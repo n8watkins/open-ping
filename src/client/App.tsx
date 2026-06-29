@@ -3,6 +3,7 @@ import { BootstrapProvider } from "./lib/bootstrap";
 import { AppLayout } from "./components/AppLayout";
 import { Placeholder } from "./components/Placeholder";
 import Dashboard from "./pages/Dashboard";
+import Monitors from "./pages/Monitors";
 import Login from "./pages/Login";
 import Setup from "./pages/Setup";
 import NotFound from "./pages/NotFound";
@@ -16,7 +17,9 @@ export default function App() {
 
         <Route element={<AppLayout />}>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/monitors" element={<Placeholder title="Monitors" />} />
+          <Route path="/monitors" element={<Monitors />} />
+          <Route path="/monitors/new" element={<Placeholder title="New monitor" />} />
+          <Route path="/monitors/:id" element={<Placeholder title="Monitor detail" />} />
           <Route path="/incidents" element={<Placeholder title="Incidents" />} />
           <Route path="/maintenance" element={<Placeholder title="Maintenance" />} />
           <Route path="/integrations" element={<Placeholder title="Integrations" />} />

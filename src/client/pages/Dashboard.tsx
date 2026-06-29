@@ -1,15 +1,28 @@
-import { Activity, Plus } from "lucide-react";
-
-// Explicit class strings (not interpolated) so Tailwind's static extraction
-// keeps these utilities in the build.
-const STAT_CARDS = [
-  { label: "Monitors", value: "0", valueClass: "text-ink" },
-  { label: "Up", value: "0", valueClass: "text-up" },
-  { label: "Degraded", value: "0", valueClass: "text-degraded" },
-  { label: "Down", value: "0", valueClass: "text-down" },
-];
+import { Link } from "react-router-dom";
+import { Activity, Plus, Loader2, AlertTriangle } from "lucide-react";
+import { useFetch } from "../lib/useFetch";
+import type { OverviewResponse } from "../lib/types";
+import { StatusPill } from "../components/ui/StatusPill";
+import { Card } from "../components/ui/Card";
+import { Stat } from "../components/ui/Stat";
+import { EmptyState } from "../components/ui/EmptyState";
+import { formatMs, formatPct, formatRelativeTime } from "../lib/format";
 
 export default function Dashboard() {
+  const { data, loading } = useFetch<OverviewResponse>("/api/overview");
+
+  if (loading && !data) {
+    return (
+      <div className="grid min-h-[40vh] place-items-center">
+        <Loader2 className="size-6 animate-spin text-ink-faint" />
+      </div>
+    );
+  }
+
+  const counts = data?.counts;
+  const monitors = data?.monitors ?? [];
+  const channels = data?.channels ?? [];
+
   return (
     <div className="mx-auto max-w-6xl">
       <div className="flex items-center justify-between">
@@ -19,39 +32,61 @@ export default function Dashboard() {
             Status of everything OpenPing is watching.
           </p>
         </div>
-        <button
-          type="button"
+        <Link
+          to="/monitors/new"
           className="inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
         >
           <Plus className="size-4" />
           Add monitor
-        </button>
+        </Link>
       </div>
 
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {STAT_CARDS.map((stat) => (
-          <div
-            key={stat.label}
-            className="rounded-card border border-line bg-surface p-4"
-          >
-            <div className="text-xs font-medium text-ink-muted">{stat.label}</div>
-            <div className={`mt-2 text-2xl font-semibold ${stat.valueClass}`}>
-              {stat.value}
-            </div>
-          </div>
-        ))}
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
+        <Card className="p-4"><Stat label="Monitors" value={counts?.total ?? 0} /></Card>
+        <Card className="p-4"><Stat label="Up" value={counts?.up ?? 0} valueClass="text-up" /></Card>
+        <Card className="p-4"><Stat label="Degraded" value={counts?.degraded ?? 0} valueClass="text-degraded" /></Card>
+        <Card className="p-4"><Stat label="Down" value={counts?.down ?? 0} valueClass="text-down" /></Card>
+        <Card className="p-4"><Stat label="Open incidents" value={counts?.openIncidents ?? 0} valueClass={counts?.openIncidents ? "text-down" : undefined} /></Card>
       </div>
 
-      <div className="mt-6 flex flex-col items-center justify-center gap-3 rounded-card border border-dashed border-line bg-surface/40 px-6 py-20 text-center">
-        <span className="grid size-12 place-items-center rounded-full bg-accent-soft">
-          <Activity className="size-6 text-accent" />
-        </span>
-        <h2 className="text-base font-medium">No monitors yet</h2>
-        <p className="max-w-sm text-sm text-ink-muted">
-          Add your first HTTP or heartbeat monitor to start tracking uptime,
-          response time, and incidents.
-        </p>
-      </div>
+      {channels.some((ch) => !ch.healthy && ch.enabled) && (
+        <div className="mt-4 flex items-center gap-2 rounded-lg border border-degraded/40 bg-degraded/10 px-3 py-2 text-sm text-degraded">
+          <AlertTriangle className="size-4" />
+          One or more notification channels are failing. Check Integrations.
+        </div>
+      )}
+
+      <h2 className="mt-8 mb-3 text-sm font-medium text-ink-muted">Monitors</h2>
+      {monitors.length === 0 ? (
+        <EmptyState
+          icon={<Activity className="size-6 text-accent" />}
+          title="No monitors yet"
+          description="Add your first HTTP or heartbeat monitor to start tracking uptime, response time, and incidents."
+        />
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {monitors.map((m) => (
+            <Link key={m.id} to={`/monitors/${m.id}`}>
+              <Card className="p-4 transition-colors hover:border-ink-faint/40">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{m.name}</div>
+                    <div className="mt-0.5 text-xs text-ink-faint capitalize">{m.type}</div>
+                  </div>
+                  <StatusPill state={m.state} />
+                </div>
+                <div className="mt-4 flex items-center justify-between text-xs text-ink-muted">
+                  <span>24h uptime {formatPct(m.uptime24h)}</span>
+                  <span>{m.lastDurationMs != null ? formatMs(m.lastDurationMs) : "—"}</span>
+                </div>
+                <div className="mt-1 text-xs text-ink-faint">
+                  {m.lastCheckedAt ? `Checked ${formatRelativeTime(m.lastCheckedAt)}` : "Not checked yet"}
+                </div>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

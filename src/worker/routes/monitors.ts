@@ -12,6 +12,7 @@ import {
 } from "../db/monitors";
 import { runMonitorCheck } from "../checks/runner";
 import { applyCheckResult } from "../checks/state";
+import { computeUptime, computeIncidentMetrics } from "../history/metrics";
 
 /**
  * Monitor CRUD API mounted at /api/monitors. All routes require an
@@ -43,6 +44,65 @@ monitors.get("/:id", async (c) => {
   const monitor = await getMonitor(c.env, c.req.param("id"));
   if (!monitor) return c.json({ error: "not_found" }, 404);
   return c.json({ monitor });
+});
+
+/** Rich detail: monitor + current state + uptime windows + latency + incidents. */
+monitors.get("/:id/detail", async (c) => {
+  const id = c.req.param("id");
+  const monitor = await getMonitor(c.env, id);
+  if (!monitor) return c.json({ error: "not_found" }, 404);
+  const now = Date.now();
+  const DAY = 86400000;
+
+  const state = await c.env.DB.prepare(
+    `SELECT state, state_since, last_checked_at, last_success_at, last_duration_ms,
+            last_status_code, last_error, consecutive_failures, consecutive_successes,
+            next_check_at, active_incident_id, is_flapping
+     FROM monitor_state WHERE monitor_id = ?`,
+  )
+    .bind(id)
+    .first();
+
+  const [d1, d7, d30, d365] = await Promise.all([
+    computeUptime(c.env, id, now - DAY, now),
+    computeUptime(c.env, id, now - 7 * DAY, now),
+    computeUptime(c.env, id, now - 30 * DAY, now),
+    computeUptime(c.env, id, now - 365 * DAY, now),
+  ]);
+
+  const latency = await c.env.DB.prepare(
+    `SELECT AVG(duration_ms) AS avg, MIN(duration_ms) AS min, MAX(duration_ms) AS max
+     FROM samples WHERE monitor_id = ? AND ok = 1 AND duration_ms IS NOT NULL AND at >= ?`,
+  )
+    .bind(id, now - DAY)
+    .first<{ avg: number | null; min: number | null; max: number | null }>();
+
+  const samplesRes = await c.env.DB.prepare(
+    `SELECT at, ok, state, duration_ms AS durationMs, status_code AS statusCode, error
+     FROM samples WHERE monitor_id = ? AND at >= ? ORDER BY at`,
+  )
+    .bind(id, now - DAY)
+    .all();
+
+  const incidentsRes = await c.env.DB.prepare(
+    `SELECT id, status, title, started_at AS startedAt, resolved_at AS resolvedAt,
+            duration_seconds AS durationSeconds, error
+     FROM incidents WHERE monitor_id = ? ORDER BY started_at DESC LIMIT 20`,
+  )
+    .bind(id)
+    .all();
+
+  const incidentMetrics = await computeIncidentMetrics(c.env, id, now);
+
+  return c.json({
+    monitor,
+    state,
+    uptime: { d1: d1.uptimePct, d7: d7.uptimePct, d30: d30.uptimePct, d365: d365.uptimePct },
+    latency: { avg: latency?.avg ?? null, min: latency?.min ?? null, max: latency?.max ?? null },
+    incidentMetrics,
+    recentSamples: samplesRes.results ?? [],
+    recentIncidents: incidentsRes.results ?? [],
+  });
 });
 
 monitors.put("/:id", async (c) => {

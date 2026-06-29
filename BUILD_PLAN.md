@@ -10,20 +10,20 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** Phase 5 — Dashboard & Status Page (Phase 4 ~COMPLETE)
-- **Last completed:** Phase 4b. 4 parallel agents built Web Push (VAPID + aes128gcm via
-  Web Crypto), push-subscription DB/routes, the PWA (manifest/SW/offline/client helper),
-  and magic-link auth; integrated push delivery into the outbox dispatcher, VAPID
-  keygen/storage, route mounts, and SW registration. 147 tests pass. Verified LIVE: PWA
-  assets serve, VAPID generate+readback (private encrypted), magic-link generic ok (no
-  disclosure). Web Push wire encryption needs real-device validation.
-- **Next up:** Phase 5 — the React UI. Build incident/metrics READ APIs first (GET
-  /api/incidents, /api/monitors + state, /api/monitors/:id/metrics, /api/diagnostics),
-  then overview dashboard, monitor detail (uptime bars/charts), monitor editor, incident
-  explorer, integrations UI, settings, maintenance, and the PUBLIC status page.
-- **Notes:** carry-overs: weekly summary email (Phase 6), push/devices + install UI
-  (build in Phase 5 settings). Most API engine endpoints exist; dashboard needs READ
-  endpoints exposing monitor state + history + metrics + diagnostics.
+- **Active phase:** Phase 5 — Dashboard & Status Page (5a done: APIs + overview)
+- **Last completed:** Phase 5a. 3 parallel agents built the incidents API (+CSV/JSON
+  export), diagnostics+usage API, and the client UI primitives (StatusPill/UptimeBar/
+  Sparkline/Card/Stat/EmptyState + format utils). I added the overview API + monitor
+  detail API + useFetch hook + real Overview and Monitors pages. 167 tests pass; all read
+  APIs verified LIVE (overview counts/state/uptime, detail uptime windows, diagnostics
+  counts, usage 120 checks/day, incidents list).
+- **Next up (Phase 5b+):** monitor detail page (uptime bars + latency sparkline +
+  metrics + incident list), monitor editor form (http+heartbeat/schedule/assertions),
+  incident explorer UI, integrations + push/devices UI, settings, maintenance, and the
+  PUBLIC status page (+ public-safety redaction). Then Phase 6.
+- **Notes:** UI primitives live in src/client/components/ui; useFetch in lib/useFetch;
+  API types in lib/types. Pages consume /api/overview. Public status page needs its own
+  unauthenticated API that redacts URLs/creds/internal errors.
 
 ---
 
@@ -87,12 +87,15 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Phase 5 — Dashboard & Status Page
 
-- [ ] Overview dashboard (counts, channel health, uptime bars, latest latency)
-- [ ] Monitor cards (state, time-in-state, last/next check, 24h uptime, actions)
-- [ ] Monitor detail (uptime bars 24h/7d/30d/365d, latency chart, metrics, incidents)
-- [ ] Incident explorer (filters, search, notes, public update, CSV/JSON export)
+- [x] Read APIs: /api/overview, /api/monitors/:id/detail, /api/incidents (+export), /api/diagnostics (+usage)
+- [x] Client UI primitives (StatusPill, UptimeBar, Sparkline, Card, Stat, EmptyState, format)
+- [x] Overview dashboard (counts, channel-health banner, monitor cards, latest latency)
+- [x] Monitor cards/list (state, last/next check, 24h uptime)
+- [ ] Monitor detail page (uptime bars 24h/7d/30d/365d, latency chart, metrics, incidents)
+- [ ] Monitor editor (create/edit form: http + heartbeat, schedule, assertions)
+- [ ] Incident explorer UI (filters, search, notes, public update, CSV/JSON export)
 - [ ] Maintenance UI (one-time/recurring, global/per-monitor, public msg)
-- [ ] Integrations UI (status, test, edit, last success/failure, health)
+- [ ] Integrations UI (status, test, edit, last success/failure, health) + push/devices
 - [ ] Settings UI (all sections per PRD §16)
 - [ ] Status-page customization (name, logo, favicon, accent, theme, footer, groups)
 - [ ] Public status page (overall banner, groups, uptime bars, incidents, maint)
