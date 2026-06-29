@@ -10,6 +10,8 @@ import {
   setPaused,
   updateMonitor,
 } from "../db/monitors";
+import { runMonitorCheck } from "../checks/runner";
+import { applyCheckResult } from "../checks/state";
 
 /**
  * Monitor CRUD API mounted at /api/monitors. All routes require an
@@ -78,4 +80,21 @@ monitors.post("/:id/resume", async (c) => {
   const monitor = await setPaused(c.env, c.req.param("id"), false);
   if (!monitor) return c.json({ error: "not_found" }, 404);
   return c.json({ monitor });
+});
+
+/**
+ * Manual test (PRD §9). Runs a check now and returns the outcome. By default it
+ * does NOT affect stored history/state; pass ?apply=1 to persist the result.
+ * HTTP monitors only — heartbeats are push-driven.
+ */
+monitors.post("/:id/test", async (c) => {
+  const monitor = await getMonitor(c.env, c.req.param("id"));
+  if (!monitor) return c.json({ error: "not_found" }, 404);
+  if (monitor.type !== "http") {
+    return c.json({ error: "not_testable", message: "Heartbeat monitors are push-driven." }, 400);
+  }
+  const apply = c.req.query("apply") === "1" || c.req.query("apply") === "true";
+  const outcome = await runMonitorCheck(monitor, { now: Date.now() });
+  if (apply) await applyCheckResult(c.env, monitor, outcome);
+  return c.json({ outcome, applied: apply });
 });

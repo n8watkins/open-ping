@@ -10,19 +10,20 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** Phase 2 — Monitoring Engine
-- **Last completed:** PARALLEL iteration (4 agents) — shared Zod schemas, Monitor
-  CRUD (db + auth-guarded routes), HTTP check executor, assertions engine, and
-  timezone/DST schedule engine. Integrated + verified: tsc clean, 64 unit tests
-  pass, full CRUD cycle verified on dev (auth/CSRF/validation/create/pause/delete,
-  cascade-delete of monitor_state confirmed).
-- **Next up:** the check cycle — wire executor+assertions+schedule into the
-  scheduled() handler with warm-up, retries (2× / 10s), result classification,
-  current-state updates, execution lease; then heartbeat ingestion `/hb/:token`
-  and manual test actions.
-- **Notes:** Build now parallelized across subagents over disjoint files (see
-  memory). Verify protected routes locally by inserting a session row whose id =
-  sha256(cookie token); csrf_secret must match the x-csrf-token header.
+- **Active phase:** Phase 3 — Incidents & History (Phase 2 ~COMPLETE)
+- **Last completed:** the check cycle. Core (runner/classification, state
+  persistence) authored serially; lease+diagnostics and heartbeat ingestion built
+  in parallel. scheduled() handler does lease → schedule eval → concurrent HTTP
+  checks (warm-up + 2× retry) → missed-heartbeat detection → run diagnostics.
+  Manual test endpoint added. 86 unit tests pass; verified LIVE on dev: real HTTP
+  check up/down incl assertion_failed (retried 2×), heartbeat ingestion → state up
+  + sample. Cron self-trigger not exposed by vite dev plugin → validate on deploy.
+- **Next up:** Phase 3 — incident lifecycle (open on failed cycle, ongoing, recovery,
+  dedupe), flapping, status intervals, hourly/daily/monthly summaries, uptime %,
+  MTBF/MTTR, compaction. Hook incident creation into applyCheckResult.
+- **Notes:** scheduler calls runMonitorCheck/applyCheckResult/recordHeartbeat — the
+  Phase-3 incident hooks belong in checks/state.applyCheckResult + a new incidents
+  module. Local dev session forging: id = sha256(cookie token), csrf must match.
 
 ---
 
@@ -48,14 +49,14 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 - [x] HTTP/API check executor (methods, headers, body, auth, timeout, redirects)
 - [x] Expected-status + response-time threshold evaluation
 - [x] Content/JSON assertions engine
-- [ ] Heartbeat ingestion endpoint `/hb/:token` (+ duration/exit/message/metrics)
+- [x] Heartbeat ingestion endpoint `/hb/:token` (+ duration/exit/message/metrics)
 - [x] Schedule engine: always / business-hours / custom weekly, timezone + DST aware
 - [x] "Due now?" + "active now?" + next-active/next-check computation
-- [ ] Warm-up / cold-start handling (warm-up timeout, retry once)
-- [ ] Retry logic (2 attempts, 10s delay) + result classification
-- [ ] Current-state record updates (consecutive fails/successes, time-in-state)
-- [ ] Scheduled handler: load due monitors, concurrency-limited checks, lease lock
-- [ ] Manual test actions (no-history / apply / send-test / re-run failed)
+- [x] Warm-up / cold-start handling (warm-up timeout + retry; warming_up display TODO)
+- [x] Retry logic (2 attempts, 10s delay) + result classification
+- [x] Current-state record updates (consecutive fails/successes, time-in-state)
+- [x] Scheduled handler: load due monitors, concurrency-limited checks, lease lock
+- [x] Manual test actions (no-history / apply done; send-test notif = Phase 4)
 - [~] Schedule preview computation (active hours/mo done; est hosted hours TODO)
 
 ## Phase 3 — Incidents & History

@@ -119,6 +119,19 @@ export async function getMonitor(
   return row ? rowToMonitor(row) : null;
 }
 
+/** Look up a heartbeat monitor by its ingestion token (for /hb/:token). */
+export async function getMonitorByHeartbeatToken(
+  env: Env,
+  token: string,
+): Promise<MonitorRecord | null> {
+  const row = await env.DB.prepare(
+    "SELECT * FROM monitors WHERE heartbeat_token = ? AND type = 'heartbeat'",
+  )
+    .bind(token)
+    .first<MonitorRow>();
+  return row ? rowToMonitor(row) : null;
+}
+
 export async function createMonitor(
   env: Env,
   input: CreateMonitorInput,
