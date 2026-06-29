@@ -11,11 +11,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 ## Current status
 
 - **Active phase:** Phase 1 — Foundation
-- **Last completed:** verified scaffold — `tsc -b` clean, `vite build` clean, dev
-  server boots, `/api/health` returns JSON (db bound), SPA + API 404 routing correct.
-- **Next up:** D1 schema v1 migration + settings store, then sessions + GitHub OAuth.
-- **Notes:** API paths guarded in worker catch-all so unmatched `/api/*` returns
-  JSON 404 (Hono route() merge means sub-app notFound never fires).
+- **Last completed:** D1 v1 schema (16 tables, migration applies clean to local
+  D1, upsert verified), settings store (plaintext + AES-GCM secret support),
+  crypto + ids helpers (5/5 unit tests pass).
+- **Next up:** session system (cookies/rotation/CSRF/auth middleware) → GitHub OAuth.
+- **Notes:** wrangler pinned at v3.114 (works); v4 available — consider upgrade in
+  hardening. Local D1 lives in `.wrangler/state`; `npm run db:migrate:local` applies.
 
 ---
 
@@ -27,8 +28,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 - [x] Worker entry: Hono app, `/api` router, scheduled() stub, SPA asset fallback
 - [x] Shared types/zod package
 - [x] React app shell: dark-navy layout, router, Tailwind design tokens
-- [ ] D1 schema v1 migration: settings, sessions, monitors, incidents, samples, intervals, summaries, notification channels, outbox, push subscriptions, maintenance, heartbeats
-- [ ] Config/settings store (D1 key-value, encrypted-secret aware)
+- [x] D1 schema v1 migration: settings, sessions, monitors, incidents, samples, intervals, summaries, notification channels, outbox, push subscriptions, maintenance, heartbeats
+- [x] Config/settings store (D1 key-value, encrypted-secret aware)
 - [ ] Session system: secure cookies, rotation, CSRF, auth middleware
 - [ ] GitHub OAuth: login, callback, state validation, allowlist check
 - [ ] Setup wizard shell (resumable, step state in D1)
