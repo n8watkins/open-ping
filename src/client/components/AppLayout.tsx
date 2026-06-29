@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, Navigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Activity,
@@ -6,10 +6,12 @@ import {
   Wrench,
   Plug,
   Settings,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "../lib/cn";
 import { Logo } from "./Logo";
+import { useBootstrap } from "../lib/bootstrap";
 
 interface NavItem {
   to: string;
@@ -27,6 +29,18 @@ const NAV: NavItem[] = [
 ];
 
 export function AppLayout() {
+  const { loading, status, me } = useBootstrap();
+
+  if (loading) {
+    return (
+      <div className="grid min-h-full place-items-center">
+        <Loader2 className="size-6 animate-spin text-ink-faint" />
+      </div>
+    );
+  }
+  if (status && !status.setupComplete) return <Navigate to="/setup" replace />;
+  if (!me?.authenticated) return <Navigate to="/login" replace />;
+
   return (
     <div className="flex min-h-full">
       {/* Desktop sidebar */}
