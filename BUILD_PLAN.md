@@ -10,15 +10,19 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** Phase 2 — Monitoring Engine (Phase 1 COMPLETE)
-- **Last completed:** resumable setup wizard (D1 step state, settings mirroring,
-  completion + post-complete write lock all verified end-to-end) + client bootstrap
-  (api helper, BootstrapProvider) + setup/auth route gating. Phase 1 done.
-- **Next up:** Phase 2 — Monitor CRUD API + Zod schemas (http + heartbeat), then
-  HTTP check executor.
-- **Notes:** `.dev.vars` holds local GITHUB creds + ADMIN_GITHUB_LOGIN. Local D1
-  setup_complete reset to false so dev shows the wizard. requireAuth middleware
-  exists and is ready to protect Phase 2 monitor routes.
+- **Active phase:** Phase 2 — Monitoring Engine
+- **Last completed:** PARALLEL iteration (4 agents) — shared Zod schemas, Monitor
+  CRUD (db + auth-guarded routes), HTTP check executor, assertions engine, and
+  timezone/DST schedule engine. Integrated + verified: tsc clean, 64 unit tests
+  pass, full CRUD cycle verified on dev (auth/CSRF/validation/create/pause/delete,
+  cascade-delete of monitor_state confirmed).
+- **Next up:** the check cycle — wire executor+assertions+schedule into the
+  scheduled() handler with warm-up, retries (2× / 10s), result classification,
+  current-state updates, execution lease; then heartbeat ingestion `/hb/:token`
+  and manual test actions.
+- **Notes:** Build now parallelized across subagents over disjoint files (see
+  memory). Verify protected routes locally by inserting a session row whose id =
+  sha256(cookie token); csrf_secret must match the x-csrf-token header.
 
 ---
 
@@ -40,19 +44,19 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Phase 2 — Monitoring Engine
 
-- [ ] Monitor CRUD API + zod schemas (HTTP + heartbeat types)
-- [ ] HTTP/API check executor (methods, headers, body, auth, timeout, redirects)
-- [ ] Expected-status + response-time threshold evaluation
-- [ ] Content/JSON assertions engine
+- [x] Monitor CRUD API + zod schemas (HTTP + heartbeat types)
+- [x] HTTP/API check executor (methods, headers, body, auth, timeout, redirects)
+- [x] Expected-status + response-time threshold evaluation
+- [x] Content/JSON assertions engine
 - [ ] Heartbeat ingestion endpoint `/hb/:token` (+ duration/exit/message/metrics)
-- [ ] Schedule engine: always / business-hours / custom weekly, timezone + DST aware
-- [ ] "Due now?" + "active now?" + next-active/next-check computation
+- [x] Schedule engine: always / business-hours / custom weekly, timezone + DST aware
+- [x] "Due now?" + "active now?" + next-active/next-check computation
 - [ ] Warm-up / cold-start handling (warm-up timeout, retry once)
 - [ ] Retry logic (2 attempts, 10s delay) + result classification
 - [ ] Current-state record updates (consecutive fails/successes, time-in-state)
 - [ ] Scheduled handler: load due monitors, concurrency-limited checks, lease lock
 - [ ] Manual test actions (no-history / apply / send-test / re-run failed)
-- [ ] Schedule preview computation (active hours/mo, est hosted hours)
+- [~] Schedule preview computation (active hours/mo done; est hosted hours TODO)
 
 ## Phase 3 — Incidents & History
 
