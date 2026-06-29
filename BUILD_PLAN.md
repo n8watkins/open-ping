@@ -10,19 +10,18 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** Phase 4 — Notifications & PWA (Phase 3 COMPLETE)
-- **Last completed:** Phase 3 incidents + history. 4 parallel agents built incidents,
-  status intervals, history rollups/compaction, and uptime/MTBF/MTTR metrics; wired
-  incident + interval + hourly-rollup hooks into checks/state and compaction into the
-  scheduler. 122 unit tests pass. Verified LIVE: down→incident opened (event+pointer+
-  interval+summary), recovery→resolved w/ duration, interval split, timeline opened→
-  recovered.
-- **Next up:** Phase 4 — notification outbox + channels (Resend email, Discord,
-  signed webhooks), magic-link auth, Web Push (VAPID), PWA manifest + service worker.
-  Hook outbox enqueue into incident open/resolve in checks/state (markNotified exists).
-- **Notes:** incident/metrics READ APIs (GET /api/incidents, /api/monitors/:id/metrics)
-  deferred to Phase 5 dashboard. Notification enqueue point = applyIncidentTransition
-  in checks/state.ts. Web Push VAPID must use Web Crypto (no node web-push lib).
+- **Active phase:** Phase 4 — Notifications & PWA (outbound pipeline DONE; push/PWA next)
+- **Last completed:** outbound notification pipeline. 3 parallel agents built outbox,
+  channel senders (Resend/Discord/signed-webhook), and channel CRUD; wired event matrix,
+  payload builder, dispatcher, and incident→outbox enqueue hooks (incl flapping warning)
+  into checks/state + scheduler. 136 tests pass. Verified LIVE: channel test-send executes
+  (webhook POST, errors captured), incident open enqueues a 'down' outbox entry.
+- **Next up (Phase 4b):** Web Push (VAPID keygen + aes128gcm encryption via Web Crypto,
+  subscribe/test/disable/remove + device mgmt), PWA (manifest, icons, service worker w/
+  push + offline), magic-link auth (Resend), weekly summary email.
+- **Notes:** Web Push must be hand-rolled with Web Crypto (no node web-push lib). Push
+  channel kind exists in matrix but is delivered via a separate subscription path, not the
+  channel-based dispatcher. Email sender not live-tested (no Resend key locally).
 
 ---
 
@@ -71,16 +70,17 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Phase 4 — Notifications & PWA
 
-- [ ] Notification outbox (per-channel delivery records, retries, max attempts)
-- [ ] Resend email channel (down/recovery/heartbeat/flapping/test/weekly/maint)
+- [x] Notification outbox (per-channel delivery records, retries, max attempts)
+- [x] Resend email channel (sender + HTML/text render; used by dispatcher)
 - [ ] Email magic-link auth (hashed single-use token, rate limit, generic response)
-- [ ] Discord webhook channel (embeds)
-- [ ] Generic signed webhook channel (HMAC signature, custom headers, test)
+- [x] Discord webhook channel (embeds)
+- [x] Generic signed webhook channel (HMAC signature, custom headers, test)
 - [ ] Web Push: VAPID via Web Crypto, subscribe/test/disable/remove, device mgmt
 - [ ] PWA manifest + icons + standalone + theme colors
 - [ ] Service worker: push handling, deep links, app-shell cache, offline fallback
 - [ ] Android install flow + notification permission guidance + test push
-- [ ] Notification defaults + per-event channel matrix
+- [x] Notification defaults + per-event channel matrix
+- [x] Dispatcher + incident enqueue hooks + channel CRUD/test API (engine glue)
 - [ ] Weekly summary email (scheduler-driven, opt-in)
 
 ## Phase 5 — Dashboard & Status Page

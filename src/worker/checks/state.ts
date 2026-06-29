@@ -13,6 +13,8 @@ import {
 } from "../db/incidents";
 import { updateStatusInterval } from "../db/intervals";
 import { recordCheckSample } from "../history/rollups";
+import { enqueueIncidentEvent } from "../notifications/enqueue";
+import type { NotifyEvent } from "../../shared/notifications";
 
 /**
  * Persists check results: mutable current state, recent samples, incident
@@ -91,6 +93,7 @@ async function applyIncidentTransition(
   env: Env,
   monitor: MonitorRecord,
   p: { ok: boolean; at: number; error?: string | null; httpStatus?: number | null },
+  downEvent: NotifyEvent = "down",
 ): Promise<{ activeIncidentId: string | null; isFlapping: boolean }> {
   try {
     const active = await getActiveIncident(env, monitor.id);
@@ -112,9 +115,18 @@ async function applyIncidentTransition(
         httpStatus: p.httpStatus,
         isFlapping: flapping,
       });
+      // Single flapping warning instead of yet another down alert.
+      await safe("notify", () =>
+        enqueueIncidentEvent(env, monitor, inc, flapping ? "flapping" : downEvent),
+      );
       return { activeIncidentId: inc.id, isFlapping: flapping };
     }
-    if (active) await resolveIncident(env, active.id, { at: p.at });
+    if (active) {
+      const resolved = await resolveIncident(env, active.id, { at: p.at });
+      await safe("notify", () =>
+        enqueueIncidentEvent(env, monitor, resolved ?? active, "recovered"),
+      );
+    }
     return { activeIncidentId: null, isFlapping: false };
   } catch (e) {
     console.error(`[incident] transition failed for ${monitor.id}`, e);
@@ -329,11 +341,12 @@ export async function markHeartbeatMissed(
   const stateChanged = prevState !== "down";
   const stateSince = stateChanged ? now : (cur?.state_since ?? now);
 
-  const incident = await applyIncidentTransition(env, monitor, {
-    ok: false,
-    at: now,
-    error: "heartbeat_missed",
-  });
+  const incident = await applyIncidentTransition(
+    env,
+    monitor,
+    { ok: false, at: now, error: "heartbeat_missed" },
+    "heartbeat_missed",
+  );
 
   await env.DB.prepare(
     `UPDATE monitor_state SET

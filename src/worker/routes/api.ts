@@ -3,12 +3,14 @@ import type { AppEnv } from "../types";
 import { apiAuth } from "./api-auth";
 import { setup } from "./setup";
 import { monitors } from "./monitors";
+import { channels } from "./channels";
 
 export const api = new Hono<AppEnv>();
 
 api.route("/auth", apiAuth);
 api.route("/setup", setup);
 api.route("/monitors", monitors);
+api.route("/channels", channels);
 
 /** Liveness/readiness probe. Reports whether core wiring is present. */
 api.get("/health", (c) => {

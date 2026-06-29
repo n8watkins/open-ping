@@ -4,6 +4,7 @@ import { isActiveAt } from "./lib/schedule";
 import { runMonitorCheck } from "./checks/runner";
 import { applyCheckResult, setScheduledOff, markHeartbeatMissed } from "./checks/state";
 import { rollupAndCompact } from "./history/rollups";
+import { processOutbox } from "./notifications/dispatcher";
 import {
   acquireLease,
   releaseLease,
@@ -128,6 +129,15 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
       }
     });
 
+    // Flush queued notifications (independent; never fails the run).
+    let notificationFailures = 0;
+    try {
+      const r = await processOutbox(env, Date.now());
+      notificationFailures = r.failed;
+    } catch (e) {
+      console.error("[scheduler] notification dispatch failed", e);
+    }
+
     // Compaction/retention runs after checks and must never fail the run.
     try {
       await rollupAndCompact(env, now);
@@ -140,7 +150,7 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
       monitorsChecked: checked,
       monitorsSkipped: skipped,
       checkFailures: failures,
-      notificationFailures: 0,
+      notificationFailures,
     });
     console.log(
       `[scheduler] cron=${controller.cron} checked=${checked} skipped=${skipped} failures=${failures}`,
