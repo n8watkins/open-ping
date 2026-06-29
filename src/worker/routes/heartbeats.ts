@@ -36,12 +36,12 @@ export function isMethodAllowed(
  * True when no secret is configured, otherwise the provided value must match.
  * Uses a constant-time comparison to avoid leaking the secret via timing.
  */
-export function checkSecret(
+export async function checkSecret(
   configured: string | undefined,
   provided: string | undefined,
-): boolean {
+): Promise<boolean> {
   if (!configured) return true;
-  return provided != null && timingSafeEqual(provided, configured);
+  return provided != null && (await timingSafeEqual(provided, configured));
 }
 
 export interface HeartbeatPayload {
@@ -148,7 +148,7 @@ heartbeats.all("/:token", async (c) => {
     c.req.query("secret") ??
     c.req.header("x-heartbeat-secret") ??
     bearerToken(c.req.header("authorization"));
-  if (!checkSecret(cfg.secret, provided)) {
+  if (!(await checkSecret(cfg.secret, provided))) {
     return c.json({ error: "unauthorized" }, 401);
   }
 

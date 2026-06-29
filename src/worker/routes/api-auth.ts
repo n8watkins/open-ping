@@ -1,6 +1,7 @@
 import { Hono } from "hono";
+import { deleteCookie } from "hono/cookie";
 import type { AppEnv } from "../types";
-import { getSession, destroySession } from "../lib/sessions";
+import { getSession, destroySession, revokeAllSessions, SESSION_COOKIE } from "../lib/sessions";
 import { getAdminGithubLogin, getAdminEmail } from "../lib/admin";
 import { getSetting } from "../db/settings";
 import { timingSafeEqual } from "../lib/timing";
@@ -36,9 +37,26 @@ apiAuth.post("/logout", async (c) => {
   const session = await getSession(c);
   if (!session) return c.json({ error: "unauthorized" }, 401);
   const csrf = c.req.header("x-csrf-token");
-  if (!csrf || !timingSafeEqual(csrf, session.csrf_secret)) {
+  if (!csrf || !(await timingSafeEqual(csrf, session.csrf_secret))) {
     return c.json({ error: "csrf_failed" }, 403);
   }
   await destroySession(c);
+  return c.json({ ok: true });
+});
+
+/**
+ * Sign out everywhere: revoke ALL sessions for the caller's identity, not just
+ * the current cookie. Lets the admin forcibly kill a leaked/stolen session token
+ * (which is otherwise valid for up to 30 days) without waiting for expiry.
+ */
+apiAuth.post("/logout-all", async (c) => {
+  const session = await getSession(c);
+  if (!session) return c.json({ error: "unauthorized" }, 401);
+  const csrf = c.req.header("x-csrf-token");
+  if (!csrf || !(await timingSafeEqual(csrf, session.csrf_secret))) {
+    return c.json({ error: "csrf_failed" }, 403);
+  }
+  await revokeAllSessions(c.env, session.identity);
+  deleteCookie(c, SESSION_COOKIE, { path: "/" });
   return c.json({ ok: true });
 });

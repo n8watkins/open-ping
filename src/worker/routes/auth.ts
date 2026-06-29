@@ -1,8 +1,10 @@
 import { Hono } from "hono";
+import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv, Env } from "../types";
 import { randomToken, sha256hex } from "../lib/ids";
 import { isAllowedGithubLogin } from "../lib/admin";
 import { createSession } from "../lib/sessions";
+import { timingSafeEqual } from "../lib/timing";
 
 /**
  * Browser-facing auth flows mounted at /auth. GitHub OAuth (PRD §13):
@@ -15,6 +17,7 @@ const GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN = "https://github.com/login/oauth/access_token";
 const GITHUB_USER = "https://api.github.com/user";
 const STATE_TTL_MS = 1000 * 60 * 10; // 10 minutes
+const STATE_COOKIE = "op_oauth_state";
 const UA = "OpenPing";
 
 // NOTE: only honors the APP_URL env override, not the `app_url` setting the
@@ -36,19 +39,25 @@ auth.get("/github/start", async (c) => {
   const base = baseUrl(c);
   if (!c.env.GITHUB_CLIENT_ID) return loginRedirect(base, "github_not_configured");
 
-  // NOTE (deferred): this `state` is single-use and server-validated on
-  // callback, but it is NOT bound to the initiating browser (no paired nonce in
-  // an HttpOnly cookie / double-submit), so it only weakly defends against login
-  // CSRF / session fixation. Left as-is for now because the single-admin
-  // allowlist means a forced login can still only ever resolve to the one admin
-  // identity. Revisit by storing a random nonce in a cookie at /start and
-  // checking it against this row in /github/callback.
+  // The `state` is single-use and server-validated on callback, AND bound to the
+  // initiating browser via a matching HttpOnly cookie (double-submit). The
+  // callback requires both the server row and the cookie to match the returned
+  // `state`, so an attacker who can't read the victim's cookie can't forge a
+  // login-CSRF / fixation flow. (The single-admin allowlist already bounds the
+  // blast radius, but this closes the gap properly.)
   const state = randomToken(24);
   await c.env.DB.prepare(
     `INSERT INTO auth_tokens (id, kind, data, created_at, expires_at) VALUES (?, 'oauth_state', ?, ?, ?)`,
   )
     .bind(await sha256hex(state), JSON.stringify({}), Date.now(), Date.now() + STATE_TTL_MS)
     .run();
+  setCookie(c, STATE_COOKIE, state, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax", // sent on the top-level GET navigation back from GitHub
+    path: "/auth/github",
+    maxAge: STATE_TTL_MS / 1000,
+  });
 
   const authorize = new URL(GITHUB_AUTHORIZE);
   authorize.searchParams.set("client_id", c.env.GITHUB_CLIENT_ID);
@@ -67,6 +76,14 @@ auth.get("/github/callback", async (c) => {
   if (!code || !state) return loginRedirect(base, "invalid_callback");
   if (!c.env.GITHUB_CLIENT_ID || !c.env.GITHUB_CLIENT_SECRET) {
     return loginRedirect(base, "github_not_configured");
+  }
+
+  // Bind to the initiating browser: the state cookie set at /start must match
+  // the returned `state` (constant-time). Clear it regardless of outcome.
+  const cookieState = getCookie(c, STATE_COOKIE);
+  deleteCookie(c, STATE_COOKIE, { path: "/auth/github" });
+  if (!cookieState || !(await timingSafeEqual(cookieState, state))) {
+    return loginRedirect(base, "state_invalid");
   }
 
   // Validate + consume single-use state.

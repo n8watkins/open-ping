@@ -36,22 +36,22 @@ describe("isMethodAllowed", () => {
 });
 
 describe("checkSecret", () => {
-  it("passes when no secret is configured", () => {
-    expect(checkSecret(undefined, undefined)).toBe(true);
-    expect(checkSecret(undefined, "anything")).toBe(true);
-    expect(checkSecret("", "anything")).toBe(true);
+  it("passes when no secret is configured", async () => {
+    expect(await checkSecret(undefined, undefined)).toBe(true);
+    expect(await checkSecret(undefined, "anything")).toBe(true);
+    expect(await checkSecret("", "anything")).toBe(true);
   });
 
-  it("passes when the provided secret matches", () => {
-    expect(checkSecret("s3cret", "s3cret")).toBe(true);
+  it("passes when the provided secret matches", async () => {
+    expect(await checkSecret("s3cret", "s3cret")).toBe(true);
   });
 
-  it("fails when the provided secret does not match", () => {
-    expect(checkSecret("s3cret", "nope")).toBe(false);
+  it("fails when the provided secret does not match", async () => {
+    expect(await checkSecret("s3cret", "nope")).toBe(false);
   });
 
-  it("fails when a secret is configured but none is provided", () => {
-    expect(checkSecret("s3cret", undefined)).toBe(false);
+  it("fails when a secret is configured but none is provided", async () => {
+    expect(await checkSecret("s3cret", undefined)).toBe(false);
   });
 });
 

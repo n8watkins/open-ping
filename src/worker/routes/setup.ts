@@ -52,7 +52,7 @@ async function guardWrite(c: Context<AppEnv>): Promise<Response | null> {
   }
   if (session && !SAFE_METHODS.has(c.req.method.toUpperCase())) {
     const provided = c.req.header(CSRF_HEADER);
-    if (!provided || !timingSafeEqual(provided, session.csrf_secret)) {
+    if (!provided || !(await timingSafeEqual(provided, session.csrf_secret))) {
       return c.json({ error: "csrf_failed" }, 403);
     }
   }

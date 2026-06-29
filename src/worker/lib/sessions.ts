@@ -93,15 +93,18 @@ export async function destroySession(c: Ctx): Promise<void> {
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
 }
 
-// NOTE (deferred): there is no admin-facing session revocation beyond the caller
-// logging out their own session (destroySession) and the scheduled purge of
-// already-expired rows (cleanupExpiredSessions). There is no "revoke all other
-// sessions" / revoke-by-id-on-demand control, so a cookie that leaks before its
-// 30-day expiry can't be forcibly killed without clearing the table. Mitigated
-// by the single-admin model (only one identity can ever hold a session) and
-// rotation on every login; revisit with an explicit revoke endpoint.
 async function destroySessionById(env: Env, id: string): Promise<void> {
   await env.DB.prepare(`DELETE FROM sessions WHERE id = ?`).bind(id).run();
+}
+
+/**
+ * Revoke every session for an identity ("sign out everywhere"). Lets the admin
+ * forcibly kill a leaked/stolen cookie (otherwise valid up to 30 days) without
+ * waiting for expiry. Exposed via POST /api/auth/logout-all; also suitable to
+ * call on an admin-identity/credential rotation.
+ */
+export async function revokeAllSessions(env: Env, identity: string): Promise<void> {
+  await env.DB.prepare(`DELETE FROM sessions WHERE identity = ?`).bind(identity).run();
 }
 
 /** Remove expired sessions (called from scheduled cleanup). */
