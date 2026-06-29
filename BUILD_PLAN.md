@@ -11,12 +11,15 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 ## Current status
 
 - **Active phase:** Phase 1 — Foundation
-- **Last completed:** D1 v1 schema (16 tables, migration applies clean to local
-  D1, upsert verified), settings store (plaintext + AES-GCM secret support),
-  crypto + ids helpers (5/5 unit tests pass).
-- **Next up:** session system (cookies/rotation/CSRF/auth middleware) → GitHub OAuth.
-- **Notes:** wrangler pinned at v3.114 (works); v4 available — consider upgrade in
-  hardening. Local D1 lives in `.wrangler/state`; `npm run db:migrate:local` applies.
+- **Last completed:** session system (hashed-token cookies, rotation, per-session
+  CSRF, requireAuth middleware) + GitHub OAuth (start/callback, single-use state,
+  allowlist). Verified via dev server: status/me/logout correct; /auth/github/start
+  builds correct GitHub URL + stores state. tsc/tests/build all green.
+- **Next up:** setup wizard shell (resumable, step state in D1) + setup-gating, then
+  finish Phase 1 → Phase 2 monitoring engine.
+- **Notes:** `.dev.vars` (gitignored) holds local GITHUB_CLIENT_ID/SECRET + ADMIN_
+  GITHUB_LOGIN for testing. OAuth callback code-exchange untestable locally (needs
+  real GitHub). requireAuth/cleanupExpiredSessions exported, wired to routes next.
 
 ---
 
@@ -30,8 +33,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 - [x] React app shell: dark-navy layout, router, Tailwind design tokens
 - [x] D1 schema v1 migration: settings, sessions, monitors, incidents, samples, intervals, summaries, notification channels, outbox, push subscriptions, maintenance, heartbeats
 - [x] Config/settings store (D1 key-value, encrypted-secret aware)
-- [ ] Session system: secure cookies, rotation, CSRF, auth middleware
-- [ ] GitHub OAuth: login, callback, state validation, allowlist check
+- [x] Session system: secure cookies, rotation, CSRF, auth middleware
+- [x] GitHub OAuth: login, callback, state validation, allowlist check
 - [ ] Setup wizard shell (resumable, step state in D1)
 - [x] Responsive app layout + mobile bottom nav
 - [x] Verify: `npm run build` passes; worker boots in dev; `/api/health` responds

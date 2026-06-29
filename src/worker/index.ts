@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv, Env } from "./types";
 import { api } from "./routes/api";
+import { auth } from "./routes/auth";
 import { runScheduled } from "./scheduler";
 
 const app = new Hono<AppEnv>();
@@ -9,9 +10,11 @@ const app = new Hono<AppEnv>();
 // fallback so API routes never get swallowed by the asset handler.
 app.route("/api", api);
 
-// Heartbeat ingestion + auth callbacks get registered here in later phases.
+// Browser-facing OAuth / magic-link redirect flows.
+app.route("/auth", auth);
+
+// Heartbeat ingestion gets registered here in a later phase.
 // app.route("/hb", heartbeats)
-// app.route("/auth", auth)
 
 // Everything else: serve the built SPA. `not_found_handling: single-page-application`
 // in wrangler.jsonc makes ASSETS return index.html for client-side routes.

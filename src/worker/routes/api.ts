@@ -1,7 +1,10 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
+import { apiAuth } from "./api-auth";
 
 export const api = new Hono<AppEnv>();
+
+api.route("/auth", apiAuth);
 
 /** Liveness/readiness probe. Reports whether core wiring is present. */
 api.get("/health", (c) => {

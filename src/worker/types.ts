@@ -39,4 +39,19 @@ export type AppEnv = { Bindings: Env; Variables: AppVariables };
 export interface AppVariables {
   /** Set by auth middleware on authenticated requests. */
   admin?: { id: string; login?: string; email?: string };
+  /** The authenticated session row, set by requireAuth. */
+  session?: SessionRow;
+}
+
+/** A row in the `sessions` table. */
+export interface SessionRow {
+  id: string;
+  identity: string;
+  identity_kind: "github" | "email";
+  csrf_secret: string;
+  created_at: number;
+  expires_at: number;
+  last_seen_at: number | null;
+  user_agent: string | null;
+  ip: string | null;
 }
