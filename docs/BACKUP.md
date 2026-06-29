@@ -32,9 +32,9 @@ This is by design. The exporter redacts everything sensitive:
   **bodies** are dropped.
 - Heartbeat **secrets** and the per-monitor **ingestion/heartbeat token** are
   removed.
-- Settings are filtered to non-secret keys (anything VAPID-, `key`- or
-  `secret`-named is excluded), and incidents expose only public-safe columns
-  (no internal error text or private notes).
+- Settings are filtered to non-secret keys (anything VAPID-, `key`-, `secret`-,
+  `token`- or `password`-named is excluded), and incidents expose only
+  public-safe columns (no internal error text or private notes).
 
 Because secrets aren't in the backup, you'll re-enter monitor credentials and
 re-set Worker secrets after a restore.

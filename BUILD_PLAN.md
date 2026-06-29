@@ -10,9 +10,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** ✅ V1 COMPLETE + post-build review pass applied.
-- **Last completed:** Parallel multi-agent review of the whole app against §26, then fixed
-  every confirmed issue. 245 tests pass (10 new); `tsc -b` + `vite build` clean.
+- **Active phase:** ✅ V1 COMPLETE + two post-build review passes applied.
+- **Last completed:** A second, 9-agent parallel **security + coding review** (adversarially
+  verified) landed 21 confirmed fixes — see [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md) and
+  migration `0002_review_fixes.sql`. 253 tests pass; `tsc -b` + `vite build` clean.
+- **Earlier:** Parallel multi-agent review of the whole app against §26, fixing every
+  confirmed issue (245 tests at that point).
 - **Status:** Build loop STOPPED — implementation complete. Items that can only be exercised
   on a real deployment (cron trigger cadence, real-device PWA install + Web Push wire
   encryption, live Resend/Discord delivery, GitHub OAuth code exchange) are implemented and
@@ -87,7 +90,7 @@ push wire delivery, live email/Discord, OAuth code exchange).
 - [x] Heartbeat ingestion endpoint `/hb/:token` (+ duration/exit/message/metrics)
 - [x] Schedule engine: always / business-hours / custom weekly, timezone + DST aware
 - [x] "Due now?" + "active now?" + next-active/next-check computation
-- [x] Warm-up / cold-start handling (warm-up timeout + retry; warming_up display TODO)
+- [x] Warm-up / cold-start handling (warm-up timeout + retry; `warming_up` state rendered in the UI)
 - [x] Retry logic (2 attempts, 10s delay) + result classification
 - [x] Current-state record updates (consecutive fails/successes, time-in-state)
 - [x] Scheduled handler: load due monitors, concurrency-limited checks, lease lock

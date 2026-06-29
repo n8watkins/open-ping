@@ -14,3 +14,4 @@ coverage/
 .vscode/*
 !.vscode/extensions.json
 worker-configuration.d.ts
+*.tsbuildinfo

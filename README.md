@@ -9,10 +9,11 @@ Its defining feature is **schedule-aware monitoring**: applications are checked
 hours they show as `Scheduled off` rather than `Down`, and the inactive period
 does not reduce uptime.
 
-> Status: **early development.** See [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the
-> V1 roadmap and live progress.
+> Status: **V1 complete**, hardened by a post-build security review (see
+> [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md)). See
+> [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the build history.
 
-## What it does (V1 target)
+## What it does
 
 - HTTP/API monitoring with keyword & JSON assertions
 - Heartbeat / cron-job monitoring
@@ -46,7 +47,7 @@ npm run build      # production build (client + worker)
 npm run test       # vitest
 ```
 
-## Deploy (outline — see docs once Phase 6 lands)
+## Deploy (outline — see [docs/INSTALL.md](./docs/INSTALL.md) for the full guide)
 
 1. `npm run db:create` and copy the `database_id` into `wrangler.jsonc`.
 2. `npm run db:migrate` to apply migrations to your D1 database.

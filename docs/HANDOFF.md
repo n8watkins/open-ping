@@ -15,15 +15,16 @@ hours; outside them they show `Scheduled off` and don't count against uptime.
   OAuth, Resend email, Discord, signed webhooks. Single-administrator (no public signup).
 - **Source of truth for scope:** the full PRD (pasted into the first session message) and
   `BUILD_PLAN.md` (phase + §26 acceptance-criteria tracker — all checked).
-- **Repo:** local git only — **no remote configured**, nothing pushed. `git init` was run
-  this session; default branch `main`. 25 commits.
+- **Repo:** local git, default branch `main`. A 9-agent security + coding review pass has
+  since landed (see `SECURITY_REVIEW.md`).
 - **Runs at:** `http://localhost:5173` via `npm run dev` (vite + workerd). Not yet deployed
   to a real Cloudflare account.
 
 ## State
 
-**V1 implementation COMPLETE.** All 6 PRD phases done; 235 unit tests pass; `tsc -b`
-and `vite build` clean. This session's commits (oldest→newest), all on `main`:
+**V1 implementation COMPLETE**, plus a follow-up security + coding review (21 fixes,
+`SECURITY_REVIEW.md`). All 6 PRD phases done; 253 unit tests pass; `tsc -b`
+and `vite build` clean. The original build session's commits (oldest→newest), all on `main`:
 
 | Phase | Commits |
 |---|---|
@@ -116,7 +117,7 @@ Nothing is half-done or broken. No known failing tests.
 - `BUILD_PLAN.md` — phase tracker + §26 acceptance criteria (all checked; `⊕` = deploy-validate).
 - `wrangler.jsonc` — Worker config: D1 binding `DB`, cron `*/12 * * * *`, SPA assets. Put real `database_id` here.
 - `src/worker/index.ts` — Worker entry: Hono app, route mounts, `scheduled()` handler, SPA fallback.
-- `src/worker/scheduler.ts` — the 12-min cycle: lease → maintenance/schedule eval → concurrent checks → missed heartbeats → outbox dispatch → compaction → weekly summary.
+- `src/worker/scheduler.ts` — the 12-min cycle: lease → maintenance/schedule eval → concurrent checks → missed heartbeats → outbox dispatch → compaction → weekly summary → expired-session/auth-token GC + `scheduler_runs` prune.
 - `src/worker/routes/*` — API: `api.ts` (mounts), `auth`/`api-auth`/`magic` (auth), `monitors`, `channels`, `push`, `incidents`, `maintenance`, `overview`, `diagnostics`, `settings`, `data` (import/export), `public` (unauthenticated, redacted), `setup`, `heartbeats`.
 - `src/worker/checks/*` — `http.ts` (executor + SSRF guard), `assertions.ts`, `runner.ts` (warm-up/retry/classify), `state.ts` (current state + incident/interval/rollup/notify hooks).
 - `src/worker/db/*` — `monitors`, `incidents`, `intervals`, `channels`, `push`, `outbox`, `maintenance`, `settings`, `setup`.
@@ -125,4 +126,5 @@ Nothing is half-done or broken. No known failing tests.
 - `src/worker/lib/*` — `crypto.ts`, `secret-config.ts`, `ssrf.ts`, `sessions.ts`, `admin.ts`, `ids.ts`, `lease.ts`, `schedule.ts` (timezone/DST).
 - `src/client/*` — `App.tsx` (routes), `components/AppLayout.tsx` (shell+nav), `components/ui/*` (primitives), `lib/{api,useFetch,bootstrap,format,types}.ts`, `pages/*` (Dashboard, Monitors, MonitorDetail, MonitorEditor, Incidents, Integrations, Settings, Maintenance, StatusPageSettings, PublicStatus, Setup, Login).
 - `migrations/0001_init.sql` — full v1 D1 schema (16 tables).
+- `migrations/0002_review_fixes.sql` — security-review additions: `monitor_state.last_beat_at` + unique partial index `idx_incidents_one_open`.
 - `docs/*` — INSTALL, UPGRADE, BACKUP, TROUBLESHOOTING, CUSTOM_DOMAIN, FREE_TIER (+ this HANDOFF).
