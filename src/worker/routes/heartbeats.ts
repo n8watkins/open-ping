@@ -22,6 +22,14 @@ export const heartbeats = new Hono<AppEnv>();
 // must now configure `acceptedMethods` (e.g. ["GET"]) or switch to POST.
 const DEFAULT_ACCEPTED_METHODS = ["POST", "HEAD"];
 
+// Minimum spacing between beats we actually persist for a given token. Heartbeat
+// monitors have a schema-enforced minimum interval of 60s, so this floor never
+// throttles a legitimate beat (or a quick client retry) — it only caps abusive
+// tight-loop spam on a leaked token from exhausting the D1 write budget. A
+// throttled beat returns 200 (the monitor's liveness was already just recorded);
+// only the redundant follow-on writes are skipped.
+const MIN_INGEST_INTERVAL_MS = 5000;
+
 /** True iff `method` is accepted (defaulting to POST/HEAD when none configured). */
 export function isMethodAllowed(
   accepted: string[] | undefined,
@@ -152,13 +160,26 @@ heartbeats.all("/:token", async (c) => {
     return c.json({ error: "unauthorized" }, 401);
   }
 
+  const now = Date.now();
+  // Rate-limit: drop (but ack) beats that arrive within MIN_INGEST_INTERVAL_MS of
+  // the last recorded one, so a leaked token can't spam writes. A cheap indexed
+  // read; fails open if it errors so a real beat is never lost.
+  const last = await c.env.DB.prepare(
+    "SELECT last_beat_at FROM monitor_state WHERE monitor_id = ?",
+  )
+    .bind(monitor.id)
+    .first<{ last_beat_at: number | null }>()
+    .catch(() => null);
+  if (last?.last_beat_at != null && now - last.last_beat_at < MIN_INGEST_INTERVAL_MS) {
+    return c.json({ ok: true, monitor: monitor.id, throttled: true });
+  }
+
   const contentType = c.req.header("content-type") ?? "";
   const body = contentType.includes("application/json")
     ? await c.req.json().catch(() => undefined)
     : undefined;
 
   const payload = parseHeartbeatPayload(c.req.query(), body);
-  const now = Date.now();
   // Suppress incidents/alerts and uptime accrual for beats that land during a
   // maintenance window OR outside the monitor's schedule window — the scheduler
   // already does this for HTTP checks (PRD §16/§7). The beat is still recorded
