@@ -137,6 +137,50 @@ export function isWindowActiveAt(w: MaintenanceWindow, now: number): boolean {
   return offset < r.durationMinutes;
 }
 
+/**
+ * For a weekly recurring window, the next occurrence STRICTLY AFTER `now` that
+ * still falls within the window's [startsAt, endsAt) validity range — or null if
+ * there is none (not weekly, zero duration, malformed start, or no future
+ * occurrence before the range ends). Returns the occurrence's absolute start/end
+ * in epoch ms, used to surface recurring windows in the public "upcoming" list.
+ */
+export function nextRecurringOccurrence(
+  w: MaintenanceWindow,
+  now: number,
+): { startsAt: number; endsAt: number } | null {
+  const r = w.recurrence;
+  if (r == null || r.type !== "weekly" || r.durationMinutes <= 0) return null;
+
+  const [hStr, mStr] = r.start.split(":");
+  const startHour = Number(hStr);
+  const startMinute = Number(mStr);
+  if (!Number.isFinite(startHour) || !Number.isFinite(startMinute)) return null;
+
+  const startMinuteOfWeek = r.weekday * 1440 + startHour * 60 + startMinute;
+
+  // Reference point: if the validity range opens in the future, the first valid
+  // occurrence is the first rule-match at/after startsAt; otherwise it's the
+  // first match strictly after now.
+  const ref = Math.max(now, w.startsAt - 1);
+  const d = new Date(ref);
+  const refMinuteOfWeek =
+    d.getUTCDay() * 1440 +
+    d.getUTCHours() * 60 +
+    d.getUTCMinutes() +
+    d.getUTCSeconds() / 60 +
+    d.getUTCMilliseconds() / 60000;
+
+  let delta =
+    (((startMinuteOfWeek - refMinuteOfWeek) % MINUTES_PER_WEEK) +
+      MINUTES_PER_WEEK) %
+    MINUTES_PER_WEEK;
+  if (delta === 0) delta = MINUTES_PER_WEEK; // ref sits exactly on a slot → next week
+
+  const startsAt = ref + delta * 60_000;
+  if (startsAt >= w.endsAt) return null; // beyond the validity range
+  return { startsAt, endsAt: startsAt + r.durationMinutes * 60_000 };
+}
+
 export async function listMaintenanceWindows(
   env: Env,
 ): Promise<MaintenanceWindow[]> {
@@ -307,9 +351,11 @@ const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
  * Public-facing maintenance for the status page: only windows with a non-null
- * `publicMessage`. `active` is what's running now; `upcoming` is one-time windows
- * whose `startsAt` is in the future and within the next 14 days (max 10,
- * soonest first).
+ * `publicMessage`. `active` is what's running now; `upcoming` is the next 14 days
+ * of windows that aren't already active (max 10, soonest first) — one-time
+ * windows by their `startsAt`, and recurring windows projected to their next
+ * occurrence (startsAt/endsAt overridden to that occurrence so the status page
+ * shows the right date).
  */
 export async function publicMaintenance(
   env: Env,
@@ -321,13 +367,18 @@ export async function publicMaintenance(
   const active = pub.filter((w) => isWindowActiveAt(w, now));
 
   const horizon = now + FOURTEEN_DAYS_MS;
-  const upcoming = pub
-    .filter(
-      (w) =>
-        w.recurrence == null && w.startsAt > now && w.startsAt <= horizon,
-    )
-    .sort((a, b) => a.startsAt - b.startsAt)
-    .slice(0, 10);
+  const upcoming: MaintenanceWindow[] = [];
+  for (const w of pub) {
+    if (w.recurrence == null) {
+      if (w.startsAt > now && w.startsAt <= horizon) upcoming.push(w);
+    } else if (!isWindowActiveAt(w, now)) {
+      const occ = nextRecurringOccurrence(w, now);
+      if (occ && occ.startsAt > now && occ.startsAt <= horizon) {
+        upcoming.push({ ...w, startsAt: occ.startsAt, endsAt: occ.endsAt });
+      }
+    }
+  }
+  upcoming.sort((a, b) => a.startsAt - b.startsAt);
 
-  return { active, upcoming };
+  return { active, upcoming: upcoming.slice(0, 10) };
 }

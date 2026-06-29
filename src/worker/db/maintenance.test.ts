@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isWindowActiveAt } from "./maintenance";
+import { isWindowActiveAt, nextRecurringOccurrence } from "./maintenance";
 import type { MaintenanceWindow, Recurrence } from "./maintenance";
 
 /** Build a maintenance window with sane defaults for unit tests. */
@@ -147,5 +147,65 @@ describe("isWindowActiveAt — weekly recurrence bounded by validity range", () 
     // are out of range despite matching the weekly rule.
     expect(isWindowActiveAt(w, Date.UTC(2024, 1, 19, 9, 30))).toBe(false);
     expect(isWindowActiveAt(w, Date.UTC(2024, 1, 26, 9, 30))).toBe(false);
+  });
+});
+
+describe("nextRecurringOccurrence", () => {
+  const rec: Recurrence = {
+    type: "weekly",
+    weekday: 1, // Monday
+    start: "09:00",
+    durationMinutes: 60,
+  };
+
+  it("returns null for a one-time window", () => {
+    const w = makeWindow({ startsAt: 0, endsAt: 1 });
+    expect(nextRecurringOccurrence(w, 0)).toBeNull();
+  });
+
+  it("finds the next Monday 09:00 from mid-week", () => {
+    const w = makeWindow({
+      recurrence: rec,
+      startsAt: Date.UTC(2024, 0, 1),
+      endsAt: Date.UTC(2025, 0, 1),
+    });
+    // Tue 2024-01-02 12:00 → next is Mon 2024-01-08 09:00..10:00
+    const occ = nextRecurringOccurrence(w, Date.UTC(2024, 0, 2, 12, 0));
+    expect(occ).toEqual({
+      startsAt: Date.UTC(2024, 0, 8, 9, 0),
+      endsAt: Date.UTC(2024, 0, 8, 10, 0),
+    });
+  });
+
+  it("returns the NEXT occurrence (not the current one) while active", () => {
+    const w = makeWindow({
+      recurrence: rec,
+      startsAt: Date.UTC(2024, 0, 1),
+      endsAt: Date.UTC(2025, 0, 1),
+    });
+    // Mon 2024-01-01 09:30 is inside the slot; next future start is a week later.
+    const occ = nextRecurringOccurrence(w, Date.UTC(2024, 0, 1, 9, 30));
+    expect(occ?.startsAt).toBe(Date.UTC(2024, 0, 8, 9, 0));
+  });
+
+  it("clamps the first occurrence to the validity start", () => {
+    const w = makeWindow({
+      recurrence: rec,
+      startsAt: Date.UTC(2024, 1, 5, 0, 0), // Mon 2024-02-05
+      endsAt: Date.UTC(2024, 1, 19, 0, 0), // Mon 2024-02-19 (exclusive)
+    });
+    // Well before the range opens → first valid occurrence is Mon 2024-02-05 09:00.
+    const occ = nextRecurringOccurrence(w, Date.UTC(2024, 0, 15, 0, 0));
+    expect(occ?.startsAt).toBe(Date.UTC(2024, 1, 5, 9, 0));
+  });
+
+  it("returns null when the next occurrence would fall outside the validity range", () => {
+    const w = makeWindow({
+      recurrence: rec,
+      startsAt: Date.UTC(2024, 1, 5, 0, 0),
+      endsAt: Date.UTC(2024, 1, 19, 0, 0), // last valid Monday slot is 02-12
+    });
+    // Sun 2024-02-18 → next Monday 09:00 is 02-19, which is >= endsAt → null.
+    expect(nextRecurringOccurrence(w, Date.UTC(2024, 1, 18, 12, 0))).toBeNull();
   });
 });
