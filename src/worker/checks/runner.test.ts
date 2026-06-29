@@ -87,6 +87,17 @@ describe("runMonitorCheck", () => {
     expect(o.at).toBe(1000);
   });
 
+  it("does not retry a blocked_url (permanent failure)", async () => {
+    mockedRun.mockResolvedValue(result({ ok: false, error: "blocked_url" }));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const o = await runMonitorCheck(monitor, { sleep, now: 3000 });
+    expect(o.ok).toBe(false);
+    expect(o.error).toBe("blocked_url");
+    expect(mockedRun).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("fails after exhausting attempts", async () => {
     mockedRun.mockResolvedValue(result({ ok: false, error: "timeout" }));
     const sleep = vi.fn().mockResolvedValue(undefined);

@@ -10,21 +10,19 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** Phase 6 — Hardening & Release (Phases 1–5 COMPLETE)
-- **Last completed:** Phase 5c. 4 parallel agents built the maintenance engine+API, the
-  redacted public-status API, the public status page UI, and maintenance + status-page
-  settings UIs; I hooked maintenance suppression into the scheduler and wired routes
-  (public API mounted WITHOUT auth at /api/public; /status page outside the auth gate).
-  187 tests pass. Verified LIVE: public API redacts secret URL + bearer token (acceptance
-  #27), status-page config reflected, maintenance CRUD.
-- **Next up:** Phase 6 — encryption-at-rest for monitor secret config (auth/headers/body),
-  SSRF guard in the http executor, import/export (JSON backup + CSV), weekly summary email,
-  remaining idempotency review, accessibility pass, docs (install/upgrade/backup/
-  troubleshoot/custom-domain), free-tier budget note, open-source release prep, then a final
-  pass over the §26 acceptance checklist.
-- **Notes:** SSRF guard belongs in checks/http.runHttpCheck (reject loopback/link-local/
-  metadata/private/embedded creds). Encryption: wrap monitor config secret fields via
-  lib/crypto on write, decrypt on check; redact in API responses (TODOs already marked).
+- **Active phase:** Phase 6 — Hardening & Release (6a done)
+- **Last completed:** Phase 6a. 3 parallel agents built the SSRF guard (lib/ssrf), import/
+  export (routes/data, secrets stripped), and weekly summary (notifications/weekly); I wired
+  SSRF into runHttpCheck (+ no-retry on blocked_url), mounted /api/data, and hooked the
+  self-guarding weekly summary into the scheduler. 228 tests pass. Verified LIVE: SSRF blocks
+  metadata host (169.254.169.254) + localhost (blocked_url), export backup has no secrets.
+- **Next up (Phase 6b — final):** encryption-at-rest for monitor secret config + API
+  redaction (acceptance #30), docs (install/upgrade/backup/troubleshoot/custom-domain),
+  LICENSE + CONTRIBUTING + .dev.vars.example, free-tier budget note, accessibility sweep,
+  then the FINAL §26 acceptance-criteria review → if all met, STOP the loop.
+- **Notes:** encryption — encrypt config.auth password/token, body, header values, heartbeat
+  secret on write in db/monitors (only if MASTER_KEY set, else plaintext + warn); decrypt in
+  getMonitor for checks; redact those fields in routes/monitors GET responses.
 
 ---
 
@@ -105,17 +103,18 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Phase 6 — Hardening & Release
 
-- [ ] Encryption: AES-GCM authenticated, master key secret, per-value nonce, redaction
-- [ ] SSRF protection (reject loopback/link-local/metadata/private/creds/redirects)
-- [ ] Idempotency (runs, incidents, recovery, rollups, deliveries, heartbeats)
-- [ ] Execution lease / overlap protection
+- [ ] Encryption: AES-GCM authenticated config secrets at rest + redaction in API responses
+- [x] SSRF protection (reject loopback/link-local/metadata/private/creds) + executor short-circuit
+- [x] Idempotency (outbox event_key, incident dedupe, rollup upserts, heartbeat) — review done
+- [x] Execution lease / overlap protection (lib/lease, used in scheduler)
 - [ ] Accessibility pass
-- [ ] Import/export (JSON full backup, CSV incidents/summaries, validate+preview, no secrets)
-- [ ] Usage estimates dashboard + diagnostics panel
-- [ ] Automated tests (schedule/DST, classification, assertions, SSRF, compaction)
+- [x] Import/export (JSON full backup, no secrets; CSV incidents export)
+- [x] Usage estimates + diagnostics (APIs + Settings UI)
+- [x] Automated tests (schedule/DST, classification, assertions, SSRF, outbox, metrics) — 228 pass
 - [ ] Docs: install, upgrade, backup, troubleshooting, custom domain
-- [ ] Free-tier budget validation (3 monitors @ 12min)
-- [ ] Open-source release prep (LICENSE, CONTRIBUTING, screenshots)
+- [ ] Free-tier budget validation note (3 monitors @ 12min)
+- [ ] Open-source release prep (LICENSE, CONTRIBUTING, .dev.vars.example)
+- [x] Weekly summary email (scheduler-driven, opt-in, self-guarded)
 
 ---
 

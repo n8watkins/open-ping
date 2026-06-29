@@ -12,6 +12,7 @@ import { diagnostics } from "./diagnostics";
 import { settings } from "./settings";
 import { maintenance } from "./maintenance";
 import { publicStatus } from "./public";
+import { data } from "./data";
 
 export const api = new Hono<AppEnv>();
 
@@ -25,6 +26,7 @@ api.route("/incidents", incidents);
 api.route("/diagnostics", diagnostics);
 api.route("/settings", settings);
 api.route("/maintenance", maintenance);
+api.route("/data", data);
 api.route("/push", push);
 
 // Public, UNAUTHENTICATED status-page data (redacted).

@@ -6,6 +6,7 @@ import { applyCheckResult, setScheduledOff, setMaintenanceState, markHeartbeatMi
 import { activeWindowsAt } from "./db/maintenance";
 import { rollupAndCompact } from "./history/rollups";
 import { processOutbox } from "./notifications/dispatcher";
+import { sendWeeklySummary } from "./notifications/weekly";
 import {
   acquireLease,
   releaseLease,
@@ -156,6 +157,13 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
       await rollupAndCompact(env, now);
     } catch (e) {
       console.error("[scheduler] compaction failed", e);
+    }
+
+    // Weekly summary (self-guards on enabled/recipient/due).
+    try {
+      await sendWeeklySummary(env, Date.now());
+    } catch (e) {
+      console.error("[scheduler] weekly summary failed", e);
     }
 
     await recordRunFinish(env, run.id, run.startedAt, {

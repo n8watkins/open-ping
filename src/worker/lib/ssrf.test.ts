@@ -44,19 +44,19 @@ describe("assertSafeUrl", () => {
   }
 
   it("reports specific rejection reasons", () => {
-    expect(assertSafeUrl("not a url").reason).toBe("invalid_url");
-    expect(assertSafeUrl("ftp://example.com").reason).toBe("bad_scheme");
-    expect(assertSafeUrl("https://user:pass@example.com").reason).toBe(
-      "embedded_credentials",
-    );
-    expect(assertSafeUrl("http://localhost").reason).toBe("loopback_host");
-    expect(assertSafeUrl("http://printer.local").reason).toBe("loopback_host");
-    expect(assertSafeUrl("http://metadata.google.internal").reason).toBe(
-      "metadata_host",
-    );
-    expect(assertSafeUrl("http://169.254.169.254").reason).toBe("metadata_host");
-    expect(assertSafeUrl("http://10.1.2.3").reason).toBe("private_ipv4");
-    expect(assertSafeUrl("http://[::1]").reason).toBe("private_ipv6");
+    const reasonOf = (u: string): string | undefined => {
+      const r = assertSafeUrl(u);
+      return r.ok ? undefined : r.reason;
+    };
+    expect(reasonOf("not a url")).toBe("invalid_url");
+    expect(reasonOf("ftp://example.com")).toBe("bad_scheme");
+    expect(reasonOf("https://user:pass@example.com")).toBe("embedded_credentials");
+    expect(reasonOf("http://localhost")).toBe("loopback_host");
+    expect(reasonOf("http://printer.local")).toBe("loopback_host");
+    expect(reasonOf("http://metadata.google.internal")).toBe("metadata_host");
+    expect(reasonOf("http://169.254.169.254")).toBe("metadata_host");
+    expect(reasonOf("http://10.1.2.3")).toBe("private_ipv4");
+    expect(reasonOf("http://[::1]")).toBe("private_ipv6");
   });
 });
 

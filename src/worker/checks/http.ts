@@ -1,5 +1,6 @@
 import type { HttpConfig } from "../../shared/schemas";
 import { b64encode } from "../lib/crypto";
+import { assertSafeUrl } from "../lib/ssrf";
 
 /**
  * HTTP/API check executor (PRD §6.1): performs a single outbound request and
@@ -72,6 +73,18 @@ export async function runHttpCheck(
   config: HttpConfig,
   opts?: { warmup?: boolean },
 ): Promise<HttpCheckResult> {
+  // SSRF guard (PRD §19): reject loopback/link-local/metadata/private/credentialed
+  // targets before making any outbound request.
+  const safe = assertSafeUrl(config.url);
+  if (!safe.ok) {
+    return {
+      ok: false,
+      durationMs: 0,
+      error: "blocked_url",
+      errorMessage: `Target rejected by SSRF guard: ${safe.reason}`,
+    };
+  }
+
   const timeoutMs = opts?.warmup ? config.warmupTimeoutMs : config.timeoutMs;
 
   // Build request headers, then layer auth on top.

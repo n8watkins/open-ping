@@ -98,6 +98,8 @@ export async function runMonitorCheck(
       succeededAttempt = attempt;
       break;
     }
+    // Permanent failures (e.g. SSRF-blocked target) shouldn't waste a retry.
+    if (result.error === "blocked_url") break;
     if (attempt < maxAttempts) await sleep(retryDelayMs);
   }
 
