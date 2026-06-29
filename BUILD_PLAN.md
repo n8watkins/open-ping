@@ -10,20 +10,19 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** Phase 3 — Incidents & History (Phase 2 ~COMPLETE)
-- **Last completed:** the check cycle. Core (runner/classification, state
-  persistence) authored serially; lease+diagnostics and heartbeat ingestion built
-  in parallel. scheduled() handler does lease → schedule eval → concurrent HTTP
-  checks (warm-up + 2× retry) → missed-heartbeat detection → run diagnostics.
-  Manual test endpoint added. 86 unit tests pass; verified LIVE on dev: real HTTP
-  check up/down incl assertion_failed (retried 2×), heartbeat ingestion → state up
-  + sample. Cron self-trigger not exposed by vite dev plugin → validate on deploy.
-- **Next up:** Phase 3 — incident lifecycle (open on failed cycle, ongoing, recovery,
-  dedupe), flapping, status intervals, hourly/daily/monthly summaries, uptime %,
-  MTBF/MTTR, compaction. Hook incident creation into applyCheckResult.
-- **Notes:** scheduler calls runMonitorCheck/applyCheckResult/recordHeartbeat — the
-  Phase-3 incident hooks belong in checks/state.applyCheckResult + a new incidents
-  module. Local dev session forging: id = sha256(cookie token), csrf must match.
+- **Active phase:** Phase 4 — Notifications & PWA (Phase 3 COMPLETE)
+- **Last completed:** Phase 3 incidents + history. 4 parallel agents built incidents,
+  status intervals, history rollups/compaction, and uptime/MTBF/MTTR metrics; wired
+  incident + interval + hourly-rollup hooks into checks/state and compaction into the
+  scheduler. 122 unit tests pass. Verified LIVE: down→incident opened (event+pointer+
+  interval+summary), recovery→resolved w/ duration, interval split, timeline opened→
+  recovered.
+- **Next up:** Phase 4 — notification outbox + channels (Resend email, Discord,
+  signed webhooks), magic-link auth, Web Push (VAPID), PWA manifest + service worker.
+  Hook outbox enqueue into incident open/resolve in checks/state (markNotified exists).
+- **Notes:** incident/metrics READ APIs (GET /api/incidents, /api/monitors/:id/metrics)
+  deferred to Phase 5 dashboard. Notification enqueue point = applyIncidentTransition
+  in checks/state.ts. Web Push VAPID must use Web Crypto (no node web-push lib).
 
 ---
 
@@ -61,14 +60,14 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Phase 3 — Incidents & History
 
-- [ ] Incident lifecycle: open (1 failed cycle), ongoing, recovery, dedupe
-- [ ] Flapping detection + single flapping warning
-- [ ] Status intervals (evolving interval rows, split on state/schedule/maint)
-- [ ] Recent detailed samples (24h rotating)
-- [ ] Hourly summaries (90d), daily (2y), monthly (indefinite)
-- [ ] Uptime % calculations excluding scheduled-off
-- [ ] MTBF / MTTR / longest / most-recent metrics
-- [ ] Compaction + retention cleanup (idempotent, independent of checks)
+- [x] Incident lifecycle: open (1 failed cycle), ongoing, recovery, dedupe
+- [x] Flapping detection (is_flapping flag; flapping-warning NOTIFICATION = Phase 4)
+- [x] Status intervals (evolving interval rows, split on state/schedule)
+- [x] Recent detailed samples (24h rotating; pruned by compaction)
+- [x] Hourly summaries (90d), daily (2y), monthly (indefinite)
+- [x] Uptime % calculations excluding scheduled-off (metrics module; API in Phase 5)
+- [x] MTBF / MTTR / longest / most-recent metrics
+- [x] Compaction + retention cleanup (idempotent, runs in scheduler after checks)
 
 ## Phase 4 — Notifications & PWA
 

@@ -36,7 +36,7 @@ const ZERO_AGG: LatencyAgg = {
 /** Raw shape of the columns we read back from `status_intervals`. */
 interface IntervalRow {
   id: string;
-  state: string;
+  state: MonitorState;
   started_at: number;
   checks: number;
   ok_checks: number;

@@ -3,6 +3,7 @@ import { listMonitors, type MonitorRecord } from "./db/monitors";
 import { isActiveAt } from "./lib/schedule";
 import { runMonitorCheck } from "./checks/runner";
 import { applyCheckResult, setScheduledOff, markHeartbeatMissed } from "./checks/state";
+import { rollupAndCompact } from "./history/rollups";
 import {
   acquireLease,
   releaseLease,
@@ -126,6 +127,13 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
         console.error(`[scheduler] check ${m.id} failed`, e);
       }
     });
+
+    // Compaction/retention runs after checks and must never fail the run.
+    try {
+      await rollupAndCompact(env, now);
+    } catch (e) {
+      console.error("[scheduler] compaction failed", e);
+    }
 
     await recordRunFinish(env, run.id, run.startedAt, {
       ok: true,

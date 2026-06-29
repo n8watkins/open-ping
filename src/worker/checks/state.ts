@@ -4,12 +4,25 @@ import type { CheckOutcome } from "./types";
 import type { MonitorState } from "../../shared/states";
 import { newId } from "../lib/ids";
 import { nextCheckAt, nextActivePeriod } from "../lib/schedule";
+import {
+  getActiveIncident,
+  openIncident,
+  recordObservation,
+  resolveIncident,
+  countRecentIncidents,
+} from "../db/incidents";
+import { updateStatusInterval } from "../db/intervals";
+import { recordCheckSample } from "../history/rollups";
 
 /**
- * Persists check results to current state + recent samples (PRD §17). Incident
- * lifecycle and history rollups are layered on in Phase 3 — this module owns the
- * mutable `monitor_state` row and the 24h `samples` table only.
+ * Persists check results: mutable current state, recent samples, incident
+ * lifecycle, evolving status intervals, and hourly rollups (PRD §11, §17).
+ * Auxiliary writes (intervals, rollups, incidents) are wrapped so a failure in
+ * one never prevents the core state + sample write.
  */
+
+const FLAP_WINDOW_MS = 60 * 60 * 1000;
+const FLAP_THRESHOLD = 3;
 
 interface StateRow {
   state: MonitorState;
@@ -17,11 +30,14 @@ interface StateRow {
   last_success_at: number | null;
   consecutive_failures: number;
   consecutive_successes: number;
+  active_incident_id: string | null;
+  is_flapping: number;
 }
 
 async function readState(env: Env, monitorId: string): Promise<StateRow | null> {
   return env.DB.prepare(
-    `SELECT state, state_since, last_success_at, consecutive_failures, consecutive_successes
+    `SELECT state, state_since, last_success_at, consecutive_failures,
+            consecutive_successes, active_incident_id, is_flapping
      FROM monitor_state WHERE monitor_id = ?`,
   )
     .bind(monitorId)
@@ -66,7 +82,55 @@ async function insertSample(
     .run();
 }
 
-/** Apply an HTTP check outcome: update current state and write a sample. */
+/**
+ * Open/observe/resolve the active incident for a failed/recovered check.
+ * Returns the incident pointer + flapping flag to store on monitor_state.
+ * Tolerant of errors — incident bookkeeping must not abort a check.
+ */
+async function applyIncidentTransition(
+  env: Env,
+  monitor: MonitorRecord,
+  p: { ok: boolean; at: number; error?: string | null; httpStatus?: number | null },
+): Promise<{ activeIncidentId: string | null; isFlapping: boolean }> {
+  try {
+    const active = await getActiveIncident(env, monitor.id);
+    if (!p.ok) {
+      if (active) {
+        await recordObservation(env, active.id, {
+          at: p.at,
+          error: p.error,
+          httpStatus: p.httpStatus,
+        });
+        return { activeIncidentId: active.id, isFlapping: active.isFlapping };
+      }
+      // Opening a new incident — flag flapping if too many recently.
+      const recent = await countRecentIncidents(env, monitor.id, p.at - FLAP_WINDOW_MS);
+      const flapping = recent + 1 >= FLAP_THRESHOLD;
+      const inc = await openIncident(env, monitor, {
+        at: p.at,
+        error: p.error,
+        httpStatus: p.httpStatus,
+        isFlapping: flapping,
+      });
+      return { activeIncidentId: inc.id, isFlapping: flapping };
+    }
+    if (active) await resolveIncident(env, active.id, { at: p.at });
+    return { activeIncidentId: null, isFlapping: false };
+  } catch (e) {
+    console.error(`[incident] transition failed for ${monitor.id}`, e);
+    return { activeIncidentId: null, isFlapping: false };
+  }
+}
+
+async function safe(label: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+  } catch (e) {
+    console.error(`[state] ${label} failed`, e);
+  }
+}
+
+/** Apply an HTTP check outcome: state, sample, incident, interval, rollup. */
 export async function applyCheckResult(
   env: Env,
   monitor: MonitorRecord,
@@ -80,18 +144,21 @@ export async function applyCheckResult(
   const consecutiveFailures = outcome.ok ? 0 : (cur?.consecutive_failures ?? 0) + 1;
   const consecutiveSuccesses = outcome.ok ? (cur?.consecutive_successes ?? 0) + 1 : 0;
   const lastSuccessAt = outcome.ok ? now : (cur?.last_success_at ?? null);
-  const next = nextCheckAt(
-    monitor.schedule,
-    new Date(now),
-    monitor.intervalSeconds,
-  ).getTime();
+  const next = nextCheckAt(monitor.schedule, new Date(now), monitor.intervalSeconds).getTime();
+
+  const incident = await applyIncidentTransition(env, monitor, {
+    ok: outcome.ok,
+    at: now,
+    error: outcome.error,
+    httpStatus: outcome.statusCode,
+  });
 
   await env.DB.prepare(
     `UPDATE monitor_state SET
        state = ?, state_since = ?, last_checked_at = ?, last_success_at = ?,
        last_duration_ms = ?, last_status_code = ?, last_error = ?,
        consecutive_failures = ?, consecutive_successes = ?, next_check_at = ?,
-       warmup = ?, updated_at = ?
+       warmup = ?, active_incident_id = ?, is_flapping = ?, updated_at = ?
      WHERE monitor_id = ?`,
   )
     .bind(
@@ -106,6 +173,8 @@ export async function applyCheckResult(
       consecutiveSuccesses,
       next,
       outcome.warmup ? 1 : 0,
+      incident.activeIncidentId,
+      incident.isFlapping ? 1 : 0,
       now,
       monitor.id,
     )
@@ -126,27 +195,47 @@ export async function applyCheckResult(
       : undefined,
   });
 
+  await safe("interval", () =>
+    updateStatusInterval(env, monitor.id, outcome.state, now, {
+      latencyMs: outcome.durationMs,
+      ok: outcome.ok,
+    }),
+  );
+  await safe("rollup", () =>
+    recordCheckSample(env, monitor.id, {
+      at: now,
+      ok: outcome.ok,
+      durationMs: outcome.durationMs,
+      retryRecovered: outcome.retryRecovered,
+      monitoredSeconds: monitor.intervalSeconds,
+      downSeconds: outcome.state === "down" ? monitor.intervalSeconds : 0,
+    }),
+  );
+
   return { prevState, stateChanged };
 }
 
-/** Mark a monitor outside its schedule window. No sample (scheduled-off is neutral). */
+/** Mark a monitor outside its schedule window. No sample/incident/rollup. */
 export async function setScheduledOff(env: Env, monitor: MonitorRecord, now: number): Promise<void> {
   const cur = await readState(env, monitor.id);
-  if (cur?.state === "scheduled_off") {
-    // Keep next_check_at fresh but avoid resetting state_since.
-    const np = nextActivePeriod(monitor.schedule, new Date(now));
-    await env.DB.prepare(`UPDATE monitor_state SET next_check_at = ?, updated_at = ? WHERE monitor_id = ?`)
-      .bind(np ? np.start.getTime() : now + monitor.intervalSeconds * 1000, now, monitor.id)
-      .run();
-    return;
-  }
   const np = nextActivePeriod(monitor.schedule, new Date(now));
-  await env.DB.prepare(
-    `UPDATE monitor_state SET state = 'scheduled_off', state_since = ?, next_check_at = ?, updated_at = ?
-     WHERE monitor_id = ?`,
-  )
-    .bind(now, np ? np.start.getTime() : now + monitor.intervalSeconds * 1000, now, monitor.id)
-    .run();
+  const nextAt = np ? np.start.getTime() : now + monitor.intervalSeconds * 1000;
+
+  if (cur?.state === "scheduled_off") {
+    await env.DB.prepare(`UPDATE monitor_state SET next_check_at = ?, updated_at = ? WHERE monitor_id = ?`)
+      .bind(nextAt, now, monitor.id)
+      .run();
+  } else {
+    await env.DB.prepare(
+      `UPDATE monitor_state SET state = 'scheduled_off', state_since = ?, next_check_at = ?, updated_at = ?
+       WHERE monitor_id = ?`,
+    )
+      .bind(now, nextAt, now, monitor.id)
+      .run();
+  }
+  await safe("interval", () =>
+    updateStatusInterval(env, monitor.id, "scheduled_off", now, { reason: "schedule_window" }),
+  );
 }
 
 /** Record a received heartbeat: state up, reset failures, push next deadline. */
@@ -170,12 +259,16 @@ export async function recordHeartbeat(
   const stateChanged = prevState !== state;
   const stateSince = stateChanged ? now : (cur?.state_since ?? now);
   const deadline = now + (monitor.intervalSeconds + (monitor.graceSeconds ?? 0)) * 1000;
+  const error = ok ? null : `exit_status_${payload.exitStatus}`;
+
+  const incident = await applyIncidentTransition(env, monitor, { ok, at: now, error });
 
   await env.DB.prepare(
     `UPDATE monitor_state SET
        state = ?, state_since = ?, last_checked_at = ?, last_success_at = ?,
        last_duration_ms = ?, last_error = ?,
-       consecutive_failures = ?, consecutive_successes = ?, next_check_at = ?, updated_at = ?
+       consecutive_failures = ?, consecutive_successes = ?, next_check_at = ?,
+       active_incident_id = ?, is_flapping = ?, updated_at = ?
      WHERE monitor_id = ?`,
   )
     .bind(
@@ -184,10 +277,12 @@ export async function recordHeartbeat(
       now,
       ok ? now : (cur?.last_success_at ?? null),
       payload.durationMs ?? null,
-      ok ? null : `exit_status_${payload.exitStatus}`,
+      error,
       ok ? 0 : (cur?.consecutive_failures ?? 0) + 1,
       ok ? (cur?.consecutive_successes ?? 0) + 1 : 0,
       deadline,
+      incident.activeIncidentId,
+      incident.isFlapping ? 1 : 0,
       now,
       monitor.id,
     )
@@ -198,7 +293,7 @@ export async function recordHeartbeat(
     ok,
     state,
     durationMs: payload.durationMs,
-    error: ok ? null : `exit_status_${payload.exitStatus}`,
+    error,
     attempts: 1,
     meta: {
       ...(payload.message ? { message: payload.message } : {}),
@@ -207,20 +302,44 @@ export async function recordHeartbeat(
     },
   });
 
+  await safe("interval", () =>
+    updateStatusInterval(env, monitor.id, state, now, { latencyMs: payload.durationMs, ok }),
+  );
+  await safe("rollup", () =>
+    recordCheckSample(env, monitor.id, {
+      at: now,
+      ok,
+      durationMs: payload.durationMs,
+      monitoredSeconds: monitor.intervalSeconds,
+      downSeconds: ok ? 0 : monitor.intervalSeconds,
+    }),
+  );
+
   return { prevState, stateChanged };
 }
 
-/** Mark a heartbeat monitor as down because no call arrived before the deadline. */
-export async function markHeartbeatMissed(env: Env, monitor: MonitorRecord, now: number): Promise<{ prevState: MonitorState; stateChanged: boolean }> {
+/** Mark a heartbeat monitor down because no call arrived before the deadline. */
+export async function markHeartbeatMissed(
+  env: Env,
+  monitor: MonitorRecord,
+  now: number,
+): Promise<{ prevState: MonitorState; stateChanged: boolean }> {
   const cur = await readState(env, monitor.id);
   const prevState: MonitorState = cur?.state ?? "unknown";
   const stateChanged = prevState !== "down";
   const stateSince = stateChanged ? now : (cur?.state_since ?? now);
 
+  const incident = await applyIncidentTransition(env, monitor, {
+    ok: false,
+    at: now,
+    error: "heartbeat_missed",
+  });
+
   await env.DB.prepare(
     `UPDATE monitor_state SET
        state = 'down', state_since = ?, last_checked_at = ?, last_error = 'heartbeat_missed',
-       consecutive_failures = ?, consecutive_successes = 0, next_check_at = ?, updated_at = ?
+       consecutive_failures = ?, consecutive_successes = 0, next_check_at = ?,
+       active_incident_id = ?, is_flapping = ?, updated_at = ?
      WHERE monitor_id = ?`,
   )
     .bind(
@@ -228,6 +347,8 @@ export async function markHeartbeatMissed(env: Env, monitor: MonitorRecord, now:
       now,
       (cur?.consecutive_failures ?? 0) + 1,
       now + monitor.intervalSeconds * 1000,
+      incident.activeIncidentId,
+      incident.isFlapping ? 1 : 0,
       now,
       monitor.id,
     )
@@ -241,6 +362,9 @@ export async function markHeartbeatMissed(env: Env, monitor: MonitorRecord, now:
       error: "heartbeat_missed",
       attempts: 1,
     });
+    await safe("interval", () =>
+      updateStatusInterval(env, monitor.id, "down", now, { ok: false, reason: "heartbeat_missed" }),
+    );
   }
 
   return { prevState, stateChanged };
