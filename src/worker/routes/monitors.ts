@@ -13,6 +13,13 @@ import {
 import { runMonitorCheck } from "../checks/runner";
 import { applyCheckResult } from "../checks/state";
 import { computeUptime, computeIncidentMetrics } from "../history/metrics";
+import { redactConfig } from "../lib/secret-config";
+import type { MonitorRecord } from "../db/monitors";
+
+/** Strip secret config fields before sending a monitor to the client. */
+function redactMonitor(m: MonitorRecord): MonitorRecord {
+  return { ...m, config: redactConfig(m.config as Record<string, unknown>) as MonitorRecord["config"] };
+}
 
 /**
  * Monitor CRUD API mounted at /api/monitors. All routes require an
@@ -27,7 +34,7 @@ monitors.use("*", requireAuth);
 
 monitors.get("/", async (c) => {
   const list = await listMonitors(c.env);
-  return c.json({ monitors: list });
+  return c.json({ monitors: list.map(redactMonitor) });
 });
 
 monitors.post("/", async (c) => {
@@ -37,13 +44,13 @@ monitors.post("/", async (c) => {
     return c.json({ error: "validation", issues: parsed.error.issues }, 400);
   }
   const monitor = await createMonitor(c.env, parsed.data);
-  return c.json({ monitor }, 201);
+  return c.json({ monitor: redactMonitor(monitor) }, 201);
 });
 
 monitors.get("/:id", async (c) => {
   const monitor = await getMonitor(c.env, c.req.param("id"));
   if (!monitor) return c.json({ error: "not_found" }, 404);
-  return c.json({ monitor });
+  return c.json({ monitor: redactMonitor(monitor) });
 });
 
 /** Rich detail: monitor + current state + uptime windows + latency + incidents. */
@@ -95,7 +102,7 @@ monitors.get("/:id/detail", async (c) => {
   const incidentMetrics = await computeIncidentMetrics(c.env, id, now);
 
   return c.json({
-    monitor,
+    monitor: redactMonitor(monitor),
     state,
     uptime: { d1: d1.uptimePct, d7: d7.uptimePct, d30: d30.uptimePct, d365: d365.uptimePct },
     latency: { avg: latency?.avg ?? null, min: latency?.min ?? null, max: latency?.max ?? null },
@@ -119,7 +126,7 @@ monitors.put("/:id", async (c) => {
   }
   const monitor = await updateMonitor(c.env, id, parsed.data);
   if (!monitor) return c.json({ error: "not_found" }, 404);
-  return c.json({ monitor });
+  return c.json({ monitor: redactMonitor(monitor) });
 });
 
 monitors.delete("/:id", async (c) => {
@@ -133,13 +140,13 @@ monitors.delete("/:id", async (c) => {
 monitors.post("/:id/pause", async (c) => {
   const monitor = await setPaused(c.env, c.req.param("id"), true);
   if (!monitor) return c.json({ error: "not_found" }, 404);
-  return c.json({ monitor });
+  return c.json({ monitor: redactMonitor(monitor) });
 });
 
 monitors.post("/:id/resume", async (c) => {
   const monitor = await setPaused(c.env, c.req.param("id"), false);
   if (!monitor) return c.json({ error: "not_found" }, 404);
-  return c.json({ monitor });
+  return c.json({ monitor: redactMonitor(monitor) });
 });
 
 /**

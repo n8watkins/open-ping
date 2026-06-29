@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { newId, randomToken } from "../lib/ids";
+import { encryptConfig, decryptConfig, mergeSecrets } from "../lib/secret-config";
 import type {
   Assertion,
   CreateMonitorInput,
@@ -102,11 +103,19 @@ function rowToMonitor(row: MonitorRow): MonitorRecord {
   };
 }
 
+async function decryptRecord(env: Env, rec: MonitorRecord): Promise<MonitorRecord> {
+  rec.config = (await decryptConfig(
+    env,
+    rec.config as Record<string, unknown>,
+  )) as MonitorRecord["config"];
+  return rec;
+}
+
 export async function listMonitors(env: Env): Promise<MonitorRecord[]> {
   const res = await env.DB.prepare(
     "SELECT * FROM monitors ORDER BY sort_order, created_at",
   ).all<MonitorRow>();
-  return (res.results ?? []).map(rowToMonitor);
+  return Promise.all((res.results ?? []).map((r) => decryptRecord(env, rowToMonitor(r))));
 }
 
 export async function getMonitor(
@@ -116,7 +125,7 @@ export async function getMonitor(
   const row = await env.DB.prepare("SELECT * FROM monitors WHERE id = ?")
     .bind(id)
     .first<MonitorRow>();
-  return row ? rowToMonitor(row) : null;
+  return row ? decryptRecord(env, rowToMonitor(row)) : null;
 }
 
 /** Look up a heartbeat monitor by its ingestion token (for /hb/:token). */
@@ -129,7 +138,7 @@ export async function getMonitorByHeartbeatToken(
   )
     .bind(token)
     .first<MonitorRow>();
-  return row ? rowToMonitor(row) : null;
+  return row ? decryptRecord(env, rowToMonitor(row)) : null;
 }
 
 export async function createMonitor(
@@ -144,6 +153,11 @@ export async function createMonitor(
   const graceSeconds =
     input.type === "heartbeat" ? input.config.graceSeconds : null;
   const assertions = input.type === "http" ? input.assertions : null;
+  const storedConfig = await encryptConfig(
+    env,
+    input.type,
+    input.config as Record<string, unknown>,
+  );
 
   await env.DB.prepare(
     `INSERT INTO monitors (
@@ -160,7 +174,7 @@ export async function createMonitor(
       0,
       intervalSeconds,
       graceSeconds,
-      JSON.stringify(input.config),
+      JSON.stringify(storedConfig),
       JSON.stringify(input.schedule),
       assertions == null ? null : JSON.stringify(assertions),
       JSON.stringify(input.notify),
@@ -200,6 +214,12 @@ export async function updateMonitor(
   const graceSeconds =
     input.type === "heartbeat" ? input.config.graceSeconds : null;
   const assertions = input.type === "http" ? input.assertions : null;
+  // Preserve secrets the client redacted (sent empty), then encrypt at rest.
+  const merged = mergeSecrets(
+    input.config as Record<string, unknown>,
+    existing.config as Record<string, unknown>,
+  );
+  const storedConfig = await encryptConfig(env, input.type, merged);
 
   // Full replace of mutable fields; id, heartbeat_token, created_at and
   // sort_order are preserved (type is immutable, enforced at the route layer).
@@ -215,7 +235,7 @@ export async function updateMonitor(
       input.enabled ? 1 : 0,
       intervalSeconds,
       graceSeconds,
-      JSON.stringify(input.config),
+      JSON.stringify(storedConfig),
       JSON.stringify(input.schedule),
       assertions == null ? null : JSON.stringify(assertions),
       JSON.stringify(input.notify),
