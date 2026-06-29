@@ -14,7 +14,7 @@
     "moduleDetection": "force",
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "types": ["@cloudflare/workers-types/2023-07-01"]
+    "types": ["@cloudflare/workers-types"]
   },
   "include": ["src/worker", "src/shared"]
 }
