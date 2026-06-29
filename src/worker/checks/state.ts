@@ -250,6 +250,27 @@ export async function setScheduledOff(env: Env, monitor: MonitorRecord, now: num
   );
 }
 
+/** Mark a monitor in a maintenance window. No check/incident; suppresses outages. */
+export async function setMaintenanceState(env: Env, monitor: MonitorRecord, now: number): Promise<void> {
+  const cur = await readState(env, monitor.id);
+  const next = now + monitor.intervalSeconds * 1000;
+  if (cur?.state === "maintenance") {
+    await env.DB.prepare(`UPDATE monitor_state SET next_check_at = ?, updated_at = ? WHERE monitor_id = ?`)
+      .bind(next, now, monitor.id)
+      .run();
+  } else {
+    await env.DB.prepare(
+      `UPDATE monitor_state SET state = 'maintenance', state_since = ?, next_check_at = ?, updated_at = ?
+       WHERE monitor_id = ?`,
+    )
+      .bind(now, next, now, monitor.id)
+      .run();
+  }
+  await safe("interval", () =>
+    updateStatusInterval(env, monitor.id, "maintenance", now, { reason: "maintenance" }),
+  );
+}
+
 /** Record a received heartbeat: state up, reset failures, push next deadline. */
 export async function recordHeartbeat(
   env: Env,

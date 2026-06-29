@@ -10,6 +10,8 @@ import { overview } from "./overview";
 import { incidents } from "./incidents";
 import { diagnostics } from "./diagnostics";
 import { settings } from "./settings";
+import { maintenance } from "./maintenance";
+import { publicStatus } from "./public";
 
 export const api = new Hono<AppEnv>();
 
@@ -22,7 +24,11 @@ api.route("/channels", channels);
 api.route("/incidents", incidents);
 api.route("/diagnostics", diagnostics);
 api.route("/settings", settings);
+api.route("/maintenance", maintenance);
 api.route("/push", push);
+
+// Public, UNAUTHENTICATED status-page data (redacted).
+api.route("/public", publicStatus);
 
 /** Liveness/readiness probe. Reports whether core wiring is present. */
 api.get("/health", (c) => {

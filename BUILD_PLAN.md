@@ -10,20 +10,21 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** Phase 5 — Dashboard & Status Page (5b done; public page + maint left)
-- **Last completed:** Phase 5b. 4 parallel agents built the monitor detail page, monitor
-  editor (http+heartbeat/schedule/assertions), incident explorer, and integrations+settings
-  pages; I added /api/settings (whitelisted GET/PUT) and wired all routes. tsc clean, 167
-  tests pass, build clean. Verified LIVE: settings GET/PUT (whitelist enforced), all SPA
-  routes serve.
-- **Next up (Phase 5c):** the PUBLIC status page — a new UNAUTHENTICATED API that redacts
-  private data (URLs/creds/headers/internal errors), the public page UI (overall banner,
-  service groups, 90-day uptime bars, active/recent incidents, scheduled maintenance),
-  status-page customization settings, plus the maintenance engine + UI (suppress incidents).
-  Then Phase 6 (hardening/release).
-- **Notes:** public API must build only from monitor.public config + summaries + public
-  incidents; never expose monitor.config. Maintenance needs a db/maintenance + scheduler
-  hook (suppress incident open during active window) + UI.
+- **Active phase:** Phase 6 — Hardening & Release (Phases 1–5 COMPLETE)
+- **Last completed:** Phase 5c. 4 parallel agents built the maintenance engine+API, the
+  redacted public-status API, the public status page UI, and maintenance + status-page
+  settings UIs; I hooked maintenance suppression into the scheduler and wired routes
+  (public API mounted WITHOUT auth at /api/public; /status page outside the auth gate).
+  187 tests pass. Verified LIVE: public API redacts secret URL + bearer token (acceptance
+  #27), status-page config reflected, maintenance CRUD.
+- **Next up:** Phase 6 — encryption-at-rest for monitor secret config (auth/headers/body),
+  SSRF guard in the http executor, import/export (JSON backup + CSV), weekly summary email,
+  remaining idempotency review, accessibility pass, docs (install/upgrade/backup/
+  troubleshoot/custom-domain), free-tier budget note, open-source release prep, then a final
+  pass over the §26 acceptance checklist.
+- **Notes:** SSRF guard belongs in checks/http.runHttpCheck (reject loopback/link-local/
+  metadata/private/embedded creds). Encryption: wrap monitor config secret fields via
+  lib/crypto on write, decrypt on check; redact in API responses (TODOs already marked).
 
 ---
 
@@ -94,12 +95,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 - [x] Monitor detail page (uptime bars 24h/7d/30d/365d, latency sparkline, metrics, incidents)
 - [x] Monitor editor (create/edit form: http + heartbeat, schedule, assertions)
 - [x] Incident explorer UI (filters, search, notes, public update, CSV/JSON export)
-- [ ] Maintenance UI (one-time/recurring, global/per-monitor, public msg) + maintenance engine
+- [x] Maintenance UI (one-time/per-monitor/global, public msg) + maintenance engine + scheduler suppression
 - [x] Integrations UI (status, test, edit, last success/failure, health) + push/devices
 - [x] Settings UI (general, retention, usage, diagnostics) + /api/settings
-- [ ] Status-page customization (name, logo, favicon, accent, theme, footer, groups)
-- [ ] Public status page (overall banner, groups, uptime bars, incidents, maint)
-- [ ] Public-safety: never leak URLs/creds/headers/bodies/internal errors
+- [x] Status-page customization (name, logo, accent, theme, footer, attribution)
+- [x] Public status page (overall banner, groups, 90d uptime bars, incidents, maint)
+- [x] Public-safety: never leak URLs/creds/headers/bodies/internal errors (VERIFIED no leak)
 - [x] Mobile navigation (bottom nav present; refine in hardening)
 
 ## Phase 6 — Hardening & Release

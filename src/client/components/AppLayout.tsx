@@ -6,6 +6,7 @@ import {
   Wrench,
   Plug,
   Settings,
+  Globe,
   Loader2,
   type LucideIcon,
 } from "lucide-react";
@@ -25,6 +26,7 @@ const NAV: NavItem[] = [
   { to: "/incidents", label: "Incidents", icon: AlertTriangle },
   { to: "/maintenance", label: "Maintenance", icon: Wrench },
   { to: "/integrations", label: "Integrations", icon: Plug },
+  { to: "/status-page", label: "Status page", icon: Globe },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 

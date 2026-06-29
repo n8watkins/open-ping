@@ -2,7 +2,8 @@ import type { Env } from "./types";
 import { listMonitors, type MonitorRecord } from "./db/monitors";
 import { isActiveAt } from "./lib/schedule";
 import { runMonitorCheck } from "./checks/runner";
-import { applyCheckResult, setScheduledOff, markHeartbeatMissed } from "./checks/state";
+import { applyCheckResult, setScheduledOff, setMaintenanceState, markHeartbeatMissed } from "./checks/state";
+import { activeWindowsAt } from "./db/maintenance";
 import { rollupAndCompact } from "./history/rollups";
 import { processOutbox } from "./notifications/dispatcher";
 import {
@@ -68,10 +69,22 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
       (stateRes.results ?? []).map((s) => [s.monitor_id, s]),
     );
 
+    // Active maintenance windows (loaded once; checked in-memory per monitor).
+    const windows = await activeWindowsAt(env, now);
+    const globalMaintenance = windows.some((w) => w.scope === "global");
+    const maintenanceMonitorIds = new Set(
+      windows.filter((w) => w.scope === "monitors").flatMap((w) => w.monitorIds ?? []),
+    );
+
     const dueHttp: MonitorRecord[] = [];
 
     for (const m of monitors) {
       if (!m.enabled || m.paused) {
+        skipped++;
+        continue;
+      }
+      if (globalMaintenance || maintenanceMonitorIds.has(m.id)) {
+        await setMaintenanceState(env, m, now);
         skipped++;
         continue;
       }
