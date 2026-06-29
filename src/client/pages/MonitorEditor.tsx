@@ -967,6 +967,7 @@ export default function MonitorEditor() {
               hint="Optional. Required on the ping request when set."
             >
               <input
+                type="password"
                 value={form.secret}
                 onChange={(e) => set("secret", e.target.value)}
                 autoComplete="off"

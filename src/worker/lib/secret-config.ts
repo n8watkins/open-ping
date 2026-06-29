@@ -28,6 +28,18 @@ const ALL_SECRET_PATHS: readonly string[] = ["secret", "auth.password", "auth.to
 
 const CIPHERTEXT_PREFIX = "v1:";
 
+/**
+ * True only for a STRUCTURALLY valid `v1:<iv>:<ct>` ciphertext (both segments
+ * base64). A bare `startsWith("v1:")` prefix sniff is unsafe: a plaintext secret
+ * the admin happens to begin with "v1:" would be mistaken for ciphertext and
+ * skipped by the encryptor, silently stored in plaintext at rest. Requiring the
+ * full two-segment base64 shape closes that collision so such values get
+ * encrypted normally.
+ */
+export function isCiphertext(v: unknown): v is string {
+  return typeof v === "string" && /^v1:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/.test(v);
+}
+
 /** True for a non-empty string value (a secret worth protecting). */
 export function secretValuePresent(v: unknown): v is string {
   return typeof v === "string" && v.length > 0;
@@ -74,7 +86,7 @@ export async function encryptConfig(
   if (!env.MASTER_KEY) return clone;
   for (const path of SECRET_PATHS[type]) {
     const value = getPath(clone, path);
-    if (secretValuePresent(value) && !value.startsWith(CIPHERTEXT_PREFIX)) {
+    if (secretValuePresent(value) && !isCiphertext(value)) {
       setPath(clone, path, await encryptValue(env, value));
     }
   }

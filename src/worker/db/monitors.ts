@@ -159,14 +159,18 @@ export async function createMonitor(
     input.config as Record<string, unknown>,
   );
 
-  await env.DB.prepare(
-    `INSERT INTO monitors (
-       id, type, name, enabled, paused, interval_seconds, grace_seconds,
-       config, schedule, assertions, notify, public, heartbeat_token,
-       sort_order, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(
+  // Both inserts run as one transaction (like deleteMonitor): a failure of
+  // either rolls back both, so a monitor can never exist without its
+  // monitor_state row. An orphaned monitor would be permanently un-checkable —
+  // every other code path only UPDATEs monitor_state (0 rows when absent).
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO monitors (
+         id, type, name, enabled, paused, interval_seconds, grace_seconds,
+         config, schedule, assertions, notify, public, heartbeat_token,
+         sort_order, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
       id,
       input.type,
       input.name,
@@ -183,17 +187,14 @@ export async function createMonitor(
       0,
       now,
       now,
-    )
-    .run();
-
-  await env.DB.prepare(
-    `INSERT INTO monitor_state (
-       monitor_id, state, state_since, consecutive_failures,
-       consecutive_successes, next_check_at, updated_at
-     ) VALUES (?, 'unknown', ?, 0, 0, ?, ?)`,
-  )
-    .bind(id, now, now, now)
-    .run();
+    ),
+    env.DB.prepare(
+      `INSERT INTO monitor_state (
+         monitor_id, state, state_since, consecutive_failures,
+         consecutive_successes, next_check_at, updated_at
+       ) VALUES (?, 'unknown', ?, 0, 0, ?, ?)`,
+    ).bind(id, now, now, now),
+  ]);
 
   const created = await getMonitor(env, id);
   if (!created) throw new Error("createMonitor: failed to read back inserted row");

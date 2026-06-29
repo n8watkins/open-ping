@@ -27,27 +27,48 @@ const recurrenceSchema = z.object({
   durationMinutes: z.number().int().positive(),
 });
 
-const maintenanceCreateSchema = z.object({
-  title: z.string().min(1).max(200).optional(),
-  scope: z.enum(["global", "monitors"]),
-  monitorIds: z.array(z.string()).optional(),
-  startsAt: z.number().int(),
-  endsAt: z.number().int(),
-  recurrence: recurrenceSchema.nullable().optional(),
-  publicMessage: z.string().max(2000).optional(),
-  privateNotes: z.string().max(2000).optional(),
-});
+const maintenanceCreateSchema = z
+  .object({
+    title: z.string().min(1).max(200).optional(),
+    scope: z.enum(["global", "monitors"]),
+    monitorIds: z.array(z.string()).optional(),
+    startsAt: z.number().int(),
+    endsAt: z.number().int(),
+    recurrence: recurrenceSchema.nullable().optional(),
+    publicMessage: z.string().max(2000).optional(),
+    privateNotes: z.string().max(2000).optional(),
+  })
+  // A window with endsAt <= startsAt would pass validation but never activate
+  // (isWindowActiveAt is startsAt <= now < endsAt) — the operator believes
+  // maintenance is scheduled while it silently never fires.
+  .refine((v) => v.endsAt > v.startsAt, {
+    message: "endsAt must be after startsAt",
+    path: ["endsAt"],
+  })
+  // A monitors-scoped window with no monitorIds suppresses nothing.
+  .refine((v) => v.scope !== "monitors" || (v.monitorIds?.length ?? 0) > 0, {
+    message: "monitorIds is required and non-empty when scope is 'monitors'",
+    path: ["monitorIds"],
+  });
 
-const maintenanceUpdateSchema = z.object({
-  title: z.string().min(1).max(200).nullable().optional(),
-  scope: z.enum(["global", "monitors"]).optional(),
-  monitorIds: z.array(z.string()).nullable().optional(),
-  startsAt: z.number().int().optional(),
-  endsAt: z.number().int().optional(),
-  recurrence: recurrenceSchema.nullable().optional(),
-  publicMessage: z.string().max(2000).nullable().optional(),
-  privateNotes: z.string().max(2000).nullable().optional(),
-});
+const maintenanceUpdateSchema = z
+  .object({
+    title: z.string().min(1).max(200).nullable().optional(),
+    scope: z.enum(["global", "monitors"]).optional(),
+    monitorIds: z.array(z.string()).nullable().optional(),
+    startsAt: z.number().int().optional(),
+    endsAt: z.number().int().optional(),
+    recurrence: recurrenceSchema.nullable().optional(),
+    publicMessage: z.string().max(2000).nullable().optional(),
+    privateNotes: z.string().max(2000).nullable().optional(),
+  })
+  // Partial update: only enforce ordering when BOTH bounds are present in the
+  // patch. The scope/monitorIds invariant is checked in the handler against the
+  // merged result (scope and monitorIds may be updated independently).
+  .refine(
+    (v) => v.startsAt === undefined || v.endsAt === undefined || v.endsAt > v.startsAt,
+    { message: "endsAt must be after startsAt", path: ["endsAt"] },
+  );
 
 maintenance.get("/", async (c) => {
   const list = await listMaintenanceWindows(c.env);
@@ -79,6 +100,25 @@ maintenance.put("/:id", async (c) => {
   }
   const existing = await getMaintenanceWindow(c.env, id);
   if (!existing) return c.json({ error: "not_found" }, 404);
+
+  // Enforce the scope/monitorIds invariant against the MERGED result (either
+  // field may be patched independently), so an update can't leave a
+  // monitors-scoped window with an empty monitor list.
+  const effectiveScope = parsed.data.scope ?? existing.scope;
+  const effectiveMonitorIds =
+    parsed.data.monitorIds !== undefined
+      ? parsed.data.monitorIds
+      : existing.monitorIds;
+  if (effectiveScope === "monitors" && (effectiveMonitorIds?.length ?? 0) === 0) {
+    return c.json(
+      {
+        error: "validation",
+        message: "monitorIds is required and non-empty when scope is 'monitors'",
+      },
+      400,
+    );
+  }
+
   const window = await updateMaintenanceWindow(c.env, id, parsed.data);
   if (!window) return c.json({ error: "not_found" }, 404);
   return c.json({ window });

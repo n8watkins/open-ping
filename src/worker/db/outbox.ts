@@ -171,11 +171,14 @@ export async function markFailed(
 ): Promise<void> {
   const now = Date.now();
   const { status, nextAttemptAt } = computeRetry(newAttemptCount, maxAttempts, now);
+  // Never resurrect a terminal row: if post-send bookkeeping throws after an
+  // entry is already 'sent' (or 'dead'), the caller's catch must not be able to
+  // flip it back to 'failed' and cause a duplicate delivery on the next claim.
   await env.DB.prepare(
     `UPDATE notification_outbox
         SET status = ?, attempts = ?, next_attempt_at = ?, last_error = ?,
             updated_at = ?
-      WHERE id = ?`,
+      WHERE id = ? AND status NOT IN ('sent', 'dead')`,
   )
     .bind(
       status,

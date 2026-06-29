@@ -10,6 +10,7 @@ import { sendWebhook } from "./channels/webhook";
 import { sendWebPush } from "./push/webpush";
 import { getVapid } from "./push/vapid";
 import { toEmailHtml, toEmailText, toDiscordEmbed, type NotificationPayload } from "./payload";
+import { assertSafeUrl } from "../lib/ssrf";
 
 const MAX_ATTEMPTS = 5;
 const BATCH = 25;
@@ -31,10 +32,18 @@ export async function deliverToChannel(
   switch (channel.type) {
     case "discord": {
       if (!cfg.url) return { ok: false, error: "missing_webhook_url" };
+      const safe = assertSafeUrl(cfg.url);
+      if (!safe.ok) return { ok: false, error: `unsafe_url: ${safe.reason}` };
       return sendDiscordMessage(cfg.url, { embeds: [toDiscordEmbed(payload)] });
     }
     case "webhook": {
       if (!cfg.url) return { ok: false, error: "missing_url" };
+      // Same SSRF guard the monitor checks use — a channel URL could otherwise
+      // point at loopback/link-local/metadata/private ranges and reflect the
+      // internal response into last_error. Validated per-delivery (not just at
+      // create time) so pre-existing configs are covered and there's no TOCTOU.
+      const safe = assertSafeUrl(cfg.url);
+      if (!safe.ok) return { ok: false, error: `unsafe_url: ${safe.reason}` };
       return sendWebhook(cfg.url, cfg.secret, payload);
     }
     case "email": {
@@ -95,7 +104,13 @@ export async function processOutbox(
       const result = await deliverToChannel(env, channel, entry.payload as NotificationPayload);
       if (result.ok) {
         await markSent(env, entry.id);
-        await recordChannelResult(env, channel.id, true);
+        // Bookkeeping only — must never reach the outer catch (which would
+        // re-mark this already-sent entry failed and re-deliver it).
+        try {
+          await recordChannelResult(env, channel.id, true);
+        } catch (e) {
+          console.error("[dispatcher] recordChannelResult failed", e);
+        }
         sent++;
       } else {
         await markFailed(env, entry.id, entry.attempts + 1, result.error ?? "send_failed", MAX_ATTEMPTS);
@@ -144,7 +159,13 @@ async function deliverPush(
   });
   if (result.ok) {
     await markSent(env, entryId);
-    await recordPushResult(env, sub.id, true);
+    // Bookkeeping only — isolate so a failure here can't reach the caller's
+    // catch and re-mark this already-sent entry failed (duplicate push).
+    try {
+      await recordPushResult(env, sub.id, true);
+    } catch (e) {
+      console.error("[dispatcher] recordPushResult failed", e);
+    }
     return "sent";
   }
   if (result.expired) {

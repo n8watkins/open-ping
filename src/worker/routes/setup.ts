@@ -54,7 +54,17 @@ async function guardWrite(c: Context<AppEnv>): Promise<Response | null> {
 }
 
 setup.get("/state", async (c) => {
-  return c.json({ state: await getSetupState(c.env), status: await setupStatus(c.env) });
+  const status = await setupStatus(c.env);
+  const state = await getSetupState(c.env);
+  // The wizard's collected `data` mirrors the administrator's GitHub login /
+  // email. During first-run setup the endpoint is unauthenticated by necessity
+  // (bootstrap), but once setup is complete an anonymous caller must NOT be able
+  // to read that identity back — the sibling /api/auth/status deliberately
+  // exposes only booleans. After completion, redact `data` unless authenticated.
+  if (status.setupComplete && !(await getSession(c))) {
+    return c.json({ state: { ...state, data: {} }, status });
+  }
+  return c.json({ state, status });
 });
 
 setup.post("/save", async (c) => {

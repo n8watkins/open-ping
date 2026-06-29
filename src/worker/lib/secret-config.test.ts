@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { generateMasterKey } from "./crypto";
 import {
   secretValuePresent,
+  isCiphertext,
   encryptConfig,
   decryptConfig,
   redactConfig,
@@ -21,6 +22,33 @@ describe("secretValuePresent", () => {
     expect(secretValuePresent("")).toBe(false);
     expect(secretValuePresent(undefined)).toBe(false);
     expect(secretValuePresent(123)).toBe(false);
+  });
+});
+
+describe("isCiphertext (structural, not a prefix sniff)", () => {
+  it("accepts only a well-formed v1:<iv>:<ct> shape", () => {
+    expect(isCiphertext("v1:AAAA:BBBB")).toBe(true);
+    expect(isCiphertext("v1:abc123+/=:def456+/=")).toBe(true);
+  });
+  it("rejects plaintext that merely starts with 'v1:'", () => {
+    // The bug: such a value used to be mistaken for ciphertext and stored raw.
+    expect(isCiphertext("v1:my-password")).toBe(false);
+    expect(isCiphertext("v1:")).toBe(false);
+    expect(isCiphertext("v1:onlyonesegment")).toBe(false);
+    expect(isCiphertext("plain")).toBe(false);
+    expect(isCiphertext(123)).toBe(false);
+  });
+});
+
+describe("a plaintext secret beginning with 'v1:' is still encrypted at rest", () => {
+  it("does not skip encryption for a colon-containing 'v1:'-prefixed value", async () => {
+    const env = envWithKey();
+    const hbConfig = { intervalSeconds: 3600, secret: "v1:looks-like-cipher" };
+    const enc = await encryptConfig(env, "heartbeat", hbConfig);
+    expect(enc.secret).not.toBe("v1:looks-like-cipher");
+    expect(isCiphertext(enc.secret as string)).toBe(true);
+    const dec = await decryptConfig(env, enc);
+    expect(dec.secret).toBe("v1:looks-like-cipher");
   });
 });
 

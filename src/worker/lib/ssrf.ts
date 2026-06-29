@@ -78,19 +78,38 @@ export function isBlockedIPv6(host: string): boolean {
   if (/^fe[89ab]/.test(h)) return true; // fe80::/10 link-local
 
   // IPv4-mapped, dotted form: ::ffff:a.b.c.d
-  const dotted = h.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (dotted) return isBlockedIPv4(dotted[1]);
+  const mappedDotted = h.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (mappedDotted) return isBlockedIPv4(mappedDotted[1]);
 
   // IPv4-mapped, hex form (how WHATWG serializes it): ::ffff:wwww:xxxx
-  const hex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (hex) {
-    const hi = parseInt(hex[1], 16);
-    const lo = parseInt(hex[2], 16);
-    const v4 = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
-    return isBlockedIPv4(v4);
-  }
+  const mappedHex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedHex) return isBlockedIPv4(hextetsToV4(mappedHex[1], mappedHex[2]));
+
+  // IPv4-compatible (deprecated): ::a.b.c.d / ::wwww:xxxx (high 96 bits zero).
+  // `::` and `::1` are already handled above, so a remaining `::x:y` embeds a v4.
+  const compatDotted = h.match(/^::(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (compatDotted) return isBlockedIPv4(compatDotted[1]);
+  const compatHex = h.match(/^::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (compatHex) return isBlockedIPv4(hextetsToV4(compatHex[1], compatHex[2]));
+
+  // 6to4: 2002:<v4>::/16 — the two hextets after `2002:` are the embedded v4.
+  const sixToFour = h.match(/^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})/);
+  if (sixToFour) return isBlockedIPv4(hextetsToV4(sixToFour[1], sixToFour[2]));
+
+  // NAT64 well-known prefix: 64:ff9b::<v4> (dotted or hex tail).
+  const nat64Dotted = h.match(/^64:ff9b::(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (nat64Dotted) return isBlockedIPv4(nat64Dotted[1]);
+  const nat64Hex = h.match(/^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (nat64Hex) return isBlockedIPv4(hextetsToV4(nat64Hex[1], nat64Hex[2]));
 
   return false;
+}
+
+/** Convert two IPv6 hextets (hex strings) into a dotted-quad IPv4 literal. */
+function hextetsToV4(hiHex: string, loHex: string): string {
+  const hi = parseInt(hiHex, 16);
+  const lo = parseInt(loHex, 16);
+  return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
 }
 
 /**

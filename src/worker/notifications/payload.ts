@@ -104,7 +104,7 @@ export function toEmailHtml(p: NotificationPayload): string {
   rows.push(`<p style="font-size:13px;color:#64748b;line-height:1.6">${meta.join("<br>")}</p>`);
   if (p.url) {
     rows.push(
-      `<p style="margin-top:20px"><a href="${p.url}" style="background:#6d8bff;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-size:14px">View monitor</a></p>`,
+      `<p style="margin-top:20px"><a href="${escapeHtml(p.url)}" style="background:#6d8bff;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-size:14px">View monitor</a></p>`,
     );
   }
   return `<div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:24px">

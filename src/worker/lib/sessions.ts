@@ -103,3 +103,15 @@ export async function cleanupExpiredSessions(env: Env): Promise<void> {
     .bind(Date.now())
     .run();
 }
+
+/**
+ * Remove expired auth_tokens (oauth_state / magic_link). These rows are only
+ * deleted on a matching callback/verify, so abandoned flows (or scripted hits
+ * to /auth/github/start) would otherwise accumulate without bound. Index-backed
+ * by idx_auth_tokens_expires. Called from scheduled cleanup.
+ */
+export async function cleanupExpiredAuthTokens(env: Env): Promise<void> {
+  await env.DB.prepare(`DELETE FROM auth_tokens WHERE expires_at <= ?`)
+    .bind(Date.now())
+    .run();
+}

@@ -34,6 +34,7 @@ interface StateRow {
   state: MonitorState;
   state_since: number | null;
   last_success_at: number | null;
+  last_beat_at: number | null;
   consecutive_failures: number;
   consecutive_successes: number;
   active_incident_id: string | null;
@@ -42,7 +43,7 @@ interface StateRow {
 
 async function readState(env: Env, monitorId: string): Promise<StateRow | null> {
   return env.DB.prepare(
-    `SELECT state, state_since, last_success_at, consecutive_failures,
+    `SELECT state, state_since, last_success_at, last_beat_at, consecutive_failures,
             consecutive_successes, active_incident_id, is_flapping
      FROM monitor_state WHERE monitor_id = ?`,
   )
@@ -254,13 +255,24 @@ export async function setScheduledOff(env: Env, monitor: MonitorRecord, now: num
   const np = nextActivePeriod(monitor.schedule, new Date(now));
   const nextAt = np ? np.start.getTime() : now + monitor.intervalSeconds * 1000;
 
+  // Resolve any open incident at the moment monitoring pauses so its
+  // duration_seconds reflects only the actively-monitored downtime, not the
+  // un-monitored off-hours gap (which uptime accounting also excludes). Called
+  // directly (not via applyIncidentTransition), so no "recovered" alert fires.
+  if (cur?.active_incident_id) {
+    await safe("incident-resolve", () =>
+      resolveIncident(env, cur.active_incident_id!, { at: now }).then(() => {}),
+    );
+  }
+
   if (cur?.state === "scheduled_off") {
     await env.DB.prepare(`UPDATE monitor_state SET next_check_at = ?, updated_at = ? WHERE monitor_id = ?`)
       .bind(nextAt, now, monitor.id)
       .run();
   } else {
     await env.DB.prepare(
-      `UPDATE monitor_state SET state = 'scheduled_off', state_since = ?, next_check_at = ?, updated_at = ?
+      `UPDATE monitor_state SET state = 'scheduled_off', state_since = ?, next_check_at = ?,
+         active_incident_id = NULL, is_flapping = 0, updated_at = ?
        WHERE monitor_id = ?`,
     )
       .bind(now, nextAt, now, monitor.id)
@@ -275,13 +287,24 @@ export async function setScheduledOff(env: Env, monitor: MonitorRecord, now: num
 export async function setMaintenanceState(env: Env, monitor: MonitorRecord, now: number): Promise<void> {
   const cur = await readState(env, monitor.id);
   const next = now + monitor.intervalSeconds * 1000;
+
+  // Resolve any open incident when a maintenance window starts so its duration
+  // doesn't span the (incident-suppressed, uptime-excluded) maintenance gap. A
+  // real outage still ongoing when maintenance ends reopens a fresh incident.
+  if (cur?.active_incident_id) {
+    await safe("incident-resolve", () =>
+      resolveIncident(env, cur.active_incident_id!, { at: now }).then(() => {}),
+    );
+  }
+
   if (cur?.state === "maintenance") {
     await env.DB.prepare(`UPDATE monitor_state SET next_check_at = ?, updated_at = ? WHERE monitor_id = ?`)
       .bind(next, now, monitor.id)
       .run();
   } else {
     await env.DB.prepare(
-      `UPDATE monitor_state SET state = 'maintenance', state_since = ?, next_check_at = ?, updated_at = ?
+      `UPDATE monitor_state SET state = 'maintenance', state_since = ?, next_check_at = ?,
+         active_incident_id = NULL, is_flapping = 0, updated_at = ?
        WHERE monitor_id = ?`,
     )
       .bind(now, next, now, monitor.id)
@@ -329,7 +352,7 @@ export async function recordHeartbeat(
   await env.DB.prepare(
     `UPDATE monitor_state SET
        state = ?, state_since = ?, last_checked_at = ?, last_success_at = ?,
-       last_duration_ms = ?, last_error = ?,
+       last_beat_at = ?, last_duration_ms = ?, last_error = ?,
        consecutive_failures = ?, consecutive_successes = ?, next_check_at = ?,
        active_incident_id = ?, is_flapping = ?, updated_at = ?
      WHERE monitor_id = ?`,
@@ -339,6 +362,9 @@ export async function recordHeartbeat(
       stateSince,
       now,
       ok ? now : (cur?.last_success_at ?? null),
+      // last_beat_at advances on EVERY received beat (ok or fail) so the
+      // scheduler's overdue test is driven by beats actually arriving.
+      now,
       payload.durationMs ?? null,
       error,
       ok ? 0 : (cur?.consecutive_failures ?? 0) + 1,
@@ -392,6 +418,18 @@ export async function markHeartbeatMissed(
 ): Promise<{ prevState: MonitorState; stateChanged: boolean }> {
   const cur = await readState(env, monitor.id);
   const prevState: MonitorState = cur?.state ?? "unknown";
+
+  // Freshness re-check (closes the heartbeat-ingestion vs scheduler race): if a
+  // beat arrived after the scheduler snapshotted state and decided this monitor
+  // was overdue, last_beat_at is now within interval+grace — so a beat IS
+  // arriving. Skip marking it missed and let the ingestion path's state stand;
+  // otherwise we'd clobber the real exit_status error and double-count downtime.
+  const graceWindowMs =
+    (monitor.intervalSeconds + (monitor.graceSeconds ?? 0)) * 1000;
+  if (cur?.last_beat_at != null && now - cur.last_beat_at < graceWindowMs) {
+    return { prevState, stateChanged: false };
+  }
+
   const stateChanged = prevState !== "down";
   const stateSince = stateChanged ? now : (cur?.state_since ?? now);
 

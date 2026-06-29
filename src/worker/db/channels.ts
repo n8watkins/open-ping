@@ -1,6 +1,7 @@
 import type { Env } from "../types";
 import { newId } from "../lib/ids";
 import { encryptValue, decryptValue } from "../lib/crypto";
+import { isCiphertext } from "../lib/secret-config";
 
 /**
  * Notification channel CRUD data layer. The `notification_channels` table stores
@@ -48,7 +49,7 @@ async function encryptChannelConfig(
     if (
       typeof value === "string" &&
       value.length > 0 &&
-      !value.startsWith(CIPHERTEXT_PREFIX)
+      !isCiphertext(value)
     ) {
       clone[field] = await encryptValue(env, value);
     }

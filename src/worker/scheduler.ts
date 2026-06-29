@@ -13,6 +13,7 @@ import {
   recordRunStart,
   recordRunFinish,
 } from "./lib/lease";
+import { cleanupExpiredSessions, cleanupExpiredAuthTokens } from "./lib/sessions";
 
 const LEASE_NAME = "scheduler";
 const LEASE_TTL_MS = 5 * 60 * 1000; // shorter than the 12-min cadence
@@ -27,6 +28,7 @@ interface StateRow {
   state: string;
   next_check_at: number | null;
   last_success_at: number | null;
+  last_beat_at: number | null;
 }
 
 /** Run async work over items with a bounded concurrency limit. */
@@ -48,8 +50,9 @@ async function mapLimit<T>(
 /**
  * Every-12-minute check cycle (PRD §9). Acquires an execution lease, evaluates
  * each enabled monitor against its schedule, runs due HTTP checks concurrently
- * (with warm-up + retries via the runner), detects missed heartbeats, and
- * records run diagnostics. Incident lifecycle + history rollups arrive in Phase 3.
+ * (with warm-up + retries via the runner), detects missed heartbeats, applies
+ * the incident lifecycle, flushes queued notifications, runs history rollups +
+ * retention/cleanup, and records run diagnostics.
  */
 export async function runScheduled(controller: ScheduledController, env: Env): Promise<void> {
   const lease = await acquireLease(env, LEASE_NAME, LEASE_TTL_MS);
@@ -68,7 +71,7 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
     const now = Date.now();
 
     const stateRes = await env.DB.prepare(
-      "SELECT monitor_id, state, next_check_at, last_success_at FROM monitor_state",
+      "SELECT monitor_id, state, next_check_at, last_success_at, last_beat_at FROM monitor_state",
     ).all<StateRow>();
     const states = new Map<string, StateRow>(
       (stateRes.results ?? []).map((s) => [s.monitor_id, s]),
@@ -102,10 +105,12 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
       const st = states.get(m.id);
 
       if (m.type === "heartbeat") {
-        // Base the deadline on the last received beat, or — for a monitor that
-        // has never beaten — on its creation time, so a brand-new heartbeat
-        // monitor is not declared down before its first interval has elapsed.
-        const base = st?.last_success_at ?? m.createdAt;
+        // Base the deadline on the last beat ACTUALLY RECEIVED (success OR
+        // failure), or — for a monitor that has never beaten — on its creation
+        // time. Keying off last_success_at would wrongly declare an on-schedule
+        // but failing heartbeat "missed", clobbering its real error and
+        // double-counting downtime.
+        const base = st?.last_beat_at ?? m.createdAt;
         const deadline = base + (m.intervalSeconds + (m.graceSeconds ?? 0)) * 1000;
         if (now > deadline) {
           // Overdue: (re)mark missed every cycle while it stays overdue so the
@@ -172,6 +177,15 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
       await sendWeeklySummary(env, Date.now());
     } catch (e) {
       console.error("[scheduler] weekly summary failed", e);
+    }
+
+    // Purge expired sessions + auth tokens so abandoned OAuth/magic flows and
+    // rotated sessions can't grow D1 without bound (both index-backed).
+    try {
+      await cleanupExpiredSessions(env);
+      await cleanupExpiredAuthTokens(env);
+    } catch (e) {
+      console.error("[scheduler] auth cleanup failed", e);
     }
 
     await recordRunFinish(env, run.id, run.startedAt, {

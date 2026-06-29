@@ -56,6 +56,19 @@ function intRange(min: number, max: number) {
 const VALIDATORS: Record<string, (v: string) => string | null> = {
   timezone: (v) =>
     DateTime.local().setZone(v).isValid ? null : "must be a valid IANA timezone",
+  // app_url is interpolated into notification emails/links; require a real
+  // http(s) URL so a malformed value can't break out of an href attribute
+  // (the renderer also escapes it as defense-in-depth).
+  app_url: (v) => {
+    try {
+      const u = new URL(v);
+      return u.protocol === "http:" || u.protocol === "https:"
+        ? null
+        : "must be an http(s) URL";
+    } catch {
+      return "must be a valid URL";
+    }
+  },
   // `retention` is a JSON object { sampleHours, hourlyDays, dailyDays } (read by
   // history/rollups + routes/diagnostics); each provided field must be a
   // positive integer.

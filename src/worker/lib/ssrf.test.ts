@@ -17,6 +17,10 @@ const BLOCKED = [
   "ftp://example.com",
   "http://metadata.google.internal",
   "http://172.16.5.5",
+  // IPv6 literal encodings that embed an internal IPv4 (serialized by WHATWG):
+  "http://[::127.0.0.1]", // IPv4-compatible -> [::7f00:1]
+  "http://[2002:7f00:0001::]", // 6to4 of 127.0.0.1 -> [2002:7f00:1::]
+  "http://[64:ff9b::7f00:1]", // NAT64 of 127.0.0.1
 ];
 
 const ALLOWED = [
@@ -99,5 +103,16 @@ describe("isBlockedIPv6", () => {
   });
   it("allows public IPv6", () => {
     expect(isBlockedIPv6("[2606:4700:4700::1111]")).toBe(false);
+  });
+  it("flags IPv4-compatible, 6to4 and NAT64 encodings of internal IPv4", () => {
+    // WHATWG serializes these (verified) to the bracketed forms below.
+    expect(isBlockedIPv6("[::7f00:1]")).toBe(true); // ::127.0.0.1 (compat)
+    expect(isBlockedIPv6("[::a00:1]")).toBe(true); // ::10.0.0.1 (compat)
+    expect(isBlockedIPv6("[2002:7f00:1::]")).toBe(true); // 6to4 of 127.0.0.1
+    expect(isBlockedIPv6("[2002:a9fe:a9fe::]")).toBe(true); // 6to4 of 169.254.169.254
+    expect(isBlockedIPv6("[64:ff9b::7f00:1]")).toBe(true); // NAT64 of 127.0.0.1
+  });
+  it("does not over-block public 6to4 / compatible forms", () => {
+    expect(isBlockedIPv6("[2002:0808:0808::]")).toBe(false); // 6to4 of 8.8.8.8
   });
 });

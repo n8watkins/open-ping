@@ -301,10 +301,15 @@ export async function sendWeeklySummary(
   // Anchor to a target weekday + hour (UTC) so the summary actually lands once a
   // week at a predictable time, instead of firing immediately on first enable
   // and then drifting ~12h earlier each week. Defaults to Monday 09:00 UTC.
-  const rawDay = Number(await getSetting(env, "weekly_summary_day"));
+  // Read the raw string first: Number(null) === 0 would make an UNSET setting
+  // look like a valid in-range value (Sunday / midnight) and silently defeat the
+  // documented Monday-09:00 defaults. Only coerce when a value is actually set.
+  const rawDayStr = await getSetting(env, "weekly_summary_day");
+  const rawDay = rawDayStr == null || rawDayStr === "" ? NaN : Number(rawDayStr);
   const targetDay =
     Number.isInteger(rawDay) && rawDay >= 0 && rawDay <= 6 ? rawDay : 1;
-  const rawHour = Number(await getSetting(env, "weekly_summary_hour"));
+  const rawHourStr = await getSetting(env, "weekly_summary_hour");
+  const rawHour = rawHourStr == null || rawHourStr === "" ? NaN : Number(rawHourStr);
   const targetHour =
     Number.isInteger(rawHour) && rawHour >= 0 && rawHour <= 23 ? rawHour : 9;
   const d = new Date(now);

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { secureHeaders } from "hono/secure-headers";
 import type { AppEnv, Env } from "./types";
 import { api } from "./routes/api";
 import { auth } from "./routes/auth";
@@ -7,6 +8,33 @@ import { heartbeats } from "./routes/heartbeats";
 import { runScheduled } from "./scheduler";
 
 const app = new Hono<AppEnv>();
+
+// Security headers on every response (admin SPA, public status page, JSON API).
+// frame-ancestors/X-Frame-Options block clickjacking of the authenticated admin
+// panel; nosniff + a tailored CSP are defense-in-depth for an app that renders
+// admin- and heartbeat-supplied strings. The CSP suits the Vite/React/Tailwind
+// build (external hashed scripts, inline style attributes, same-origin XHR,
+// external/data: images for the status-page logo); tune if you add origins.
+app.use(
+  "*",
+  secureHeaders({
+    xFrameOptions: "DENY",
+    xContentTypeOptions: "nosniff",
+    referrerPolicy: "no-referrer",
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      frameAncestors: ["'none'"],
+      objectSrc: ["'none'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      fontSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"],
+      workerSrc: ["'self'"],
+    },
+  }),
+);
 
 // JSON API (auth, monitors, incidents, settings, …). Mounted before the SPA
 // fallback so API routes never get swallowed by the asset handler.

@@ -14,6 +14,31 @@ import { assertSafeUrl } from "../lib/ssrf";
 /** Maximum number of body characters retained for later assertion evaluation. */
 const MAX_BODY_CHARS = 1_000_000;
 
+/**
+ * Read a response body with a HARD ceiling enforced DURING the read. `res.text()`
+ * would buffer the entire (untrusted) body into memory first, so a hostile
+ * endpoint could return hundreds of MB and exhaust the Worker's ~128MB isolate
+ * before any cap applied. We stream chunks until `maxChars` is reached, then
+ * cancel the reader so the remaining bytes are never downloaded — bounding peak
+ * memory to ~maxChars plus one chunk.
+ */
+async function readCappedText(res: Response, maxChars: number): Promise<string> {
+  if (!res.body) return (await res.text()).slice(0, maxChars);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let out = "";
+  try {
+    while (out.length < maxChars) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return out.length > maxChars ? out.slice(0, maxChars) : out;
+}
+
 /** Methods that must never carry a request body. */
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 
@@ -194,11 +219,13 @@ export async function runHttpCheck(
         method = "GET";
         reqBody = undefined;
       }
-      // Never carry Authorization to a different origin (avoids leaking creds
-      // to a redirect target).
-      if (next.origin !== prevOrigin && reqHeaders.has("Authorization")) {
-        reqHeaders = new Headers(reqHeaders);
-        reqHeaders.delete("Authorization");
+      // Cross-origin redirect: drop ALL admin-configured and credential headers
+      // (Authorization, Cookie, X-Api-Key, …). The redirect target is chosen by
+      // the untrusted remote server, so carrying any configured secret header to
+      // a different origin would leak it. Stripping only Authorization (as before)
+      // missed every other configured secret-bearing header.
+      if (next.origin !== prevOrigin) {
+        reqHeaders = new Headers();
       }
       currentUrl = next.toString();
       redirected = true;
@@ -210,9 +237,10 @@ export async function runHttpCheck(
     finalUrl = res!.url || currentUrl;
 
     // Read the body for later assertion evaluation; the timer still covers it.
+    // The cap is enforced DURING the read (streaming) so an oversized response
+    // can't exhaust isolate memory before being truncated.
     try {
-      const text = await res!.text();
-      body = text.length > MAX_BODY_CHARS ? text.slice(0, MAX_BODY_CHARS) : text;
+      body = await readCappedText(res!, MAX_BODY_CHARS);
     } catch (err) {
       if (timedOut) throw err; // a stalled body that hit the timeout is a timeout
       body = undefined;

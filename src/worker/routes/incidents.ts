@@ -311,12 +311,14 @@ incidents.get("/:id", async (c) => {
   return c.json({ incident: mapRow(row), events: (results ?? []).map(mapEvent) });
 });
 
+// Cap free-text annotation fields (matches maintenance.ts) so repeated PATCHes
+// can't store unbounded text / grow incident_events without limit.
 const patchSchema = z.object({
-  privateNotes: z.string().nullable().optional(),
-  publicMessage: z.string().nullable().optional(),
+  privateNotes: z.string().max(2000).nullable().optional(),
+  publicMessage: z.string().max(2000).nullable().optional(),
   public: z.boolean().optional(),
-  rootCause: z.string().nullable().optional(),
-  resolution: z.string().nullable().optional(),
+  rootCause: z.string().max(2000).nullable().optional(),
+  resolution: z.string().max(2000).nullable().optional(),
 });
 
 // PATCH /:id — annotate the incident; only provided fields are updated. When a

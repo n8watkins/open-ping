@@ -75,7 +75,10 @@ interface PublicIncident {
 }
 
 interface PublicMaint {
-  title: string | null;
+  // NB: the window's internal `title` is deliberately NOT exposed — operators
+  // treat it as an internal label (it has no "shown publicly" hint in the admin
+  // UI), and the sibling incident projection anonymizes its title for the same
+  // reason. Only the admin-authored public message is surfaced.
   message: string;
   startsAt: number;
   endsAt: number;
@@ -235,7 +238,6 @@ async function loadDaySummaries(
 /** Project a maintenance window to its public shape (admin message only). */
 function toPublicMaint(w: MaintenanceWindow): PublicMaint {
   return {
-    title: w.title,
     message: w.publicMessage ?? "",
     startsAt: w.startsAt,
     endsAt: w.endsAt,

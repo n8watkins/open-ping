@@ -78,7 +78,8 @@ interface PublicIncident {
 }
 
 interface MaintenanceWindow {
-  title: string;
+  // The server does not expose the window's internal title (it can hold private
+  // labels); the callout uses a generic heading and the admin's public message.
   message: string | null;
   startsAt: number;
   endsAt: number;
@@ -322,7 +323,7 @@ export default function PublicStatus() {
                 key={`maint-${i}`}
                 toneClass="border-maint/30 bg-maint/5"
                 icon={<Wrench className="size-5 text-maint" />}
-                title={m.title}
+                title="Scheduled maintenance"
                 meta={`${formatDateTime(m.startsAt)} – ${formatDateTime(m.endsAt)}`}
                 message={m.message}
               />

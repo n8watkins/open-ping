@@ -342,4 +342,14 @@ export async function rollupAndCompact(env: Env, now: number): Promise<void> {
   } catch (e) {
     console.error("[rollups] interval prune failed", e);
   }
+  // Prune old scheduler-run diagnostics (~120 rows/day, inserted every cron).
+  // Only the most recent runs are ever read (diagnostics/overview use LIMIT), so
+  // a daily horizon is ample. Index-backed by idx_scheduler_runs_started.
+  try {
+    await env.DB.prepare("DELETE FROM scheduler_runs WHERE started_at < ?")
+      .bind(now - dailyMs)
+      .run();
+  } catch (e) {
+    console.error("[rollups] scheduler_runs prune failed", e);
+  }
 }

@@ -66,6 +66,24 @@ export async function setJSON<T>(
   await setSetting(env, key, JSON.stringify(value), opts);
 }
 
+/**
+ * True for a settings key that names a secret and must never be returned to a
+ * client or written into a backup. The `encrypted` column alone is NOT a safe
+ * filter: best-effort mode (no MASTER_KEY) stores secrets — notably the VAPID
+ * private key — with encrypted=0/plaintext. This name-based denylist guarantees
+ * every consumer (export, GET /api/settings, PUT response) is protected.
+ */
+export function isSecretSettingKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return (
+    lower.startsWith("vapid") ||
+    lower.includes("secret") ||
+    lower.includes("key") ||
+    lower.includes("token") ||
+    lower.includes("password")
+  );
+}
+
 /** Non-secret settings only — safe for export/backup (PRD §23 excludes secrets). */
 export async function getExportableSettings(
   env: Env,
@@ -74,6 +92,11 @@ export async function getExportableSettings(
     "SELECT key, value FROM settings WHERE encrypted = 0",
   ).all<{ key: string; value: string }>();
   const out: Record<string, string> = {};
-  for (const r of res.results ?? []) out[r.key] = r.value;
+  for (const r of res.results ?? []) {
+    // Defense in depth: skip secret-named keys even when stored at encrypted=0
+    // (e.g. the VAPID private key generated in best-effort mode).
+    if (isSecretSettingKey(r.key)) continue;
+    out[r.key] = r.value;
+  }
   return out;
 }
