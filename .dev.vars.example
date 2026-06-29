@@ -1,0 +1,45 @@
+# OpenPing local development secrets.
+#
+# Copy this file to `.dev.vars` (which is gitignored) and fill in real values:
+#
+#     cp .dev.vars.example .dev.vars
+#
+# `wrangler` / `npm run dev` loads these into the Worker as `env` bindings,
+# mirroring the production secrets you set with `wrangler secret put <NAME>`.
+# Anything left blank or omitted simply makes that feature "not configured"
+# locally — the app still boots so you can run the first-run setup wizard.
+
+# --- Required for anything beyond a bare boot ---
+
+# AES-GCM master key used to encrypt sensitive config at rest (base64, 32 bytes).
+# Generate one with:  openssl rand -base64 32
+MASTER_KEY=
+
+# HMAC key for signing session + CSRF tokens (any long random string).
+# Generate one with:  openssl rand -base64 32
+SESSION_SECRET=
+
+# --- GitHub OAuth (sign-in) ---
+# Create a GitHub OAuth app and set the callback to ${APP_URL}/auth/github/callback.
+# For local dev that's usually http://localhost:5173/auth/github/callback.
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+
+# --- Administrator allowlist (at least ONE identity is required) ---
+# The GitHub login and/or email allowed to sign in as the single admin.
+ADMIN_GITHUB_LOGIN=
+ADMIN_EMAIL=
+
+# --- Email + magic links (Resend) ---
+RESEND_API_KEY=
+
+# --- Public base URL of this installation ---
+# Local dev default:
+APP_URL=http://localhost:5173
+
+# --- Web Push (optional) ---
+# VAPID keys can instead be generated in-app under Integrations and stored in
+# settings. Set them here only if you want to manage them as secrets.
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=

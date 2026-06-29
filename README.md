@@ -54,6 +54,16 @@ npm run test       # vitest
 4. `npm run deploy`.
 5. Open the app and complete the first-run setup wizard.
 
+## Documentation
+
+- [Install](./docs/INSTALL.md) — from clone to a deployed install (plus a local-dev quickstart)
+- [Upgrade](./docs/UPGRADE.md) — pull, migrate, redeploy
+- [Backup & restore](./docs/BACKUP.md) — JSON export/import and full D1 dumps
+- [Custom domain](./docs/CUSTOM_DOMAIN.md) — put OpenPing on your own hostname
+- [Free tier](./docs/FREE_TIER.md) — how usage maps to Cloudflare's free plan
+- [Troubleshooting](./docs/TROUBLESHOOTING.md) — common issues and fixes
+- [Contributing](./CONTRIBUTING.md) — dev setup and PR guidelines
+
 ## License
 
-MIT
+[MIT](./LICENSE)
