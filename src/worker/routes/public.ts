@@ -23,6 +23,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const BAR_DAYS = 90;
 const RECENT_INCIDENT_LIMIT = 10;
 const UPCOMING_MAINT_LIMIT = 10;
+// Short, shared cache window: this endpoint is unauthenticated and does
+// unbounded per-monitor work, so let the CDN absorb bursts (the page tolerates a
+// few seconds of staleness). The "decrypt only visible monitors" optimization
+// lives in db/monitors.ts and is a separate follow-up.
+const STATUS_CACHE_SECONDS = 20;
 
 // ---------------------------------------------------------------------------
 // Public-facing value types (the wire shape consumed by the status page SPA).
@@ -305,6 +310,10 @@ function toPublicIncident(
 publicStatus.get("/status", async (c) => {
   const env = c.env;
   const now = Date.now();
+
+  // Let the CDN serve repeat hits; applies to both the disabled early-return
+  // below and the full payload.
+  c.header("Cache-Control", `public, max-age=${STATUS_CACHE_SECONDS}`);
 
   // --- Page branding/config (settings keys status_page_*) ---
   const [

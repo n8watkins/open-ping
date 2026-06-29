@@ -6,13 +6,22 @@ import {
 } from "./heartbeats";
 
 describe("isMethodAllowed", () => {
-  it("allows any method when the allowlist is undefined", () => {
-    expect(isMethodAllowed(undefined, "GET")).toBe(true);
-    expect(isMethodAllowed(undefined, "DELETE")).toBe(true);
+  it("defaults to POST/HEAD only when the allowlist is undefined", () => {
+    // Intentional: GET is what link-preview/prefetch bots use, so it must not
+    // record a beat unless explicitly opted in via acceptedMethods.
+    expect(isMethodAllowed(undefined, "POST")).toBe(true);
+    expect(isMethodAllowed(undefined, "HEAD")).toBe(true);
+    expect(isMethodAllowed(undefined, "GET")).toBe(false);
+    expect(isMethodAllowed(undefined, "DELETE")).toBe(false);
   });
 
-  it("allows any method when the allowlist is empty", () => {
+  it("defaults to POST/HEAD only when the allowlist is empty", () => {
     expect(isMethodAllowed([], "POST")).toBe(true);
+    expect(isMethodAllowed([], "GET")).toBe(false);
+  });
+
+  it("allows GET only when explicitly opted in", () => {
+    expect(isMethodAllowed(["GET"], "GET")).toBe(true);
   });
 
   it("allows a listed method case-insensitively", () => {

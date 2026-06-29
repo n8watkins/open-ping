@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { bucketStart, aggregateSummaries, type SummaryTotals } from "./rollups";
+import {
+  bucketStart,
+  aggregateSummaries,
+  okLatencyMs,
+  type SummaryTotals,
+} from "./rollups";
 
 // A fixed, non-boundary instant: 2026-03-15T14:37:22.123Z.
 const AT = Date.UTC(2026, 2, 15, 14, 37, 22, 123);
@@ -114,5 +119,37 @@ describe("aggregateSummaries", () => {
     const out = aggregateSummaries([row({ min_latency_ms: 42, max_latency_ms: 42 })]);
     expect(out.min_latency_ms).toBe(42);
     expect(out.max_latency_ms).toBe(42);
+  });
+});
+
+describe("okLatencyMs", () => {
+  it("counts latency only for OK checks", () => {
+    expect(okLatencyMs(true, 120)).toBe(120);
+    // A failed-but-responded check is excluded from the weekly avg numerator.
+    expect(okLatencyMs(false, 120)).toBe(0);
+  });
+
+  it("contributes 0 for a missing or non-finite duration", () => {
+    expect(okLatencyMs(true, null)).toBe(0);
+    expect(okLatencyMs(true, undefined)).toBe(0);
+    expect(okLatencyMs(true, Number.NaN)).toBe(0);
+    expect(okLatencyMs(true, Number.POSITIVE_INFINITY)).toBe(0);
+    expect(okLatencyMs(false, null)).toBe(0);
+  });
+
+  it("keeps the weekly avg numerator/denominator consistent (OK checks only)", () => {
+    // 3 OK checks (100/200/300) + 1 failed-but-responded (999): summing over OK
+    // gives 600 against ok_checks=3 ⇒ avg 200 — the 999 never enters either side,
+    // which was the bug (all-check latency divided by ok-only count).
+    const samples = [
+      { ok: true, ms: 100 },
+      { ok: true, ms: 200 },
+      { ok: true, ms: 300 },
+      { ok: false, ms: 999 },
+    ];
+    const sum = samples.reduce((n, s) => n + okLatencyMs(s.ok, s.ms), 0);
+    const okCount = samples.filter((s) => s.ok).length;
+    expect(sum).toBe(600);
+    expect(Math.round(sum / okCount)).toBe(200);
   });
 });

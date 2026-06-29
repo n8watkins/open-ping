@@ -31,7 +31,13 @@ const SUBJECT = "Your OpenPing sign-in link";
 
 const requestSchema = z.object({ email: z.string().email() });
 
-/** Resolve the public base URL (env > settings > request origin), no trailing slash. */
+/**
+ * Resolve the public base URL (env > settings > request origin), no trailing
+ * slash. The request-origin fallback derives from the spoofable Host header;
+ * setup /complete now requires app_url (env or settings) so a completed
+ * deployment builds single-use magic links from a configured base, not the
+ * caller-controlled Host.
+ */
 async function baseUrl(c: Ctx): Promise<string> {
   const configured = c.env.APP_URL ?? (await getSetting(c.env, "app_url"));
   const base = configured ?? new URL(c.req.url).origin;
@@ -53,6 +59,19 @@ export function isWithinCooldown(
   cooldownMs: number = COOLDOWN_MS,
 ): boolean {
   return lastCreatedAt != null && now - lastCreatedAt < cooldownMs;
+}
+
+/**
+ * Pure single-use validity predicate for the row returned by the atomic
+ * `DELETE ... RETURNING` consume in /verify: the token is usable only if a row
+ * actually came back (i.e. THIS request won the consume race) and it has not
+ * expired. A type guard so callers narrow the consumed row to non-null.
+ */
+export function isConsumedTokenValid<T extends { expires_at: number }>(
+  row: T | null,
+  now: number,
+): row is T {
+  return row !== null && row.expires_at > now;
 }
 
 function magicEmailBody(link: string): { html: string; text: string } {
@@ -147,16 +166,18 @@ magicFlow.get("/verify", async (c) => {
   if (!token) return loginRedirect(base, "magic_invalid");
 
   const id = await sha256hex(token);
+  // Single-use, atomically: DELETE ... RETURNING claims the row in one
+  // statement, so two concurrent verifies of the same link can't both read it
+  // as unused and each mint a session — only the request whose DELETE returns a
+  // row proceeds. Consumption is the DELETE itself, so the legacy `used_at`
+  // column it used to also check is dead and intentionally dropped here.
   const row = await c.env.DB.prepare(
-    `SELECT data, expires_at, used_at FROM auth_tokens WHERE id = ? AND kind = 'magic_link'`,
+    `DELETE FROM auth_tokens WHERE id = ? AND kind = 'magic_link' RETURNING data, expires_at`,
   )
     .bind(id)
-    .first<{ data: string | null; expires_at: number; used_at: number | null }>();
+    .first<{ data: string | null; expires_at: number }>();
 
-  // Single-use: consume the token regardless of outcome.
-  await c.env.DB.prepare(`DELETE FROM auth_tokens WHERE id = ?`).bind(id).run();
-
-  if (!row || row.used_at || row.expires_at <= Date.now()) {
+  if (!isConsumedTokenValid(row, Date.now())) {
     return loginRedirect(base, "magic_invalid");
   }
 

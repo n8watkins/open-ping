@@ -7,7 +7,7 @@ import {
   isSetupComplete,
   markSetupComplete,
 } from "../db/setup";
-import { getAdminGithubLogin, getAdminEmail } from "../lib/admin";
+import { getAdminGithubLogin, getAdminEmail, hasAdminConfigured } from "../lib/admin";
 import { getSetting } from "../db/settings";
 import { CSRF_HEADER, getSession } from "../lib/sessions";
 import { timingSafeEqual } from "../lib/timing";
@@ -34,14 +34,20 @@ async function setupStatus(env: Env) {
 }
 
 /**
- * Block writes after setup completes unless authenticated, and — whenever a
- * session is present — enforce CSRF on state-changing methods exactly like
- * middleware/auth.ts, so a completed-setup deployment can't have its admin
- * identity rewritten by a forged cross-site request.
+ * Block anonymous writes once setup is complete OR an administrator identity
+ * already exists (env or settings). Without the latter check, during the
+ * pre-completion bootstrap window any anonymous caller could POST /save an
+ * adminEmail, /complete, then log in — admin injection. The request that first
+ * writes the admin still succeeds because guardWrite runs at request-start,
+ * before saveSetupStep persists the identity; every subsequent mutation then
+ * requires a session. Whenever a session is present, also enforce CSRF on
+ * state-changing methods exactly like middleware/auth.ts, so a completed-setup
+ * deployment can't have its admin identity rewritten by a forged cross-site
+ * request.
  */
 async function guardWrite(c: Context<AppEnv>): Promise<Response | null> {
   const session = await getSession(c);
-  if ((await isSetupComplete(c.env)) && !session) {
+  if (((await isSetupComplete(c.env)) || (await hasAdminConfigured(c.env))) && !session) {
     return c.json({ error: "setup_locked" }, 403);
   }
   if (session && !SAFE_METHODS.has(c.req.method.toUpperCase())) {
@@ -91,6 +97,14 @@ setup.post("/complete", async (c) => {
   }
   if (!status.timezone) {
     return c.json({ error: "timezone_required" }, 400);
+  }
+  // app_url is embedded into single-use magic-link and OAuth redirect URLs;
+  // without it routes/magic.ts and routes/auth.ts fall back to the request Host
+  // header, which an attacker can spoof to capture an emailed sign-in token.
+  // Require a real app_url (env override or the wizard-written setting) before
+  // completion so a finished deployment never depends on that Host fallback.
+  if (!c.env.APP_URL && !status.appUrl) {
+    return c.json({ error: "app_url_required" }, 400);
   }
   await markSetupComplete(c.env);
   return c.json({ ok: true, status: await setupStatus(c.env) });

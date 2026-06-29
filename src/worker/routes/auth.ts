@@ -17,6 +17,11 @@ const GITHUB_USER = "https://api.github.com/user";
 const STATE_TTL_MS = 1000 * 60 * 10; // 10 minutes
 const UA = "OpenPing";
 
+// NOTE: only honors the APP_URL env override, not the `app_url` setting the
+// setup wizard writes; when APP_URL is unset this falls back to the spoofable
+// request Host header. GitHub validates redirect_uri against the registered
+// callback so the blast radius is limited, but set APP_URL in production for a
+// stable OAuth base. (magic.ts baseUrl additionally reads the app_url setting.)
 function baseUrl(c: { env: Env; req: { url: string } }): string {
   return c.env.APP_URL?.replace(/\/$/, "") ?? new URL(c.req.url).origin;
 }
@@ -31,6 +36,13 @@ auth.get("/github/start", async (c) => {
   const base = baseUrl(c);
   if (!c.env.GITHUB_CLIENT_ID) return loginRedirect(base, "github_not_configured");
 
+  // NOTE (deferred): this `state` is single-use and server-validated on
+  // callback, but it is NOT bound to the initiating browser (no paired nonce in
+  // an HttpOnly cookie / double-submit), so it only weakly defends against login
+  // CSRF / session fixation. Left as-is for now because the single-admin
+  // allowlist means a forced login can still only ever resolve to the one admin
+  // identity. Revisit by storing a random nonce in a cookie at /start and
+  // checking it against this row in /github/callback.
   const state = randomToken(24);
   await c.env.DB.prepare(
     `INSERT INTO auth_tokens (id, kind, data, created_at, expires_at) VALUES (?, 'oauth_state', ?, ?, ?)`,

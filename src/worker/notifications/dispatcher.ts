@@ -168,8 +168,10 @@ async function deliverPush(
     }
     return "sent";
   }
-  if (result.expired) {
-    // Subscription is gone — drop it and stop retrying (not a delivery failure).
+  if (result.expired || result.invalid) {
+    // Gone (404/410), or permanently invalid (SSRF-blocked endpoint / corrupt
+    // keys): the subscription can never succeed, so prune it and stop retrying
+    // instead of burning the retry budget on a guaranteed failure.
     await recordPushResult(env, sub.id, false, { expired: true });
     await markSent(env, entryId);
     return "pruned";

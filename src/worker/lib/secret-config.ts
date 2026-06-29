@@ -29,6 +29,14 @@ const ALL_SECRET_PATHS: readonly string[] = ["secret", "auth.password", "auth.to
 const CIPHERTEXT_PREFIX = "v1:";
 
 /**
+ * Guards the "encryption-at-rest disabled" warning so it is emitted at most once
+ * per isolate. Best-effort encryption stays silent on the happy path, but a
+ * deploy with no `MASTER_KEY` should not unknowingly persist secrets in cleartext
+ * without leaving any operational signal.
+ */
+let encryptionDisabledWarned = false;
+
+/**
  * True only for a STRUCTURALLY valid `v1:<iv>:<ct>` ciphertext (both segments
  * base64). A bare `startsWith("v1:")` prefix sniff is unsafe: a plaintext secret
  * the admin happens to begin with "v1:" would be mistaken for ciphertext and
@@ -83,7 +91,26 @@ export async function encryptConfig(
   config: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const clone = structuredClone(config);
-  if (!env.MASTER_KEY) return clone;
+  if (!env.MASTER_KEY) {
+    // Stay best-effort (no throw — that would break intentional no-key deploys),
+    // but make the fail-open OBSERVABLE: if we were actually handed a plaintext
+    // secret to persist, warn once that encryption-at-rest is off.
+    if (
+      !encryptionDisabledWarned &&
+      SECRET_PATHS[type].some((path) => {
+        const value = getPath(clone, path);
+        return secretValuePresent(value) && !isCiphertext(value);
+      })
+    ) {
+      encryptionDisabledWarned = true;
+      console.warn(
+        "[openping] MASTER_KEY is not configured: encryption-at-rest is DISABLED. " +
+          "Monitor/channel/VAPID secrets are being stored in PLAINTEXT in D1. " +
+          "Set the MASTER_KEY Worker secret to enable encryption.",
+      );
+    }
+    return clone;
+  }
   for (const path of SECRET_PATHS[type]) {
     const value = getPath(clone, path);
     if (secretValuePresent(value) && !isCiphertext(value)) {

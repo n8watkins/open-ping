@@ -13,7 +13,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, safeHttpUrl } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { cn } from "../lib/cn";
 import {
@@ -177,6 +177,10 @@ export default function MonitorDetail() {
   const ingestUrl = monitor.heartbeatToken
     ? `${window.location.origin}/hb/${monitor.heartbeatToken}`
     : null;
+  // Only link the target when it is http(s); a `javascript:` config value would
+  // otherwise execute from the href (rel/target do not prevent that).
+  const targetUrl = monitor.config.url ?? null;
+  const safeTargetUrl = safeHttpUrl(targetUrl);
 
   const latencyPoints = recentSamples
     .filter((s) => s.durationMs != null)
@@ -340,15 +344,19 @@ export default function MonitorDetail() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-xs font-medium text-ink-muted">Target</div>
-              {monitor.config.url ? (
+              {safeTargetUrl ? (
                 <a
-                  href={monitor.config.url}
+                  href={safeTargetUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="mt-1 block truncate font-mono text-sm text-accent hover:underline"
                 >
-                  {monitor.config.url}
+                  {targetUrl}
                 </a>
+              ) : targetUrl ? (
+                <span className="mt-1 block truncate font-mono text-sm text-ink">
+                  {targetUrl}
+                </span>
               ) : (
                 <span className="mt-1 block text-sm text-ink-faint">—</span>
               )}

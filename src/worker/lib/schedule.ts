@@ -95,26 +95,51 @@ export function isExcludedDate(schedule: Schedule, at: Date): boolean {
   return schedule.excludedDates.includes(key);
 }
 
-/** Whether any of `windows` contains the instant `at` (interpreted in `zone`). */
-function windowsActiveAt(windows: Window[], zone: string, at: Date): boolean {
+/**
+ * Whether any of `windows` contains the instant `at` (interpreted in `zone`).
+ *
+ * `excludedDates` are applied per the window's OPENING day, not the instant's
+ * own date: an overnight window opened on a non-excluded day stays active
+ * through its morning spillover even if that spillover lands on an excluded
+ * date, and an overnight window opened on an excluded day is inactive for its
+ * whole span. This anchors a window to its opening day exactly as
+ * {@link nextActivePeriod} does, so the two functions never disagree (which
+ * would otherwise let setScheduledOff write a past next_check_at).
+ */
+function windowsActiveAt(
+  windows: Window[],
+  zone: string,
+  at: Date,
+  excludedDates: readonly string[] = [],
+): boolean {
   const dt = DateTime.fromJSDate(at, { zone });
   const weekday = luxonToSchemaWeekday(dt.weekday);
   const prevWeekday = (weekday + 6) % 7;
   // Fractional minutes from midnight so [start, end) boundaries are exact.
   const minute =
     dt.hour * 60 + dt.minute + dt.second / 60 + dt.millisecond / 60000;
+  const todayKey = dt.toFormat("yyyy-MM-dd");
+  const prevKey = dt.minus({ days: 1 }).toFormat("yyyy-MM-dd");
+  const excluded = (key: string) =>
+    excludedDates.length > 0 && excludedDates.includes(key);
 
   for (const w of windows) {
     const overnight = w.endMin <= w.startMin;
     if (!overnight) {
+      // Opens and closes on `weekday`; exclusion keys off that (today's) date.
       if (weekday === w.weekday && minute >= w.startMin && minute < w.endMin) {
-        return true;
+        if (!excluded(todayKey)) return true;
       }
     } else {
-      // Evening portion [start, 24:00) on the opening day.
-      if (weekday === w.weekday && minute >= w.startMin) return true;
-      // Morning portion [00:00, end) belonging to the previous day's window.
-      if (prevWeekday === w.weekday && minute < w.endMin) return true;
+      // Evening portion [start, 24:00) opens today → key exclusion off today.
+      if (weekday === w.weekday && minute >= w.startMin && !excluded(todayKey)) {
+        return true;
+      }
+      // Morning portion [00:00, end) belongs to the window that OPENED
+      // yesterday → key exclusion off yesterday (the opening day).
+      if (prevWeekday === w.weekday && minute < w.endMin && !excluded(prevKey)) {
+        return true;
+      }
     }
   }
   return false;
@@ -126,13 +151,16 @@ function windowsActiveAt(windows: Window[], zone: string, at: Date): boolean {
  * - `always`         → always true.
  * - `business_hours` → local weekday is in `weekdays` and local time is within
  *                      the single daily window [start, end) (overnight aware).
- * - `custom`         → the local date is not excluded AND some period for the
- *                      day contains the local time (overnight aware).
+ * - `custom`         → some period contains the local time (overnight aware)
+ *                      and that period's OPENING day is not excluded. Exclusion
+ *                      is anchored to the opening day (see {@link windowsActiveAt})
+ *                      so it agrees with {@link nextActivePeriod} for overnight
+ *                      windows.
  */
 export function isActiveAt(schedule: Schedule, at: Date): boolean {
   if (schedule.mode === "always") return true;
-  if (schedule.mode === "custom" && isExcludedDate(schedule, at)) return false;
-  return windowsActiveAt(scheduleWindows(schedule), schedule.timezone, at);
+  const excluded = schedule.mode === "custom" ? schedule.excludedDates : [];
+  return windowsActiveAt(scheduleWindows(schedule), schedule.timezone, at, excluded);
 }
 
 /** Resolve a recurring window into concrete instants on a given local day. */

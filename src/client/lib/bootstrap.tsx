@@ -29,6 +29,8 @@ interface BootstrapValue {
   me: Me | null;
   /** CSRF token for mutations, when authenticated. */
   csrf: string | null;
+  /** Non-null when the bootstrap fetch failed (vs. a genuine unauthenticated state). */
+  error: string | null;
   refresh: () => Promise<void>;
 }
 
@@ -38,6 +40,7 @@ export function BootstrapProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<AuthStatus | null>(null);
   const [me, setMe] = useState<Me | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -47,8 +50,14 @@ export function BootstrapProvider({ children }: { children: ReactNode }) {
       ]);
       setStatus(s);
       setMe(m);
-    } catch {
-      // Leave nulls; gate will treat as unauthenticated.
+      setError(null);
+    } catch (e) {
+      // Capture the failure instead of swallowing it: a transient status fetch
+      // error must be distinguishable from a genuinely provider-less install,
+      // otherwise Login renders every sign-in option as disabled. Left
+      // un-cleared at the start of refresh so a retry keeps the error visible
+      // until it actually succeeds.
+      setError(e instanceof Error ? e.message : "Could not reach the server.");
     } finally {
       setLoading(false);
     }
@@ -60,7 +69,7 @@ export function BootstrapProvider({ children }: { children: ReactNode }) {
 
   return (
     <BootstrapContext.Provider
-      value={{ loading, status, me, csrf: me?.csrf ?? null, refresh }}
+      value={{ loading, status, me, csrf: me?.csrf ?? null, error, refresh }}
     >
       {children}
     </BootstrapContext.Provider>

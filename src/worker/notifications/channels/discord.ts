@@ -49,6 +49,9 @@ export async function sendDiscordMessage(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      // Bound the request so one hung endpoint can't stall the sequential outbox
+      // drain. An abort throws and is mapped to a retryable network_error below.
+      signal: AbortSignal.timeout(10000),
     });
   } catch {
     return { ok: false, error: "network_error" };

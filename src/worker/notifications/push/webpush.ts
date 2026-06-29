@@ -23,6 +23,8 @@
  * is trusted in production.
  */
 
+import { assertSafeUrl } from "../../lib/ssrf";
+
 // ---------------------------------------------------------------------------
 // base64url helpers (no padding) — Uint8Array <-> base64url string.
 // Style mirrors src/worker/lib/crypto.ts (btoa/atob, byte-at-a-time).
@@ -71,6 +73,12 @@ export interface SendWebPushResult {
   error?: string;
   /** True when the push service reports the subscription is gone (404/410). */
   expired?: boolean;
+  /**
+   * True for a permanent, local validation failure (SSRF-blocked endpoint or
+   * corrupt subscription keys): the subscription can never succeed, so the
+   * caller should prune it rather than retry.
+   */
+  invalid?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -303,18 +311,38 @@ export async function sendWebPush(opts: {
 }): Promise<SendWebPushResult> {
   const { subscription, payload, vapid, ttl } = opts;
 
-  const clientPublic = base64urlDecode(subscription.p256dh);
-  const authSecret = base64urlDecode(subscription.auth);
-  if (clientPublic.length !== 65 || authSecret.length !== 16) {
-    return { ok: false, error: "invalid_subscription" };
+  // SSRF guard: a device registers its own push endpoint, and POST
+  // /devices/:id/test reflects ~200 bytes of the endpoint's response — so an
+  // unvalidated endpoint could be aimed at loopback/link-local/metadata/private
+  // hosts. Validate before any crypto or fetch so this covers BOTH the test
+  // route and outbox delivery with no TOCTOU. A blocked/malformed endpoint is
+  // permanent, so flag `invalid` for the caller to prune instead of retrying.
+  const safeEndpoint = assertSafeUrl(subscription.endpoint);
+  if (!safeEndpoint.ok) {
+    return {
+      ok: false,
+      invalid: true,
+      error: `invalid_subscription: ${safeEndpoint.reason}`,
+    };
   }
 
-  let audience: string;
+  // Decode the stored keys inside try/catch: a corrupt base64url value makes
+  // `atob` throw, which would otherwise escape and burn the retry budget instead
+  // of pruning. Treat any decode failure as a permanent invalid subscription.
+  let clientPublic: Uint8Array;
+  let authSecret: Uint8Array;
   try {
-    audience = new URL(subscription.endpoint).origin;
+    clientPublic = base64urlDecode(subscription.p256dh);
+    authSecret = base64urlDecode(subscription.auth);
   } catch {
-    return { ok: false, error: "invalid_endpoint" };
+    return { ok: false, invalid: true, error: "invalid_subscription" };
   }
+  if (clientPublic.length !== 65 || authSecret.length !== 16) {
+    return { ok: false, invalid: true, error: "invalid_subscription" };
+  }
+
+  // Reuse the URL already parsed by the SSRF guard for the VAPID audience.
+  const audience = safeEndpoint.url.origin;
 
   let jwt: string;
   let body: Uint8Array;
@@ -342,6 +370,10 @@ export async function sendWebPush(opts: {
       method: "POST",
       headers,
       body,
+      // Bound the request so one hung push service can't stall the sequential
+      // outbox drain (and the post-drain rollup/weekly/cleanup). Aborts surface
+      // as a throw, which the catch maps to a retryable network_error.
+      signal: AbortSignal.timeout(10000),
     });
   } catch {
     return { ok: false, error: "network_error" };

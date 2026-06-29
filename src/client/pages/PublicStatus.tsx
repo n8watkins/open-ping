@@ -10,6 +10,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
+import { safeHttpUrl } from "../lib/api";
 import { Logo } from "../components/Logo";
 import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -252,15 +253,21 @@ export default function PublicStatus() {
     ? ({ "--color-accent": page.accent } as CSSProperties)
     : undefined;
 
+  // Admin-supplied URLs render on this unauthenticated page, so only emit them
+  // when they are http(s); a `javascript:` value would otherwise execute from
+  // an href/src (rel/target do not prevent that).
+  const safeLogo = safeHttpUrl(page.logo);
+  const safeHomepage = safeHttpUrl(page.homepage);
+
   return (
     <div className="min-h-full bg-canvas text-ink" data-theme={effectiveTheme} style={accentStyle}>
       <div className="mx-auto max-w-3xl px-4 py-10 sm:py-14">
         {/* Header */}
         <header className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
-            {page.logo ? (
+            {safeLogo ? (
               <img
-                src={page.logo}
+                src={safeLogo}
                 alt={page.name}
                 className="size-9 shrink-0 rounded-lg object-contain"
               />
@@ -276,9 +283,9 @@ export default function PublicStatus() {
               )}
             </div>
           </div>
-          {page.homepage && (
+          {safeHomepage && (
             <a
-              href={page.homepage}
+              href={safeHomepage}
               target="_blank"
               rel="noreferrer"
               className="inline-flex shrink-0 items-center gap-1.5 text-sm text-ink-muted transition-colors hover:text-ink"

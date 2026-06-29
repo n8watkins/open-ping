@@ -234,4 +234,36 @@ describe("runHttpCheck", () => {
     expect(result.statusCode).toBe(302);
     expect(result.redirected).toBe(false);
   });
+
+  it("drops the request body on a cross-origin 307 redirect", async () => {
+    // 307/308 preserve the method and body, so a secret in the body would be
+    // re-sent to the server-chosen cross-origin target unless we drop it.
+    const fetchMock = mockFetchSequence(
+      redirectTo("https://other.example.com/next", 307),
+      new Response("final body", { status: 200 }),
+    );
+
+    await runHttpCheck(makeConfig({ method: "POST", body: "secret-payload" }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, firstInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, secondInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(firstInit.body).toBe("secret-payload");
+    expect(secondInit.method).toBe("POST"); // 307 keeps the method...
+    expect(secondInit.body).toBeUndefined(); // ...but the body must not cross origins
+  });
+
+  it("preserves the request body on a same-origin 307 redirect", async () => {
+    const fetchMock = mockFetchSequence(
+      redirectTo("https://example.com/next", 307),
+      new Response("final body", { status: 200 }),
+    );
+
+    await runHttpCheck(makeConfig({ method: "POST", body: "payload" }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, secondInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(secondInit.method).toBe("POST");
+    expect(secondInit.body).toBe("payload");
+  });
 });

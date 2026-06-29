@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Loader2, CheckCircle2, ExternalLink } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
+import { cn } from "../lib/cn";
 import { useBootstrap } from "../lib/bootstrap";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 
@@ -56,8 +57,25 @@ function parseTheme(v: unknown): Theme {
   return v === "light" || v === "dark" || v === "system" ? v : "system";
 }
 
-function normalizeHex(v: string): string {
-  return /^#[0-9a-fA-F]{6}$/.test(v.trim()) ? v.trim() : DEFAULT_ACCENT;
+/** Hex color pattern the server accepts (see worker routes/settings.ts): #rgb or #rrggbb. */
+const ACCENT_PATTERN = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+function isValidAccent(v: string): boolean {
+  return ACCENT_PATTERN.test(v.trim());
+}
+
+/**
+ * A `#rrggbb` value for the native color input, which only accepts 6-digit hex:
+ * expand a valid `#rgb`, pass `#rrggbb` through, else fall back to the default.
+ */
+function accentSwatchValue(v: string): string {
+  const t = v.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(t)) return t;
+  if (/^#[0-9a-fA-F]{3}$/.test(t)) {
+    const [, r, g, b] = t;
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  return DEFAULT_ACCENT;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +123,13 @@ export default function StatusPageSettings() {
   }
 
   async function save() {
+    // Validate the accent client-side with the same pattern the server uses so a
+    // typo surfaces as inline guidance instead of an opaque server 400.
+    if (!isValidAccent(accent)) {
+      setSaved(false);
+      setSaveError("Enter a valid hex color, e.g. #6d8bff or #abc.");
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     setSaved(false);
@@ -118,7 +143,7 @@ export default function StatusPageSettings() {
             status_page_name: name,
             status_page_description: description,
             status_page_logo: logo,
-            status_page_accent: accent,
+            status_page_accent: accent.trim(),
             status_page_theme: theme,
             status_page_homepage: homepage,
             status_page_footer: footer,
@@ -135,7 +160,8 @@ export default function StatusPageSettings() {
     }
   }
 
-  const accentSwatch = normalizeHex(accent);
+  const accentValid = isValidAccent(accent);
+  const accentSwatch = accentSwatchValue(accent);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -242,9 +268,15 @@ export default function StatusPageSettings() {
                     value={accent}
                     onChange={(e) => mark(setAccent, e.target.value)}
                     placeholder={DEFAULT_ACCENT}
-                    className="input font-mono"
+                    aria-invalid={!accentValid}
+                    className={cn("input font-mono", !accentValid && "border-down")}
                   />
                 </div>
+                {!accentValid && (
+                  <p className="mt-1.5 text-xs text-down">
+                    Use a 3- or 6-digit hex color, e.g. #6d8bff.
+                  </p>
+                )}
               </Field>
 
               <Field label="Theme">

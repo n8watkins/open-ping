@@ -179,8 +179,10 @@ export async function recordObservation(
 
 /**
  * Resolve an incident on recovery: stamp `resolved_at`, compute the duration in
- * whole seconds, and append a `recovered` timeline event. Returns the updated
- * record, or null if no such incident exists.
+ * whole seconds, and append a `recovered` timeline event. Idempotent — only the
+ * open → resolved transition mutates the row and writes the event, so a repeat
+ * resolve is a no-op. Returns the (resolved) record, or null if no such incident
+ * exists.
  */
 export async function resolveIncident(
   env: Env,
@@ -192,32 +194,30 @@ export async function resolveIncident(
 
   const durationSeconds = Math.round((ctx.at - existing.startedAt) / 1000);
 
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE incidents
-         SET status = 'resolved', resolved_at = ?, duration_seconds = ?,
-             updated_at = ?
-       WHERE id = ?`,
-    ).bind(ctx.at, durationSeconds, ctx.at, incidentId),
-    env.DB.prepare(
+  // Guard on `status = 'open'` so only the first resolve transitions the row.
+  // A double-resolve (e.g. the unlocked heartbeat route racing the scheduler)
+  // matches zero rows here and becomes a no-op — resolved_at/duration stay put
+  // and no second `recovered` timeline event is written.
+  const res = await env.DB.prepare(
+    `UPDATE incidents
+       SET status = 'resolved', resolved_at = ?, duration_seconds = ?,
+           updated_at = ?
+     WHERE id = ? AND status = 'open'`,
+  )
+    .bind(ctx.at, durationSeconds, ctx.at, incidentId)
+    .run();
+
+  // Only append the recovery event when this call actually closed the incident.
+  if (res.meta?.changes === 1) {
+    await env.DB.prepare(
       `INSERT INTO incident_events (id, incident_id, at, kind, message)
        VALUES (?, ?, ?, 'recovered', ?)`,
-    ).bind(newId("iev"), incidentId, ctx.at, "Recovered"),
-  ]);
+    )
+      .bind(newId("iev"), incidentId, ctx.at, "Recovered")
+      .run();
+  }
 
   return getIncidentById(env, incidentId);
-}
-
-/** Mark an incident's "down" notification as sent (idempotency guard). */
-export async function markNotified(
-  env: Env,
-  incidentId: string,
-): Promise<void> {
-  await env.DB.prepare(
-    "UPDATE incidents SET notified = 1, updated_at = ? WHERE id = ?",
-  )
-    .bind(Date.now(), incidentId)
-    .run();
 }
 
 /** Count incidents for a monitor that started at/after `sinceMs`. */
@@ -232,36 +232,4 @@ export async function countRecentIncidents(
     .bind(monitorId, sinceMs)
     .first<{ c: number }>();
   return row?.c ?? 0;
-}
-
-/** Flag/unflag an incident as flapping. */
-export async function setFlapping(
-  env: Env,
-  incidentId: string,
-  flapping: boolean,
-): Promise<void> {
-  await env.DB.prepare(
-    "UPDATE incidents SET is_flapping = ?, updated_at = ? WHERE id = ?",
-  )
-    .bind(flapping ? 1 : 0, Date.now(), incidentId)
-    .run();
-}
-
-/**
- * Pure flapping test: true when the number of incident start times falling
- * within the trailing window `(now - windowMs, now]` reaches `threshold`.
- * The lower bound is exclusive and the upper bound inclusive.
- */
-export function isFlapping(
-  incidentStartTimes: number[],
-  now: number,
-  windowMs = 60 * 60 * 1000,
-  threshold = 3,
-): boolean {
-  const lowerBound = now - windowMs;
-  let count = 0;
-  for (const t of incidentStartTimes) {
-    if (t > lowerBound && t <= now) count++;
-  }
-  return count >= threshold;
 }

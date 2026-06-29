@@ -106,10 +106,24 @@ export function aggregateSummaries(rows: SummaryTotals[]): SummaryTotals {
 }
 
 /**
+ * Latency (ms) a single check contributes to `sum_latency_ms`. Only OK checks
+ * contribute, so the weekly `avgResponseMs = sum_latency_ms / ok_checks` divides
+ * a numerator and denominator that cover the SAME set of checks. A non-finite or
+ * absent duration contributes 0. PURE — exported for unit testing.
+ */
+export function okLatencyMs(ok: boolean, durationMs?: number | null): number {
+  if (!ok) return 0;
+  return typeof durationMs === "number" && Number.isFinite(durationMs)
+    ? durationMs
+    : 0;
+}
+
+/**
  * Fold a single check result into its HOUR summary bucket. Additive upsert keyed
  * by (monitor_id, period='hour', bucket_start): incrementing the existing row on
- * conflict, so it is safe under concurrent/retried writes. Latency only counts
- * when finite; min/max COALESCE the existing (possibly NULL) value.
+ * conflict, so it is safe under concurrent/retried writes. min/max track every
+ * responding check (COALESCE the existing, possibly NULL value); sum_latency_ms
+ * counts only OK checks so the weekly average divides over a consistent set.
  */
 export async function recordCheckSample(
   env: Env,
@@ -158,9 +172,9 @@ export async function recordCheckSample(
       s.ok ? 1 : 0,
       s.ok ? 0 : 1,
       s.retryRecovered ? 1 : 0,
-      latency ?? 0,
-      latency,
-      latency,
+      okLatencyMs(s.ok, s.durationMs), // sum_latency_ms: OK checks only
+      latency, // min_latency_ms: any responding check
+      latency, // max_latency_ms: any responding check
       s.monitoredSeconds,
       s.downSeconds,
     )
@@ -227,7 +241,9 @@ interface DistinctBucket {
  *
  *  1. Recompute DAY summaries from their constituent HOUR rows.
  *  2. Recompute MONTH summaries from their constituent DAY rows.
- *  3. Prune expired tiers: samples > 24h, hour > 90d, day > 2y. Months kept forever.
+ *  3. Prune expired tiers per DEFAULT_RETENTION: samples > 24h, hour > 35d,
+ *     day > 400d. Months are kept forever. (Horizons are overridable via the
+ *     `retention` setting.)
  */
 export async function rollupAndCompact(env: Env, now: number): Promise<void> {
   const stored = await getJSON<Partial<RetentionConfig>>(env, "retention").catch(() => null);

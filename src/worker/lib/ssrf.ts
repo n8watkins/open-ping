@@ -24,6 +24,8 @@ const BLOCKED_IPV4_CIDRS: ReadonlyArray<readonly [string, number]> = [
   ["192.0.0.0", 24], // IETF protocol assignments
   ["192.168.0.0", 16], // RFC1918 private
   ["198.18.0.0", 15], // benchmarking
+  ["224.0.0.0", 4], // multicast
+  ["240.0.0.0", 4], // reserved/future use (incl. 255.255.255.255 broadcast)
 ];
 
 /** Parse a dotted-quad IPv4 string into a uint32, or null if not a valid IPv4. */
@@ -75,7 +77,9 @@ export function isBlockedIPv6(host: string): boolean {
   if (h === "::1") return true; // loopback
   if (h === "::") return true; // unspecified
   if (h.startsWith("fc") || h.startsWith("fd")) return true; // fc00::/7 ULA
-  if (/^fe[89ab]/.test(h)) return true; // fe80::/10 link-local
+  // fe80::/10 link-local (fe80–febf) plus deprecated fec0::/10 site-local
+  // (fec0–feff); together they fill fe80::/9, none of which is publicly routable.
+  if (/^fe[89a-f]/.test(h)) return true;
 
   // IPv4-mapped, dotted form: ::ffff:a.b.c.d
   const mappedDotted = h.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
@@ -91,6 +95,15 @@ export function isBlockedIPv6(host: string): boolean {
   if (compatDotted) return isBlockedIPv4(compatDotted[1]);
   const compatHex = h.match(/^::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
   if (compatHex) return isBlockedIPv4(hextetsToV4(compatHex[1], compatHex[2]));
+  // Single-hextet IPv4-compatible tail: `::x` (all high bits zero) embeds only
+  // the low 16 bits, i.e. 0.0.(x>>8).(x&0xff) — always within 0.0.0.0/8 ("this"
+  // network). `::` and `::1` are handled above, so any remaining `::x` is routed
+  // through the IPv4 denylist rather than slipping past as "not an IP literal".
+  const compatSingle = h.match(/^::([0-9a-f]{1,4})$/);
+  if (compatSingle) {
+    const x = parseInt(compatSingle[1], 16);
+    return isBlockedIPv4(`0.0.${(x >> 8) & 0xff}.${x & 0xff}`);
+  }
 
   // 6to4: 2002:<v4>::/16 — the two hextets after `2002:` are the embedded v4.
   const sixToFour = h.match(/^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})/);

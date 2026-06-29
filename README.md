@@ -9,8 +9,8 @@ Its defining feature is **schedule-aware monitoring**: applications are checked
 hours they show as `Scheduled off` rather than `Down`, and the inactive period
 does not reduce uptime.
 
-> Status: **V1 complete**, hardened by a post-build security review (see
-> [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md)). See
+> Status: **V1 complete**, hardened by two post-build review passes (see
+> [`CODE_REVIEW.md`](./CODE_REVIEW.md)). See
 > [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the build history.
 
 ## What it does

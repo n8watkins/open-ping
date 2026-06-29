@@ -4,6 +4,7 @@ import {
   base64urlEncode,
   buildVapidJwt,
   generateVapidKeys,
+  sendWebPush,
   type VapidKeys,
 } from "./webpush";
 
@@ -97,5 +98,67 @@ describe("buildVapidJwt", () => {
     expect(claims.sub).toBe("mailto:admin@example.com");
     expect(typeof claims.exp).toBe("number");
     expect(claims.exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+});
+
+describe("sendWebPush validation (no network)", () => {
+  // These paths return before any crypto or fetch, so a placeholder VAPID
+  // identity is fine — it is never used here.
+  const vapid: VapidKeys = {
+    publicKey: "x",
+    privateKey: "y",
+    subject: "mailto:admin@example.com",
+  };
+  const okKeys = {
+    p256dh: base64urlEncode(new Uint8Array(65)),
+    auth: base64urlEncode(new Uint8Array(16)),
+  };
+
+  it("rejects an SSRF-unsafe endpoint as invalid (prunable), without fetching", async () => {
+    for (const endpoint of [
+      "http://localhost/push",
+      "http://169.254.169.254/latest/meta-data",
+      "http://10.0.0.5/push",
+      "ftp://push.example.com/x",
+    ]) {
+      const r = await sendWebPush({
+        subscription: { endpoint, ...okKeys },
+        payload: "{}",
+        vapid,
+      });
+      expect(r.ok).toBe(false);
+      expect(r.invalid).toBe(true);
+      expect(r.error).toMatch(/^invalid_subscription/);
+    }
+  });
+
+  it("rejects malformed base64url keys as invalid, without throwing", async () => {
+    const r = await sendWebPush({
+      subscription: {
+        endpoint: "https://push.example.com/abc",
+        p256dh: "*not base64*",
+        auth: "*nope*",
+      },
+      payload: "{}",
+      vapid,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.invalid).toBe(true);
+    expect(r.error).toBe("invalid_subscription");
+  });
+
+  it("rejects wrong-length keys as invalid", async () => {
+    const r = await sendWebPush({
+      subscription: {
+        endpoint: "https://push.example.com/abc",
+        p256dh: base64urlEncode(new Uint8Array(10)), // not the required 65 bytes
+        auth: base64urlEncode(new Uint8Array(16)),
+      },
+      payload: "{}",
+      vapid,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.invalid).toBe(true);
+    expect(r.error).toBe("invalid_subscription");
   });
 });

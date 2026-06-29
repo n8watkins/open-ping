@@ -49,7 +49,13 @@ describe("isWindowActiveAt — weekly recurrence", () => {
     start: "09:00",
     durationMinutes: 60,
   };
-  const w = makeWindow({ recurrence: rec });
+  // Wide validity range so these cases exercise the weekly rule itself, not the
+  // [startsAt, endsAt) bounds (those are covered separately below).
+  const w = makeWindow({
+    recurrence: rec,
+    startsAt: Date.UTC(2024, 0, 1),
+    endsAt: Date.UTC(2025, 0, 1),
+  });
 
   it("is active on the matching weekday within the window", () => {
     // Mon 2024-01-01 09:30 UTC
@@ -79,7 +85,13 @@ describe("isWindowActiveAt — weekly recurrence crossing midnight", () => {
     start: "23:00",
     durationMinutes: 120,
   };
-  const w = makeWindow({ recurrence: rec });
+  // Wide validity range so the midnight / week-boundary cases aren't masked by
+  // the [startsAt, endsAt) bounds.
+  const w = makeWindow({
+    recurrence: rec,
+    startsAt: Date.UTC(2024, 0, 1),
+    endsAt: Date.UTC(2025, 0, 1),
+  });
 
   it("is active late Saturday before midnight", () => {
     // Sat 2024-01-06 23:30 UTC
@@ -100,5 +112,40 @@ describe("isWindowActiveAt — weekly recurrence crossing midnight", () => {
 
   it("is inactive before the window starts on Saturday", () => {
     expect(isWindowActiveAt(w, Date.UTC(2024, 0, 6, 22, 30))).toBe(false);
+  });
+});
+
+describe("isWindowActiveAt — weekly recurrence bounded by validity range", () => {
+  // Mondays (weekday 1) 09:00 UTC for 60 minutes, but valid only for two weeks:
+  // [Mon 2024-02-05 00:00, Mon 2024-02-19 00:00). A bounded recurring window must
+  // not recur before it starts or after it ends.
+  const rec: Recurrence = {
+    type: "weekly",
+    weekday: 1,
+    start: "09:00",
+    durationMinutes: 60,
+  };
+  const w = makeWindow({
+    recurrence: rec,
+    startsAt: Date.UTC(2024, 1, 5, 0, 0),
+    endsAt: Date.UTC(2024, 1, 19, 0, 0),
+  });
+
+  it("is active on a matching weekday inside the validity range", () => {
+    // Mon 2024-02-12 09:30 UTC — within [startsAt, endsAt) and the weekly rule.
+    expect(isWindowActiveAt(w, Date.UTC(2024, 1, 12, 9, 30))).toBe(true);
+  });
+
+  it("does not recur before startsAt even on a matching weekday/time", () => {
+    // Mon 2024-01-29 09:30 UTC — the weekly rule matches, but this precedes the
+    // window's validity range, so it must be inactive.
+    expect(isWindowActiveAt(w, Date.UTC(2024, 0, 29, 9, 30))).toBe(false);
+  });
+
+  it("does not recur at/after endsAt even on a matching weekday/time", () => {
+    // endsAt is exclusive: the Monday that is endsAt's day, and later Mondays,
+    // are out of range despite matching the weekly rule.
+    expect(isWindowActiveAt(w, Date.UTC(2024, 1, 19, 9, 30))).toBe(false);
+    expect(isWindowActiveAt(w, Date.UTC(2024, 1, 26, 9, 30))).toBe(false);
   });
 });

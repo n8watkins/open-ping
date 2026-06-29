@@ -35,6 +35,7 @@ interface StateRow {
   state_since: number | null;
   last_success_at: number | null;
   last_beat_at: number | null;
+  last_error: string | null;
   consecutive_failures: number;
   consecutive_successes: number;
   active_incident_id: string | null;
@@ -43,8 +44,8 @@ interface StateRow {
 
 async function readState(env: Env, monitorId: string): Promise<StateRow | null> {
   return env.DB.prepare(
-    `SELECT state, state_since, last_success_at, last_beat_at, consecutive_failures,
-            consecutive_successes, active_incident_id, is_flapping
+    `SELECT state, state_since, last_success_at, last_beat_at, last_error,
+            consecutive_failures, consecutive_successes, active_incident_id, is_flapping
      FROM monitor_state WHERE monitor_id = ?`,
   )
     .bind(monitorId)
@@ -253,7 +254,12 @@ export async function applyCheckResult(
 export async function setScheduledOff(env: Env, monitor: MonitorRecord, now: number): Promise<void> {
   const cur = await readState(env, monitor.id);
   const np = nextActivePeriod(monitor.schedule, new Date(now));
-  const nextAt = np ? np.start.getTime() : now + monitor.intervalSeconds * 1000;
+  // Clamp to `now`: never write a next_check_at in the past. nextActivePeriod
+  // can return a window whose start already passed (e.g. an overnight window
+  // still open at `now`); a past timestamp would make the due-query re-fire this
+  // monitor every tick. The opening-day exclusion fix in isActiveAt keeps the
+  // two functions consistent, but this guard is the hard backstop.
+  const nextAt = np ? Math.max(np.start.getTime(), now) : now + monitor.intervalSeconds * 1000;
 
   // Resolve any open incident at the moment monitoring pauses so its
   // duration_seconds reflects only the actively-monitored downtime, not the
@@ -327,22 +333,33 @@ export async function recordHeartbeat(
     runId?: string;
     metrics?: Record<string, number>;
   },
-  opts?: { maintenance?: boolean },
+  opts?: { maintenance?: boolean; scheduledOff?: boolean },
 ): Promise<{ prevState: MonitorState; stateChanged: boolean }> {
   const now = payload.at;
   const cur = await readState(env, monitor.id);
   const prevState: MonitorState = cur?.state ?? "unknown";
   const ok = payload.exitStatus == null || payload.exitStatus === 0;
-  // During a maintenance window the beat is still recorded, but a failure must
-  // not open an incident and the cycle is excluded from uptime (PRD §16/§11).
+  // A beat received during a maintenance window OR outside the monitor's
+  // schedule window is still recorded (state + last_beat_at, so deadline
+  // tracking stays sane), but its failure must NOT open an incident or fire an
+  // alert, and the cycle is excluded from uptime accounting (PRD §16/§11/§7).
+  // Maintenance takes precedence over schedule for the displayed state.
   const inMaintenance = opts?.maintenance ?? false;
-  const state: MonitorState = inMaintenance ? "maintenance" : ok ? "up" : "down";
+  const offSchedule = (opts?.scheduledOff ?? false) && !inMaintenance;
+  const suppressed = inMaintenance || offSchedule;
+  const state: MonitorState = inMaintenance
+    ? "maintenance"
+    : offSchedule
+      ? "scheduled_off"
+      : ok
+        ? "up"
+        : "down";
   const stateChanged = prevState !== state;
   const stateSince = stateChanged ? now : (cur?.state_since ?? now);
   const deadline = now + (monitor.intervalSeconds + (monitor.graceSeconds ?? 0)) * 1000;
   const error = ok ? null : `exit_status_${payload.exitStatus}`;
 
-  const incident = inMaintenance
+  const incident = suppressed
     ? {
         activeIncidentId: cur?.active_incident_id ?? null,
         isFlapping: cur?.is_flapping === 1,
@@ -394,20 +411,53 @@ export async function recordHeartbeat(
   await safe("interval", () =>
     updateStatusInterval(env, monitor.id, state, now, { latencyMs: payload.durationMs, ok }),
   );
-  // Maintenance beats are excluded from uptime accounting (like scheduled-off).
-  if (!inMaintenance) {
+  // Maintenance / off-schedule beats are excluded from uptime accounting.
+  if (!suppressed) {
+    // A beat that recovers a *missed-heartbeat* outage must NOT re-credit a full
+    // interval of monitored time: markHeartbeatMissed already accrued that
+    // wall-clock span (monitored + down) on each overdue cron cycle. Crediting
+    // another interval here would overlap those seconds and inflate uptime. (A
+    // recovery from a *received* failing beat — exit_status != 0 — is genuinely
+    // one interval later, so it still credits a full interval.)
+    const recoveringFromMissed =
+      ok && cur?.state === "down" && cur?.last_error === "heartbeat_missed";
     await safe("rollup", () =>
       recordCheckSample(env, monitor.id, {
         at: now,
         ok,
         durationMs: payload.durationMs,
-        monitoredSeconds: monitor.intervalSeconds,
+        monitoredSeconds: recoveringFromMissed ? 0 : monitor.intervalSeconds,
         downSeconds: ok ? 0 : monitor.intervalSeconds,
       }),
     );
   }
 
   return { prevState, stateChanged };
+}
+
+/**
+ * Grant one grace cycle to a heartbeat monitor re-entering its schedule window
+ * (snapshot state `scheduled_off`, or a never-beaten `unknown` start). The
+ * pre-gap last_beat_at is stale — potentially hours or days old — so the first
+ * in-window tick would otherwise be instantly overdue and falsely marked missed
+ * (opening an incident + firing an alert) the moment monitoring resumes.
+ *
+ * Re-base the deadline on `now` and mark the monitor `warming_up` (a non-down,
+ * uptime-excluded state, mirroring an HTTP cold start). Because the state is no
+ * longer scheduled_off/unknown, the scheduler does NOT warm it up again on the
+ * next tick — it resumes ordinary overdue detection from the fresh base, so a
+ * genuinely missed beat is still caught.
+ */
+export async function warmHeartbeat(env: Env, monitor: MonitorRecord, now: number): Promise<void> {
+  const deadline = now + (monitor.intervalSeconds + (monitor.graceSeconds ?? 0)) * 1000;
+  await env.DB.prepare(
+    `UPDATE monitor_state SET
+       state = 'warming_up', state_since = ?, last_beat_at = ?, next_check_at = ?,
+       warmup = 1, active_incident_id = NULL, is_flapping = 0, updated_at = ?
+     WHERE monitor_id = ?`,
+  )
+    .bind(now, now, deadline, now, monitor.id)
+    .run();
 }
 
 /** Mark a heartbeat monitor down because no call arrived before the deadline. */

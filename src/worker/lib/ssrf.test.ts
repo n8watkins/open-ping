@@ -21,6 +21,15 @@ const BLOCKED = [
   "http://[::127.0.0.1]", // IPv4-compatible -> [::7f00:1]
   "http://[2002:7f00:0001::]", // 6to4 of 127.0.0.1 -> [2002:7f00:1::]
   "http://[64:ff9b::7f00:1]", // NAT64 of 127.0.0.1
+  "http://[fec0::1]", // deprecated site-local fec0::/10
+  "http://[::2]", // single-hextet IPv4-compatible -> 0.0.0.2 (0.0.0.0/8)
+  // Encoded-loopback forms that rely on WHATWG normalizing the host to a
+  // dotted-quad before the IPv4 denylist sees it — regression guards.
+  "http://0x7f000001", // hex 127.0.0.1
+  "http://2130706433", // decimal 127.0.0.1
+  "http://0177.0.0.1", // octal-first-octet 127.0.0.1
+  "http://127.1", // short-form 127.0.0.1
+  "http://0", // 0.0.0.0 ("this" network)
 ];
 
 const ALLOWED = [
@@ -114,5 +123,16 @@ describe("isBlockedIPv6", () => {
   });
   it("does not over-block public 6to4 / compatible forms", () => {
     expect(isBlockedIPv6("[2002:0808:0808::]")).toBe(false); // 6to4 of 8.8.8.8
+  });
+  it("flags deprecated site-local (fec0::/10)", () => {
+    expect(isBlockedIPv6("[fec0::1]")).toBe(true); // start of the range
+    expect(isBlockedIPv6("[fed0::1]")).toBe(true); // middle of the range
+    expect(isBlockedIPv6("[feff::1]")).toBe(true); // end of the range
+  });
+  it("flags single-hextet IPv4-compatible forms (::x -> 0.0.0.0/8)", () => {
+    expect(isBlockedIPv6("::2")).toBe(true); // 0.0.0.2
+    expect(isBlockedIPv6("[::ff]")).toBe(true); // 0.0.0.255
+    expect(isBlockedIPv6("[::100]")).toBe(true); // 0.0.1.0
+    expect(isBlockedIPv6("[::ffff]")).toBe(true); // 0.0.255.255
   });
 });

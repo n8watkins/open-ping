@@ -16,7 +16,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 };
 
 export default function Login() {
-  const { loading, status, me } = useBootstrap();
+  const { loading, status, me, error: bootstrapError, refresh } = useBootstrap();
   const [params] = useSearchParams();
   const error = params.get("error");
 
@@ -27,6 +27,16 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+
+  async function retry() {
+    setRetrying(true);
+    try {
+      await refresh();
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   async function requestMagicLink(e: FormEvent) {
     e.preventDefault();
@@ -55,6 +65,39 @@ export default function Login() {
   }
   if (status && !status.setupComplete) return <Navigate to="/setup" replace />;
   if (me?.authenticated) return <Navigate to="/" replace />;
+
+  // A failed bootstrap leaves `status` null, which would otherwise render every
+  // provider as disabled ("no sign-in options"). Show a retryable error instead
+  // so a transient outage doesn't masquerade as a misconfigured install.
+  if (bootstrapError && !status) {
+    return (
+      <div className="grid min-h-full place-items-center px-4">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 flex justify-center">
+            <Logo />
+          </div>
+          <div className="rounded-card border border-line bg-surface p-6 text-center">
+            <h1 className="text-lg font-semibold tracking-tight">
+              Can't reach the server
+            </h1>
+            <p className="mt-2 text-sm text-ink-muted">
+              We couldn't load sign-in options. This is usually a temporary
+              network or server issue.
+            </p>
+            <button
+              type="button"
+              onClick={() => void retry()}
+              disabled={retrying}
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-line disabled:opacity-40"
+            >
+              {retrying ? <Loader2 className="size-4 animate-spin" /> : null}
+              Try again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid min-h-full place-items-center px-4">

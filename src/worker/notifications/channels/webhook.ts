@@ -57,7 +57,14 @@ export async function sendWebhook(
 
   let res: Response;
   try {
-    res = await fetch(url, { method: "POST", headers, body });
+    // Bound the request so one hung endpoint can't stall the sequential outbox
+    // drain. An abort throws and is mapped to a retryable network_error below.
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: AbortSignal.timeout(10000),
+    });
   } catch {
     return { ok: false, error: "network_error" };
   }

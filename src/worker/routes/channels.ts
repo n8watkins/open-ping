@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
+import { NOTIFY_EVENTS } from "../../shared/notifications";
 import { requireAuth } from "../middleware/auth";
 import {
   createChannel,
@@ -35,20 +36,85 @@ function redactChannel(ch: ChannelRecord): ChannelRecord {
   return { ...ch, config: redactChannelConfig(ch.type, ch.config) };
 }
 
-const channelCreateSchema = z.object({
-  type: z.enum(["email", "discord", "webhook"]),
-  name: z.string().min(1).max(120).optional(),
-  enabled: z.boolean().optional(),
-  config: z.record(z.string(), z.unknown()),
-  events: z.array(z.string()).optional(),
-});
+// --- Per-channel-type config validation (PRD §16) ---------------------------
+// `config` is freeform JSON persisted verbatim and replayed on every delivery,
+// so validate the load-bearing fields per channel type. Webhook/Discord URLs are
+// also SSRF-guarded per-delivery (assertSafeUrl); this rejects malformed config
+// up front. Unknown keys pass through so a stored field is never silently dropped.
 
+const MAX_URL = 2048;
+const MAX_SECRET = 1024;
+const MAX_EMAIL = 320; // RFC 5321 forward/reverse path length
+
+/** A length-bounded https URL (Discord + webhook endpoints are always https). */
+const httpsUrl = z
+  .string()
+  .max(MAX_URL)
+  .url()
+  .refine((u) => {
+    try {
+      return new URL(u).protocol === "https:";
+    } catch {
+      return false;
+    }
+  }, "must be an https URL");
+
+const emailAddr = z.string().max(MAX_EMAIL).email();
+const optionalSecret = z.string().max(MAX_SECRET).optional();
+
+/** Known notification events; bounds the optional per-channel override list. */
+const eventsSchema = z.array(z.enum(NOTIFY_EVENTS)).max(NOTIFY_EVENTS.length);
+
+const nameField = z.string().min(1).max(120).optional();
+
+// Create: the full config is always supplied (no redacted secrets yet), so each
+// type's required fields must be present and well-formed.
+const channelCreateSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("discord"),
+    name: nameField,
+    enabled: z.boolean().optional(),
+    config: z.object({ url: httpsUrl }).passthrough(),
+    events: eventsSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("webhook"),
+    name: nameField,
+    enabled: z.boolean().optional(),
+    config: z.object({ url: httpsUrl, secret: optionalSecret }).passthrough(),
+    events: eventsSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("email"),
+    name: nameField,
+    enabled: z.boolean().optional(),
+    config: z
+      .object({ to: emailAddr, from: emailAddr.optional() })
+      .passthrough(),
+    events: eventsSchema.optional(),
+  }),
+]);
+
+// Update: `type` is not in the body (it comes from the stored record) and secret
+// config fields arrive blanked ("") to be merged back by the data layer — so the
+// Discord webhook URL (a secret) may legitimately be empty here. The config is
+// validated against the channel's actual type in the handler (updateConfigSchemas).
 const channelUpdateSchema = z.object({
-  name: z.string().min(1).max(120).optional(),
+  name: nameField,
   enabled: z.boolean().optional(),
   config: z.record(z.string(), z.unknown()).optional(),
-  events: z.array(z.string()).optional(),
+  events: eventsSchema.optional(),
 });
+
+/** Allow a blanked secret ("") OR a valid https URL (redact-then-resubmit flow). */
+const secretUrl = z.union([z.literal(""), httpsUrl]);
+
+/** Per-type config validators for UPDATE (secret fields may be blank). */
+const updateConfigSchemas: Record<string, z.ZodTypeAny> = {
+  discord: z.object({ url: secretUrl }).passthrough(),
+  webhook: z.object({ url: httpsUrl, secret: optionalSecret }).passthrough(),
+  email: z.object({ to: emailAddr, from: emailAddr.optional() }).passthrough(),
+};
 
 channels.get("/", async (c) => {
   const list = await listChannels(c.env);
@@ -80,6 +146,20 @@ channels.put("/:id", async (c) => {
   }
   const existing = await getChannel(c.env, id);
   if (!existing) return c.json({ error: "not_found" }, 404);
+
+  // The update body carries no `type`, so validate the config against the
+  // channel's actual stored type. Secret fields may be blank here (redacted then
+  // resubmitted); the data layer merges the stored secret back in afterwards.
+  if (parsed.data.config !== undefined) {
+    const configSchema = updateConfigSchemas[existing.type];
+    if (configSchema) {
+      const cfg = configSchema.safeParse(parsed.data.config);
+      if (!cfg.success) {
+        return c.json({ error: "validation", issues: cfg.error.issues }, 400);
+      }
+    }
+  }
+
   const channel = await updateChannel(c.env, id, parsed.data);
   if (!channel) return c.json({ error: "not_found" }, 404);
   return c.json({ channel: redactChannel(channel) });

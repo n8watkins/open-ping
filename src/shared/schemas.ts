@@ -18,8 +18,9 @@ export const httpMethodSchema = z.enum([
 ]);
 
 export const headerSchema = z.object({
-  name: z.string().min(1),
-  value: z.string(),
+  name: z.string().min(1).max(256),
+  // ~8 KB: request headers are stored and replayed on every check.
+  value: z.string().max(8192),
 });
 
 export const httpAuthSchema = z.discriminatedUnion("type", [
@@ -36,12 +37,12 @@ export const httpAuthSchema = z.discriminatedUnion("type", [
 export const assertionSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("contains"),
-    value: z.string().min(1),
+    value: z.string().min(1).max(8192),
     caseSensitive: z.boolean().default(false),
   }),
   z.object({
     kind: z.literal("not_contains"),
-    value: z.string().min(1),
+    value: z.string().min(1).max(8192),
     caseSensitive: z.boolean().default(false),
   }),
   z.object({ kind: z.literal("not_empty") }),
@@ -50,21 +51,35 @@ export const assertionSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("json_path_equals"),
     path: z.string().min(1),
-    value: z.string(),
+    value: z.string().max(8192),
   }),
   z.object({
     kind: z.literal("json_path_contains"),
     path: z.string().min(1),
-    value: z.string(),
+    value: z.string().max(8192),
   }),
 ]);
 
 export const httpConfigSchema = z
   .object({
-    url: z.string().url(),
+    // Constrain the scheme (and bound length) so client + server agree with the
+    // outbound `assertSafeUrl` boundary: the value is also rendered as a
+    // clickable admin href, so `javascript:`/`data:`/`file:` must be rejected.
+    url: z
+      .string()
+      .url()
+      .max(2048)
+      .refine((u) => {
+        try {
+          return /^https?:$/.test(new URL(u).protocol);
+        } catch {
+          return false;
+        }
+      }, "url must be http(s)"),
     method: httpMethodSchema.default("GET"),
-    headers: z.array(headerSchema).default([]),
-    body: z.string().optional(),
+    headers: z.array(headerSchema).max(100).default([]),
+    // ~64 KB: the body is stored in a TEXT column and replayed on every check.
+    body: z.string().max(65536).optional(),
     auth: httpAuthSchema.default({ type: "none" }),
     timeoutMs: z.number().int().min(1000).max(120000).default(60000),
     warmupTimeoutMs: z.number().int().min(1000).max(300000).default(120000),
@@ -114,7 +129,9 @@ export const scheduleSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("always") }),
   z.object({
     mode: z.literal("business_hours"),
-    weekdays: z.array(weekdaySchema).default([1, 2, 3, 4, 5]),
+    // `.min(1)`: a business-hours schedule with no weekdays would never run, so
+    // the monitor would be silently `scheduled_off` forever and never checked.
+    weekdays: z.array(weekdaySchema).min(1).max(7).default([1, 2, 3, 4, 5]),
     start: timeOfDaySchema.default("08:00"),
     end: timeOfDaySchema.default("17:00"),
     timezone: timezoneSchema,
@@ -126,25 +143,30 @@ export const scheduleSchema = z.discriminatedUnion("mode", [
       .array(
         z.object({
           weekday: weekdaySchema,
-          periods: z.array(periodSchema),
+          periods: z.array(periodSchema).max(24),
         }),
       )
+      .max(31)
       .default([]),
-    excludedDates: z.array(z.string()).default([]), // YYYY-MM-DD
+    // YYYY-MM-DD; bounded so the JSON config blob can't grow unboundedly.
+    excludedDates: z
+      .array(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/))
+      .max(1000)
+      .default([]),
   }),
 ]);
 
 // --- Notification + public preferences ---
 export const notifySchema = z.object({
-  channels: z.array(z.string()).default([]),
+  channels: z.array(z.string().max(64)).max(100).default([]),
   events: z.record(z.string(), z.boolean()).optional(),
 });
 
 export const publicConfigSchema = z.object({
   visible: z.boolean().default(false),
-  name: z.string().optional(),
-  description: z.string().optional(),
-  group: z.string().optional(),
+  name: z.string().max(256).optional(),
+  description: z.string().max(256).optional(),
+  group: z.string().max(256).optional(),
   sortOrder: z.number().int().default(0),
   showUptime: z.boolean().default(true),
   showResponseTime: z.boolean().default(false),

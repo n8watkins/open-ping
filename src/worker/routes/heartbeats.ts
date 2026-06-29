@@ -3,6 +3,7 @@ import type { AppEnv } from "../types";
 import { getMonitorByHeartbeatToken } from "../db/monitors";
 import { recordHeartbeat } from "../checks/state";
 import { isMonitorInMaintenance } from "../db/maintenance";
+import { isActiveAt } from "../lib/schedule";
 import { timingSafeEqual } from "../lib/timing";
 import type { HeartbeatConfig } from "../../shared/schemas";
 
@@ -14,14 +15,21 @@ import type { HeartbeatConfig } from "../../shared/schemas";
  */
 export const heartbeats = new Hono<AppEnv>();
 
-/** True if no method allowlist is set, else true iff `method` is in `accepted`. */
+// With no explicit per-monitor allowlist we accept POST and HEAD only. GET is
+// the method link-preview/prefetch bots and browser address-bar probes use, so
+// allowing it by default lets them fire false success beats. NOTE: this is an
+// intentional behavior change — heartbeats that previously relied on a bare GET
+// must now configure `acceptedMethods` (e.g. ["GET"]) or switch to POST.
+const DEFAULT_ACCEPTED_METHODS = ["POST", "HEAD"];
+
+/** True iff `method` is accepted (defaulting to POST/HEAD when none configured). */
 export function isMethodAllowed(
   accepted: string[] | undefined,
   method: string,
 ): boolean {
-  if (!accepted || accepted.length === 0) return true;
+  const allow = accepted && accepted.length > 0 ? accepted : DEFAULT_ACCEPTED_METHODS;
   const m = method.toUpperCase();
-  return accepted.some((a) => a.toUpperCase() === m);
+  return allow.some((a) => a.toUpperCase() === m);
 }
 
 /**
@@ -58,12 +66,26 @@ function toText(v: unknown): string | undefined {
   return undefined;
 }
 
-/** Keep only numeric (finite) values from an arbitrary metrics object. */
+// The /hb/:token endpoint is the one genuinely public WRITE path, and its
+// payload is persisted verbatim into samples.meta. Cap every attacker-controllable
+// field so a known token can't be used to bloat storage / exhaust the D1 write
+// budget with oversized beats.
+const MAX_MESSAGE_CHARS = 1000;
+const MAX_RUNID_CHARS = 200;
+const MAX_METRICS_KEYS = 50;
+
+/**
+ * Keep only numeric (finite) values from an arbitrary metrics object, bounded to
+ * MAX_METRICS_KEYS to cap the persisted size.
+ */
 function filterMetrics(v: unknown): Record<string, number> | undefined {
   if (!v || typeof v !== "object") return undefined;
   const out: Record<string, number> = {};
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    if (typeof val === "number" && !Number.isNaN(val)) out[k] = val;
+    if (typeof val === "number" && !Number.isNaN(val)) {
+      out[k] = val;
+      if (Object.keys(out).length >= MAX_METRICS_KEYS) break;
+    }
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -86,10 +108,13 @@ export function parseHeartbeatPayload(
   const exitStatus = toNumber(
     b.exitStatus ?? b.status ?? query.status ?? query.exit ?? query.exitStatus,
   );
-  const message = toText(b.message ?? query.msg ?? query.message);
+  const message = toText(b.message ?? query.msg ?? query.message)?.slice(
+    0,
+    MAX_MESSAGE_CHARS,
+  );
   const runId = toText(
     b.runId ?? b.run_id ?? query.rid ?? query.run_id ?? query.runId,
-  );
+  )?.slice(0, MAX_RUNID_CHARS);
   const metrics = filterMetrics(b.metrics);
 
   const payload: HeartbeatPayload = {};
@@ -134,10 +159,19 @@ heartbeats.all("/:token", async (c) => {
 
   const payload = parseHeartbeatPayload(c.req.query(), body);
   const now = Date.now();
-  // Suppress incidents for beats reporting a failure during a maintenance
-  // window — the scheduler already does this for checks (PRD §16).
+  // Suppress incidents/alerts and uptime accrual for beats that land during a
+  // maintenance window OR outside the monitor's schedule window — the scheduler
+  // already does this for HTTP checks (PRD §16/§7). The beat is still recorded
+  // so deadline tracking stays sane; it just must not count against uptime or
+  // page anyone for an off-hours run.
   const maintenance = await isMonitorInMaintenance(c.env, monitor.id, now);
-  await recordHeartbeat(c.env, monitor, { at: now, ...payload }, { maintenance });
+  const scheduledOff = !isActiveAt(monitor.schedule, new Date(now));
+  await recordHeartbeat(
+    c.env,
+    monitor,
+    { at: now, ...payload },
+    { maintenance, scheduledOff },
+  );
 
   return c.json({ ok: true, monitor: monitor.id });
 });

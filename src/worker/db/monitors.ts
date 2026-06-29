@@ -278,4 +278,14 @@ export async function deleteMonitor(env: Env, id: string): Promise<void> {
     env.DB.prepare("DELETE FROM monitor_state WHERE monitor_id = ?").bind(id),
     env.DB.prepare("DELETE FROM monitors WHERE id = ?").bind(id),
   ]);
+
+  // notification_outbox is intentionally NOT part of this cascade. Its rows have
+  // no monitor_id; the only monitor linkage is the unique `event_key`
+  // (`<event>:<incidentId>:…`, a format owned by notifications/enqueue.ts) which
+  // embeds the *incident* id mid-string, not a monitor id. A correct purge would
+  // correlate each of the monitor's incidents via
+  // `event_key LIKE '%:' || REPLACE(id,'_','\_') || ':%' ESCAPE '\'` — coupling
+  // this layer to that key format and to LIKE's `_`-wildcard quirk. Deferred as
+  // too fragile; orphaned outbox rows are terminal (sent/dead/pending) and are
+  // only ever read by their own id, so leaving them is harmless.
 }

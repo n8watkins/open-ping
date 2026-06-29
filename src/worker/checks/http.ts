@@ -226,6 +226,11 @@ export async function runHttpCheck(
       // missed every other configured secret-bearing header.
       if (next.origin !== prevOrigin) {
         reqHeaders = new Headers();
+        // Drop the request body as well. On a 307/308 the method and body are
+        // preserved, so without this a secret carried in the body would be
+        // re-sent to the server-chosen cross-origin target — the same leak the
+        // header stripping above guards against.
+        reqBody = undefined;
       }
       currentUrl = next.toString();
       redirected = true;

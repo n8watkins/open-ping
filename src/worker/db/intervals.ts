@@ -102,16 +102,6 @@ async function getOpenRow(
     .first<IntervalRow>();
 }
 
-/** Small public helper: the currently-open interval for a monitor, or null. */
-export async function getOpenInterval(
-  env: Env,
-  monitorId: string,
-): Promise<{ id: string; state: MonitorState; startedAt: number } | null> {
-  const row = await getOpenRow(env, monitorId);
-  if (!row) return null;
-  return { id: row.id, state: row.state as MonitorState, startedAt: row.started_at };
-}
-
 /**
  * Record a check/state observation against the evolving interval timeline.
  * Extends the open interval when the state is unchanged; closes it and opens a

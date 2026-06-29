@@ -61,8 +61,10 @@ function rowToSubscription(row: PushSubscriptionRow): PushSubscriptionRecord {
 
 /**
  * Register (or re-register) a subscription, keyed by its unique endpoint. A
- * repeat subscribe from the same device refreshes the keys/metadata and clears
- * the `disabled` flag rather than creating a duplicate row.
+ * repeat subscribe from the same device refreshes the keys/metadata, clears the
+ * `disabled` flag, and resets the failure bookkeeping (failures/last_failure_at)
+ * so a device returning with fresh keys starts clean — rather than creating a
+ * duplicate row.
  */
 export async function upsertSubscription(
   env: Env,
@@ -88,7 +90,9 @@ export async function upsertSubscription(
        label = excluded.label,
        user_agent = excluded.user_agent,
        platform = excluded.platform,
-       disabled = 0`,
+       disabled = 0,
+       failures = 0,
+       last_failure_at = NULL`,
   )
     .bind(
       id,

@@ -15,15 +15,15 @@ hours; outside them they show `Scheduled off` and don't count against uptime.
   OAuth, Resend email, Discord, signed webhooks. Single-administrator (no public signup).
 - **Source of truth for scope:** the full PRD (pasted into the first session message) and
   `BUILD_PLAN.md` (phase + §26 acceptance-criteria tracker — all checked).
-- **Repo:** local git, default branch `main`. A 9-agent security + coding review pass has
-  since landed (see `SECURITY_REVIEW.md`).
+- **Repo:** local git, default branch `main`. Post-build review passes have
+  since landed (see `CODE_REVIEW.md`).
 - **Runs at:** `http://localhost:5173` via `npm run dev` (vite + workerd). Not yet deployed
   to a real Cloudflare account.
 
 ## State
 
-**V1 implementation COMPLETE**, plus a follow-up security + coding review (21 fixes,
-`SECURITY_REVIEW.md`). All 6 PRD phases done; 253 unit tests pass; `tsc -b`
+**V1 implementation COMPLETE**, plus follow-up review passes (see `CODE_REVIEW.md`).
+All 6 PRD phases done; 253 unit tests pass; `tsc -b`
 and `vite build` clean. The original build session's commits (oldest→newest), all on `main`:
 
 | Phase | Commits |

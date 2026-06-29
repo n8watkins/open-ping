@@ -221,6 +221,8 @@ export async function gatherWeeklyStats(
   const retryRecoveries = agg?.retry_recoveries ?? 0;
 
   const overallUptimePct = checks > 0 ? (okChecks / checks) * 100 : 100;
+  // sum_latency_ms is accumulated for OK checks only (see rollups.okLatencyMs),
+  // so dividing by ok_checks keeps the numerator and denominator consistent.
   const avgResponseMs = okChecks > 0 ? Math.round(sumLatency / okChecks) : null;
 
   const slow = await env.DB.prepare(

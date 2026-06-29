@@ -49,6 +49,27 @@ function intRange(min: number, max: number) {
 }
 
 /**
+ * Validate an OPTIONAL http(s) URL setting bounded to `max` chars. An empty
+ * string is allowed (it clears the setting). Used for status-page branding
+ * values that are rendered as an `href`/`src` on the PUBLIC status page, so a
+ * `javascript:`/`data:` scheme must be rejected at the server boundary.
+ */
+function optionalUrlSetting(max = 2048) {
+  return (v: string): string | null => {
+    if (v === "") return null;
+    if (v.length > max) return `must be at most ${max} characters`;
+    try {
+      const u = new URL(v);
+      return u.protocol === "http:" || u.protocol === "https:"
+        ? null
+        : "must be an http(s) URL";
+    } catch {
+      return "must be a valid URL";
+    }
+  };
+}
+
+/**
  * Per-key value validators for writable settings (keys without an entry accept
  * any string). Each returns an error message when the value is invalid, so the
  * PUT handler can reject the whole request before storing anything.
@@ -96,6 +117,9 @@ const VALIDATORS: Record<string, (v: string) => string | null> = {
       : "must be a hex color (e.g. #6d8bff)",
   status_page_theme: (v) =>
     v === "dark" || v === "light" ? null : "must be 'dark' or 'light'",
+  // Rendered as an href/src on the PUBLIC status page — require a safe scheme.
+  status_page_homepage: optionalUrlSetting(),
+  status_page_logo: optionalUrlSetting(),
   status_page_enabled: boolSetting,
   status_page_attribution: boolSetting,
   weekly_summary_enabled: boolSetting,

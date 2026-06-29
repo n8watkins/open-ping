@@ -115,15 +115,66 @@ export function toEmailHtml(p: NotificationPayload): string {
   </div>`;
 }
 
+// Discord embed length limits
+// (https://discord.com/developers/docs/resources/channel#embed-limits). An
+// over-limit embed is rejected with 400 → retried to death → the alert is lost.
+const DISCORD_TITLE_MAX = 256;
+const DISCORD_DESCRIPTION_MAX = 4096;
+const DISCORD_FIELD_VALUE_MAX = 1024;
+
+/** Truncate to `max` characters, marking any elision with an ellipsis. */
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
+
+/**
+ * Backslash-escape Discord markdown control characters so an attacker-influenced
+ * string (notably a remote `error` body) can't inject bold/italics, spoilers,
+ * code blocks, block quotes, or masked links. Single pass — the backslashes we
+ * insert are not re-scanned, so there is no double-escaping.
+ */
+function escapeDiscordMarkdown(s: string): string {
+  return s.replace(/[\\*_~`|>[\]]/g, "\\$&");
+}
+
+/**
+ * Map a notification event to the monitor "state" used for the embed accent
+ * color. `p.state` is collapsed to up/down for the webhook contract, which would
+ * render flapping/degraded/maintenance with the red "down" color; derive the
+ * color from the real event instead so those show amber (degraded) / green.
+ */
+function eventColorState(event: NotifyEvent): string {
+  switch (event) {
+    case "recovered":
+    case "maintenance_end":
+    case "test":
+    case "weekly":
+      return "up";
+    case "flapping":
+    case "degraded":
+    case "maintenance_start":
+      return "degraded"; // amber, not red
+    default:
+      return "down"; // down, heartbeat_missed
+  }
+}
+
 export function toDiscordEmbed(p: NotificationPayload): DiscordEmbed {
   const fields: DiscordEmbed["fields"] = [];
   if (p.statusCode) fields.push({ name: "HTTP status", value: String(p.statusCode), inline: true });
-  if (p.error) fields.push({ name: "Error", value: p.error, inline: true });
+  if (p.error) {
+    fields.push({
+      name: "Error",
+      value: truncate(escapeDiscordMarkdown(p.error), DISCORD_FIELD_VALUE_MAX),
+      inline: true,
+    });
+  }
   return {
-    title: p.title,
-    description: p.body,
+    title: truncate(p.title, DISCORD_TITLE_MAX),
+    // `body` embeds the (untrusted) error, so sanitize it too before truncating.
+    description: truncate(escapeDiscordMarkdown(p.body), DISCORD_DESCRIPTION_MAX),
     url: p.url,
-    color: stateColor(p.state),
+    color: stateColor(eventColorState(p.event)),
     fields: fields.length ? fields : undefined,
     timestamp: new Date(p.detectedAt).toISOString(),
     footer: { text: "OpenPing" },

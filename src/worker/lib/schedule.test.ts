@@ -134,6 +134,61 @@ describe("excludedDates", () => {
   });
 });
 
+describe("excludedDates × overnight windows (opening-day rule)", () => {
+  // Monday (weekday 1) overnight window 22:00–06:00 spilling into Tuesday.
+  // 2024-06-24 is a Monday; the window spills into Tuesday 2024-06-25. The
+  // exclusion rule must anchor the whole window to its OPENING day (Monday) so
+  // isActiveAt and nextActivePeriod never disagree — disagreement is what let
+  // setScheduledOff write a next_check_at in the past.
+  const overnightMon = (excludedDates: string[]): Schedule => ({
+    mode: "custom",
+    timezone: NY,
+    days: [{ weekday: 1, periods: [{ start: "22:00", end: "06:00" }] }],
+    excludedDates,
+  });
+  const monEvening = at(NY, { year: 2024, month: 6, day: 24, hour: 23 });
+  const tueMorning = at(NY, { year: 2024, month: 6, day: 25, hour: 2 });
+
+  it("excluding the OPENING day suppresses the whole overnight window", () => {
+    const s = overnightMon(["2024-06-24"]);
+    expect(isActiveAt(s, monEvening)).toBe(false); // evening portion
+    expect(isActiveAt(s, tueMorning)).toBe(false); // morning spillover, same window
+  });
+
+  it("excluding only the SPILLOVER day leaves the window active", () => {
+    // The divergence the fix closes: the old rule keyed the morning portion off
+    // Tuesday's own (excluded) date and wrongly went inactive, while
+    // nextActivePeriod kept the window (keyed to Monday). Now both agree.
+    const s = overnightMon(["2024-06-25"]);
+    expect(isActiveAt(s, monEvening)).toBe(true);
+    expect(isActiveAt(s, tueMorning)).toBe(true);
+  });
+
+  it("isActiveAt agrees with nextActivePeriod on the morning spillover", () => {
+    // The period nextActivePeriod returns must actually contain an instant that
+    // isActiveAt reports as active, with no exclusion and with only the
+    // spillover day excluded (window still anchored to the open Monday).
+    for (const s of [overnightMon([]), overnightMon(["2024-06-25"])]) {
+      expect(isActiveAt(s, tueMorning)).toBe(true);
+      const period = nextActivePeriod(s, tueMorning);
+      expect(period).not.toBeNull();
+      expect(period!.start.getTime()).toBeLessThanOrEqual(tueMorning.getTime());
+      expect(period!.end.getTime()).toBeGreaterThan(tueMorning.getTime());
+    }
+  });
+
+  it("excluding the opening day makes nextActivePeriod skip to a future window", () => {
+    // With Monday excluded, isActiveAt(tueMorning) is false; the next active
+    // window must therefore start strictly AFTER the instant (never the past
+    // start of the excluded, already-open window) — the basis for the
+    // setScheduledOff next_check_at clamp.
+    const s = overnightMon(["2024-06-24"]);
+    const period = nextActivePeriod(s, tueMorning);
+    expect(period).not.toBeNull();
+    expect(period!.start.getTime()).toBeGreaterThan(tueMorning.getTime());
+  });
+});
+
 describe("DST correctness — America/New_York spring-forward 2024-03-10", () => {
   // Include Sunday so the DST-transition day itself is a scheduled day.
   const everyDayNY: Schedule = {

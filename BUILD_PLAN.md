@@ -10,12 +10,15 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** ✅ V1 COMPLETE + two post-build review passes applied.
-- **Last completed:** A second, 9-agent parallel **security + coding review** (adversarially
-  verified) landed 21 confirmed fixes — see [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md) and
-  migration `0002_review_fixes.sql`. 253 tests pass; `tsc -b` + `vite build` clean.
-- **Earlier:** Parallel multi-agent review of the whole app against §26, fixing every
-  confirmed issue (245 tests at that point).
+- **Active phase:** ✅ V1 COMPLETE + post-build review passes applied.
+- **Last completed:** A third pass — 8-agent parallel review (disjoint domains) →
+  7-agent parallel fix (disjoint files) — landed 4 High + ~13 Medium + ~24 Low fixes
+  (heartbeat×schedule seams, setup bootstrap lock, SSRF/validation hardening) and
+  migration `0003_heartbeat_backfill.sql`. **277 tests pass**; `tsc -b` + `vite build`
+  clean. Consolidated record: [`CODE_REVIEW.md`](./CODE_REVIEW.md).
+- **Earlier:** A 9-agent **security + coding review** (adversarially verified) landed
+  21 confirmed fixes + migration `0002_review_fixes.sql` (253 tests); and before that,
+  a parallel multi-agent review against §26 (245 tests).
 - **Status:** Build loop STOPPED — implementation complete. Items that can only be exercised
   on a real deployment (cron trigger cadence, real-device PWA install + Web Push wire
   encryption, live Resend/Discord delivery, GitHub OAuth code exchange) are implemented and

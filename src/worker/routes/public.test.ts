@@ -1,9 +1,20 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// The /status route reads only settings in its disabled early-return path; mock
+// getSetting so the route returns without touching D1, letting us assert the CDN
+// cache header in isolation. (db/monitors + db/maintenance don't import settings,
+// so this mock is safe for the whole import graph.)
+vi.mock("../db/settings", () => ({
+  getSetting: vi.fn(async () => null),
+}));
+
 import {
   computeOverall,
   computeUptimeAndBars,
+  publicStatus,
   type PublicServiceState,
 } from "./public";
+import type { Env } from "../types";
 
 /** Tiny factory for a service with only the state field computeOverall reads. */
 function svc(state: PublicServiceState): { state: PublicServiceState } {
@@ -108,5 +119,17 @@ describe("computeUptimeAndBars", () => {
     expect(byDate.get("2026-06-28")?.uptimePct).toBe(50);
     expect(byDate.get("2026-06-27")?.state).toBe("down");
     expect(byDate.get("2026-06-27")?.uptimePct).toBe(0);
+  });
+});
+
+describe("GET /status cache header", () => {
+  it("sets a short public Cache-Control header so the CDN can absorb load", async () => {
+    // Settings are all mocked to null → status page disabled → early return,
+    // but the header is set before that branch, so it is present regardless.
+    const res = await publicStatus.request("/status", {}, {} as Env);
+    expect(res.status).toBe(200);
+    const cacheControl = res.headers.get("Cache-Control");
+    expect(cacheControl).toContain("public");
+    expect(cacheControl).toMatch(/max-age=\d+/);
   });
 });

@@ -2,7 +2,13 @@ import type { Env } from "./types";
 import { listMonitors, type MonitorRecord } from "./db/monitors";
 import { isActiveAt } from "./lib/schedule";
 import { runMonitorCheck } from "./checks/runner";
-import { applyCheckResult, setScheduledOff, setMaintenanceState, markHeartbeatMissed } from "./checks/state";
+import {
+  applyCheckResult,
+  setScheduledOff,
+  setMaintenanceState,
+  markHeartbeatMissed,
+  warmHeartbeat,
+} from "./checks/state";
 import { activeWindowsAt } from "./db/maintenance";
 import { rollupAndCompact } from "./history/rollups";
 import { processOutbox } from "./notifications/dispatcher";
@@ -18,6 +24,11 @@ import { cleanupExpiredSessions, cleanupExpiredAuthTokens } from "./lib/sessions
 const LEASE_NAME = "scheduler";
 const LEASE_TTL_MS = 5 * 60 * 1000; // shorter than the 12-min cadence
 const CONCURRENCY = 6;
+// Upper bound on HTTP checks run in a single cron tick. At CONCURRENCY=6 an
+// unbounded backlog could blow the Worker subrequest/CPU budget and run past the
+// 12-min cadence / 5-min lease (→ overlapping crons double-counting). Excess due
+// monitors (oldest next_check_at first) are deferred to the next tick.
+const MAX_CHECKS_PER_RUN = 200;
 // Half the 12-min cadence: a monitor whose next check lands within this window
 // is run now rather than slipping to the following tick (which would otherwise
 // double its effective interval whenever a run takes a moment to reach it).
@@ -61,12 +72,16 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
     return;
   }
 
-  const run = await recordRunStart(env, controller.cron ?? null);
   let checked = 0;
   let skipped = 0;
   let failures = 0;
+  // Recorded INSIDE the try so that if it throws, the finally still releases the
+  // lease (otherwise the lease would be held until its TTL expires, stalling the
+  // next cron tick). `run` stays null until the start row is written.
+  let run: { id: string; startedAt: number } | null = null;
 
   try {
+    run = await recordRunStart(env, controller.cron ?? null);
     const monitors = await listMonitors(env);
     const now = Date.now();
 
@@ -92,25 +107,51 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
         continue;
       }
       if (globalMaintenance || maintenanceMonitorIds.has(m.id)) {
-        await setMaintenanceState(env, m, now);
-        skipped++;
+        // Wrapped so one monitor's DB error can't abort the whole cycle and
+        // starve every monitor after it.
+        try {
+          await setMaintenanceState(env, m, now);
+          skipped++;
+        } catch (e) {
+          failures++;
+          console.error(`[scheduler] maintenance ${m.id} failed`, e);
+        }
         continue;
       }
       if (!isActiveAt(m.schedule, new Date(now))) {
-        await setScheduledOff(env, m, now);
-        skipped++;
+        try {
+          await setScheduledOff(env, m, now);
+          skipped++;
+        } catch (e) {
+          failures++;
+          console.error(`[scheduler] scheduled-off ${m.id} failed`, e);
+        }
         continue;
       }
 
       const st = states.get(m.id);
 
       if (m.type === "heartbeat") {
+        // First in-window tick after an off-schedule gap (or a never-beaten cold
+        // start): the pre-gap last_beat_at is stale — potentially hours/days old
+        // — so the deadline below would be instantly overdue → a false miss the
+        // moment monitoring resumes. Grant one warm-up cycle that re-bases the
+        // deadline on `now`; genuine misses are detected from the next tick on.
+        if (!st || st.state === "scheduled_off" || st.state === "unknown") {
+          try {
+            await warmHeartbeat(env, m, now);
+            skipped++;
+          } catch (e) {
+            failures++;
+            console.error(`[scheduler] heartbeat warm-up ${m.id} failed`, e);
+          }
+          continue;
+        }
         // Base the deadline on the last beat ACTUALLY RECEIVED (success OR
-        // failure), or — for a monitor that has never beaten — on its creation
-        // time. Keying off last_success_at would wrongly declare an on-schedule
-        // but failing heartbeat "missed", clobbering its real error and
-        // double-counting downtime.
-        const base = st?.last_beat_at ?? m.createdAt;
+        // failure). Keying off last_success_at would wrongly declare an
+        // on-schedule but failing heartbeat "missed", clobbering its real error
+        // and double-counting downtime.
+        const base = st.last_beat_at ?? m.createdAt;
         const deadline = base + (m.intervalSeconds + (m.graceSeconds ?? 0)) * 1000;
         if (now > deadline) {
           // Overdue: (re)mark missed every cycle while it stays overdue so the
@@ -138,13 +179,37 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
       dueHttp.push(m);
     }
 
-    await mapLimit(dueHttp, CONCURRENCY, async (m) => {
+    // Run the most-overdue monitors first (oldest next_check_at), then cap the
+    // batch: an unbounded fan-out at CONCURRENCY can exceed the Worker
+    // subrequest/CPU budget and overrun the 12-min cadence / 5-min lease. The
+    // remainder carries over to the next tick, where its already-past
+    // next_check_at keeps it due — logged, never silently dropped.
+    dueHttp.sort(
+      (a, b) =>
+        (states.get(a.id)?.next_check_at ?? 0) - (states.get(b.id)?.next_check_at ?? 0),
+    );
+    let toCheck = dueHttp;
+    if (dueHttp.length > MAX_CHECKS_PER_RUN) {
+      const deferred = dueHttp.length - MAX_CHECKS_PER_RUN;
+      toCheck = dueHttp.slice(0, MAX_CHECKS_PER_RUN);
+      skipped += deferred;
+      console.log(
+        `[scheduler] ${dueHttp.length} HTTP checks due; running ${MAX_CHECKS_PER_RUN}, deferring ${deferred} to the next tick`,
+      );
+    }
+
+    await mapLimit(toCheck, CONCURRENCY, async (m) => {
       const st = states.get(m.id);
-      // Warm-up applies on a cold start (never checked / just came back on
-      // schedule). A monitor already in `warming_up` is NOT warmed up again:
-      // the next check is a normal one whose failure opens a real incident, so
-      // warm-up grants exactly one grace cycle rather than masking outages.
-      const warmup = !st || st.state === "scheduled_off" || st.state === "unknown";
+      // Warm-up applies on a cold start (never checked) or the first check after
+      // the monitor comes back on schedule or out of maintenance. A monitor
+      // already in `warming_up` is NOT warmed up again: the next check is a
+      // normal one whose failure opens a real incident, so warm-up grants exactly
+      // one grace cycle rather than masking outages.
+      const warmup =
+        !st ||
+        st.state === "scheduled_off" ||
+        st.state === "unknown" ||
+        st.state === "maintenance";
       try {
         const outcome = await runMonitorCheck(m, { warmup, now: Date.now() });
         await applyCheckResult(env, m, outcome);
@@ -200,14 +265,17 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
     );
   } catch (err) {
     console.error("[scheduler] run failed", err);
-    await recordRunFinish(env, run.id, run.startedAt, {
-      ok: false,
-      monitorsChecked: checked,
-      monitorsSkipped: skipped,
-      checkFailures: failures,
-      notificationFailures: 0,
-      error: err instanceof Error ? err.message : String(err),
-    });
+    // Only record a finish if the start row was actually written.
+    if (run) {
+      await recordRunFinish(env, run.id, run.startedAt, {
+        ok: false,
+        monitorsChecked: checked,
+        monitorsSkipped: skipped,
+        checkFailures: failures,
+        notificationFailures: 0,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   } finally {
     await releaseLease(env, LEASE_NAME, lease);
   }

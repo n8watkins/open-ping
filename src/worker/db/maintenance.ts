@@ -91,10 +91,12 @@ const MINUTES_PER_WEEK = 7 * 24 * 60;
  *
  * One-time (recurrence === null): `startsAt <= now < endsAt`.
  *
- * Weekly recurrence: evaluated entirely in UTC. We map both `now` and the rule's
- * start to a "minute of the week" (0..10079, Sunday 00:00 = 0) and test whether
- * `now` falls within [start, start + durationMinutes). The membership test wraps
- * modulo the week length, so windows that cross midnight — or even the
+ * Weekly recurrence: first gated on the window's [startsAt, endsAt) validity
+ * range — a bounded recurring window does not recur before it starts or after it
+ * ends. Within range it is evaluated entirely in UTC: we map both `now` and the
+ * rule's start to a "minute of the week" (0..10079, Sunday 00:00 = 0) and test
+ * whether `now` falls within [start, start + durationMinutes). The membership
+ * test wraps modulo the week length, so windows that cross midnight — or even the
  * Saturday→Sunday week boundary — are handled correctly.
  */
 export function isWindowActiveAt(w: MaintenanceWindow, now: number): boolean {
@@ -102,6 +104,11 @@ export function isWindowActiveAt(w: MaintenanceWindow, now: number): boolean {
   if (r == null) {
     return w.startsAt <= now && now < w.endsAt;
   }
+
+  // A recurring window only recurs within its [startsAt, endsAt) validity range;
+  // outside that range the weekly rule does not fire (a bounded recurrence must
+  // not recur forever).
+  if (now < w.startsAt || now >= w.endsAt) return false;
 
   if (r.type !== "weekly") return false;
   if (r.durationMinutes <= 0) return false;

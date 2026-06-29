@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useState,
   type FormEvent,
@@ -133,17 +134,29 @@ export default function Maintenance() {
     return m;
   }, [monitors]);
 
-  const now = Date.now();
+  // Drive `now` from state on an interval so the per-row Active/Upcoming/Ended
+  // badges advance with wall-clock time instead of freezing until an unrelated
+  // re-render happens.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
   const windows = useMemo(() => {
     const list = extractWindows(data);
+    // The sort only needs to re-run when data changes; it reads a fresh
+    // timestamp here while the live badges track `now`. (Keying the memo on a
+    // per-render `now` would defeat memoization entirely.)
+    const t = Date.now();
     return [...list].sort((a, b) => {
-      const ra = STATE_RANK[windowState(a, now)];
-      const rb = STATE_RANK[windowState(b, now)];
+      const ra = STATE_RANK[windowState(a, t)];
+      const rb = STATE_RANK[windowState(b, t)];
       if (ra !== rb) return ra - rb;
       // Upcoming: soonest first. Active/ended: most recent start first.
       return ra === 1 ? a.startsAt - b.startsAt : b.startsAt - a.startsAt;
     });
-  }, [data, now]);
+  }, [data]);
 
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);

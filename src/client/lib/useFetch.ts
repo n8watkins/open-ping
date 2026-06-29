@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
 interface FetchState<T> {
@@ -14,19 +14,30 @@ export function useFetch<T>(path: string | null): FetchState<T> {
   const [loading, setLoading] = useState(path !== null);
   const [error, setError] = useState<string | null>(null);
 
+  // Monotonic token shared by the effect and `reload`: every request claims the
+  // next value and only commits if it is still the latest. The effect cleanup
+  // bumps it on unmount/path change so no in-flight request (including a stale
+  // `reload` bound to an old path) can setState after unmount or clobber newer
+  // data.
+  const tokenRef = useRef(0);
+
   const reload = useCallback(async () => {
     if (path === null) {
       setLoading(false);
       return;
     }
+    const token = ++tokenRef.current;
     setLoading(true);
     try {
-      setData(await api<T>(path));
+      const d = await api<T>(path);
+      if (tokenRef.current !== token) return;
+      setData(d);
       setError(null);
     } catch (e) {
+      if (tokenRef.current !== token) return;
       setError(e instanceof Error ? e.message : "error");
     } finally {
-      setLoading(false);
+      if (tokenRef.current === token) setLoading(false);
     }
   }, [path]);
 
@@ -38,23 +49,27 @@ export function useFetch<T>(path: string | null): FetchState<T> {
       setLoading(false);
       return;
     }
-    let ignore = false;
+    const token = ++tokenRef.current;
     setLoading(true);
     api<T>(path)
       .then((d) => {
-        if (!ignore) {
+        if (tokenRef.current === token) {
           setData(d);
           setError(null);
         }
       })
       .catch((e) => {
-        if (!ignore) setError(e instanceof Error ? e.message : "error");
+        if (tokenRef.current === token) {
+          setError(e instanceof Error ? e.message : "error");
+        }
       })
       .finally(() => {
-        if (!ignore) setLoading(false);
+        if (tokenRef.current === token) setLoading(false);
       });
     return () => {
-      ignore = true;
+      // Invalidate this effect's request and any in-flight `reload` so neither
+      // commits after the path changes or the component unmounts.
+      tokenRef.current++;
     };
   }, [path]);
 
