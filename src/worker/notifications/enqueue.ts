@@ -26,10 +26,9 @@ const COOLDOWN_EVENTS: ReadonlySet<NotifyEvent> = new Set([
 /**
  * True when an alert of this exact event type for this monitor was already
  * enqueued within the cooldown window — the signal used to coalesce flapping/
- * down storms (one alert per event type per monitor per window). The outbox has
- * no monitor_id column, so the monitor is matched via the JSON payload.
- * Best-effort: any query error fails OPEN (returns false) so a genuine alert is
- * never lost to a transient DB issue.
+ * down storms (one alert per event type per monitor per window). Matched on the
+ * indexed monitor_id column. Best-effort: any query error fails OPEN (returns
+ * false) so a genuine alert is never lost to a transient DB issue.
  */
 async function recentlyAlerted(
   env: Env,
@@ -42,7 +41,7 @@ async function recentlyAlerted(
       `SELECT 1 FROM notification_outbox
         WHERE event_type = ?
           AND created_at >= ?
-          AND json_extract(payload, '$.monitorId') = ?
+          AND monitor_id = ?
         LIMIT 1`,
     )
       .bind(event, since, monitorId)
@@ -89,6 +88,7 @@ export async function enqueueIncidentEvent(
     .filter((ch) => restrict.length === 0 || restrict.includes(ch.id))
     .map((ch) => ({
       eventKey: `${event}:${incident.id}:${ch.id}`,
+      monitorId: monitor.id,
       channelId: ch.id,
       channelType: ch.type,
       eventType: event,
@@ -107,6 +107,7 @@ export async function enqueueIncidentEvent(
     for (const s of subs) {
       entries.push({
         eventKey: `${event}:${incident.id}:push:${s.id}`,
+        monitorId: monitor.id,
         channelId: null,
         channelType: "push",
         target: s.id,

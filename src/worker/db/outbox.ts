@@ -24,6 +24,7 @@ const MAX_ERROR_LEN = 500;
 export interface OutboxEntry {
   id: string;
   eventKey: string;
+  monitorId: string | null;
   channelId: string | null;
   channelType: string;
   target: string | null;
@@ -41,6 +42,7 @@ export interface OutboxEntry {
 interface OutboxRow {
   id: string;
   event_key: string;
+  monitor_id: string | null;
   channel_id: string | null;
   channel_type: string;
   target: string | null;
@@ -68,6 +70,7 @@ function rowToEntry(row: OutboxRow): OutboxEntry {
   return {
     id: row.id,
     eventKey: row.event_key,
+    monitorId: row.monitor_id ?? null,
     channelId: row.channel_id ?? null,
     channelType: row.channel_type,
     target: row.target ?? null,
@@ -92,6 +95,7 @@ export async function enqueue(
   env: Env,
   entries: Array<{
     eventKey: string;
+    monitorId?: string | null;
     channelId?: string | null;
     channelType: string;
     target?: string | null;
@@ -104,14 +108,15 @@ export async function enqueue(
   const statements = entries.map((e) =>
     env.DB.prepare(
       `INSERT INTO notification_outbox (
-         id, event_key, channel_id, channel_type, target, event_type,
+         id, event_key, monitor_id, channel_id, channel_type, target, event_type,
          payload, status, attempts, next_attempt_at, last_error,
          created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, NULL, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, NULL, ?, ?)
        ON CONFLICT(event_key) DO NOTHING`,
     ).bind(
       newId("out"),
       e.eventKey,
+      e.monitorId ?? null,
       e.channelId ?? null,
       e.channelType,
       e.target ?? null,
