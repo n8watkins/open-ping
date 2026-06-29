@@ -93,8 +93,16 @@ export default function Incidents() {
     if (status !== "all") sp.set("status", status);
     if (monitorId) sp.set("monitorId", monitorId);
     if (q) sp.set("q", q);
-    if (from) sp.set("from", from);
-    if (to) sp.set("to", to);
+    // The date inputs give "YYYY-MM-DD"; the server expects epoch-ms. Convert
+    // to local start-of-day / end-of-day so the range is inclusive.
+    if (from) {
+      const ms = new Date(from + "T00:00:00").getTime();
+      if (Number.isFinite(ms)) sp.set("from", String(ms));
+    }
+    if (to) {
+      const ms = new Date(to + "T23:59:59.999").getTime();
+      if (Number.isFinite(ms)) sp.set("to", String(ms));
+    }
     if (sort) sp.set("sort", sort);
     return sp.toString();
   }, [status, monitorId, q, from, to, sort]);

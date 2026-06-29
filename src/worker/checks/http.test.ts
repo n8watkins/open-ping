@@ -172,4 +172,66 @@ describe("runHttpCheck", () => {
     expect(result.error).toBe("timeout");
     expect(result.errorMessage).toContain("5000ms");
   });
+
+  /** Stub fetch to return each response in order, one per call. */
+  function mockFetchSequence(...responses: Response[]): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn();
+    for (const r of responses) fetchMock.mockResolvedValueOnce(r);
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function redirectTo(location: string, status = 302): Response {
+    return new Response(null, { status, headers: { location } });
+  }
+
+  it("follows a redirect to a safe URL and reads the final body", async () => {
+    const fetchMock = mockFetchSequence(
+      redirectTo("https://other.example.com/next"),
+      new Response("final body", { status: 200 }),
+    );
+
+    const result = await runHttpCheck(makeConfig());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(true);
+    expect(result.redirected).toBe(true);
+    expect(result.body).toBe("final body");
+    expect(result.finalUrl).toContain("other.example.com");
+  });
+
+  it("blocks a redirect whose target is an SSRF-rejected address", async () => {
+    const fetchMock = mockFetchSequence(
+      redirectTo("http://169.254.169.254/latest/meta-data"),
+      new Response("should never be fetched", { status: 200 }),
+    );
+
+    const result = await runHttpCheck(makeConfig());
+
+    // The blocked target is never fetched — re-validation happens before the hop.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("blocked_url");
+  });
+
+  it("gives up after too many redirects", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(redirectTo("https://example.com/loop"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runHttpCheck(makeConfig());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("too_many_redirects");
+  });
+
+  it("does not follow redirects when followRedirects is false", async () => {
+    const fetchMock = mockFetchSequence(redirectTo("https://other.example.com/next"));
+
+    const result = await runHttpCheck(makeConfig({ followRedirects: false }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // 302 is within the default expected 200-399 range, so the hop itself is "ok".
+    expect(result.statusCode).toBe(302);
+    expect(result.redirected).toBe(false);
+  });
 });

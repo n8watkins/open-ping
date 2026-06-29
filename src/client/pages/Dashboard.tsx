@@ -9,12 +9,23 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { formatMs, formatPct, formatRelativeTime } from "../lib/format";
 
 export default function Dashboard() {
-  const { data, loading } = useFetch<OverviewResponse>("/api/overview");
+  const { data, loading, error } = useFetch<OverviewResponse>("/api/overview");
 
   if (loading && !data) {
     return (
       <div className="grid min-h-[40vh] place-items-center">
         <Loader2 className="size-6 animate-spin text-ink-faint" />
+      </div>
+    );
+  }
+
+  if (error && !data) {
+    return (
+      <div className="mx-auto max-w-6xl">
+        <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
+        <p className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
+          Could not load overview: {error}
+        </p>
       </div>
     );
   }

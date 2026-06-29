@@ -17,6 +17,10 @@ import {
 const LEASE_NAME = "scheduler";
 const LEASE_TTL_MS = 5 * 60 * 1000; // shorter than the 12-min cadence
 const CONCURRENCY = 6;
+// Half the 12-min cadence: a monitor whose next check lands within this window
+// is run now rather than slipping to the following tick (which would otherwise
+// double its effective interval whenever a run takes a moment to reach it).
+const DUE_SLACK_MS = 6 * 60 * 1000;
 
 interface StateRow {
   monitor_id: string;
@@ -98,11 +102,15 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
       const st = states.get(m.id);
 
       if (m.type === "heartbeat") {
-        const deadline =
-          (st?.last_success_at ?? 0) +
-          (m.intervalSeconds + (m.graceSeconds ?? 0)) * 1000;
-        const overdue = now > (st?.next_check_at ?? 0) && now > deadline;
-        if (overdue && st?.state !== "down") {
+        // Base the deadline on the last received beat, or — for a monitor that
+        // has never beaten — on its creation time, so a brand-new heartbeat
+        // monitor is not declared down before its first interval has elapsed.
+        const base = st?.last_success_at ?? m.createdAt;
+        const deadline = base + (m.intervalSeconds + (m.graceSeconds ?? 0)) * 1000;
+        if (now > deadline) {
+          // Overdue: (re)mark missed every cycle while it stays overdue so the
+          // ongoing downtime accrues in the rollups. markHeartbeatMissed dedupes
+          // the incident + the notification, so this does not spam alerts.
           try {
             await markHeartbeatMissed(env, m, now);
             checked++;
@@ -117,8 +125,8 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
         continue;
       }
 
-      // HTTP monitor: run only if due.
-      if ((st?.next_check_at ?? 0) > now) {
+      // HTTP monitor: due if next_check_at lands within this cycle (+slack).
+      if ((st?.next_check_at ?? 0) > now + DUE_SLACK_MS) {
         skipped++;
         continue;
       }
@@ -127,11 +135,11 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
 
     await mapLimit(dueHttp, CONCURRENCY, async (m) => {
       const st = states.get(m.id);
-      const warmup =
-        !st ||
-        st.state === "scheduled_off" ||
-        st.state === "unknown" ||
-        st.state === "warming_up";
+      // Warm-up applies on a cold start (never checked / just came back on
+      // schedule). A monitor already in `warming_up` is NOT warmed up again:
+      // the next check is a normal one whose failure opens a real incident, so
+      // warm-up grants exactly one grace cycle rather than masking outages.
+      const warmup = !st || st.state === "scheduled_off" || st.state === "unknown";
       try {
         const outcome = await runMonitorCheck(m, { warmup, now: Date.now() });
         await applyCheckResult(env, m, outcome);

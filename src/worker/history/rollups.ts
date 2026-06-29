@@ -1,24 +1,36 @@
 import type { Env } from "../types";
+import { getJSON } from "../db/settings";
 
 /**
- * Historical compaction (PRD §17). Check results land as recent `samples` (24h)
- * and are continuously folded into HOUR `summaries`. A periodic pass rolls
- * HOUR → DAY (kept 90d) and DAY → MONTH (kept indefinitely), then prunes the
- * expired tiers:
+ * Historical compaction (PRD §17). Check results land as recent `samples` and
+ * are continuously folded into HOUR `summaries`. A periodic pass rolls
+ * HOUR → DAY and DAY → MONTH, then prunes the expired tiers. Retention horizons
+ * are read from the `retention` setting (and reported by routes/diagnostics):
  *
- *   samples (24h) → hourly (90d) → daily (2y) → monthly (forever)
+ *   samples (sampleHours) → hourly (hourlyDays) → daily (dailyDays) → monthly (forever)
  *
- * Everything here is idempotent and safe to retry: per-sample accumulation is an
- * additive upsert keyed by (monitor_id, period, bucket_start); the rollup passes
- * recompute each derived bucket from its source rows and write absolute totals,
- * so running twice yields the same result. All time math is plain UTC epoch-ms —
- * no Node APIs, no timezone libraries.
+ * A derived bucket is recomputed only while ALL of its source rows are still
+ * retained; once its sources age past their horizon the bucket is "sealed" at
+ * its last full value, so pruning the sources can never silently shrink it.
+ * Per-sample accumulation is an additive upsert keyed by (monitor_id, period,
+ * bucket_start); derived passes write absolute recomputed totals. All time math
+ * is plain UTC epoch-ms — no Node APIs, no timezone libraries.
  */
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
-const NINETY_DAYS_MS = 90 * DAY_MS;
-const TWO_YEARS_MS = 730 * DAY_MS; // ~2 years; UTC days are exactly 86_400_000ms in epoch-ms
+
+/** Retention horizons. Defaults MUST match DEFAULT_RETENTION in routes/diagnostics. */
+interface RetentionConfig {
+  sampleHours: number;
+  hourlyDays: number;
+  dailyDays: number;
+}
+const DEFAULT_RETENTION: RetentionConfig = {
+  sampleHours: 24,
+  hourlyDays: 35,
+  dailyDays: 400,
+};
 
 /** A summary's numeric accumulator columns — shared by samples, hour/day/month rows. */
 export interface SummaryTotals {
@@ -218,18 +230,28 @@ interface DistinctBucket {
  *  3. Prune expired tiers: samples > 24h, hour > 90d, day > 2y. Months kept forever.
  */
 export async function rollupAndCompact(env: Env, now: number): Promise<void> {
+  const stored = await getJSON<Partial<RetentionConfig>>(env, "retention").catch(() => null);
+  const retention: RetentionConfig = { ...DEFAULT_RETENTION, ...(stored ?? {}) };
+  const sampleMs = retention.sampleHours * HOUR_MS;
+  const hourlyMs = retention.hourlyDays * DAY_MS;
+  const dailyMs = retention.dailyDays * DAY_MS;
+
   // (1) HOUR → DAY -----------------------------------------------------------
+  // Recompute only days whose hour rows are ALL still retained (dayStart within
+  // the hourly horizon). Older days are sealed at their last full value so the
+  // hour prune below can't shrink them.
   try {
     const hourBuckets = await env.DB.prepare(
       `SELECT DISTINCT monitor_id, bucket_start FROM summaries
        WHERE period = 'hour' AND bucket_start >= ?`,
     )
-      .bind(now - TWO_YEARS_MS)
+      .bind(now - hourlyMs)
       .all<DistinctBucket>();
 
     const days = new Map<string, { monitorId: string; dayStart: number }>();
     for (const r of hourBuckets.results ?? []) {
       const dayStart = bucketStart("day", r.bucket_start);
+      if (dayStart < now - hourlyMs) continue; // sealed — some hours already pruned
       days.set(`${r.monitor_id}:${dayStart}`, { monitorId: r.monitor_id, dayStart });
     }
 
@@ -252,17 +274,20 @@ export async function rollupAndCompact(env: Env, now: number): Promise<void> {
   }
 
   // (2) DAY → MONTH ----------------------------------------------------------
+  // Recompute only months whose day rows are ALL still retained; older months
+  // are sealed at their last full value.
   try {
     const dayBuckets = await env.DB.prepare(
       `SELECT DISTINCT monitor_id, bucket_start FROM summaries
        WHERE period = 'day' AND bucket_start >= ?`,
     )
-      .bind(now - TWO_YEARS_MS)
+      .bind(now - dailyMs)
       .all<DistinctBucket>();
 
     const months = new Map<string, { monitorId: string; monthStart: number }>();
     for (const r of dayBuckets.results ?? []) {
       const monthStart = bucketStart("month", r.bucket_start);
+      if (monthStart < now - dailyMs) continue; // sealed — some days already pruned
       months.set(`${r.monitor_id}:${monthStart}`, { monitorId: r.monitor_id, monthStart });
     }
 
@@ -287,23 +312,34 @@ export async function rollupAndCompact(env: Env, now: number): Promise<void> {
   // (3) Prune ----------------------------------------------------------------
   try {
     await env.DB.prepare("DELETE FROM samples WHERE at < ?")
-      .bind(now - DAY_MS)
+      .bind(now - sampleMs)
       .run();
   } catch (e) {
     console.error("[rollups] sample prune failed", e);
   }
   try {
     await env.DB.prepare("DELETE FROM summaries WHERE period = 'hour' AND bucket_start < ?")
-      .bind(now - NINETY_DAYS_MS)
+      .bind(now - hourlyMs)
       .run();
   } catch (e) {
     console.error("[rollups] hour prune failed", e);
   }
   try {
     await env.DB.prepare("DELETE FROM summaries WHERE period = 'day' AND bucket_start < ?")
-      .bind(now - TWO_YEARS_MS)
+      .bind(now - dailyMs)
       .run();
   } catch (e) {
     console.error("[rollups] day prune failed", e);
+  }
+  // Prune closed status intervals past the daily horizon (the longest window any
+  // view reads). Open intervals are always kept. Fixes unbounded table growth.
+  try {
+    await env.DB.prepare(
+      "DELETE FROM status_intervals WHERE ended_at IS NOT NULL AND ended_at < ?",
+    )
+      .bind(now - dailyMs)
+      .run();
+  } catch (e) {
+    console.error("[rollups] interval prune failed", e);
   }
 }

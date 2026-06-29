@@ -175,8 +175,12 @@ function buildFilter(query: Record<string, string | undefined>): {
 
   const q = query.q;
   if (q && q.trim() !== "") {
-    conds.push("i.title LIKE ?");
-    binds.push(`%${q}%`);
+    // Neutralize LIKE wildcards in user input: escape the escape char first,
+    // then `%`/`_`, and declare the escape char with ESCAPE so they match
+    // literally instead of acting as wildcards.
+    const escaped = q.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+    conds.push("i.title LIKE ? ESCAPE '\\'");
+    binds.push(`%${escaped}%`);
   }
 
   return { where: conds.length > 0 ? conds.join(" AND ") : "", binds };

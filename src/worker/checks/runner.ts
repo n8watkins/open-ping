@@ -38,7 +38,9 @@ export function classifyCheck(input: ClassifyInput): Omit<CheckOutcome, "at"> {
   const retryRecovered = ok && succeededAttempt > 1;
 
   let state: CheckOutcome["state"];
-  if (!ok) state = "down";
+  // A failed warm-up cycle is reported as `warming_up`, not `down`, so a cold
+  // start gets one grace cycle before an incident can open (PRD §8 warm-up).
+  if (!ok) state = warmup ? "warming_up" : "down";
   else if (result.degraded) state = "degraded";
   else state = "up";
 

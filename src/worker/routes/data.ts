@@ -233,6 +233,24 @@ const maintenanceImportSchema = z.object({
   privateNotes: z.string().nullable().optional(),
 });
 
+/**
+ * Minimal validation for the public-safe incident rows produced by `/export`
+ * (no internal error text / private notes are present in a backup). Restored
+ * incidents are inserted as non-public (public = 0) so a restore never silently
+ * re-publishes history; the operator can re-mark them public afterwards.
+ */
+const incidentImportSchema = z.object({
+  id: z.string(),
+  monitorId: z.string(),
+  status: z.enum(["open", "resolved"]),
+  title: z.string().nullable().optional(),
+  startedAt: z.number(),
+  resolvedAt: z.number().nullable().optional(),
+  durationSeconds: z.number().nullable().optional(),
+  rootCause: z.string().nullable().optional(),
+  publicMessage: z.string().nullable().optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Routes.
 // ---------------------------------------------------------------------------
@@ -306,22 +324,35 @@ data.post("/import", async (c) => {
     return c.json({ error: "invalid_import", errors: result.errors }, 400);
   }
 
-  // Safe after validateImport.ok: monitors/maintenance are guaranteed arrays.
-  const backup = raw as { monitors: unknown[]; maintenance: unknown[] };
+  // Safe after validateImport.ok: monitors/maintenance/incidents are arrays.
+  const backup = raw as {
+    monitors: unknown[];
+    maintenance: unknown[];
+    incidents: unknown[];
+  };
 
-  // Re-parse to obtain the typed, defaulted monitor inputs we'll create.
-  const validMonitors: CreateMonitorInput[] = [];
+  // Re-parse to obtain the typed, defaulted monitor inputs we'll create, keeping
+  // each backup monitor's ORIGINAL id so incidents can be remapped to the new
+  // monitor ids that createMonitor() will assign.
+  const validMonitors: { oldId: string | null; input: CreateMonitorInput }[] = [];
   for (const m of backup.monitors) {
     const parsed = createMonitorSchema.safeParse(m);
-    if (parsed.success) validMonitors.push(parsed.data);
+    if (parsed.success) {
+      const rawId = (m as { id?: unknown }).id;
+      validMonitors.push({
+        oldId: typeof rawId === "string" ? rawId : null,
+        input: parsed.data,
+      });
+    }
   }
 
   const existing = await listMonitors(c.env);
   const existingNames = new Set(existing.map((m) => m.name));
+  const existingIdByName = new Map(existing.map((m) => [m.name, m.id]));
 
   if (options.dryRun) {
     const duplicateMonitors = validMonitors
-      .map((m) => m.name)
+      .map((m) => m.input.name)
       .filter((name) => existingNames.has(name));
     return c.json({
       preview: { counts: result.counts, duplicateMonitors },
@@ -333,13 +364,22 @@ data.post("/import", async (c) => {
 
   let importedMonitors = 0;
   let skippedMonitors = 0;
-  for (const m of validMonitors) {
-    if (skipExisting && existingNames.has(m.name)) {
+  // Maps each backup monitor id to the id it resolves to in THIS instance, so
+  // imported incidents reference a monitor that actually exists (avoids a
+  // foreign-key failure / orphaned rows on restore into a fresh instance).
+  const monitorIdMap = new Map<string, string>();
+  for (const { oldId, input } of validMonitors) {
+    if (skipExisting && existingNames.has(input.name)) {
       skippedMonitors++;
+      // Link the backup's incidents to the existing same-named monitor.
+      const existingId = existingIdByName.get(input.name);
+      if (oldId && existingId) monitorIdMap.set(oldId, existingId);
       continue;
     }
-    await createMonitor(c.env, m);
-    existingNames.add(m.name);
+    const created = await createMonitor(c.env, input);
+    existingNames.add(input.name);
+    existingIdByName.set(input.name, created.id);
+    if (oldId) monitorIdMap.set(oldId, created.id);
     importedMonitors++;
   }
 
@@ -360,8 +400,55 @@ data.post("/import", async (c) => {
     importedMaintenance++;
   }
 
+  // Incidents: insert the public-safe rows from the backup, remapping each to its
+  // monitor's id in this instance. Incidents whose monitor wasn't imported are
+  // skipped (no dangling foreign key). `INSERT OR IGNORE` keeps re-import
+  // idempotent (a colliding incident id is skipped). Restored rows are non-public.
+  let importedIncidents = 0;
+  let skippedIncidents = 0;
+  const importNow = Date.now();
+  for (const inc of backup.incidents) {
+    const parsed = incidentImportSchema.safeParse(inc);
+    if (!parsed.success) {
+      skippedIncidents++;
+      continue;
+    }
+    const d = parsed.data;
+    const monitorId = monitorIdMap.get(d.monitorId);
+    if (!monitorId) {
+      skippedIncidents++; // its monitor wasn't imported into this instance
+      continue;
+    }
+    const res = await c.env.DB.prepare(
+      `INSERT OR IGNORE INTO incidents (
+         id, monitor_id, status, title, root_cause, started_at, resolved_at,
+         duration_seconds, public_message, public, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+    )
+      .bind(
+        d.id,
+        monitorId,
+        d.status,
+        d.title ?? null,
+        d.rootCause ?? null,
+        d.startedAt,
+        d.resolvedAt ?? null,
+        d.durationSeconds ?? null,
+        d.publicMessage ?? null,
+        importNow,
+        importNow,
+      )
+      .run();
+    if (res.meta?.changes) importedIncidents++;
+    else skippedIncidents++; // id collision — already present
+  }
+
   return c.json({
-    imported: { monitors: importedMonitors, maintenance: importedMaintenance },
-    skipped: { monitors: skippedMonitors },
+    imported: {
+      monitors: importedMonitors,
+      maintenance: importedMaintenance,
+      incidents: importedIncidents,
+    },
+    skipped: { monitors: skippedMonitors, incidents: skippedIncidents },
   });
 });

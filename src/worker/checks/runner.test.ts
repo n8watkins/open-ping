@@ -58,6 +58,30 @@ describe("classifyCheck", () => {
     expect(o.error).toBe("assertion_failed");
     expect(o.assertionFailures).toEqual(["expected to contain 'ok'"]);
   });
+
+  it("a failed WARM-UP cycle is warming_up, not down (one grace cycle)", () => {
+    const o = classifyCheck({
+      result: result({ ok: false, error: "timeout" }),
+      ok: false,
+      succeededAttempt: -1,
+      maxAttempts: 2,
+      warmup: true,
+    });
+    expect(o.state).toBe("warming_up");
+    // It is still not "ok", so it won't be counted as a success either.
+    expect(o.ok).toBe(false);
+  });
+
+  it("a non-warm-up failure is still down", () => {
+    const o = classifyCheck({
+      result: result({ ok: false, error: "timeout" }),
+      ok: false,
+      succeededAttempt: -1,
+      maxAttempts: 2,
+      warmup: false,
+    });
+    expect(o.state).toBe("down");
+  });
 });
 
 describe("runMonitorCheck", () => {

@@ -32,6 +32,27 @@
   --radius-card: 0.875rem;
 }
 
+/*
+ * Light theme for the public status page only. Scoped to [data-theme="light"]
+ * so it overrides the dark @theme canvas/surface/ink/line vars for that subtree
+ * (custom properties cascade to descendants; semantic status colors are kept).
+ * The wrapper sets data-theme="light" | "dark" from the configured page.theme
+ * (system honours prefers-color-scheme); "dark" inherits the :root defaults.
+ */
+[data-theme="light"] {
+  --color-canvas: #f6f8fb;
+  --color-surface: #ffffff;
+  --color-surface-2: #eef2f7;
+  --color-line: #d8e0ea;
+  --color-line-soft: #e7edf4;
+
+  --color-ink: #16233a;
+  --color-ink-muted: #475569;
+  --color-ink-faint: #7a8aa0;
+
+  --color-accent-soft: #e3e9ff;
+}
+
 @layer base {
   html,
   body,

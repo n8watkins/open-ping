@@ -25,8 +25,9 @@ function redactMonitor(m: MonitorRecord): MonitorRecord {
  * Monitor CRUD API mounted at /api/monitors. All routes require an
  * authenticated session; the auth middleware also enforces CSRF on mutations.
  *
- * TODO(phase-6): redact secret config fields (auth password/token, heartbeat
- * secret) in responses — for now we return the full config so editing works.
+ * Secret config fields (auth password/token, heartbeat secret) are blanked in
+ * every response via `redactMonitor`; the editor resubmits the blanked value and
+ * `db/monitors.updateMonitor` merges the stored secret back in (`mergeSecrets`).
  */
 export const monitors = new Hono<AppEnv>();
 

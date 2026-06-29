@@ -61,14 +61,19 @@ export function computeUptimeFromRows(
 }
 
 /**
+ * Windows up to this length are summed from the finest ('hour') summaries.
+ * Hourly rows are pruned after ~35d, so anything longer must use 'day' rows.
+ */
+const HOURLY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
  * Compute uptime for a monitor over the window [sinceMs, now].
  *
- * WINDOWING ASSUMPTION (V1): we sum from the finest period available — the
- * 'hour' summary rows whose bucket_start falls within the window. Hourly
- * buckets exist for the full retention horizon (≤ 90d), so summing them is
- * accurate and avoids the double-counting that mixing 'hour'/'day'/'month'
- * periods would introduce. For ranges beyond hourly retention this would
- * under-count; that is out of scope for V1.
+ * WINDOWING: short windows (≤ 30d) sum the finest 'hour' summaries; longer
+ * windows (e.g. the 365-day bar) sum 'day' summaries, which are retained well
+ * past the hourly horizon. We never mix periods in one query, so there is no
+ * double-counting. Day summaries are kept current by the per-cycle compaction
+ * pass, so the most recent day is fresh to within one run.
  */
 export async function computeUptime(
   env: Env,
@@ -76,15 +81,17 @@ export async function computeUptime(
   sinceMs: number,
   now: number,
 ): Promise<UptimeResult> {
+  const period: "hour" | "day" =
+    now - sinceMs > HOURLY_WINDOW_MS ? "day" : "hour";
   const res = await env.DB.prepare(
     `SELECT checks, ok_checks, monitored_seconds, down_seconds
        FROM summaries
       WHERE monitor_id = ?
-        AND period = 'hour'
+        AND period = ?
         AND bucket_start >= ?
         AND bucket_start <= ?`,
   )
-    .bind(monitorId, sinceMs, now)
+    .bind(monitorId, period, sinceMs, now)
     .all<SummaryUptimeRow>();
 
   return computeUptimeFromRows(res.results ?? []);

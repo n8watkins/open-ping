@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv, Env } from "../types";
 import { listMonitors } from "../db/monitors";
 import { getSetting } from "../db/settings";
+import { publicMaintenance, type MaintenanceWindow } from "../db/maintenance";
 import type { MonitorState } from "../../shared/states";
 
 /**
@@ -231,46 +232,34 @@ async function loadDaySummaries(
   return res.results ?? [];
 }
 
-interface MaintRow {
-  title: string | null;
-  public_message: string | null;
-  starts_at: number;
-  ends_at: number;
+/** Project a maintenance window to its public shape (admin message only). */
+function toPublicMaint(w: MaintenanceWindow): PublicMaint {
+  return {
+    title: w.title,
+    message: w.publicMessage ?? "",
+    startsAt: w.startsAt,
+    endsAt: w.endsAt,
+  };
 }
 
 /**
- * Load active + upcoming maintenance windows that carry a public message. Only
- * `public_message` (never `private_notes`) is exposed.
+ * Load active + upcoming maintenance windows that carry a public message. Uses
+ * the recurrence-aware `publicMaintenance` helper (via `isWindowActiveAt`) so a
+ * weekly window is only "active" during its actual recurring slot, not for the
+ * whole multi-month envelope. Only `public_message` (never `private_notes`) is
+ * exposed; empty messages are dropped.
  */
 async function loadMaintenance(
   env: Env,
   now: number,
 ): Promise<{ active: PublicMaint[]; upcoming: PublicMaint[] }> {
-  const res = await env.DB.prepare(
-    `SELECT title, public_message, starts_at, ends_at
-       FROM maintenance_windows
-      WHERE public_message IS NOT NULL
-        AND public_message != ''
-        AND ends_at >= ?
-      ORDER BY starts_at ASC`,
-  )
-    .bind(now)
-    .all<MaintRow>();
-
-  const active: PublicMaint[] = [];
-  const upcoming: PublicMaint[] = [];
-  for (const r of res.results ?? []) {
-    if (r.public_message == null || r.public_message === "") continue;
-    const entry: PublicMaint = {
-      title: r.title,
-      message: r.public_message,
-      startsAt: r.starts_at,
-      endsAt: r.ends_at,
-    };
-    if (r.starts_at <= now && r.ends_at >= now) active.push(entry);
-    else if (r.starts_at > now) upcoming.push(entry);
-  }
-  return { active, upcoming: upcoming.slice(0, UPCOMING_MAINT_LIMIT) };
+  const { active, upcoming } = await publicMaintenance(env, now);
+  const hasMessage = (w: MaintenanceWindow) =>
+    w.publicMessage != null && w.publicMessage !== "";
+  return {
+    active: active.filter(hasMessage).map(toPublicMaint),
+    upcoming: upcoming.filter(hasMessage).map(toPublicMaint).slice(0, UPCOMING_MAINT_LIMIT),
+  };
 }
 
 /** Public-safe columns of an `incidents` row (no error/notes/title/url). */
@@ -349,6 +338,13 @@ publicStatus.get("/status", async (c) => {
     attribution: attributionRaw == null ? true : attributionRaw === "true",
   };
   const enabled = enabledRaw === "true";
+
+  // Enforce the operator's kill switch server-side: when the status page is not
+  // explicitly enabled, expose nothing but the page name. None of the work
+  // below (services, uptime, incidents, maintenance) runs or is returned.
+  if (!enabled) {
+    return c.json({ enabled: false, page: { name: page.name } });
+  }
 
   // --- Visible monitors only ---
   const visible = (await listMonitors(env)).filter(

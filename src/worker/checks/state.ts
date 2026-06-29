@@ -25,6 +25,10 @@ import type { NotifyEvent } from "../../shared/notifications";
 
 const FLAP_WINDOW_MS = 60 * 60 * 1000;
 const FLAP_THRESHOLD = 3;
+// Each overdue heartbeat cycle credits one cron period (~12 min) of downtime, so
+// an ongoing heartbeat outage accrues in the uptime rollups instead of leaving
+// the monitor stuck at ~100% uptime.
+const HEARTBEAT_DOWN_SLICE_SECONDS = 12 * 60;
 
 interface StateRow {
   state: MonitorState;
@@ -123,9 +127,14 @@ async function applyIncidentTransition(
     }
     if (active) {
       const resolved = await resolveIncident(env, active.id, { at: p.at });
-      await safe("notify", () =>
-        enqueueIncidentEvent(env, monitor, resolved ?? active, "recovered"),
-      );
+      // Suppress the per-incident recovery alert while flapping — a single
+      // flapping notification already fired when the incident opened, so rapid
+      // flaps don't spam paired down/recovered messages (PRD §14).
+      if (!active.isFlapping) {
+        await safe("notify", () =>
+          enqueueIncidentEvent(env, monitor, resolved ?? active, "recovered"),
+        );
+      }
     }
     return { activeIncidentId: null, isFlapping: false };
   } catch (e) {
@@ -158,12 +167,20 @@ export async function applyCheckResult(
   const lastSuccessAt = outcome.ok ? now : (cur?.last_success_at ?? null);
   const next = nextCheckAt(monitor.schedule, new Date(now), monitor.intervalSeconds).getTime();
 
-  const incident = await applyIncidentTransition(env, monitor, {
-    ok: outcome.ok,
-    at: now,
-    error: outcome.error,
-    httpStatus: outcome.statusCode,
-  });
+  // A failed warm-up cycle does NOT open an incident — it is the one grace cycle
+  // a cold start gets. Preserve any existing incident pointer untouched.
+  const incident =
+    outcome.state === "warming_up"
+      ? {
+          activeIncidentId: cur?.active_incident_id ?? null,
+          isFlapping: cur?.is_flapping === 1,
+        }
+      : await applyIncidentTransition(env, monitor, {
+          ok: outcome.ok,
+          at: now,
+          error: outcome.error,
+          httpStatus: outcome.statusCode,
+        });
 
   await env.DB.prepare(
     `UPDATE monitor_state SET
@@ -213,16 +230,20 @@ export async function applyCheckResult(
       ok: outcome.ok,
     }),
   );
-  await safe("rollup", () =>
-    recordCheckSample(env, monitor.id, {
-      at: now,
-      ok: outcome.ok,
-      durationMs: outcome.durationMs,
-      retryRecovered: outcome.retryRecovered,
-      monitoredSeconds: monitor.intervalSeconds,
-      downSeconds: outcome.state === "down" ? monitor.intervalSeconds : 0,
-    }),
-  );
+  // Warm-up cycles are excluded from uptime accounting (like scheduled-off):
+  // they neither count as a successful check nor as downtime.
+  if (outcome.state !== "warming_up") {
+    await safe("rollup", () =>
+      recordCheckSample(env, monitor.id, {
+        at: now,
+        ok: outcome.ok,
+        durationMs: outcome.durationMs,
+        retryRecovered: outcome.retryRecovered,
+        monitoredSeconds: monitor.intervalSeconds,
+        downSeconds: outcome.state === "down" ? monitor.intervalSeconds : 0,
+      }),
+    );
+  }
 
   return { prevState, stateChanged };
 }
@@ -283,18 +304,27 @@ export async function recordHeartbeat(
     runId?: string;
     metrics?: Record<string, number>;
   },
+  opts?: { maintenance?: boolean },
 ): Promise<{ prevState: MonitorState; stateChanged: boolean }> {
   const now = payload.at;
   const cur = await readState(env, monitor.id);
   const prevState: MonitorState = cur?.state ?? "unknown";
   const ok = payload.exitStatus == null || payload.exitStatus === 0;
-  const state: MonitorState = ok ? "up" : "down";
+  // During a maintenance window the beat is still recorded, but a failure must
+  // not open an incident and the cycle is excluded from uptime (PRD §16/§11).
+  const inMaintenance = opts?.maintenance ?? false;
+  const state: MonitorState = inMaintenance ? "maintenance" : ok ? "up" : "down";
   const stateChanged = prevState !== state;
   const stateSince = stateChanged ? now : (cur?.state_since ?? now);
   const deadline = now + (monitor.intervalSeconds + (monitor.graceSeconds ?? 0)) * 1000;
   const error = ok ? null : `exit_status_${payload.exitStatus}`;
 
-  const incident = await applyIncidentTransition(env, monitor, { ok, at: now, error });
+  const incident = inMaintenance
+    ? {
+        activeIncidentId: cur?.active_incident_id ?? null,
+        isFlapping: cur?.is_flapping === 1,
+      }
+    : await applyIncidentTransition(env, monitor, { ok, at: now, error });
 
   await env.DB.prepare(
     `UPDATE monitor_state SET
@@ -338,15 +368,18 @@ export async function recordHeartbeat(
   await safe("interval", () =>
     updateStatusInterval(env, monitor.id, state, now, { latencyMs: payload.durationMs, ok }),
   );
-  await safe("rollup", () =>
-    recordCheckSample(env, monitor.id, {
-      at: now,
-      ok,
-      durationMs: payload.durationMs,
-      monitoredSeconds: monitor.intervalSeconds,
-      downSeconds: ok ? 0 : monitor.intervalSeconds,
-    }),
-  );
+  // Maintenance beats are excluded from uptime accounting (like scheduled-off).
+  if (!inMaintenance) {
+    await safe("rollup", () =>
+      recordCheckSample(env, monitor.id, {
+        at: now,
+        ok,
+        durationMs: payload.durationMs,
+        monitoredSeconds: monitor.intervalSeconds,
+        downSeconds: ok ? 0 : monitor.intervalSeconds,
+      }),
+    );
+  }
 
   return { prevState, stateChanged };
 }
@@ -400,6 +433,17 @@ export async function markHeartbeatMissed(
       updateStatusInterval(env, monitor.id, "down", now, { ok: false, reason: "heartbeat_missed" }),
     );
   }
+
+  // Accrue downtime on every overdue cycle (not only the transition) so a
+  // sustained heartbeat outage drags uptime down instead of reading ~100%.
+  await safe("rollup", () =>
+    recordCheckSample(env, monitor.id, {
+      at: now,
+      ok: false,
+      monitoredSeconds: HEARTBEAT_DOWN_SLICE_SECONDS,
+      downSeconds: HEARTBEAT_DOWN_SLICE_SECONDS,
+    }),
+  );
 
   return { prevState, stateChanged };
 }

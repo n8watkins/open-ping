@@ -1,6 +1,8 @@
+import { useState, type FormEvent } from "react";
 import { Github, Mail, Loader2 } from "lucide-react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { Logo } from "../components/Logo";
+import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -10,12 +12,39 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_callback: "The sign-in response was invalid. Please try again.",
   token_exchange_failed: "Could not complete GitHub sign-in. Please try again.",
   identity_failed: "Could not read your GitHub identity. Please try again.",
+  magic_invalid: "That sign-in link is invalid or has expired. Please request a new one.",
 };
 
 export default function Login() {
   const { loading, status, me } = useBootstrap();
   const [params] = useSearchParams();
   const error = params.get("error");
+
+  const githubEnabled = status?.githubEnabled ?? false;
+  const emailEnabled = status?.emailAdminConfigured ?? false;
+
+  const [email, setEmail] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+
+  async function requestMagicLink(e: FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setEmailError(null);
+    try {
+      // The server always responds { ok: true } regardless of whether the
+      // address is allowed, so we show the same generic confirmation either way.
+      await api("/api/auth/magic/request", { method: "POST", json: { email } });
+      setSent(true);
+    } catch (err) {
+      setEmailError(
+        err instanceof Error ? err.message : "Could not send a sign-in link. Please try again.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -47,23 +76,59 @@ export default function Login() {
           )}
 
           <div className="mt-6 space-y-3">
-            <a
-              href="/auth/github/start"
-              aria-disabled={!status?.githubEnabled}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-canvas transition-opacity hover:opacity-90 aria-disabled:pointer-events-none aria-disabled:opacity-40"
-            >
-              <Github className="size-4" />
-              Continue with GitHub
-            </a>
-            <button
-              type="button"
-              disabled
-              title="Email magic link arrives in a later phase"
-              className="flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-line disabled:opacity-40"
-            >
-              <Mail className="size-4" />
-              Email magic link
-            </button>
+            {githubEnabled ? (
+              <a
+                href="/auth/github/start"
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-canvas transition-opacity hover:opacity-90"
+              >
+                <Github className="size-4" />
+                Continue with GitHub
+              </a>
+            ) : (
+              <button
+                type="button"
+                disabled
+                title="GitHub sign-in isn't configured on this installation."
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-canvas transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Github className="size-4" />
+                Continue with GitHub
+              </button>
+            )}
+
+            {emailEnabled &&
+              (sent ? (
+                <p className="rounded-lg border border-up/40 bg-up/10 px-3 py-2 text-center text-sm text-up">
+                  If that address is allowed, a sign-in link has been sent.
+                </p>
+              ) : (
+                <form onSubmit={(e) => void requestMagicLink(e)} className="space-y-2">
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    aria-label="Email address"
+                    className="input"
+                  />
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-line disabled:opacity-40"
+                  >
+                    {submitting ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Mail className="size-4" />
+                    )}
+                    Email magic link
+                  </button>
+                  {emailError && (
+                    <p className="text-center text-sm text-down">{emailError}</p>
+                  )}
+                </form>
+              ))}
           </div>
         </div>
 

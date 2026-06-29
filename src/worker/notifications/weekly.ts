@@ -298,6 +298,21 @@ export async function sendWeeklySummary(
   const recipient = await getAdminEmail(env);
   if (!recipient) return { sent: false, reason: "no_recipient" };
 
+  // Anchor to a target weekday + hour (UTC) so the summary actually lands once a
+  // week at a predictable time, instead of firing immediately on first enable
+  // and then drifting ~12h earlier each week. Defaults to Monday 09:00 UTC.
+  const rawDay = Number(await getSetting(env, "weekly_summary_day"));
+  const targetDay =
+    Number.isInteger(rawDay) && rawDay >= 0 && rawDay <= 6 ? rawDay : 1;
+  const rawHour = Number(await getSetting(env, "weekly_summary_hour"));
+  const targetHour =
+    Number.isInteger(rawHour) && rawHour >= 0 && rawHour <= 23 ? rawHour : 9;
+  const d = new Date(now);
+  if (d.getUTCDay() !== targetDay || d.getUTCHours() < targetHour) {
+    return { sent: false, reason: "not_due" };
+  }
+
+  // De-dup within the open day/hour window so it sends at most once per week.
   const lastSentAt = Number(await getSetting(env, "weekly_summary_last_sent")) || null;
   if (!isWeeklyDue(now, lastSentAt)) return { sent: false, reason: "not_due" };
 

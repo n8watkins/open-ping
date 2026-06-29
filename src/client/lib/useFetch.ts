@@ -30,9 +30,33 @@ export function useFetch<T>(path: string | null): FetchState<T> {
     }
   }, [path]);
 
+  // Fetch on path change with an out-of-order guard: a slow earlier response
+  // must not overwrite a newer one (e.g. on rapid filter changes). `reload`
+  // stays available for user-triggered refreshes.
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    if (path === null) {
+      setLoading(false);
+      return;
+    }
+    let ignore = false;
+    setLoading(true);
+    api<T>(path)
+      .then((d) => {
+        if (!ignore) {
+          setData(d);
+          setError(null);
+        }
+      })
+      .catch((e) => {
+        if (!ignore) setError(e instanceof Error ? e.message : "error");
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [path]);
 
   return { data, loading, error, reload };
 }

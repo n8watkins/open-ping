@@ -7,8 +7,8 @@ import { assertSafeUrl } from "../lib/ssrf";
  * classifies the result. Runs in the Cloudflare Workers runtime — only global
  * `fetch`, `AbortController` and Web Crypto are used; no Node APIs.
  *
- * // TODO(phase-6): SSRF guard (reject loopback/link-local/metadata/private)
- * // happens before this runs.
+ * SSRF guard (PRD §19): the initial URL is validated up front and every redirect
+ * hop is re-validated, since the Location header is set by the remote server.
  */
 
 /** Maximum number of body characters retained for later assertion evaluation. */
@@ -16,6 +16,9 @@ const MAX_BODY_CHARS = 1_000_000;
 
 /** Methods that must never carry a request body. */
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
+
+/** Maximum redirect hops followed before giving up. */
+const MAX_REDIRECTS = 5;
 
 export interface HttpCheckResult {
   ok: boolean;
@@ -101,52 +104,136 @@ export async function runHttpCheck(
     headers.set("Authorization", `Bearer ${config.auth.token}`);
   }
 
-  const init: RequestInit = {
-    method: config.method,
-    headers,
-    redirect: config.followRedirects ? "follow" : "manual",
-  };
-  // GET/HEAD must not carry a body.
-  if (config.body !== undefined && !BODYLESS_METHODS.has(config.method)) {
-    init.body = config.body;
-  }
-
   const controller = new AbortController();
-  init.signal = controller.signal;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  // One timer governs the WHOLE exchange — all redirect hops plus the body
+  // read — so a server that stalls the body (slow-loris) still hits the timeout.
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
 
   const startedAt = Date.now();
   let res: Response;
+  let finalUrl = config.url;
+  let redirected = false;
+  let durationMs = 0;
+  let body: string | undefined;
   try {
-    res = await fetch(config.url, init);
+    // Manual redirect following: every hop is re-validated against the SSRF
+    // guard, since the Location is controlled by the (untrusted) remote server.
+    let currentUrl = config.url;
+    let method = config.method;
+    let reqHeaders = headers;
+    let reqBody = config.body;
+    let hops = 0;
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const init: RequestInit = {
+        method,
+        headers: reqHeaders,
+        redirect: "manual",
+        signal: controller.signal,
+      };
+      if (reqBody !== undefined && !BODYLESS_METHODS.has(method)) {
+        init.body = reqBody;
+      }
+
+      res = await fetch(currentUrl, init);
+
+      const isRedirect =
+        res.status >= 300 && res.status < 400 && res.status !== 304;
+      if (!config.followRedirects || !isRedirect) break;
+
+      const location = res.headers.get("location");
+      if (!location) break; // 3xx without a target — treat as the final response.
+
+      if (++hops > MAX_REDIRECTS) {
+        clearTimeout(timer);
+        return {
+          ok: false,
+          durationMs: Date.now() - startedAt,
+          error: "too_many_redirects",
+          errorMessage: `Exceeded ${MAX_REDIRECTS} redirects`,
+        };
+      }
+
+      let next: URL;
+      try {
+        next = new URL(location, currentUrl);
+      } catch {
+        clearTimeout(timer);
+        return {
+          ok: false,
+          durationMs: Date.now() - startedAt,
+          error: "network_error",
+          errorMessage: "Invalid redirect location",
+        };
+      }
+
+      const safeHop = assertSafeUrl(next.toString());
+      if (!safeHop.ok) {
+        clearTimeout(timer);
+        return {
+          ok: false,
+          durationMs: Date.now() - startedAt,
+          error: "blocked_url",
+          errorMessage: `Redirect target rejected by SSRF guard: ${safeHop.reason}`,
+        };
+      }
+
+      const prevOrigin = new URL(currentUrl).origin;
+      // Match fetch semantics: 303 (and 301/302 on a non-GET) become GET.
+      if (
+        res.status === 303 ||
+        ((res.status === 301 || res.status === 302) &&
+          method !== "GET" &&
+          method !== "HEAD")
+      ) {
+        method = "GET";
+        reqBody = undefined;
+      }
+      // Never carry Authorization to a different origin (avoids leaking creds
+      // to a redirect target).
+      if (next.origin !== prevOrigin && reqHeaders.has("Authorization")) {
+        reqHeaders = new Headers(reqHeaders);
+        reqHeaders.delete("Authorization");
+      }
+      currentUrl = next.toString();
+      redirected = true;
+    }
+
+    // Response-time threshold is measured to the final response (headers), not
+    // including the body download.
+    durationMs = Date.now() - startedAt;
+    finalUrl = res!.url || currentUrl;
+
+    // Read the body for later assertion evaluation; the timer still covers it.
+    try {
+      const text = await res!.text();
+      body = text.length > MAX_BODY_CHARS ? text.slice(0, MAX_BODY_CHARS) : text;
+    } catch (err) {
+      if (timedOut) throw err; // a stalled body that hit the timeout is a timeout
+      body = undefined;
+    }
   } catch (err) {
-    const durationMs = Date.now() - startedAt;
     clearTimeout(timer);
-    if (err instanceof Error && err.name === "AbortError") {
+    const elapsed = Date.now() - startedAt;
+    if (timedOut || (err instanceof Error && err.name === "AbortError")) {
       return {
         ok: false,
-        durationMs,
+        durationMs: elapsed,
         error: "timeout",
         errorMessage: `Request exceeded ${timeoutMs}ms timeout`,
       };
     }
     const { error, errorMessage } = classifyFetchError(err);
-    return { ok: false, durationMs, error, errorMessage };
+    return { ok: false, durationMs: elapsed, error, errorMessage };
   }
-  const durationMs = Date.now() - startedAt;
   clearTimeout(timer);
 
-  const statusCode = res.status;
-
-  // Read the body for later assertion evaluation; never let a read failure
-  // abort the whole check.
-  let body: string | undefined;
-  try {
-    const text = await res.text();
-    body = text.length > MAX_BODY_CHARS ? text.slice(0, MAX_BODY_CHARS) : text;
-  } catch {
-    body = undefined;
-  }
+  const statusCode = res!.status;
 
   const { min, max } = config.expectedStatus;
   let ok = statusCode >= min && statusCode <= max;
@@ -183,7 +270,7 @@ export async function runHttpCheck(
     ...(errorMessage ? { errorMessage } : {}),
     ...(degraded ? { degraded } : {}),
     body,
-    redirected: res.redirected,
-    finalUrl: res.url,
+    redirected,
+    finalUrl,
   };
 }

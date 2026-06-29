@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DateTime } from "luxon";
 
 /**
  * Shared validation schemas (worker + client). These define the wire shape of
@@ -58,27 +59,51 @@ export const assertionSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-export const httpConfigSchema = z.object({
-  url: z.string().url(),
-  method: httpMethodSchema.default("GET"),
-  headers: z.array(headerSchema).default([]),
-  body: z.string().optional(),
-  auth: httpAuthSchema.default({ type: "none" }),
-  timeoutMs: z.number().int().min(1000).max(120000).default(60000),
-  warmupTimeoutMs: z.number().int().min(1000).max(300000).default(120000),
-  followRedirects: z.boolean().default(true),
-  expectedStatus: z
-    .object({
-      min: z.number().int().min(100).max(599).default(200),
-      max: z.number().int().min(100).max(599).default(399),
-    })
-    .default({ min: 200, max: 399 }),
-  degradedResponseMs: z.number().int().positive().optional(),
-  failResponseMs: z.number().int().positive().optional(),
-});
+export const httpConfigSchema = z
+  .object({
+    url: z.string().url(),
+    method: httpMethodSchema.default("GET"),
+    headers: z.array(headerSchema).default([]),
+    body: z.string().optional(),
+    auth: httpAuthSchema.default({ type: "none" }),
+    timeoutMs: z.number().int().min(1000).max(120000).default(60000),
+    warmupTimeoutMs: z.number().int().min(1000).max(300000).default(120000),
+    followRedirects: z.boolean().default(true),
+    expectedStatus: z
+      .object({
+        min: z.number().int().min(100).max(599).default(200),
+        max: z.number().int().min(100).max(599).default(399),
+      })
+      .default({ min: 200, max: 399 })
+      .refine((s) => s.min <= s.max, {
+        message: "expectedStatus.min must be <= expectedStatus.max",
+      }),
+    degradedResponseMs: z.number().int().positive().optional(),
+    failResponseMs: z.number().int().positive().optional(),
+  })
+  .refine(
+    (cfg) =>
+      cfg.degradedResponseMs == null ||
+      cfg.failResponseMs == null ||
+      cfg.degradedResponseMs <= cfg.failResponseMs,
+    {
+      message: "degradedResponseMs must be <= failResponseMs",
+      path: ["degradedResponseMs"],
+    },
+  );
 
 // --- Schedules (PRD §7) ---
 export const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+
+/**
+ * A schedule timezone: an IANA zone name. Defaults to UTC and is refined so an
+ * invalid zone is rejected at validation time — otherwise a bad zone would make
+ * the monitor permanently `scheduled_off` and never be checked.
+ */
+export const timezoneSchema = z
+  .string()
+  .default("UTC")
+  .refine((tz) => DateTime.local().setZone(tz).isValid, "invalid timezone");
 export const weekdaySchema = z.number().int().min(0).max(6); // 0=Sun … 6=Sat
 export const periodSchema = z.object({
   start: timeOfDaySchema,
@@ -92,11 +117,11 @@ export const scheduleSchema = z.discriminatedUnion("mode", [
     weekdays: z.array(weekdaySchema).default([1, 2, 3, 4, 5]),
     start: timeOfDaySchema.default("08:00"),
     end: timeOfDaySchema.default("17:00"),
-    timezone: z.string().default("UTC"),
+    timezone: timezoneSchema,
   }),
   z.object({
     mode: z.literal("custom"),
-    timezone: z.string().default("UTC"),
+    timezone: timezoneSchema,
     days: z
       .array(
         z.object({

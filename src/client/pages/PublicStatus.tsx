@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import {
   AlertOctagon,
   AlertTriangle,
@@ -202,6 +202,30 @@ export default function PublicStatus() {
     if (data?.page.name) document.title = `${data.page.name} — Status`;
   }, [data?.page.name]);
 
+  // Apply the configured theme: light/dark explicitly, or follow the visitor's
+  // OS preference when "system". The resolved value drives data-theme on the
+  // page wrapper (light tokens live in index.css under [data-theme="light"]).
+  const configuredTheme = data?.page.theme ?? "system";
+  const [systemLight, setSystemLight] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-color-scheme: light)").matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    const onChange = (e: MediaQueryListEvent) => setSystemLight(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  const effectiveTheme =
+    configuredTheme === "light"
+      ? "light"
+      : configuredTheme === "dark"
+        ? "dark"
+        : systemLight
+          ? "light"
+          : "dark";
+
   if (loading && !data) {
     return (
       <div className="grid min-h-full place-items-center bg-canvas text-ink">
@@ -228,7 +252,7 @@ export default function PublicStatus() {
     : undefined;
 
   return (
-    <div className="min-h-full bg-canvas text-ink" style={accentStyle}>
+    <div className="min-h-full bg-canvas text-ink" data-theme={effectiveTheme} style={accentStyle}>
       <div className="mx-auto max-w-3xl px-4 py-10 sm:py-14">
         {/* Header */}
         <header className="flex items-center justify-between gap-4">

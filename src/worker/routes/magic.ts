@@ -93,8 +93,12 @@ magicApi.post("/request", async (c) => {
   const email = parsed.data.email.trim().toLowerCase();
 
   // Everything past validation is best-effort and must never disclose whether
-  // `email` is the administrator — we always fall through to { ok: true }.
-  if (await isAllowedEmail(c.env, email)) {
+  // `email` is the administrator — neither by body (always { ok: true }) nor by
+  // TIMING. The token issue + email send (which includes a network round-trip
+  // for allowed addresses only) is deferred to ctx.waitUntil so the response
+  // returns before that work runs, leaving no latency oracle to probe.
+  const issueAndSend = async () => {
+    if (!(await isAllowedEmail(c.env, email))) return;
     const data = JSON.stringify({ email });
 
     // Rate-limit: suppress if an unused link was issued for this address recently.
@@ -123,6 +127,14 @@ magicApi.post("/request", async (c) => {
       // Ignore the result: a not-configured / failed send must not leak either.
       await sendResendEmail(c.env, { from, to: email, subject: SUBJECT, html, text });
     }
+  };
+
+  const task = issueAndSend().catch(() => {});
+  try {
+    c.executionCtx.waitUntil(task);
+  } catch {
+    // No execution context (e.g. unit tests) — run inline as a fallback.
+    await task;
   }
 
   return c.json({ ok: true });

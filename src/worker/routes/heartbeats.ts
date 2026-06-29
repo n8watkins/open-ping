@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { getMonitorByHeartbeatToken } from "../db/monitors";
 import { recordHeartbeat } from "../checks/state";
+import { isMonitorInMaintenance } from "../db/maintenance";
+import { timingSafeEqual } from "../lib/timing";
 import type { HeartbeatConfig } from "../../shared/schemas";
 
 /**
@@ -24,15 +26,14 @@ export function isMethodAllowed(
 
 /**
  * True when no secret is configured, otherwise the provided value must match.
- * NOTE: a constant-time comparison is a future hardening item; a plain `===`
- * is acceptable for now.
+ * Uses a constant-time comparison to avoid leaking the secret via timing.
  */
 export function checkSecret(
   configured: string | undefined,
   provided: string | undefined,
 ): boolean {
   if (!configured) return true;
-  return provided === configured;
+  return provided != null && timingSafeEqual(provided, configured);
 }
 
 export interface HeartbeatPayload {
@@ -132,7 +133,11 @@ heartbeats.all("/:token", async (c) => {
     : undefined;
 
   const payload = parseHeartbeatPayload(c.req.query(), body);
-  await recordHeartbeat(c.env, monitor, { at: Date.now(), ...payload });
+  const now = Date.now();
+  // Suppress incidents for beats reporting a failure during a maintenance
+  // window — the scheduler already does this for checks (PRD §16).
+  const maintenance = await isMonitorInMaintenance(c.env, monitor.id, now);
+  await recordHeartbeat(c.env, monitor, { at: now, ...payload }, { maintenance });
 
   return c.json({ ok: true, monitor: monitor.id });
 });

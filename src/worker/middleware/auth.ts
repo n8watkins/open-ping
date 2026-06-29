@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "../types";
 import { CSRF_HEADER, getSession, touchSession } from "../lib/sessions";
+import { timingSafeEqual } from "../lib/timing";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -16,7 +17,7 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
 
   if (!SAFE_METHODS.has(c.req.method.toUpperCase())) {
     const provided = c.req.header(CSRF_HEADER);
-    if (!provided || provided !== session.csrf_secret) {
+    if (!provided || !timingSafeEqual(provided, session.csrf_secret)) {
       return c.json({ error: "csrf_failed" }, 403);
     }
   }

@@ -47,8 +47,12 @@ export async function sendWebhook(
     ...extraHeaders,
   };
   if (secret) {
-    headers["X-OpenPing-Signature"] = `sha256=${await signPayload(secret, body)}`;
-    headers["X-OpenPing-Timestamp"] = String(Date.now());
+    // Sign `${timestamp}.${body}` so the timestamp is covered by the signature
+    // and can't be rewritten for a replay. Receivers reconstruct the same string.
+    const timestamp = String(Date.now());
+    headers["X-OpenPing-Timestamp"] = timestamp;
+    headers["X-OpenPing-Signature"] =
+      `sha256=${await signPayload(secret, `${timestamp}.${body}`)}`;
   }
 
   let res: Response;

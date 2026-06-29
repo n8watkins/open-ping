@@ -118,7 +118,9 @@ export function assertSafeUrl(rawUrl: string): SsrfResult {
   if (!rawHost) {
     return { ok: false, reason: "invalid_host" };
   }
-  const host = rawHost.toLowerCase();
+  // Strip a single trailing dot (FQDN root): "localhost." resolves the same as
+  // "localhost" but would otherwise slip past the literal hostname checks below.
+  const host = rawHost.toLowerCase().replace(/\.$/, "");
 
   if (
     host === "localhost" ||

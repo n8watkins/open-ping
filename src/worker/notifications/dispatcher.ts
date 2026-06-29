@@ -79,8 +79,9 @@ export async function processOutbox(
       // Web Push entries target a device subscription, not a channel.
       if (entry.channelType === "push") {
         const r = await deliverPush(env, entry.id, entry.target, entry.attempts, entry.payload as NotificationPayload);
-        if (r) sent++;
-        else failed++;
+        if (r === "sent") sent++;
+        else if (r === "failed") failed++;
+        // "pruned" (subscription gone/expired) is neither a send nor a failure.
         continue;
       }
 
@@ -116,23 +117,25 @@ export async function processOutbox(
   return { processed: due.length, sent, failed };
 }
 
-/** Deliver one push outbox entry. Returns true on success. */
+type PushOutcome = "sent" | "failed" | "pruned";
+
+/** Deliver one push outbox entry. "pruned" = the subscription is simply gone. */
 async function deliverPush(
   env: Env,
   entryId: string,
   subscriptionId: string | null,
   attempts: number,
   payload: NotificationPayload,
-): Promise<boolean> {
+): Promise<PushOutcome> {
   const sub = subscriptionId ? await getSubscription(env, subscriptionId) : null;
   if (!sub || sub.disabled) {
     await markFailed(env, entryId, MAX_ATTEMPTS, "subscription_gone", MAX_ATTEMPTS);
-    return false;
+    return "pruned";
   }
   const vapid = await getVapid(env);
   if (!vapid) {
     await markFailed(env, entryId, MAX_ATTEMPTS, "vapid_not_configured", MAX_ATTEMPTS);
-    return false;
+    return "failed";
   }
   const result = await sendWebPush({
     subscription: { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
@@ -142,15 +145,15 @@ async function deliverPush(
   if (result.ok) {
     await markSent(env, entryId);
     await recordPushResult(env, sub.id, true);
-    return true;
+    return "sent";
   }
   if (result.expired) {
-    // Subscription is gone — drop it and stop retrying.
+    // Subscription is gone — drop it and stop retrying (not a delivery failure).
     await recordPushResult(env, sub.id, false, { expired: true });
     await markSent(env, entryId);
-    return false;
+    return "pruned";
   }
   await markFailed(env, entryId, attempts + 1, result.error ?? "push_failed", MAX_ATTEMPTS);
   await recordPushResult(env, sub.id, false);
-  return false;
+  return "failed";
 }

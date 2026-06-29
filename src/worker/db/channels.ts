@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { newId } from "../lib/ids";
+import { encryptValue, decryptValue } from "../lib/crypto";
 
 /**
  * Notification channel CRUD data layer. The `notification_channels` table stores
@@ -8,8 +9,114 @@ import { newId } from "../lib/ids";
  * epoch milliseconds. Sending logic lives elsewhere (the dispatcher module);
  * this layer only persists configuration and last-result bookkeeping.
  *
- * TODO(phase-6): encrypt secret config fields (discord url, webhook secret) at rest.
+ * Secret config fields are capability secrets (a Discord webhook URL, the
+ * generic-webhook HMAC secret) and are encrypted at rest. Encryption is
+ * BEST-EFFORT, mirroring monitors: when `env.MASTER_KEY` is unset the config is
+ * stored as plaintext, and `getChannel`/`listChannels` DECRYPT so the dispatcher
+ * always receives the real secret. Routes redact these fields in API responses
+ * (see `redactChannelConfig`) and carry stored secrets forward on update (see
+ * `mergeChannelSecrets`).
  */
+
+const CIPHERTEXT_PREFIX = "v1:";
+
+/** Capability-secret config field names per channel type. */
+const CHANNEL_SECRET_FIELDS: Record<string, readonly string[]> = {
+  discord: ["url"],
+  webhook: ["secret"],
+};
+
+/** Secret config field names for a channel type ([] for types with no secrets). */
+function secretFieldsFor(type: string): readonly string[] {
+  return CHANNEL_SECRET_FIELDS[type] ?? [];
+}
+
+/**
+ * Deep-clone `config`, encrypting each secret field that holds a non-empty
+ * plaintext string. Idempotent (`v1:` values are left as-is). When
+ * `env.MASTER_KEY` is unset the clone is returned UNCHANGED (plaintext at rest).
+ */
+async function encryptChannelConfig(
+  env: Env,
+  type: string,
+  config: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const clone = structuredClone(config);
+  if (!env.MASTER_KEY) return clone;
+  for (const field of secretFieldsFor(type)) {
+    const value = clone[field];
+    if (
+      typeof value === "string" &&
+      value.length > 0 &&
+      !value.startsWith(CIPHERTEXT_PREFIX)
+    ) {
+      clone[field] = await encryptValue(env, value);
+    }
+  }
+  return clone;
+}
+
+/**
+ * Deep-clone `config`, decrypting each secret field whose value is a `v1:`
+ * ciphertext. A failed decrypt never throws outward — the value is left as-is.
+ */
+async function decryptChannelConfig(
+  env: Env,
+  type: string,
+  config: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const clone = structuredClone(config);
+  for (const field of secretFieldsFor(type)) {
+    const value = clone[field];
+    if (typeof value === "string" && value.startsWith(CIPHERTEXT_PREFIX)) {
+      try {
+        clone[field] = await decryptValue(env, value);
+      } catch {
+        // Leave as-is (missing/wrong key, corrupt ciphertext).
+      }
+    }
+  }
+  return clone;
+}
+
+/**
+ * Deep-clone `config` with every secret field blanked to `""` so API responses
+ * never expose secrets. The editor treats an empty value as "unchanged".
+ */
+export function redactChannelConfig(
+  type: string,
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  const clone = structuredClone(config);
+  for (const field of secretFieldsFor(type)) {
+    if (typeof clone[field] === "string") clone[field] = "";
+  }
+  return clone;
+}
+
+/**
+ * Update-flow merge: clone of `incoming`, but for each secret field whose
+ * incoming value is empty/absent while the stored value is a non-empty string,
+ * carry the stored value forward (so a redacted-then-resubmitted config keeps
+ * its secret).
+ */
+export function mergeChannelSecrets(
+  type: string,
+  incoming: Record<string, unknown>,
+  existing: Record<string, unknown>,
+): Record<string, unknown> {
+  const clone = structuredClone(incoming);
+  for (const field of secretFieldsFor(type)) {
+    const value = clone[field];
+    if (typeof value !== "string" || value.length === 0) {
+      const existingValue = existing[field];
+      if (typeof existingValue === "string" && existingValue.length > 0) {
+        clone[field] = existingValue;
+      }
+    }
+  }
+  return clone;
+}
 
 export interface ChannelRecord {
   id: string;
@@ -71,11 +178,22 @@ function rowToChannel(row: ChannelRow): ChannelRecord {
   };
 }
 
+/** Decrypt the secret config fields of a record in place, returning it. */
+async function decryptRecord(
+  env: Env,
+  rec: ChannelRecord,
+): Promise<ChannelRecord> {
+  rec.config = await decryptChannelConfig(env, rec.type, rec.config);
+  return rec;
+}
+
 export async function listChannels(env: Env): Promise<ChannelRecord[]> {
   const res = await env.DB.prepare(
     "SELECT * FROM notification_channels ORDER BY created_at",
   ).all<ChannelRow>();
-  return (res.results ?? []).map(rowToChannel);
+  return Promise.all(
+    (res.results ?? []).map((r) => decryptRecord(env, rowToChannel(r))),
+  );
 }
 
 export async function getChannel(
@@ -87,7 +205,7 @@ export async function getChannel(
   )
     .bind(id)
     .first<ChannelRow>();
-  return row ? rowToChannel(row) : null;
+  return row ? decryptRecord(env, rowToChannel(row)) : null;
 }
 
 export async function createChannel(
@@ -102,6 +220,7 @@ export async function createChannel(
 ): Promise<ChannelRecord> {
   const id = newId("ch");
   const now = Date.now();
+  const storedConfig = await encryptChannelConfig(env, input.type, input.config);
 
   await env.DB.prepare(
     `INSERT INTO notification_channels (
@@ -113,7 +232,7 @@ export async function createChannel(
       input.type,
       input.name ?? null,
       (input.enabled ?? true) ? 1 : 0,
-      JSON.stringify(input.config),
+      JSON.stringify(storedConfig),
       input.events == null ? null : JSON.stringify(input.events),
       now,
       now,
@@ -153,8 +272,15 @@ export async function updateChannel(
     values.push(input.enabled ? 1 : 0);
   }
   if (input.config !== undefined) {
+    // Carry forward redacted (blanked) secrets, then encrypt at rest.
+    const merged = mergeChannelSecrets(
+      existing.type,
+      input.config,
+      existing.config,
+    );
+    const storedConfig = await encryptChannelConfig(env, existing.type, merged);
     sets.push("config = ?");
-    values.push(JSON.stringify(input.config));
+    values.push(JSON.stringify(storedConfig));
   }
   if (input.events !== undefined) {
     sets.push("events = ?");

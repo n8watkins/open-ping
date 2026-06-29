@@ -10,17 +10,55 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** ✅ V1 COMPLETE — all 6 phases done; §26 acceptance criteria met.
-- **Last completed:** Phase 6b. Encryption-at-rest for monitor secret config (encrypt on
-  write, decrypt for checks, redact in API) — VERIFIED live (token stored as v1:… ciphertext,
-  absent in plaintext, redacted in responses, check still succeeds). Docs (install/upgrade/
-  backup/troubleshoot/custom-domain/free-tier), LICENSE, CONTRIBUTING, .dev.vars.example.
-  235 tests pass; build clean.
+- **Active phase:** ✅ V1 COMPLETE + post-build review pass applied.
+- **Last completed:** Parallel multi-agent review of the whole app against §26, then fixed
+  every confirmed issue. 245 tests pass (10 new); `tsc -b` + `vite build` clean.
 - **Status:** Build loop STOPPED — implementation complete. Items that can only be exercised
   on a real deployment (cron trigger cadence, real-device PWA install + Web Push wire
-  encryption, live Resend/Discord delivery) are implemented and unit/integration-verified to
-  the extent the local workerd+vite environment allows; validate on first deploy.
+  encryption, live Resend/Discord delivery, GitHub OAuth code exchange) are implemented and
+  unit/integration-verified to the extent the local workerd+vite environment allows.
 - **To ship:** follow docs/INSTALL.md — db:create, set secrets, db:migrate, deploy, run setup.
+
+### Post-build review — issues found & fixed (2026-06-29)
+
+A 6-domain parallel review caught real defects behind several "VERIFIED ✓" claims. Fixed:
+
+- **SSRF redirect bypass** — checks now follow redirects manually and re-validate EVERY hop
+  (`checks/http.ts`); the request timeout also covers the response-body read. (+ tests)
+- **Heartbeat uptime** — a down heartbeat no longer reads ~100% uptime: missed cycles now
+  accrue downtime in the rollups every cycle; a brand-new heartbeat monitor is no longer
+  marked down before its first interval elapses (`scheduler.ts`, `checks/state.ts`).
+- **Rollup corruption** — daily/monthly summaries are now *sealed* once their source rows
+  age out, so pruning can't silently shrink long-term history; `status_intervals` is now
+  pruned; the configurable `retention` setting actually drives prune horizons (`history/rollups.ts`).
+- **365-day uptime** — now summed from `day` summaries (was hour-only → capped at hourly
+  retention) (`history/metrics.ts`).
+- **Warm-up** — a failed cold-start cycle is `warming_up` (one grace cycle), not an instant
+  incident; real outages still alarm the next cycle (`checks/runner.ts`, `state.ts`, `scheduler.ts`).
+- **Maintenance** — a failing heartbeat received during a maintenance window no longer opens
+  an incident (`routes/heartbeats.ts`, `state.ts`).
+- **HTTP cadence** — due-gate slack so checks don't slip to a ~24-min interval (`scheduler.ts`).
+- **Channel secrets** — Discord URL / webhook HMAC secret now encrypted at rest + redacted in
+  the API (were plaintext) (`db/channels.ts`, `routes/channels.ts`).
+- **Backup import** — incidents are actually restored and the dry-run counts are honest
+  (`routes/data.ts`).
+- **Public status page** — `enabled` flag enforced server-side; maintenance respects recurrence
+  (`routes/public.ts`); theme is applied (light/dark/system) (`client/pages/PublicStatus.tsx`).
+- **Login** — the magic-link email flow is now wired in the UI (was a disabled stub), so
+  email-only installs can sign in (`client/pages/Login.tsx`).
+- **Frontend** — offline/stale banner; header "Operational" pill derived from real state;
+  Dashboard/Monitors show fetch errors; `api()` no longer throws on non-JSON error bodies;
+  incident date filters send epoch-ms; `useFetch` drops out-of-order responses.
+- **Hardening** — setup routes enforce CSRF; magic-link no longer leaks the admin email via a
+  timing oracle; constant-time secret compares; SSRF trailing-dot host; timezone +
+  expected-status validation; webhook signature covers the timestamp; weekly summary anchored
+  to a weekday/hour; flapping recovery notifications suppressed.
+
+**Deferred (LOW / environmental, documented):** heartbeat ingestion token hashed-at-rest (UX
+redesign); OAuth `state`→browser cookie binding; request-Host link poisoning when `app_url`
+unset; MASTER_KEY-absent diagnostics warning; full single-alert flapping coalescing (spam
+already halved); PNG/apple-touch icons; deploy-only ⊕ items (cron cadence, real-device PWA +
+push wire delivery, live email/Discord, OAuth code exchange).
 
 ---
 

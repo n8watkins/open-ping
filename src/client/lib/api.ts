@@ -34,7 +34,16 @@ export async function api<T = unknown>(
   });
 
   const text = await res.text();
-  const data = text ? (JSON.parse(text) as unknown) : null;
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text) as unknown;
+    } catch {
+      // Non-JSON body (e.g. an HTML 5xx/502/503 page): surface the HTTP status
+      // instead of throwing a raw SyntaxError that loses it.
+      throw new ApiError(res.status, res.statusText || text || "request_failed", text);
+    }
+  }
   if (!res.ok) {
     const message =
       (data && typeof data === "object" && "error" in data

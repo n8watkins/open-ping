@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, Navigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -8,16 +9,34 @@ import {
   Settings,
   Globe,
   Loader2,
+  WifiOff,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "../lib/cn";
 import { Logo } from "./Logo";
 import { useBootstrap } from "../lib/bootstrap";
+import { useFetch } from "../lib/useFetch";
+import type { OverviewResponse } from "../lib/types";
 
 interface NavItem {
   to: string;
   label: string;
   icon: LucideIcon;
+}
+
+// Static class maps (no dynamic Tailwind interpolation) for the header pill.
+const STATUS_PILL = {
+  operational: { dot: "bg-up", text: "text-up", label: "Operational" },
+  degraded: { dot: "bg-degraded", text: "text-degraded", label: "Degraded" },
+  down: { dot: "bg-down", text: "text-down", label: "Down" },
+} as const;
+
+/** Derive the overall header status from real overview counts. */
+function deriveStatus(counts: OverviewResponse["counts"] | undefined) {
+  if (!counts) return STATUS_PILL.operational;
+  if (counts.down > 0) return STATUS_PILL.down;
+  if (counts.degraded > 0 || counts.openIncidents > 0) return STATUS_PILL.degraded;
+  return STATUS_PILL.operational;
 }
 
 const NAV: NavItem[] = [
@@ -32,6 +51,27 @@ const NAV: NavItem[] = [
 
 export function AppLayout() {
   const { loading, status, me } = useBootstrap();
+
+  // Real overall status for the header pill (skipped until authenticated).
+  const { data: overview } = useFetch<OverviewResponse>(
+    me?.authenticated ? "/api/overview" : null,
+  );
+  const pill = deriveStatus(overview?.counts);
+
+  // Surface offline/stale state (PWA cache): listen for connectivity changes.
+  const [online, setOnline] = useState(
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+  useEffect(() => {
+    const goOnline = () => setOnline(true);
+    const goOffline = () => setOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -70,12 +110,24 @@ export function AppLayout() {
             Self-hosted uptime monitoring
           </div>
           <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1 text-xs text-ink-muted">
-              <span className="size-2 rounded-full bg-up" />
-              Operational
+            <span
+              className={cn(
+                "inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1 text-xs",
+                pill.text,
+              )}
+            >
+              <span className={cn("size-2 rounded-full", pill.dot)} />
+              {pill.label}
             </span>
           </div>
         </header>
+
+        {!online && (
+          <div className="flex items-center justify-center gap-2 border-b border-degraded/40 bg-degraded/10 px-4 py-1.5 text-xs text-degraded">
+            <WifiOff className="size-3.5" />
+            You're offline — data may be stale.
+          </div>
+        )}
 
         <main className="flex-1 px-4 py-6 pb-24 md:px-6 md:pb-8">
           <Outlet />

@@ -3,6 +3,7 @@ import type { AppEnv } from "../types";
 import { getSession, destroySession } from "../lib/sessions";
 import { getAdminGithubLogin, getAdminEmail } from "../lib/admin";
 import { getSetting } from "../db/settings";
+import { timingSafeEqual } from "../lib/timing";
 
 /** Session/identity endpoints mounted at /api/auth. */
 export const apiAuth = new Hono<AppEnv>();
@@ -35,7 +36,7 @@ apiAuth.post("/logout", async (c) => {
   const session = await getSession(c);
   if (!session) return c.json({ error: "unauthorized" }, 401);
   const csrf = c.req.header("x-csrf-token");
-  if (!csrf || csrf !== session.csrf_secret) {
+  if (!csrf || !timingSafeEqual(csrf, session.csrf_secret)) {
     return c.json({ error: "csrf_failed" }, 403);
   }
   await destroySession(c);
