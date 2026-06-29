@@ -82,38 +82,39 @@ export function isBlockedIPv6(host: string): boolean {
   if (/^fe[89a-f]/.test(h)) return true;
 
   // IPv4-mapped, dotted form: ::ffff:a.b.c.d
+  // (Capture groups are non-null asserted: a successful match guarantees them.)
   const mappedDotted = h.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (mappedDotted) return isBlockedIPv4(mappedDotted[1]);
+  if (mappedDotted) return isBlockedIPv4(mappedDotted[1]!);
 
   // IPv4-mapped, hex form (how WHATWG serializes it): ::ffff:wwww:xxxx
   const mappedHex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (mappedHex) return isBlockedIPv4(hextetsToV4(mappedHex[1], mappedHex[2]));
+  if (mappedHex) return isBlockedIPv4(hextetsToV4(mappedHex[1]!, mappedHex[2]!));
 
   // IPv4-compatible (deprecated): ::a.b.c.d / ::wwww:xxxx (high 96 bits zero).
   // `::` and `::1` are already handled above, so a remaining `::x:y` embeds a v4.
   const compatDotted = h.match(/^::(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (compatDotted) return isBlockedIPv4(compatDotted[1]);
+  if (compatDotted) return isBlockedIPv4(compatDotted[1]!);
   const compatHex = h.match(/^::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (compatHex) return isBlockedIPv4(hextetsToV4(compatHex[1], compatHex[2]));
+  if (compatHex) return isBlockedIPv4(hextetsToV4(compatHex[1]!, compatHex[2]!));
   // Single-hextet IPv4-compatible tail: `::x` (all high bits zero) embeds only
   // the low 16 bits, i.e. 0.0.(x>>8).(x&0xff) — always within 0.0.0.0/8 ("this"
   // network). `::` and `::1` are handled above, so any remaining `::x` is routed
   // through the IPv4 denylist rather than slipping past as "not an IP literal".
   const compatSingle = h.match(/^::([0-9a-f]{1,4})$/);
   if (compatSingle) {
-    const x = parseInt(compatSingle[1], 16);
+    const x = parseInt(compatSingle[1]!, 16);
     return isBlockedIPv4(`0.0.${(x >> 8) & 0xff}.${x & 0xff}`);
   }
 
   // 6to4: 2002:<v4>::/16 — the two hextets after `2002:` are the embedded v4.
   const sixToFour = h.match(/^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})/);
-  if (sixToFour) return isBlockedIPv4(hextetsToV4(sixToFour[1], sixToFour[2]));
+  if (sixToFour) return isBlockedIPv4(hextetsToV4(sixToFour[1]!, sixToFour[2]!));
 
   // NAT64 well-known prefix: 64:ff9b::<v4> (dotted or hex tail).
   const nat64Dotted = h.match(/^64:ff9b::(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (nat64Dotted) return isBlockedIPv4(nat64Dotted[1]);
+  if (nat64Dotted) return isBlockedIPv4(nat64Dotted[1]!);
   const nat64Hex = h.match(/^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (nat64Hex) return isBlockedIPv4(hextetsToV4(nat64Hex[1], nat64Hex[2]));
+  if (nat64Hex) return isBlockedIPv4(hextetsToV4(nat64Hex[1]!, nat64Hex[2]!));
 
   return false;
 }

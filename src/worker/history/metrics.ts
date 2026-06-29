@@ -172,7 +172,7 @@ export function computeIncidentMetricsFromRows(
     const starts = incidents.map((i) => i.startedAt).sort((a, b) => a - b);
     let gapSum = 0;
     for (let i = 1; i < starts.length; i++) {
-      gapSum += starts[i] - starts[i - 1];
+      gapSum += starts[i]! - starts[i - 1]!; // 1 <= i < length, both in bounds
     }
     mtbfSeconds = gapSum / (starts.length - 1) / 1000;
   }

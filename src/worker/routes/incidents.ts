@@ -104,18 +104,18 @@ function toNumber(value: string | undefined): number | null {
 }
 
 /** Whitelisted sort columns (ORDER BY can't be bound — never interpolate). */
-const SORT_COLUMNS: Record<string, string> = {
+const SORT_COLUMNS = {
   started_at: "i.started_at",
   resolved_at: "i.resolved_at",
   created_at: "i.created_at",
   updated_at: "i.updated_at",
   duration_seconds: "i.duration_seconds",
-};
+} as const;
 
 /** Resolve a safe ORDER BY column, defaulting to `started_at`. */
 function resolveSortColumn(sort: string | undefined): string {
-  if (sort && Object.prototype.hasOwnProperty.call(SORT_COLUMNS, sort)) {
-    return SORT_COLUMNS[sort];
+  if (sort && sort in SORT_COLUMNS) {
+    return SORT_COLUMNS[sort as keyof typeof SORT_COLUMNS];
   }
   return SORT_COLUMNS.started_at;
 }

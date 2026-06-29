@@ -34,8 +34,8 @@ const STATUS_PILL = {
 /** Derive the overall header status from real overview counts. */
 function deriveStatus(counts: OverviewResponse["counts"] | undefined) {
   if (!counts) return STATUS_PILL.operational;
-  if (counts.down > 0) return STATUS_PILL.down;
-  if (counts.degraded > 0 || counts.openIncidents > 0) return STATUS_PILL.degraded;
+  if ((counts.down ?? 0) > 0) return STATUS_PILL.down;
+  if ((counts.degraded ?? 0) > 0 || counts.openIncidents > 0) return STATUS_PILL.degraded;
   return STATUS_PILL.operational;
 }
 

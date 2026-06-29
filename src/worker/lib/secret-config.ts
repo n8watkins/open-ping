@@ -72,11 +72,11 @@ function setPath(obj: Record<string, unknown>, path: string, value: unknown): vo
   const parts = path.split(".");
   let cur: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
-    const next = cur[parts[i]];
+    const next = cur[parts[i]!]; // i < parts.length - 1, so parts[i] exists
     if (next === null || typeof next !== "object") return;
     cur = next as Record<string, unknown>;
   }
-  cur[parts[parts.length - 1]] = value;
+  cur[parts[parts.length - 1]!] = value; // split() yields ≥1 element
 }
 
 /**

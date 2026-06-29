@@ -87,12 +87,12 @@ describe("buildVapidJwt", () => {
     ).split(".");
 
     const header = JSON.parse(
-      new TextDecoder().decode(base64urlDecode(encHeader)),
+      new TextDecoder().decode(base64urlDecode(encHeader!)),
     );
     expect(header).toEqual({ typ: "JWT", alg: "ES256" });
 
     const claims = JSON.parse(
-      new TextDecoder().decode(base64urlDecode(encClaims)),
+      new TextDecoder().decode(base64urlDecode(encClaims!)),
     );
     expect(claims.aud).toBe("https://push.example.com");
     expect(claims.sub).toBe("mailto:admin@example.com");

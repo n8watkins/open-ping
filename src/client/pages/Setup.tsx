@@ -156,6 +156,7 @@ export default function Setup() {
   }
 
   const current = STEPS[step];
+  if (!current) return null; // step is always a valid index; guard for the type
 
   return (
     <div className="mx-auto flex min-h-full max-w-4xl flex-col px-4 py-8">

@@ -66,8 +66,8 @@ describe("redactMonitorForExport", () => {
 
     // header names kept, values blanked
     const headers = cfg.headers as Array<Record<string, unknown>>;
-    expect(headers[0].name).toBe("Authorization");
-    expect(headers[0].value).toBe("");
+    expect(headers[0]!.name).toBe("Authorization");
+    expect(headers[0]!.value).toBe("");
 
     // bearer token dropped
     const auth = cfg.auth as Record<string, unknown>;

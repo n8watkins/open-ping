@@ -98,8 +98,8 @@ describe("computeUptimeAndBars", () => {
       true,
     );
     // Oldest first, newest (today) last.
-    expect(bars[89].date).toBe("2026-06-29");
-    expect(bars[0].date).toBe("2026-04-01");
+    expect(bars[89]!.date).toBe("2026-06-29");
+    expect(bars[0]!.date).toBe("2026-04-01");
   });
 
   it("computes uptime % and maps per-day bar state", () => {
