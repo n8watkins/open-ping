@@ -18,7 +18,11 @@
     {
       "binding": "DB",
       "database_name": "open-ping",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Replace with the id printed by `wrangler d1 create open-ping` before
+      // deploying. Left as an obvious sentinel (not a zero-UUID) so a missed
+      // setup step fails loudly instead of with a cryptic "database not found".
+      // Local dev (`--local`) uses database_name, so this value is remote-only.
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
       "migrations_dir": "migrations"
     }
   ]

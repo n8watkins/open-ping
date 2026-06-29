@@ -44,7 +44,7 @@ database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
 Copy the `database_id` value into `wrangler.jsonc`, replacing the placeholder
-`00000000-0000-0000-0000-000000000000`:
+`REPLACE_WITH_YOUR_D1_DATABASE_ID`:
 
 ```jsonc
 "d1_databases": [
