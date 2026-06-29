@@ -10,20 +10,20 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** Phase 5 — Dashboard & Status Page (5a done: APIs + overview)
-- **Last completed:** Phase 5a. 3 parallel agents built the incidents API (+CSV/JSON
-  export), diagnostics+usage API, and the client UI primitives (StatusPill/UptimeBar/
-  Sparkline/Card/Stat/EmptyState + format utils). I added the overview API + monitor
-  detail API + useFetch hook + real Overview and Monitors pages. 167 tests pass; all read
-  APIs verified LIVE (overview counts/state/uptime, detail uptime windows, diagnostics
-  counts, usage 120 checks/day, incidents list).
-- **Next up (Phase 5b+):** monitor detail page (uptime bars + latency sparkline +
-  metrics + incident list), monitor editor form (http+heartbeat/schedule/assertions),
-  incident explorer UI, integrations + push/devices UI, settings, maintenance, and the
-  PUBLIC status page (+ public-safety redaction). Then Phase 6.
-- **Notes:** UI primitives live in src/client/components/ui; useFetch in lib/useFetch;
-  API types in lib/types. Pages consume /api/overview. Public status page needs its own
-  unauthenticated API that redacts URLs/creds/internal errors.
+- **Active phase:** Phase 5 — Dashboard & Status Page (5b done; public page + maint left)
+- **Last completed:** Phase 5b. 4 parallel agents built the monitor detail page, monitor
+  editor (http+heartbeat/schedule/assertions), incident explorer, and integrations+settings
+  pages; I added /api/settings (whitelisted GET/PUT) and wired all routes. tsc clean, 167
+  tests pass, build clean. Verified LIVE: settings GET/PUT (whitelist enforced), all SPA
+  routes serve.
+- **Next up (Phase 5c):** the PUBLIC status page — a new UNAUTHENTICATED API that redacts
+  private data (URLs/creds/headers/internal errors), the public page UI (overall banner,
+  service groups, 90-day uptime bars, active/recent incidents, scheduled maintenance),
+  status-page customization settings, plus the maintenance engine + UI (suppress incidents).
+  Then Phase 6 (hardening/release).
+- **Notes:** public API must build only from monitor.public config + summaries + public
+  incidents; never expose monitor.config. Maintenance needs a db/maintenance + scheduler
+  hook (suppress incident open during active window) + UI.
 
 ---
 
@@ -91,16 +91,16 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 - [x] Client UI primitives (StatusPill, UptimeBar, Sparkline, Card, Stat, EmptyState, format)
 - [x] Overview dashboard (counts, channel-health banner, monitor cards, latest latency)
 - [x] Monitor cards/list (state, last/next check, 24h uptime)
-- [ ] Monitor detail page (uptime bars 24h/7d/30d/365d, latency chart, metrics, incidents)
-- [ ] Monitor editor (create/edit form: http + heartbeat, schedule, assertions)
-- [ ] Incident explorer UI (filters, search, notes, public update, CSV/JSON export)
-- [ ] Maintenance UI (one-time/recurring, global/per-monitor, public msg)
-- [ ] Integrations UI (status, test, edit, last success/failure, health) + push/devices
-- [ ] Settings UI (all sections per PRD §16)
+- [x] Monitor detail page (uptime bars 24h/7d/30d/365d, latency sparkline, metrics, incidents)
+- [x] Monitor editor (create/edit form: http + heartbeat, schedule, assertions)
+- [x] Incident explorer UI (filters, search, notes, public update, CSV/JSON export)
+- [ ] Maintenance UI (one-time/recurring, global/per-monitor, public msg) + maintenance engine
+- [x] Integrations UI (status, test, edit, last success/failure, health) + push/devices
+- [x] Settings UI (general, retention, usage, diagnostics) + /api/settings
 - [ ] Status-page customization (name, logo, favicon, accent, theme, footer, groups)
 - [ ] Public status page (overall banner, groups, uptime bars, incidents, maint)
 - [ ] Public-safety: never leak URLs/creds/headers/bodies/internal errors
-- [ ] Mobile navigation polish
+- [x] Mobile navigation (bottom nav present; refine in hardening)
 
 ## Phase 6 — Hardening & Release
 

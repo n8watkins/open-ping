@@ -9,6 +9,7 @@ import { magicApi } from "./magic";
 import { overview } from "./overview";
 import { incidents } from "./incidents";
 import { diagnostics } from "./diagnostics";
+import { settings } from "./settings";
 
 export const api = new Hono<AppEnv>();
 
@@ -20,6 +21,7 @@ api.route("/monitors", monitors);
 api.route("/channels", channels);
 api.route("/incidents", incidents);
 api.route("/diagnostics", diagnostics);
+api.route("/settings", settings);
 api.route("/push", push);
 
 /** Liveness/readiness probe. Reports whether core wiring is present. */
