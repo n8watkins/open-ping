@@ -1,11 +1,14 @@
 import type { Env } from "../types";
 import type { ChannelRecord } from "../db/channels";
 import { getChannel, recordChannelResult } from "../db/channels";
+import { getSubscription, recordPushResult } from "../db/push";
 import { claimDue, markSent, markFailed } from "../db/outbox";
 import { getSetting } from "../db/settings";
 import { sendResendEmail } from "./channels/resend";
 import { sendDiscordMessage } from "./channels/discord";
 import { sendWebhook } from "./channels/webhook";
+import { sendWebPush } from "./push/webpush";
+import { getVapid } from "./push/vapid";
 import { toEmailHtml, toEmailText, toDiscordEmbed, type NotificationPayload } from "./payload";
 
 const MAX_ATTEMPTS = 5;
@@ -73,6 +76,14 @@ export async function processOutbox(
 
   for (const entry of due) {
     try {
+      // Web Push entries target a device subscription, not a channel.
+      if (entry.channelType === "push") {
+        const r = await deliverPush(env, entry.id, entry.target, entry.attempts, entry.payload as NotificationPayload);
+        if (r) sent++;
+        else failed++;
+        continue;
+      }
+
       const channel = entry.channelId ? await getChannel(env, entry.channelId) : null;
       if (!channel || !channel.enabled) {
         // Channel removed/disabled — drop the entry as dead.
@@ -103,4 +114,43 @@ export async function processOutbox(
   }
 
   return { processed: due.length, sent, failed };
+}
+
+/** Deliver one push outbox entry. Returns true on success. */
+async function deliverPush(
+  env: Env,
+  entryId: string,
+  subscriptionId: string | null,
+  attempts: number,
+  payload: NotificationPayload,
+): Promise<boolean> {
+  const sub = subscriptionId ? await getSubscription(env, subscriptionId) : null;
+  if (!sub || sub.disabled) {
+    await markFailed(env, entryId, MAX_ATTEMPTS, "subscription_gone", MAX_ATTEMPTS);
+    return false;
+  }
+  const vapid = await getVapid(env);
+  if (!vapid) {
+    await markFailed(env, entryId, MAX_ATTEMPTS, "vapid_not_configured", MAX_ATTEMPTS);
+    return false;
+  }
+  const result = await sendWebPush({
+    subscription: { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
+    payload: JSON.stringify({ title: payload.title, body: payload.body, url: payload.url }),
+    vapid,
+  });
+  if (result.ok) {
+    await markSent(env, entryId);
+    await recordPushResult(env, sub.id, true);
+    return true;
+  }
+  if (result.expired) {
+    // Subscription is gone — drop it and stop retrying.
+    await recordPushResult(env, sub.id, false, { expired: true });
+    await markSent(env, entryId);
+    return false;
+  }
+  await markFailed(env, entryId, attempts + 1, result.error ?? "push_failed", MAX_ATTEMPTS);
+  await recordPushResult(env, sub.id, false);
+  return false;
 }

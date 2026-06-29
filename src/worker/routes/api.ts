@@ -4,13 +4,17 @@ import { apiAuth } from "./api-auth";
 import { setup } from "./setup";
 import { monitors } from "./monitors";
 import { channels } from "./channels";
+import { push } from "./push";
+import { magicApi } from "./magic";
 
 export const api = new Hono<AppEnv>();
 
 api.route("/auth", apiAuth);
+api.route("/auth/magic", magicApi);
 api.route("/setup", setup);
 api.route("/monitors", monitors);
 api.route("/channels", channels);
+api.route("/push", push);
 
 /** Liveness/readiness probe. Reports whether core wiring is present. */
 api.get("/health", (c) => {

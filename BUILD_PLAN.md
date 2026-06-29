@@ -10,18 +10,20 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** Phase 4 — Notifications & PWA (outbound pipeline DONE; push/PWA next)
-- **Last completed:** outbound notification pipeline. 3 parallel agents built outbox,
-  channel senders (Resend/Discord/signed-webhook), and channel CRUD; wired event matrix,
-  payload builder, dispatcher, and incident→outbox enqueue hooks (incl flapping warning)
-  into checks/state + scheduler. 136 tests pass. Verified LIVE: channel test-send executes
-  (webhook POST, errors captured), incident open enqueues a 'down' outbox entry.
-- **Next up (Phase 4b):** Web Push (VAPID keygen + aes128gcm encryption via Web Crypto,
-  subscribe/test/disable/remove + device mgmt), PWA (manifest, icons, service worker w/
-  push + offline), magic-link auth (Resend), weekly summary email.
-- **Notes:** Web Push must be hand-rolled with Web Crypto (no node web-push lib). Push
-  channel kind exists in matrix but is delivered via a separate subscription path, not the
-  channel-based dispatcher. Email sender not live-tested (no Resend key locally).
+- **Active phase:** Phase 5 — Dashboard & Status Page (Phase 4 ~COMPLETE)
+- **Last completed:** Phase 4b. 4 parallel agents built Web Push (VAPID + aes128gcm via
+  Web Crypto), push-subscription DB/routes, the PWA (manifest/SW/offline/client helper),
+  and magic-link auth; integrated push delivery into the outbox dispatcher, VAPID
+  keygen/storage, route mounts, and SW registration. 147 tests pass. Verified LIVE: PWA
+  assets serve, VAPID generate+readback (private encrypted), magic-link generic ok (no
+  disclosure). Web Push wire encryption needs real-device validation.
+- **Next up:** Phase 5 — the React UI. Build incident/metrics READ APIs first (GET
+  /api/incidents, /api/monitors + state, /api/monitors/:id/metrics, /api/diagnostics),
+  then overview dashboard, monitor detail (uptime bars/charts), monitor editor, incident
+  explorer, integrations UI, settings, maintenance, and the PUBLIC status page.
+- **Notes:** carry-overs: weekly summary email (Phase 6), push/devices + install UI
+  (build in Phase 5 settings). Most API engine endpoints exist; dashboard needs READ
+  endpoints exposing monitor state + history + metrics + diagnostics.
 
 ---
 
@@ -72,16 +74,16 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 - [x] Notification outbox (per-channel delivery records, retries, max attempts)
 - [x] Resend email channel (sender + HTML/text render; used by dispatcher)
-- [ ] Email magic-link auth (hashed single-use token, rate limit, generic response)
+- [x] Email magic-link auth (hashed single-use token, rate limit, generic response)
 - [x] Discord webhook channel (embeds)
 - [x] Generic signed webhook channel (HMAC signature, custom headers, test)
-- [ ] Web Push: VAPID via Web Crypto, subscribe/test/disable/remove, device mgmt
-- [ ] PWA manifest + icons + standalone + theme colors
-- [ ] Service worker: push handling, deep links, app-shell cache, offline fallback
-- [ ] Android install flow + notification permission guidance + test push
+- [x] Web Push: VAPID via Web Crypto, subscribe/test/disable/remove, device mgmt (encryption needs device validation)
+- [x] PWA manifest + icons + standalone + theme colors
+- [x] Service worker: push handling, deep links, app-shell cache, offline fallback
+- [~] Android install flow + permission guidance + test push (SW+client helper done; UI in Phase 5)
 - [x] Notification defaults + per-event channel matrix
 - [x] Dispatcher + incident enqueue hooks + channel CRUD/test API (engine glue)
-- [ ] Weekly summary email (scheduler-driven, opt-in)
+- [ ] Weekly summary email (scheduler-driven, opt-in) — carry to Phase 6
 
 ## Phase 5 — Dashboard & Status Page
 

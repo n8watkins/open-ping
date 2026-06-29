@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv, Env } from "./types";
 import { api } from "./routes/api";
 import { auth } from "./routes/auth";
+import { magicFlow } from "./routes/magic";
 import { heartbeats } from "./routes/heartbeats";
 import { runScheduled } from "./scheduler";
 
@@ -13,6 +14,7 @@ app.route("/api", api);
 
 // Browser-facing OAuth / magic-link redirect flows.
 app.route("/auth", auth);
+app.route("/auth/magic", magicFlow);
 
 // Public heartbeat ingestion (called by external cron jobs / scripts).
 app.route("/hb", heartbeats);

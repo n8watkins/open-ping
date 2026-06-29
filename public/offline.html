@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1220" />
+    <meta name="color-scheme" content="dark" />
+    <title>OpenPing — Offline</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      :root {
+        --canvas: #0b1220;
+        --surface: #111b2e;
+        --line: #1f2c44;
+        --ink: #e6edf6;
+        --ink-muted: #9fb0c5;
+        --ink-faint: #6b7d96;
+        --accent: #6d8bff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        background-color: var(--canvas);
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        font-family:
+          ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+          Arial, sans-serif;
+      }
+      .card {
+        width: 100%;
+        max-width: 26rem;
+        padding: 2rem;
+        border: 1px solid var(--line);
+        border-radius: 0.875rem;
+        background-color: var(--surface);
+        text-align: center;
+      }
+      .glyph {
+        display: block;
+        width: 64px;
+        height: 64px;
+        margin: 0 auto 1.25rem;
+      }
+      .wordmark {
+        font-size: 1.5rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin: 0 0 0.25rem;
+      }
+      .wordmark .ping {
+        color: var(--accent);
+      }
+      .badge {
+        display: inline-block;
+        margin-bottom: 1rem;
+        padding: 0.2rem 0.6rem;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--ink-muted);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+      }
+      h1 {
+        font-size: 1.125rem;
+        font-weight: 600;
+        margin: 0 0 0.5rem;
+      }
+      p {
+        margin: 0 0 0.75rem;
+        font-size: 0.9rem;
+        line-height: 1.5;
+        color: var(--ink-muted);
+      }
+      p.fine {
+        margin-top: 1.25rem;
+        margin-bottom: 0;
+        font-size: 0.8rem;
+        color: var(--ink-faint);
+      }
+      .accent {
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <svg class="glyph" viewBox="0 0 32 32" role="img" aria-label="OpenPing">
+        <rect width="32" height="32" rx="8" fill="#0b1220" />
+        <circle cx="16" cy="16" r="4" fill="#6d8bff" />
+        <circle cx="16" cy="16" r="9" fill="none" stroke="#6d8bff" stroke-width="1.5" opacity="0.5" />
+        <circle cx="16" cy="16" r="13" fill="none" stroke="#6d8bff" stroke-width="1.5" opacity="0.2" />
+      </svg>
+      <p class="wordmark">Open<span class="ping">Ping</span></p>
+      <span class="badge">Offline</span>
+      <h1>You're offline</h1>
+      <p>
+        OpenPing is showing the last-known <span class="accent">cached data</span>
+        from your most recent visit. Some details may be out of date until your
+        connection returns.
+      </p>
+      <p class="fine">
+        Monitoring keeps running in the cloud while you're away — checks and
+        alerts continue uninterrupted, and fresh status will load automatically
+        once you're back online.
+      </p>
+    </main>
+  </body>
+</html>

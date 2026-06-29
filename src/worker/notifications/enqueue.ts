@@ -2,8 +2,10 @@ import type { Env } from "../types";
 import type { MonitorRecord } from "../db/monitors";
 import type { IncidentRecord } from "../db/incidents";
 import { listChannels } from "../db/channels";
+import { listActiveSubscriptions } from "../db/push";
 import { enqueue } from "../db/outbox";
 import { getSetting } from "../db/settings";
+import { isVapidConfigured } from "./push/vapid";
 import { channelWantsEvent, type ChannelKind, type NotifyEvent } from "../../shared/notifications";
 import { buildIncidentPayload } from "./payload";
 
@@ -26,7 +28,7 @@ export async function enqueueIncidentEvent(
   const payload = buildIncidentPayload(monitor, incident, event, appUrl);
   const restrict = monitor.notify?.channels ?? [];
 
-  const entries = channels
+  const entries: Parameters<typeof enqueue>[1] = channels
     .filter((ch) => channelWantsEvent(ch.type as ChannelKind, event, ch.events))
     .filter((ch) => restrict.length === 0 || restrict.includes(ch.id))
     .map((ch) => ({
@@ -36,6 +38,21 @@ export async function enqueueIncidentEvent(
       eventType: event,
       payload,
     }));
+
+  // Web Push: one entry per active device subscription (separate from channels).
+  if (channelWantsEvent("push", event, null) && (await isVapidConfigured(env))) {
+    const subs = await listActiveSubscriptions(env);
+    for (const s of subs) {
+      entries.push({
+        eventKey: `${event}:${incident.id}:push:${s.id}`,
+        channelId: null,
+        channelType: "push",
+        target: s.id,
+        eventType: event,
+        payload,
+      });
+    }
+  }
 
   if (entries.length) await enqueue(env, entries);
 }

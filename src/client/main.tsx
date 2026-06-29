@@ -14,3 +14,13 @@ createRoot(rootEl).render(
     </BrowserRouter>
   </StrictMode>,
 );
+
+// Register the service worker for PWA install + Web Push (production only;
+// the SW lives in public/ and is served at the root).
+if ("serviceWorker" in navigator && import.meta.env.PROD) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* SW registration is best-effort */
+    });
+  });
+}
