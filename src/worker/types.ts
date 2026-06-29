@@ -1,0 +1,42 @@
+/**
+ * Cloudflare Worker runtime bindings. Secrets are optional at the type level so
+ * the app can boot before first-run setup configures them; handlers must guard
+ * for missing values and surface a clear "not configured" error.
+ */
+export interface Env {
+  /** D1 — the only operational datastore. */
+  DB: D1Database;
+  /** Static asset server (built SPA). */
+  ASSETS: Fetcher;
+
+  // --- Worker secrets (set via `wrangler secret put` / dashboard) ---
+  /** HMAC key for signing/validating session + CSRF tokens. */
+  SESSION_SECRET?: string;
+  /** AES-GCM master key (base64) for encrypting sensitive D1 values. */
+  MASTER_KEY?: string;
+
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
+
+  RESEND_API_KEY?: string;
+
+  /** Allowlisted administrator identities (bootstrap). */
+  ADMIN_GITHUB_LOGIN?: string;
+  ADMIN_EMAIL?: string;
+
+  /** Public base URL of this installation, e.g. https://status.example.com */
+  APP_URL?: string;
+
+  /** Web Push VAPID keypair (set during PWA setup). */
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
+}
+
+/** Hono generics for this app. */
+export type AppEnv = { Bindings: Env; Variables: AppVariables };
+
+export interface AppVariables {
+  /** Set by auth middleware on authenticated requests. */
+  admin?: { id: string; login?: string; email?: string };
+}

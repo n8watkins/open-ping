@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.dev.vars.*
+*.local
+.env
+.env.*
+.DS_Store
+coverage/
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json
+worker-configuration.d.ts

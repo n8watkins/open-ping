@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+/*
+ * OpenPing design tokens (PRD §21): dark navy shell, slightly lighter elevated
+ * cards, restrained borders, one distinctive accent, semantic status colors.
+ * Defined via @theme so they generate utilities like bg-canvas, text-ink,
+ * border-line, text-up, bg-down/10, etc.
+ */
+@theme {
+  --color-canvas: #0b1220;
+  --color-surface: #111b2e;
+  --color-surface-2: #16233a;
+  --color-line: #1f2c44;
+  --color-line-soft: #172033;
+
+  --color-ink: #e6edf6;
+  --color-ink-muted: #9fb0c5;
+  --color-ink-faint: #6b7d96;
+
+  --color-accent: #6d8bff;
+  --color-accent-hover: #859dff;
+  --color-accent-soft: #1b2547;
+
+  --color-up: #2fbf6e;
+  --color-down: #ef4757;
+  --color-degraded: #f5a524;
+  --color-scheduled: #64748b;
+  --color-maint: #8b8bf5;
+  --color-paused: #51607a;
+  --color-warming: #f0b429;
+
+  --radius-card: 0.875rem;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-family:
+      ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+      Arial, sans-serif;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-accent) 35%, transparent);
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* Thin, restrained scrollbars that match the dark shell. */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line) transparent;
+  }
+}
