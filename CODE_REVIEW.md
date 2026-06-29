@@ -7,7 +7,8 @@ earlier `SECURITY_REVIEW.md` (Pass 1, folded into the appendix below).
 | Pass | Date | Method | Findings | Status |
 |------|------|--------|----------|--------|
 | 1 | 2026-06-29 | 9 reviewer agents + adversarial verifier | 21 confirmed | ✅ all fixed |
-| 2 | 2026-06-29 | 8 reviewer agents (disjoint domains) → 7 fix agents (disjoint files) | 4 High · ~13 Medium · ~24 Low | ✅ fixed · 11 deferred (documented) |
+| 2 | 2026-06-29 | 8 reviewer agents (disjoint domains) → 7 fix agents (disjoint files) | 4 High · ~13 Medium · ~24 Low | ✅ fixed |
+| 2b | 2026-06-29 | follow-up: resolve the 11 Pass-2 deferrals | 11 items (9 commits) | ✅ fixed (2 scoped) |
 
 **Verification (Pass 2, post-fix):** `tsc -b` clean · `vitest` **277 passed** (was 253;
 +24 tests) · `vite build` clean · new migration `0003` validated.
@@ -173,21 +174,25 @@ unmount/stale guard (`lib/useFetch.ts`); Maintenance badges tick with wall-clock
 time (`pages/Maintenance.tsx`); accent input validates/normalizes with the server's
 hex pattern (`pages/StatusPageSettings.tsx`).
 
-### Deferred (11) — with rationale
+### Deferred items — now resolved (follow-up pass)
 
-| Item | Why deferred |
-|------|--------------|
-| `timingSafeEqual` length leak (`lib/timing.ts`) | Constant-length hardening needs an async digest (no sync SHA-256 in Workers); would ripple into 4 non-owned call sites. Length-only leak is already documented in-code. |
-| Per-token heartbeat rate-limiting (`routes/heartbeats.ts`) | Payload caps landed (the storage-bloat half); true rate-limiting needs per-token throttle state — larger change. |
-| Recurring windows in public "upcoming" (`db/maintenance.ts`) | Synthesizing a next-occurrence timestamp touches the status-page renderer; non-surgical. (Range-gating — the correctness half — *was* fixed.) |
-| `deleteMonitor` outbox purge (`db/monitors.ts`) | `notification_outbox` has no `monitor_id`; matching the incident-id-embedded `event_key` via `LIKE` is fragile. Orphaned rows are terminal/read-by-own-id only, so harmless. Documented in-code. |
-| OAuth `state` browser-binding (`routes/auth.ts`) | Mitigated by the single-admin allowlist (a forced flow only yields the attacker's own non-admin login, which is rejected). `// NOTE` added. |
-| Session revocation beyond self-logout (`lib/sessions.ts`) | Mitigated by single-admin model + login rotation; "sign out everywhere" is a feature, not a fix. `// NOTE` added. |
-| `noUncheckedIndexedAccess` | Would surface many new errors repo-wide; warrants its own focused pass. |
-| `CHECK` constraints on enum columns | SQLite needs a full table rebuild to add them; risky vs the defense-in-depth payoff. |
-| Placeholder `database_id` sentinel (`wrangler.jsonc`) | Documented in INSTALL; changing it risks the existing local `.wrangler` setup. |
-| `@cloudflare/workers-types` pin bump | Low-risk but may surface type-signature churn; out of scope for a fix pass. |
-| Code-split admin SPA off the public bundle (`client/App.tsx`) | Perf/defense-in-depth (no data leak — endpoints still require auth); larger refactor. |
+All 11 Pass-2 deferrals were subsequently fixed in a sequence of focused, verified
+commits (each `tsc -b` + tests green; migrations validated on SQLite via the full
+0001→0005 chain). Two have a deliberately scoped resolution, noted below.
+
+| Item | Resolution |
+|------|------------|
+| `timingSafeEqual` length leak (`lib/timing.ts`) | Now SHA-256-hashes both inputs and compares fixed-length digests (no content or length leak). Made async; all 4 call sites await it. |
+| Per-token heartbeat rate-limiting (`routes/heartbeats.ts`) | Min-interval throttle (5s, ≪ the 60s schema minimum) via an indexed `last_beat_at` read; over-rate beats are acked but skip writes. Fails open. |
+| Recurring windows in public "upcoming" (`db/maintenance.ts`) | Added `nextRecurringOccurrence()`; recurring windows are projected to their next occurrence (within the validity range) and shown in `upcoming`. +5 tests. |
+| `deleteMonitor` outbox purge (`db/monitors.ts`) | Migration `0004` adds `notification_outbox.monitor_id` (+ index); enqueue stamps it, deleteMonitor purges it, and flap-coalescing now matches the indexed column. |
+| OAuth `state` browser-binding (`routes/auth.ts`) | Bound to an HttpOnly cookie set at `/start` and verified (constant-time) on callback (double-submit). |
+| Session revocation beyond self-logout (`lib/sessions.ts`) | Added `revokeAllSessions()` + `POST /api/auth/logout-all`. *Scope:* the capability/endpoint exists; no client account-menu UI was wired (none exists today — a separate follow-up). |
+| `noUncheckedIndexedAccess` | Enabled in all 3 tsconfig projects; fixed all 27 resulting errors (regex groups, loop indices, `SORT_COLUMNS as const`, count defaults, a `STEPS[step]` crash guard). |
+| `CHECK` constraints on enum columns | Migration `0005` adds `BEFORE INSERT/UPDATE` triggers enforcing `incidents.status ∈ {open,resolved}` (no risky table rebuild). *Scope:* only the index-backing `status` column; other enums are left to the TS types. |
+| Placeholder `database_id` (`wrangler.jsonc`) | Replaced the zero-UUID with `REPLACE_WITH_YOUR_D1_DATABASE_ID` + comment so a missed step fails loudly; verified the build still loads (id is remote-only). |
+| `@cloudflare/workers-types` pin bump | Switched the worker types from the stale `2023-07-01` entrypoint to the undated default (tracks the installed `4.20260629.x`, aligned with the runtime). |
+| Code-split admin SPA off the public bundle (`client/App.tsx`) | Admin pages `React.lazy`-loaded behind `Suspense`; the bundle anonymous `/status` visitors download dropped ~400 kB → ~297 kB. |
 
 ### Note: two findings revisited from Pass 1
 
