@@ -10,9 +10,12 @@ import {
   Globe,
   Loader2,
   WifiOff,
+  LogOut,
+  User,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "../lib/cn";
+import { api } from "../lib/api";
 import { Logo } from "./Logo";
 import { useBootstrap } from "../lib/bootstrap";
 import { useFetch } from "../lib/useFetch";
@@ -50,7 +53,17 @@ const NAV: NavItem[] = [
 ];
 
 export function AppLayout() {
-  const { loading, status, me } = useBootstrap();
+  const { loading, status, me, csrf } = useBootstrap();
+
+  async function logout() {
+    try {
+      await api("/api/auth/logout", { method: "POST", csrf: csrf ?? undefined });
+    } catch {
+      // Ignore — clear the local view and head to login regardless.
+    }
+    // Full reload so bootstrap/auth state (and any PWA cache) resets cleanly.
+    window.location.assign("/login");
+  }
 
   // Real overall status for the header pill (skipped until authenticated).
   const { data: overview } = useFetch<OverviewResponse>(
@@ -123,6 +136,26 @@ export function AppLayout() {
               <span className={cn("size-2 rounded-full", pill.dot)} />
               {pill.label}
             </span>
+            {me?.identity && (
+              <div className="flex items-center gap-2 border-l border-line pl-3">
+                <span
+                  className="hidden items-center gap-1.5 text-xs text-ink-muted sm:inline-flex"
+                  title={`Signed in (${me.identityKind ?? "session"})`}
+                >
+                  <User className="size-3.5" />
+                  {me.identity}
+                </span>
+                <button
+                  type="button"
+                  onClick={logout}
+                  title="Sign out"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                >
+                  <LogOut className="size-3.5" />
+                  <span className="hidden sm:inline">Sign out</span>
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
