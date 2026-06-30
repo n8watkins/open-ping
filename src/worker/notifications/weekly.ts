@@ -3,6 +3,7 @@ import { getSetting, setSetting } from "../db/settings";
 import { getAdminEmail } from "../lib/admin";
 import { sendResendEmail } from "./channels/resend";
 import { listMonitors } from "../db/monitors";
+import { escapeHtml, renderEmailLayout, renderEmailText } from "./email-layout";
 
 /**
  * Weekly summary email (PRD §24). Opt-in and scheduler-driven: the cron caller
@@ -84,23 +85,20 @@ function formatDate(ms: number): string {
   return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+// Single-quoted family name: interpolated into double-quoted style="" attrs.
+const FONT =
+  "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
 /**
  * Render the weekly summary email. Pure: given the aggregated stats and a label
  * for the period it covers, returns subject + HTML + plain-text bodies. The
  * subject leads with the headline uptime, e.g. "OpenPing weekly summary —
- * 99.9% uptime".
+ * 99.9% uptime". An optional `appUrl` adds an "Open OpenPing" CTA.
  */
 export function buildWeeklyEmail(
   stats: WeeklyStats,
   periodLabel: string,
+  appUrl?: string,
 ): { subject: string; html: string; text: string } {
   const uptime = formatPct(stats.overallUptimePct);
   const subject = `OpenPing weekly summary — ${uptime}% uptime`;
@@ -126,33 +124,37 @@ export function buildWeeklyEmail(
 
   const htmlRows = rows
     .map(
-      ([label, value]) =>
-        `<tr>
-          <td style="padding:8px 0;color:#94a3b8;font-size:14px">${escapeHtml(label)}</td>
-          <td style="padding:8px 0;color:#f1f5f9;font-size:14px;font-weight:600;text-align:right">${escapeHtml(value)}</td>
-        </tr>`,
+      ([label, value], i) => {
+        const border = i === 0 ? "" : "border-top:1px solid #eef2f7;";
+        return (
+          `<tr><td style="${border}padding:9px 0;font-family:${FONT};font-size:14px;color:#5f6f87;">${escapeHtml(label)}</td>` +
+          `<td style="${border}padding:9px 0;font-family:${FONT};font-size:14px;font-weight:600;color:#16233a;text-align:right;">${escapeHtml(value)}</td></tr>`
+        );
+      },
     )
-    .join("\n");
+    .join("");
 
-  const html = `<div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:24px;background:#0f172a;border-radius:12px;color:#e2e8f0">
-    <h2 style="font-size:18px;margin:0 0 4px;color:#f8fafc">OpenPing weekly summary</h2>
-    <p style="font-size:13px;color:#94a3b8;margin:0 0 20px">${escapeHtml(periodLabel)}</p>
-    <p style="font-size:28px;font-weight:700;margin:0 0 20px;color:#6d8bff">${uptime}% uptime</p>
-    <table style="width:100%;border-collapse:collapse;border-top:1px solid #1e293b">
-      ${htmlRows}
-    </table>
-    <hr style="border:none;border-top:1px solid #1e293b;margin:24px 0">
-    <p style="font-size:12px;color:#64748b;margin:0">Sent by OpenPing</p>
-  </div>`;
+  const bodyHtml =
+    `<p style="margin:0 0 16px;font-family:${FONT};font-size:13px;color:#5f6f87;">${escapeHtml(periodLabel)}</p>` +
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:#f7f9fc;border:1px solid #e3e9f2;border-radius:12px;padding:6px 18px;margin:0 0 18px;"><tr>` +
+    `<td style="padding:14px 0 12px;font-family:${FONT};font-size:13px;color:#5f6f87;text-transform:uppercase;letter-spacing:0.06em;">Overall uptime</td>` +
+    `<td style="padding:14px 0 12px;font-family:${FONT};font-size:30px;font-weight:700;color:#4f6bf0;text-align:right;line-height:1;">${uptime}%</td>` +
+    `</tr></table>` +
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;">${htmlRows}</table>`;
 
-  const text = [
-    "OpenPing weekly summary",
-    periodLabel,
-    "",
-    ...rows.map(([label, value]) => `${label}: ${value}`),
-    "",
-    "Sent by OpenPing",
-  ].join("\n");
+  const html = renderEmailLayout({
+    heading: "Weekly summary",
+    accent: "neutral",
+    bodyHtml,
+    button: appUrl ? { label: "Open OpenPing", url: appUrl } : undefined,
+    preheader: `${uptime}% uptime · ${periodLabel}`,
+  });
+
+  const text = renderEmailText({
+    heading: "OpenPing weekly summary",
+    lines: [periodLabel, "", ...rows.map(([label, value]) => `${label}: ${value}`)],
+    button: appUrl ? { label: "Open OpenPing", url: appUrl } : undefined,
+  });
 
   return { subject, html, text };
 }
@@ -326,7 +328,10 @@ export async function sendWeeklySummary(
   const sinceMs = now - WEEK_MS;
   const stats = await gatherWeeklyStats(env, sinceMs, now);
   const periodLabel = `${formatDate(sinceMs)} – ${formatDate(now)}`;
-  const email = buildWeeklyEmail(stats, periodLabel);
+  // CTA base URL: env > settings (same precedence as the rest of the app).
+  const configuredUrl = env.APP_URL ?? (await getSetting(env, "app_url"));
+  const appUrl = configuredUrl ? configuredUrl.replace(/\/$/, "") : undefined;
+  const email = buildWeeklyEmail(stats, periodLabel, appUrl);
 
   const from = (await getSetting(env, "email_from")) ?? DEFAULT_FROM;
 

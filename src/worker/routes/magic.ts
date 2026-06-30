@@ -7,6 +7,11 @@ import { isAllowedEmail } from "../lib/admin";
 import { createSession } from "../lib/sessions";
 import { getSetting } from "../db/settings";
 import { sendResendEmail } from "../notifications/channels/resend";
+import {
+  escapeHtml,
+  renderEmailLayout,
+  renderEmailText,
+} from "../notifications/email-layout";
 
 /**
  * Email magic-link authentication (PRD §13): the optional fallback to GitHub
@@ -77,30 +82,37 @@ export function isConsumedTokenValid<T extends { expires_at: number }>(
 }
 
 function magicEmailBody(link: string): { html: string; text: string } {
-  const html = `<!doctype html>
-<html>
-  <body style="font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #111;">
-    <p>Click the button below to sign in to OpenPing. This link expires in 15 minutes and can be used once.</p>
-    <p>
-      <a href="${link}"
-         style="display:inline-block;padding:12px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;">
-        Sign in to OpenPing
-      </a>
-    </p>
-    <p style="color:#555;font-size:13px;">If the button doesn't work, copy and paste this URL into your browser:<br>
-      <a href="${link}">${link}</a>
-    </p>
-    <p style="color:#555;font-size:13px;">If you didn't request this, you can safely ignore this email.</p>
-  </body>
-</html>`;
-  const text = [
-    "Sign in to OpenPing.",
-    "",
-    "Open this link to sign in (expires in 15 minutes, single use):",
-    link,
-    "",
-    "If you didn't request this, you can safely ignore this email.",
-  ].join("\n");
+  // Single-quoted family name: interpolated into double-quoted style="" attrs.
+  const FONT =
+    "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+  const safeLink = escapeHtml(link);
+  const bodyHtml =
+    `<p style="margin:0 0 16px;font-family:${FONT};font-size:15px;line-height:1.6;color:#16233a;">` +
+    `Click the button below to sign in. This link expires in 15 minutes and can be used once.</p>` +
+    `<p style="margin:20px 0 6px;font-family:${FONT};font-size:13px;line-height:1.6;color:#5f6f87;">` +
+    `If the button doesn't work, copy and paste this URL into your browser:</p>` +
+    `<p style="margin:0;font-family:${FONT};font-size:13px;line-height:1.5;word-break:break-all;">` +
+    `<a href="${safeLink}" style="color:#4f6bf0;text-decoration:underline;">${safeLink}</a></p>` +
+    `<p style="margin:18px 0 0;font-family:${FONT};font-size:13px;line-height:1.6;color:#5f6f87;">` +
+    `If you didn't request this, you can safely ignore this email.</p>`;
+
+  const html = renderEmailLayout({
+    heading: "Sign in to OpenPing",
+    accent: "neutral",
+    bodyHtml,
+    button: { label: "Sign in to OpenPing", url: link },
+    preheader: "Your single-use OpenPing sign-in link (expires in 15 minutes).",
+  });
+
+  const text = renderEmailText({
+    heading: "Sign in to OpenPing",
+    lines: [
+      "Open this link to sign in (expires in 15 minutes, single use):",
+      link,
+      "",
+      "If you didn't request this, you can safely ignore this email.",
+    ],
+  });
   return { html, text };
 }
 

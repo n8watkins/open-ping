@@ -2,6 +2,12 @@ import type { MonitorRecord } from "../db/monitors";
 import type { IncidentRecord } from "../db/incidents";
 import type { NotifyEvent } from "../../shared/notifications";
 import { stateColor, type DiscordEmbed } from "./channels/discord";
+import {
+  escapeHtml,
+  renderEmailLayout,
+  renderEmailText,
+  stripLeadingEmoji,
+} from "./email-layout";
 
 /** Normalized notification payload carried through the outbox to every channel. */
 export interface NotificationPayload {
@@ -86,33 +92,70 @@ export function buildTestPayload(channelName: string, appUrl?: string): Notifica
 
 // --- Renderers ---
 
+// Single-quoted family name: interpolated into double-quoted style="" attrs.
+const FONT =
+  "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+/** Short uppercase pill label for the email status accent. */
+const EVENT_PILL: Record<NotifyEvent, string> = {
+  down: "Down",
+  recovered: "Recovered",
+  heartbeat_missed: "Missed heartbeat",
+  flapping: "Flapping",
+  degraded: "Degraded",
+  maintenance_start: "Maintenance",
+  maintenance_end: "Maintenance",
+  weekly: "Summary",
+  test: "Test",
+};
+
+/** CTA label per event: incidents link to the monitor, test opens the app. */
+function emailButtonLabel(event: NotifyEvent): string {
+  if (event === "test") return "Open OpenPing";
+  if (event === "maintenance_start" || event === "maintenance_end") return "View monitor";
+  return "View incident";
+}
+
+function metaLines(p: NotificationPayload): Array<[string, string]> {
+  const meta: Array<[string, string]> = [];
+  if (p.statusCode) meta.push(["HTTP status", String(p.statusCode)]);
+  if (p.error) meta.push(["Error", p.error]);
+  meta.push(["Detected", new Date(p.detectedAt).toUTCString()]);
+  return meta;
+}
+
 export function toEmailText(p: NotificationPayload): string {
   const lines = [p.body, ""];
-  if (p.statusCode) lines.push(`HTTP status: ${p.statusCode}`);
-  if (p.error) lines.push(`Error: ${p.error}`);
-  lines.push(`Detected: ${new Date(p.detectedAt).toISOString()}`);
-  if (p.url) lines.push(`\n${p.url}`);
-  return lines.join("\n");
+  for (const [label, value] of metaLines(p)) lines.push(`${label}: ${value}`);
+  return renderEmailText({
+    heading: stripLeadingEmoji(p.title),
+    lines,
+    button: p.url ? { label: emailButtonLabel(p.event), url: p.url } : undefined,
+  });
 }
 
 export function toEmailHtml(p: NotificationPayload): string {
-  const rows: string[] = [`<p style="font-size:15px;margin:0 0 16px">${escapeHtml(p.body)}</p>`];
-  const meta: string[] = [];
-  if (p.statusCode) meta.push(`<strong>HTTP status:</strong> ${p.statusCode}`);
-  if (p.error) meta.push(`<strong>Error:</strong> ${escapeHtml(p.error)}`);
-  meta.push(`<strong>Detected:</strong> ${new Date(p.detectedAt).toUTCString()}`);
-  rows.push(`<p style="font-size:13px;color:#64748b;line-height:1.6">${meta.join("<br>")}</p>`);
-  if (p.url) {
-    rows.push(
-      `<p style="margin-top:20px"><a href="${escapeHtml(p.url)}" style="background:#6d8bff;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-size:14px">View monitor</a></p>`,
-    );
-  }
-  return `<div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:24px">
-    <h2 style="font-size:18px;margin:0 0 16px">${escapeHtml(p.title)}</h2>
-    ${rows.join("\n")}
-    <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0">
-    <p style="font-size:12px;color:#94a3b8">Sent by OpenPing</p>
-  </div>`;
+  const meta = metaLines(p);
+  const metaRows = meta
+    .map(
+      ([label, value]) =>
+        `<tr><td style="padding:6px 14px 6px 0;font-family:${FONT};font-size:13px;color:#5f6f87;white-space:nowrap;vertical-align:top;">${escapeHtml(label)}</td>` +
+        `<td style="padding:6px 0;font-family:${FONT};font-size:13px;color:#16233a;font-weight:600;word-break:break-word;">${escapeHtml(value)}</td></tr>`,
+    )
+    .join("");
+
+  const bodyHtml =
+    `<p style="margin:0 0 18px;font-family:${FONT};font-size:15px;line-height:1.6;color:#16233a;">${escapeHtml(p.body)}</p>` +
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:#f7f9fc;border:1px solid #e3e9f2;border-radius:10px;padding:6px 16px;">${metaRows}</table>`;
+
+  return renderEmailLayout({
+    heading: stripLeadingEmoji(p.title),
+    accent: eventColorState(p.event),
+    statusLabel: EVENT_PILL[p.event],
+    bodyHtml,
+    button: p.url ? { label: emailButtonLabel(p.event), url: p.url } : undefined,
+    preheader: p.body,
+  });
 }
 
 // Discord embed length limits
@@ -179,12 +222,4 @@ export function toDiscordEmbed(p: NotificationPayload): DiscordEmbed {
     timestamp: new Date(p.detectedAt).toISOString(),
     footer: { text: "OpenPing" },
   };
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
