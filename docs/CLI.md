@@ -46,6 +46,10 @@ node scripts/op.mjs monitors create \
 # always-on (24/7) schedule
 node scripts/op.mjs monitors create --name "My App" --url "https://..." --schedule always
 
+# update an existing monitor (full replace — re-pass name + url)
+node scripts/op.mjs monitors update <id> --name "My App" --url "https://..." \
+  --schedule business --tz "America/Los_Angeles"
+
 # delete a monitor
 node scripts/op.mjs monitors delete <id>
 ```

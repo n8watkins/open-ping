@@ -87,8 +87,9 @@ function buildSchedule() {
 
 const USAGE = `OpenPing CLI
   op monitors list
-  op monitors create --name NAME --url URL [--schedule business|always]
-                     [--tz ZONE] [--days 1,2,3,4,5] [--start 08:00] [--end 17:00]
+  op monitors create        --name NAME --url URL [--schedule business|always]
+                            [--tz ZONE] [--days 1,2,3,4,5] [--start 08:00] [--end 17:00]
+  op monitors update <id>    --name NAME --url URL [--schedule ...] [--tz ZONE] ...
   op monitors delete <id>`;
 
 async function main() {
@@ -117,6 +118,24 @@ async function main() {
       },
     });
     console.log(`✓ created ${monitor.id}  ${monitor.name}`);
+    return;
+  }
+
+  if (group === "monitors" && action === "update") {
+    const id = positionals[0] || flags.id;
+    if (!id || !flags.name || !flags.url) {
+      die("Usage: op monitors update <id> --name NAME --url URL [--schedule ...] [--tz ...]");
+    }
+    const { monitor } = await api(`/api/monitors/${id}`, {
+      method: "PUT",
+      body: {
+        type: "http",
+        name: flags.name,
+        schedule: buildSchedule(),
+        config: { url: flags.url },
+      },
+    });
+    console.log(`✓ updated ${monitor.id}  ${monitor.name}`);
     return;
   }
 
