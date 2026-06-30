@@ -51,11 +51,17 @@ app.route("/hb", heartbeats);
 // in wrangler.jsonc makes ASSETS return index.html for client-side routes.
 // Unmatched /api paths must return JSON, not the HTML shell — Hono's route()
 // merge means a sub-app's own notFound never fires for the parent, so guard here.
-app.all("*", (c) => {
+app.all("*", async (c) => {
   if (c.req.path === "/api" || c.req.path.startsWith("/api/")) {
     return c.json({ error: "not_found", path: c.req.path }, 404);
   }
-  return c.env.ASSETS.fetch(c.req.raw);
+  // ASSETS responses (incl. the SPA-fallback index.html for client routes like
+  // /status) have IMMUTABLE headers. Returning one directly makes the global
+  // secureHeaders middleware throw "Can't modify immutable headers" → 500 on
+  // every direct-loaded client route. Clone into a mutable response so the
+  // security headers can be applied.
+  const res = await c.env.ASSETS.fetch(c.req.raw);
+  return new Response(res.body, res);
 });
 
 export default {
