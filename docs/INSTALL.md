@@ -1,26 +1,48 @@
-# Installing OpenPing
+# Deploy your own OpenPing
 
-OpenPing runs entirely inside **your own Cloudflare account**: a single Worker
-(Hono router + a scheduled handler), one D1 database, and the built SPA served
-as static assets. There is no external database or central service to manage.
+Welcome! This guide takes you from a fresh clone to a live, working OpenPing
+install on **your own Cloudflare account** — no prior context required. Every
+step is copy-pasteable.
 
-This guide takes you from a clone to a deployed, working install.
+OpenPing is intentionally tiny to operate: a single Cloudflare Worker (a Hono
+router plus a scheduled handler that runs every 12 minutes), one D1 database, and
+the built React SPA served as static assets. There is **no external database and
+no central service** — everything lives in your account, and you control it.
 
-## Prerequisites
+If you get stuck at any point, jump to
+[Troubleshooting the common gotchas](#troubleshooting-the-common-gotchas) at the
+bottom, or the full [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md).
 
-- **Node 20+** (`node --version`).
-- A **Cloudflare account**. The free plan is enough for a small install — see
-  [`FREE_TIER.md`](./FREE_TIER.md).
-- **Wrangler**, Cloudflare's CLI. It ships as a dev dependency, so the `npm run`
-  scripts use the local copy automatically. You can also install it globally
-  (`npm i -g wrangler`) or call it with `npx wrangler …`.
-- A **GitHub account** (for the OAuth sign-in app) and optionally a
-  [**Resend**](https://resend.com) account (for email + magic-link sign-in).
+**Roughly what's ahead:** clone → create a database → register a GitHub sign-in
+app → set a few secrets → deploy → finish the in-app setup wizard. Budget
+15–20 minutes the first time.
 
-The first time you run a `wrangler` command it will open a browser to log in to
-Cloudflare (`npx wrangler login`).
+---
 
-## 1. Clone and install
+## 1. Prerequisites
+
+- **Node 20 or newer** — check with `node --version`. (Enforced by
+  `package.json`'s `engines` field.)
+- **git** — to clone the repo.
+- **A Cloudflare account** — the **free plan is enough** for a small install.
+  See [`FREE_TIER.md`](./FREE_TIER.md) for how usage maps to the free tier.
+- **Wrangler**, Cloudflare's CLI — it ships as a dev dependency, so the
+  `npm run` scripts use the local copy automatically. You can also call it
+  directly with `npx wrangler …`, or install it globally with `npm i -g wrangler`.
+
+Optional, but recommended for a real install:
+
+- **A GitHub account** — to create the OAuth app used for sign-in (step 4).
+- **A [Resend](https://resend.com) account** — for transactional email and
+  email magic-link sign-in (a free tier is available).
+
+> **First Wrangler command logs you in.** The first time you run a `wrangler`
+> command it opens a browser to authorize against your Cloudflare account. You
+> can also run it explicitly: `npx wrangler login`.
+
+---
+
+## 2. Clone and install
 
 ```bash
 git clone https://github.com/<owner>/open-ping.git
@@ -28,7 +50,9 @@ cd open-ping
 npm install
 ```
 
-## 2. Create the D1 database
+---
+
+## 3. Create your D1 database
 
 ```bash
 npm run db:create
@@ -43,21 +67,143 @@ database_name = "open-ping"
 database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
-Copy the `database_id` value into `wrangler.jsonc`, replacing the placeholder
-`REPLACE_WITH_YOUR_D1_DATABASE_ID`:
+Copy the printed **`database_id`** into `wrangler.jsonc`, replacing the
+placeholder value that ships in the repo:
 
 ```jsonc
 "d1_databases": [
   {
     "binding": "DB",
     "database_name": "open-ping",
-    "database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",  // <- your id here
     "migrations_dir": "migrations"
   }
 ]
 ```
 
-## 3. Apply migrations
+> **About that placeholder.** The `database_id` in `wrangler.jsonc` is a
+> deliberate **sentinel** — a non-zero UUID that is *not* a real database in your
+> account. It's intentional: if you forget this step, the deploy fails loudly
+> ("database not found") instead of silently doing the wrong thing. The
+> `database_id` only matters for **remote** commands (`--remote` / `deploy`);
+> local development (`--local`) keys off `database_name`, so it works without it.
+> This value is account-specific, so in a public template it's never a real id —
+> you always fill in your own.
+
+---
+
+## 4. Create a GitHub OAuth app (sign-in)
+
+OpenPing has a **single administrator**, and GitHub OAuth is the primary way to
+sign in. (Email magic links are an alternative/backup — see the note below.)
+
+1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
+   (<https://github.com/settings/developers>).
+2. **Application name:** anything you like (e.g. "OpenPing").
+3. **Homepage URL:** your public app URL — the `APP_URL` you'll set in step 6
+   (for example `https://status.example.com`, or your `*.workers.dev` URL).
+4. **Authorization callback URL:**
+   `https://<your-domain>/auth/github/callback`
+   — for example `https://status.example.com/auth/github/callback`.
+   OpenPing requests only the `read:user` scope.
+5. Click **Register application**, then note the **Client ID** and use
+   **Generate a new client secret** to get the **Client Secret**. Copy both —
+   you'll set them as secrets in step 6.
+
+> **Don't know your URL yet?** If you're going to deploy to a `*.workers.dev`
+> URL and don't know it, you can deploy once (step 8) to learn it, then come
+> back and fill in the Homepage/callback URLs and `APP_URL`. If you plan to use a
+> custom domain, set everything to that domain from the start — see
+> [`CUSTOM_DOMAIN.md`](./CUSTOM_DOMAIN.md).
+
+### Admin identity: `ADMIN_GITHUB_LOGIN` vs `ADMIN_EMAIL`
+
+OpenPing gates the single admin with an allowlist. You must configure **at least
+one** identity:
+
+- **`ADMIN_GITHUB_LOGIN`** — your GitHub **login (username)**, e.g. `octocat`
+  (not your display name or email). Pairs with the GitHub OAuth app above.
+- **`ADMIN_EMAIL`** — your email address. Enables **email magic-link** sign-in
+  as an alternative or backup. This path also requires `RESEND_API_KEY` (step 6)
+  so OpenPing can actually send the link.
+
+A common, robust setup is to configure **both**: GitHub for everyday sign-in, and
+email magic link as a fallback in case you ever can't use GitHub.
+
+---
+
+## 5. Generate your `MASTER_KEY`
+
+`MASTER_KEY` is a base64-encoded **32-byte AES-GCM key** that enables
+**encryption-at-rest** for sensitive values stored in D1 (monitor auth
+credentials, channel secrets, VAPID keys, etc.). Generate one with:
+
+```bash
+openssl rand -base64 32
+```
+
+Copy the output — you'll set it as the `MASTER_KEY` secret in the next step.
+
+> **What if I skip it?** OpenPing still runs, but encryption-at-rest is
+> **disabled**: any secrets it stores go into D1 in **plaintext**, and the Worker
+> logs a one-time warning
+> (`[openping] MASTER_KEY is not configured: encryption-at-rest is DISABLED…`).
+> For any real install, set `MASTER_KEY`. **Back it up somewhere safe** — it's
+> the only thing that can decrypt a full D1 dump (see [`BACKUP.md`](./BACKUP.md)).
+> Changing it later makes previously-encrypted values unreadable.
+
+---
+
+## 6. Set your Worker secrets
+
+Secrets are stored encrypted by Cloudflare and injected into the Worker at
+runtime — they live **outside** `wrangler.jsonc` and are never committed. Set
+each one with:
+
+```bash
+npx wrangler secret put <NAME>
+```
+
+You'll be prompted to paste the value. Here's every secret OpenPing recognizes:
+
+| Secret | Required? | What it is / how to obtain it |
+| --- | --- | --- |
+| `MASTER_KEY` | **Yes** | Base64 32-byte AES-GCM key for encryption-at-rest. Generate with `openssl rand -base64 32` (step 5). |
+| `APP_URL` | **Yes** | Public base URL of this install, e.g. `https://status.example.com`. Used for OAuth callbacks, magic links, and Web Push. Use `https://` and **no trailing slash**. |
+| `ADMIN_GITHUB_LOGIN` | At least one admin | Your GitHub login/username — allowlists the single admin for GitHub sign-in. |
+| `ADMIN_EMAIL` | At least one admin | Your email — allowlists the admin for email magic-link sign-in. |
+| `GITHUB_CLIENT_ID` | For GitHub sign-in | Client ID from the OAuth app (step 4). |
+| `GITHUB_CLIENT_SECRET` | For GitHub sign-in | Client secret from the OAuth app (step 4). |
+| `RESEND_API_KEY` | For email / magic links | API key from [Resend](https://resend.com). Required for email notifications and email magic-link sign-in. |
+| `API_TOKEN` | Optional | Admin token for the CLI / automation. When set, `Authorization: Bearer <API_TOKEN>` is treated as full admin. Generate with `openssl rand -base64 32`. See [`CLI.md`](./CLI.md). |
+| `VAPID_PUBLIC_KEY` | Optional | Web Push public key. You can instead generate VAPID keys in-app under **Integrations**. |
+| `VAPID_PRIVATE_KEY` | Optional | Web Push private key. |
+| `VAPID_SUBJECT` | Optional | Web Push subject — a `mailto:` address or URL. |
+
+**The minimum for a working install:** `MASTER_KEY`, `APP_URL`, one admin
+identity, and (for GitHub sign-in) `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET`.
+
+For example:
+
+```bash
+npx wrangler secret put MASTER_KEY            # paste the openssl output
+npx wrangler secret put APP_URL               # e.g. https://status.example.com
+npx wrangler secret put ADMIN_GITHUB_LOGIN    # your github username
+npx wrangler secret put GITHUB_CLIENT_ID
+npx wrangler secret put GITHUB_CLIENT_SECRET
+# optional but recommended:
+npx wrangler secret put ADMIN_EMAIL
+npx wrangler secret put RESEND_API_KEY
+```
+
+> **Two rules to remember:** (1) You **must** configure at least one admin
+> identity (`ADMIN_GITHUB_LOGIN` and/or `ADMIN_EMAIL`) — the setup wizard refuses
+> to complete without one. (2) After **changing** a secret, you must **redeploy**
+> (`npm run deploy`) for it to take effect on the live Worker.
+
+---
+
+## 7. Apply the database migrations
 
 Create the schema in your remote D1 database:
 
@@ -65,94 +211,131 @@ Create the schema in your remote D1 database:
 npm run db:migrate         # wrangler d1 migrations apply open-ping --remote
 ```
 
-For local development against a local D1 file instead, use:
+This applies every migration in `migrations/` (currently `0001` … `0005`) in
+order. Migrations are **additive and tracked by Wrangler**, so re-running is
+safe — only unapplied migrations run. Wrangler will ask you to confirm before
+applying to the remote database.
 
-```bash
-npm run db:migrate:local   # wrangler d1 migrations apply open-ping --local
-```
+(For local development against a local D1 file, use `npm run db:migrate:local`
+instead — see the [local-dev quickstart](#local-development-quickstart).)
 
-Migrations live in `migrations/` and are tracked by Wrangler, so re-running is
-safe — only unapplied migrations run.
+---
 
-## 4. Create a GitHub OAuth app
-
-GitHub OAuth is the primary sign-in method.
-
-1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**.
-2. **Homepage URL:** your public app URL (the `APP_URL` you'll set below, e.g.
-   `https://open-ping.<your-subdomain>.workers.dev` or your custom domain).
-3. **Authorization callback URL:** `${APP_URL}/auth/github/callback`
-   — for example `https://status.example.com/auth/github/callback`.
-   (OpenPing requests only the `read:user` scope.)
-4. Note the **Client ID** and generate a **Client Secret**.
-
-> Don't know your `workers.dev` URL yet? You can deploy once (step 6) to learn
-> it, then come back and set `APP_URL` and the OAuth app accordingly. For a
-> custom domain, see [`CUSTOM_DOMAIN.md`](./CUSTOM_DOMAIN.md).
-
-## 5. Set Worker secrets
-
-Secrets are stored encrypted by Cloudflare and injected into the Worker at
-runtime (they are **not** in `wrangler.jsonc`). Set each with:
-
-```bash
-npx wrangler secret put <NAME>
-```
-
-| Secret | Required? | What it is |
-| --- | --- | --- |
-| `MASTER_KEY` | **Yes** | Base64 32-byte AES-GCM key used to encrypt sensitive config at rest. Generate with `openssl rand -base64 32`. |
-| `APP_URL` | **Yes** | Public base URL of this install, e.g. `https://status.example.com`. Used for OAuth callbacks, magic links, and push. |
-| `GITHUB_CLIENT_ID` | For GitHub sign-in | From the OAuth app in step 4. |
-| `GITHUB_CLIENT_SECRET` | For GitHub sign-in | From the OAuth app in step 4. |
-| `ADMIN_GITHUB_LOGIN` | At least one admin | Your GitHub login (username). Allowlist for the single administrator. |
-| `ADMIN_EMAIL` | At least one admin | Your email. Allowlist for email/magic-link sign-in. |
-| `RESEND_API_KEY` | For email | [Resend](https://resend.com) API key for transactional email and magic links. |
-| `VAPID_PUBLIC_KEY` | Optional | Web Push public key. You can instead generate VAPID keys in-app under **Integrations**. |
-| `VAPID_PRIVATE_KEY` | Optional | Web Push private key. |
-| `VAPID_SUBJECT` | Optional | Web Push `mailto:` or URL subject. |
-| `API_TOKEN` | Optional | Admin token for the CLI / automation (Bearer auth = full admin; see [CLI](./CLI.md)). Generate with `openssl rand -base64 32`. |
-
-> **You must configure at least one admin identity** (`ADMIN_GITHUB_LOGIN` or
-> `ADMIN_EMAIL`) — the setup wizard refuses to complete without one. To use
-> GitHub sign-in you need both `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
-> To use email/magic-link sign-in you need `RESEND_API_KEY` plus `ADMIN_EMAIL`.
-
-Generate the master key:
-
-```bash
-openssl rand -base64 32   # use the output for MASTER_KEY
-```
-
-## 6. Deploy
+## 8. Deploy
 
 ```bash
 npm run deploy             # vite build && wrangler deploy
 ```
 
-Wrangler prints your deployed URL (something like
-`https://open-ping.<subdomain>.workers.dev`). If you hadn't set `APP_URL` /
-the OAuth app yet, set them now (steps 4–5) so the value matches this URL, then
-deploy again.
+Wrangler builds the SPA and publishes the Worker, then prints your deployed URL
+(something like `https://open-ping.<your-subdomain>.workers.dev`).
 
-A Cron Trigger runs the scheduled checker **every 12 minutes** (`*/12 * * * *`,
-defined in `wrangler.jsonc`); it's enabled automatically on deploy.
+The Cron Trigger that runs the checker **every 12 minutes** (`*/12 * * * *`,
+defined in `wrangler.jsonc`) is enabled automatically on deploy — you don't need
+to configure anything for monitoring to start.
 
-## 7. Complete the first-run setup wizard
+> If you deployed first to learn your `*.workers.dev` URL, go back now and set
+> `APP_URL` (step 6) and the GitHub OAuth Homepage/callback URLs (step 4) to
+> match it, then run `npm run deploy` again.
 
-Open your `APP_URL` in a browser. While setup is incomplete, the wizard is
-reachable without signing in (by necessity — it bootstraps the install). It
-walks you through:
+---
+
+## 9. (Optional) Add a custom domain
+
+A custom domain (e.g. `https://status.example.com`) gives you a nicer public
+status page and stable OAuth/push URLs. Full instructions are in
+[`CUSTOM_DOMAIN.md`](./CUSTOM_DOMAIN.md); the short version:
+
+1. Attach the domain to the Worker in the Cloudflare dashboard
+   (**Workers & Pages → your worker → Settings → Domains & Routes → Add custom
+   domain**). The domain must be on a zone in the **same Cloudflare account**.
+2. Point `APP_URL` at it and redeploy:
+   ```bash
+   npx wrangler secret put APP_URL    # enter https://status.example.com
+   npm run deploy
+   ```
+3. Update the GitHub OAuth app's **Homepage URL** and **Authorization callback
+   URL** to the new domain (`https://status.example.com/auth/github/callback`).
+   The client id/secret don't change — only the URLs.
+
+---
+
+## 10. First run: complete setup, then add monitors
+
+Open your `APP_URL` in a browser.
+
+While setup is incomplete, the **first-run wizard** is reachable without signing
+in (by necessity — it bootstraps the install). It walks you through:
 
 - confirming your public app URL,
-- choosing a timezone (required — schedules and reports use it),
-- confirming the admin identity, and
+- choosing a **timezone** (required — schedules and reports use it),
+- confirming your admin identity, and
 - optional integrations (email, push, etc.).
 
-When you finish, setup locks: further changes require signing in as the admin.
-Sign in (GitHub or email magic link) and start adding monitors.
+When you finish, **setup locks**: further changes require signing in as the
+admin. Sign in with **GitHub** or an **email magic link**, then:
 
-That's it — your install is live.
+- **Configure notification channels** under **Integrations** (email via Resend,
+  Web Push, Discord, signed webhooks) and send a test event from each.
+- **Add your monitors** (HTTP/API checks, heartbeats), each with an operating
+  schedule if you want schedule-aware monitoring.
+
+> **Prefer automation?** Once you've set an `API_TOKEN` secret, you can manage
+> monitors entirely from a terminal with the admin CLI (`scripts/op.mjs`) — see
+> [`CLI.md`](./CLI.md). Handy for scripting, bulk setup, or CI.
+
+---
+
+## 11. Verify it's working
+
+A quick checklist to confirm a healthy install:
+
+- **Health endpoint** — `GET /api/health` should return JSON with `ok: true`
+  and `db: true`:
+  ```bash
+  curl https://status.example.com/api/health
+  # {"ok":true,"name":"OpenPing","version":"0.1.0","time":"…","db":true}
+  ```
+  (`db: true` confirms the D1 binding is wired up.)
+- **Cron is firing** — after ~12 minutes, the **Diagnostics** view in the app
+  (and the `scheduler_runs` table) should show recent scheduled runs. You can
+  also see the Cron Trigger in the Cloudflare dashboard under **Workers → your
+  worker → Triggers → Cron Triggers**.
+- **A test notification** — add a monitor and a channel, then use the channel's
+  **test** action under **Integrations**; watch it arrive (and watch live logs
+  with `npx wrangler tail` if it doesn't).
+
+That's it — your install is live. 🎉
+
+---
+
+## Troubleshooting the common gotchas
+
+A few things trip up almost everyone on a first deploy. See
+[`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) for the full list; the greatest
+hits:
+
+- **"Database not found" / `no such table` on deploy or in the app.** You
+  forgot to replace the sentinel `database_id` in `wrangler.jsonc` (step 3),
+  it points at the wrong database, or you haven't run `npm run db:migrate`
+  (step 7).
+- **GitHub sign-in fails with a state / callback / "redirect URI" error.** The
+  OAuth app's **Authorization callback URL** must be **exactly**
+  `${APP_URL}/auth/github/callback`. A mismatch between `APP_URL` and the
+  registered callback (e.g. after switching to a custom domain) breaks the
+  OAuth state check. Re-check both, then redeploy.
+- **"Not authorized" after a successful GitHub login.** `ADMIN_GITHUB_LOGIN`
+  must match your GitHub **login/username** exactly (not display name or email).
+- **Worker log warns that `MASTER_KEY` is not configured.** Encryption-at-rest
+  is off and secrets are being stored in plaintext. Set the `MASTER_KEY` secret
+  (step 5) and redeploy.
+- **Magic-link / notification emails don't arrive.** Make sure `RESEND_API_KEY`
+  is set and your Resend **sending domain/sender is verified**. For quick
+  testing without verifying a domain, Resend lets you send from
+  `onboarding@resend.dev` **to your own account email** — useful to confirm the
+  pipeline before you set up a real sender.
+- **Changed a secret but nothing changed.** Secrets only take effect on the next
+  deploy — run `npm run deploy` after any `wrangler secret put`.
 
 ---
 
@@ -168,17 +351,19 @@ npm run dev                      # http://localhost:5173
 ```
 
 - `.dev.vars` uses the **same names** as the production secrets above and is
-  gitignored. At minimum set `MASTER_KEY`, one admin identity,
-  and `APP_URL=http://localhost:5173`. See
-  [`.dev.vars.example`](../.dev.vars.example).
+  gitignored. At minimum set `MASTER_KEY`, one admin identity, and
+  `APP_URL=http://localhost:5173`. See [`.dev.vars.example`](../.dev.vars.example).
 - For GitHub OAuth locally, set the OAuth app's callback to
   `http://localhost:5173/auth/github/callback`.
 - Other handy scripts: `npm run typecheck`, `npm run test`, `npm run build`.
 
+---
+
 ## Next steps
 
-- [Upgrading](./UPGRADE.md)
-- [Backup & restore](./BACKUP.md)
-- [Custom domain](./CUSTOM_DOMAIN.md)
-- [Free-tier budget](./FREE_TIER.md)
-- [Troubleshooting](./TROUBLESHOOTING.md)
+- [CLI](./CLI.md) — manage your instance from a terminal/automation
+- [Upgrading](./UPGRADE.md) — pull, migrate, redeploy
+- [Backup & restore](./BACKUP.md) — JSON export/import and full D1 dumps
+- [Custom domain](./CUSTOM_DOMAIN.md) — put OpenPing on your own hostname
+- [Free-tier budget](./FREE_TIER.md) — how usage maps to Cloudflare's free plan
+- [Troubleshooting](./TROUBLESHOOTING.md) — common issues and fixes

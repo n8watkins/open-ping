@@ -50,13 +50,21 @@ npm run build      # production build (client + worker)
 npm run test       # vitest
 ```
 
-## Deploy (outline — see [docs/INSTALL.md](./docs/INSTALL.md) for the full guide)
+## Deploy your own
 
-1. `npm run db:create` and copy the `database_id` into `wrangler.jsonc`.
-2. `npm run db:migrate` to apply migrations to your D1 database.
-3. Set Worker secrets (`MASTER_KEY`, GitHub OAuth, Resend, …).
-4. `npm run deploy`.
-5. Open the app and complete the first-run setup wizard.
+OpenPing runs entirely in **your own Cloudflare account** and deploys in a few
+minutes. The outline:
+
+1. `npm run db:create`, then copy the printed `database_id` into `wrangler.jsonc`.
+2. Create a GitHub OAuth app (sign-in) and generate a `MASTER_KEY`.
+3. Set Worker secrets (`MASTER_KEY`, `APP_URL`, admin identity, GitHub OAuth,
+   optionally Resend).
+4. `npm run db:migrate` to apply migrations, then `npm run deploy`.
+5. Open the app, finish the first-run setup wizard, and add monitors.
+
+**Follow the full, copy-pasteable walkthrough in
+[docs/INSTALL.md](./docs/INSTALL.md)** — it covers the GitHub OAuth app, every
+secret, custom domains, and a verify-it's-working checklist.
 
 ## Documentation
 
