@@ -88,7 +88,9 @@ auth.get("/github/callback", async (c) => {
   const cookieState = getCookie(c, STATE_COOKIE);
   deleteCookie(c, STATE_COOKIE, { path: "/auth/github" });
   if (!cookieState || !(await timingSafeEqual(cookieState, state))) {
-    return loginRedirect(c,"state_invalid");
+    // Cookie absent or ≠ the returned state: stale/replayed callback link, a
+    // second tab clobbering the singleton cookie, or a direct callback hit.
+    return loginRedirect(c,"state_missing");
   }
 
   // Validate + consume single-use state.
@@ -100,7 +102,9 @@ auth.get("/github/callback", async (c) => {
     .first<{ id: string; expires_at: number; used_at: number | null }>();
   await c.env.DB.prepare(`DELETE FROM auth_tokens WHERE id = ?`).bind(stateId).run();
   if (!stateRow || stateRow.used_at || stateRow.expires_at <= Date.now()) {
-    return loginRedirect(c,"state_invalid");
+    // Server-side state row gone/used/expired: usually the 10-min TTL lapsed
+    // while the user sat on GitHub's authorize/2FA screen.
+    return loginRedirect(c,"state_expired");
   }
 
   // Exchange code for an access token.

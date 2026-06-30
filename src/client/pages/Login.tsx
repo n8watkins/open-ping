@@ -9,6 +9,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   github_not_configured: "GitHub sign-in isn't configured on this installation.",
   not_authorized: "That account isn't the configured administrator.",
   state_invalid: "Sign-in session expired. Please try again.",
+  state_missing: "Your sign-in session wasn't found (the link may be stale, or a second tab interfered). Please try again.",
+  state_expired: "Sign-in took too long and expired. Please try again.",
   invalid_callback: "The sign-in response was invalid. Please try again.",
   token_exchange_failed: "Could not complete GitHub sign-in. Please try again.",
   identity_failed: "Could not read your GitHub identity. Please try again.",
@@ -121,6 +123,15 @@ export default function Login() {
           {error && (
             <p className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-center text-sm text-down">
               {ERROR_MESSAGES[error] ?? "Sign-in failed. Please try again."}
+              {githubEnabled &&
+                ["state_invalid", "state_missing", "state_expired", "invalid_callback"].includes(error) && (
+                  <>
+                    {" "}
+                    <a href="/auth/github/start" className="font-medium underline">
+                      Try again
+                    </a>
+                  </>
+                )}
             </p>
           )}
 
