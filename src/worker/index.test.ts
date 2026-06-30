@@ -61,4 +61,25 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
       path: "/api/does-not-exist",
     });
   });
+
+  it("OAuth start 302-redirects (Response.redirect headers are also immutable)", async () => {
+    // The GitHub OAuth start returns Response.redirect(), whose headers are
+    // immutable just like ASSETS — this 500'd before the mutable-clone fix.
+    const env = {
+      GITHUB_CLIENT_ID: "Ov23test",
+      DB: {
+        prepare: () => ({ bind: () => ({ run: async () => ({}) }) }),
+      },
+    } as unknown as Env;
+    const res = await worker.fetch!(
+      new Request("https://example.com/auth/github/start"),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("github.com/login/oauth/authorize");
+    expect(location).toContain("client_id=Ov23test");
+    expect(res.headers.get("x-frame-options")).toBe("DENY"); // headers still applied
+  });
 });

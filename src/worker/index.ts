@@ -36,6 +36,18 @@ app.use(
   }),
 );
 
+// secureHeaders (above) sets headers in its post-`next()` phase, but several
+// responses in this app have IMMUTABLE headers — Response.redirect() (OAuth /
+// magic-link flows) and env.ASSETS.fetch() (the SPA / static assets) — and
+// modifying those throws "Can't modify immutable headers" → 500. This inner
+// middleware runs after the handler but BEFORE secureHeaders' post-phase, and
+// replaces the response with a mutable clone so the security headers always apply
+// regardless of where the response came from.
+app.use("*", async (c, next) => {
+  await next();
+  if (c.res) c.res = new Response(c.res.body, c.res);
+});
+
 // JSON API (auth, monitors, incidents, settings, …). Mounted before the SPA
 // fallback so API routes never get swallowed by the asset handler.
 app.route("/api", api);
@@ -51,17 +63,12 @@ app.route("/hb", heartbeats);
 // in wrangler.jsonc makes ASSETS return index.html for client-side routes.
 // Unmatched /api paths must return JSON, not the HTML shell — Hono's route()
 // merge means a sub-app's own notFound never fires for the parent, so guard here.
-app.all("*", async (c) => {
+app.all("*", (c) => {
   if (c.req.path === "/api" || c.req.path.startsWith("/api/")) {
     return c.json({ error: "not_found", path: c.req.path }, 404);
   }
-  // ASSETS responses (incl. the SPA-fallback index.html for client routes like
-  // /status) have IMMUTABLE headers. Returning one directly makes the global
-  // secureHeaders middleware throw "Can't modify immutable headers" → 500 on
-  // every direct-loaded client route. Clone into a mutable response so the
-  // security headers can be applied.
-  const res = await c.env.ASSETS.fetch(c.req.raw);
-  return new Response(res.body, res);
+  // The mutable-clone middleware above handles the immutable ASSETS headers.
+  return c.env.ASSETS.fetch(c.req.raw);
 });
 
 export default {
