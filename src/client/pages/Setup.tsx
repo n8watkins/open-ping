@@ -80,6 +80,13 @@ export default function Setup() {
           navigate("/", { replace: true });
           return;
         }
+        // An admin is already configured (e.g. via the ADMIN_GITHUB_LOGIN env
+        // secret). The anonymous wizard can't reconfigure the admin and is locked
+        // server-side, so send the operator to sign in instead of a dead-end form.
+        if (res.status.githubAdminConfigured || res.status.emailAdminConfigured) {
+          navigate("/login", { replace: true });
+          return;
+        }
         setStatus(res.status);
         setDone(res.state.completedSteps);
         setStep(Math.min(res.state.currentStep, STEPS.length - 1));

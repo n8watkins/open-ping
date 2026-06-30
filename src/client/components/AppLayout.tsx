@@ -80,7 +80,11 @@ export function AppLayout() {
       </div>
     );
   }
-  if (status && !status.setupComplete) return <Navigate to="/setup" replace />;
+  // Force the first-run wizard only when setup is incomplete AND no admin is
+  // configured. With an admin already configured (env secret), skip straight to
+  // auth so a logged-in admin can use the app even if setup was never "completed".
+  if (status && !status.setupComplete && !status.githubAdminConfigured && !status.emailAdminConfigured)
+    return <Navigate to="/setup" replace />;
   if (!me?.authenticated) return <Navigate to="/login" replace />;
 
   return (

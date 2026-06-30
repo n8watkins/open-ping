@@ -63,7 +63,13 @@ export default function Login() {
       </div>
     );
   }
-  if (status && !status.setupComplete) return <Navigate to="/setup" replace />;
+  // Only force the first-run wizard when setup is incomplete AND no admin is
+  // configured yet. If an admin is already configured (e.g. via the
+  // ADMIN_GITHUB_LOGIN env secret), the anonymous wizard is unnecessary (and is
+  // locked server-side), so let the operator sign in here instead of trapping
+  // them on /setup.
+  if (status && !status.setupComplete && !status.githubAdminConfigured && !status.emailAdminConfigured)
+    return <Navigate to="/setup" replace />;
   if (me?.authenticated) return <Navigate to="/" replace />;
 
   // A failed bootstrap leaves `status` null, which would otherwise render every
