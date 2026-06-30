@@ -14,6 +14,9 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 // The marketing landing page is public; lazy-load it so it doesn't weigh down
 // the other public entry points (/login, /status).
 const Landing = lazy(() => import("./pages/Landing"));
+// The embeddable status widget (/embed) is a standalone public surface meant to
+// be iframed cross-origin; lazy-load so it ships its own tiny bundle.
+const Embed = lazy(() => import("./pages/Embed"));
 const Monitors = lazy(() => import("./pages/Monitors"));
 const MonitorDetail = lazy(() => import("./pages/MonitorDetail"));
 const MonitorEditor = lazy(() => import("./pages/MonitorEditor"));
@@ -57,6 +60,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/setup" element={<Setup />} />
           <Route path="/status" element={<PublicStatus />} />
+          <Route path="/embed" element={<Embed />} />
 
           {/* Site root: Landing for guests, Dashboard (in AppLayout) for admins. */}
           <Route path="/" element={<RootIndex />}>

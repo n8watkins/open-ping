@@ -9,6 +9,44 @@ import { runScheduled } from "./scheduler";
 
 const app = new Hono<AppEnv>();
 
+// ---------------------------------------------------------------------------
+// Embeddable status widget: framing override (scoped to /embed ONLY).
+//
+// secureHeaders() below locks every response down with `X-Frame-Options: DENY`
+// + `frame-ancestors 'none'`, which is correct for the admin panel, login,
+// API and the main status page (they must never be framed). The /embed widget
+// is the one surface designed to be iframed from an external site, so for that
+// path — and that path only — we drop X-Frame-Options and relax the CSP's
+// frame-ancestors to allow n8builds.dev subdomains. All other CSP directives
+// (script-src 'self', etc.) are preserved.
+//
+// This middleware is registered FIRST so that, by Hono's onion ordering, its
+// post-`next()` phase runs LAST — i.e. AFTER secureHeaders has written its
+// headers — letting it override them on the already-mutable response (the
+// clone middleware further below makes the ASSETS/redirect responses mutable).
+//
+// To widen embedding to another host, add origins to ALLOWED_FRAME_ANCESTORS
+// (space-separated, e.g. "https://*.n8builds.dev https://example.com").
+const WIDGET_PATH = "/embed";
+const ALLOWED_FRAME_ANCESTORS = "https://*.n8builds.dev";
+
+function isWidgetPath(path: string): boolean {
+  return path === WIDGET_PATH || path.startsWith(`${WIDGET_PATH}/`);
+}
+
+app.use("*", async (c, next) => {
+  await next();
+  if (!c.res || !isWidgetPath(c.req.path)) return;
+  c.res.headers.delete("X-Frame-Options");
+  const csp = c.res.headers.get("Content-Security-Policy");
+  c.res.headers.set(
+    "Content-Security-Policy",
+    csp
+      ? csp.replace(/frame-ancestors[^;]*/i, `frame-ancestors ${ALLOWED_FRAME_ANCESTORS}`)
+      : `frame-ancestors ${ALLOWED_FRAME_ANCESTORS}`,
+  );
+});
+
 // Security headers on every response (admin SPA, public status page, JSON API).
 // frame-ancestors/X-Frame-Options block clickjacking of the authenticated admin
 // panel; nosniff + a tailored CSP are defense-in-depth for an app that renders

@@ -48,6 +48,23 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
     );
   });
 
+  it("widens framing for the /embed widget ONLY (drops XFO, relaxes frame-ancestors)", async () => {
+    const res = await worker.fetch!(
+      new Request("https://example.com/embed"),
+      makeEnv(),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    // X-Frame-Options is removed so the iframe can load cross-origin.
+    expect(res.headers.get("x-frame-options")).toBeNull();
+    // frame-ancestors is relaxed to n8builds.dev subdomains; the rest of the CSP
+    // (script-src 'self', etc.) is preserved.
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("frame-ancestors https://*.n8builds.dev");
+    expect(csp).not.toContain("frame-ancestors 'none'");
+    expect(csp).toContain("script-src 'self'");
+  });
+
   it("returns JSON 404 for an unmatched /api route (never the SPA shell)", async () => {
     const res = await worker.fetch!(
       new Request("https://example.com/api/does-not-exist"),
