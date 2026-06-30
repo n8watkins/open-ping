@@ -17,6 +17,14 @@ const Landing = lazy(() => import("./pages/Landing"));
 // The embeddable status widget (/embed) is a standalone public surface meant to
 // be iframed cross-origin; lazy-load so it ships its own tiny bundle.
 const Embed = lazy(() => import("./pages/Embed"));
+// Free public utility tools (/tools). Each is a standalone, client-only page;
+// lazy-loaded so they don't weigh on the app or other public entry points.
+const ToolsIndex = lazy(() => import("./pages/tools/ToolsIndex"));
+const UptimeCalculator = lazy(() => import("./pages/tools/UptimeCalculator"));
+const SubnetCalculator = lazy(() => import("./pages/tools/SubnetCalculator"));
+const CronTester = lazy(() => import("./pages/tools/CronTester"));
+const DnsLookup = lazy(() => import("./pages/tools/DnsLookup"));
+const MxLookup = lazy(() => import("./pages/tools/MxLookup"));
 const Monitors = lazy(() => import("./pages/Monitors"));
 const MonitorDetail = lazy(() => import("./pages/MonitorDetail"));
 const MonitorEditor = lazy(() => import("./pages/MonitorEditor"));
@@ -61,6 +69,14 @@ export default function App() {
           <Route path="/setup" element={<Setup />} />
           <Route path="/status" element={<PublicStatus />} />
           <Route path="/embed" element={<Embed />} />
+
+          {/* Free public utility tools. */}
+          <Route path="/tools" element={<ToolsIndex />} />
+          <Route path="/tools/uptime-calculator" element={<UptimeCalculator />} />
+          <Route path="/tools/subnet-calculator" element={<SubnetCalculator />} />
+          <Route path="/tools/cron-tester" element={<CronTester />} />
+          <Route path="/tools/dns-lookup" element={<DnsLookup />} />
+          <Route path="/tools/mx-lookup" element={<MxLookup />} />
 
           {/* Site root: Landing for guests, Dashboard (in AppLayout) for admins. */}
           <Route path="/" element={<RootIndex />}>
