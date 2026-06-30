@@ -37,6 +37,12 @@ RESEND_API_KEY=
 # Local dev default:
 APP_URL=http://localhost:5173
 
+# --- Admin API token for the CLI / automation (optional) ---
+# When set, `Authorization: Bearer <API_TOKEN>` grants full admin API access
+# (used by scripts/op.mjs). Treat it like a password; rotate by changing it.
+# Generate one with:  openssl rand -base64 32
+API_TOKEN=
+
 # --- Web Push (optional) ---
 # VAPID keys can instead be generated in-app under Integrations and stored in
 # settings. Set them here only if you want to manage them as secrets.

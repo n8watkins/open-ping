@@ -27,6 +27,14 @@ export interface Env {
   /** Public base URL of this installation, e.g. https://status.example.com */
   APP_URL?: string;
 
+  /**
+   * Optional admin API token for CLI/automation. When set, a request bearing
+   * `Authorization: Bearer <API_TOKEN>` is treated as the admin (no cookie/CSRF —
+   * a Bearer header isn't ambient, so there's no CSRF surface). Opt-in: unset =
+   * no token auth. Rotate by changing the secret; treat it like a password.
+   */
+  API_TOKEN?: string;
+
   /** Web Push VAPID keypair (set during PWA setup). */
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
