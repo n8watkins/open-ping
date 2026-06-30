@@ -59,6 +59,30 @@ describe("classifyCheck", () => {
     expect(o.assertionFailures).toEqual(["expected to contain 'ok'"]);
   });
 
+  it("a Render-suspended response -> suspended with reason 'suspended'", () => {
+    const o = classifyCheck({
+      result: result({ ok: false, statusCode: 503, error: "status_out_of_range", suspended: true }),
+      ok: false,
+      succeededAttempt: -1,
+      maxAttempts: 2,
+      warmup: false,
+    });
+    expect(o.state).toBe("suspended");
+    expect(o.error).toBe("suspended");
+    expect(o.ok).toBe(false);
+  });
+
+  it("a suspended response during warm-up is still suspended (definitive, no grace)", () => {
+    const o = classifyCheck({
+      result: result({ ok: false, statusCode: 503, suspended: true }),
+      ok: false,
+      succeededAttempt: -1,
+      maxAttempts: 2,
+      warmup: true,
+    });
+    expect(o.state).toBe("suspended");
+  });
+
   it("a failed WARM-UP cycle is warming_up, not down (one grace cycle)", () => {
     const o = classifyCheck({
       result: result({ ok: false, error: "timeout" }),

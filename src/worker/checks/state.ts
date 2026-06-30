@@ -1,7 +1,7 @@
 import type { Env } from "../types";
 import type { MonitorRecord } from "../db/monitors";
 import type { CheckOutcome } from "./types";
-import type { MonitorState } from "../../shared/states";
+import { DOWNTIME_STATES, type MonitorState } from "../../shared/states";
 import { newId } from "../lib/ids";
 import { nextCheckAt, nextActivePeriod } from "../lib/schedule";
 import {
@@ -242,7 +242,9 @@ export async function applyCheckResult(
         durationMs: outcome.durationMs,
         retryRecovered: outcome.retryRecovered,
         monitoredSeconds: monitor.intervalSeconds,
-        downSeconds: outcome.state === "down" ? monitor.intervalSeconds : 0,
+        // `suspended` is a down-family outage (DOWNTIME_STATES), so it accrues a
+        // full interval of downtime exactly like `down`.
+        downSeconds: DOWNTIME_STATES.has(outcome.state) ? monitor.intervalSeconds : 0,
       }),
     );
   }

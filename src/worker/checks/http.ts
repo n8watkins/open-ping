@@ -56,10 +56,33 @@ export interface HttpCheckResult {
   errorMessage?: string;
   /** True when slower than degradedResponseMs but still ok. */
   degraded?: boolean;
+  /** True when the response matches the Render "Service Suspended" signature. */
+  suspended?: boolean;
   /** Response text, capped at MAX_BODY_CHARS. */
   body?: string;
   redirected?: boolean;
   finalUrl?: string;
+}
+
+/**
+ * Detect a Render free-tier "Service Suspended" response. When a free instance's
+ * monthly hours are exhausted, Render turns the app off entirely and serves an
+ * HTTP 503 carrying an `x-render-routing: suspend…` header and a body titled
+ * "Service Suspended". That is a distinct, durable state — the app is off, not
+ * merely erroring — so we classify it as `suspended` rather than generic `down`.
+ *
+ * Signature: status 503 AND (the routing header contains "suspend" OR the body
+ * contains "Service Suspended"). Pure + side-effect free so it can be unit-tested
+ * directly.
+ */
+export function isSuspendedResponse(input: {
+  statusCode?: number;
+  routingHeader?: string | null;
+  body?: string;
+}): boolean {
+  if (input.statusCode !== 503) return false;
+  if ((input.routingHeader ?? "").toLowerCase().includes("suspend")) return true;
+  return (input.body ?? "").includes("Service Suspended");
 }
 
 /**
@@ -295,6 +318,15 @@ export async function runHttpCheck(
     degraded = true;
   }
 
+  // Render free-tier suspension: a 503 with the suspend routing header/body is a
+  // distinct outage flavor. The status is already out-of-range (so `ok` is
+  // false); we just flag it so the runner can classify it as `suspended`.
+  const suspended = isSuspendedResponse({
+    statusCode,
+    routingHeader: res!.headers.get("x-render-routing"),
+    body,
+  });
+
   return {
     ok,
     statusCode,
@@ -302,6 +334,7 @@ export async function runHttpCheck(
     ...(error ? { error } : {}),
     ...(errorMessage ? { errorMessage } : {}),
     ...(degraded ? { degraded } : {}),
+    ...(suspended ? { suspended } : {}),
     body,
     redirected,
     finalUrl,

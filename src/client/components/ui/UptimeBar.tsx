@@ -5,6 +5,7 @@ import type { MonitorState } from "../../../shared/states";
 const SEGMENT: Record<MonitorState, string> = {
   up: "bg-up",
   down: "bg-down",
+  suspended: "bg-suspended",
   degraded: "bg-degraded",
   scheduled_off: "bg-scheduled",
   maintenance: "bg-maint",

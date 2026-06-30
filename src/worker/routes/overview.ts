@@ -41,6 +41,7 @@ overview.get("/", async (c) => {
     up: 0,
     degraded: 0,
     down: 0,
+    suspended: 0,
     scheduled_off: 0,
     paused: 0,
     maintenance: 0,

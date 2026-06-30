@@ -32,12 +32,16 @@ const STATUS_PILL = {
   operational: { dot: "bg-up", text: "text-up", label: "Operational" },
   degraded: { dot: "bg-degraded", text: "text-degraded", label: "Degraded" },
   down: { dot: "bg-down", text: "text-down", label: "Down" },
+  suspended: { dot: "bg-suspended", text: "text-suspended", label: "Suspended" },
 } as const;
 
 /** Derive the overall header status from real overview counts. */
 function deriveStatus(counts: OverviewResponse["counts"] | undefined) {
   if (!counts) return STATUS_PILL.operational;
   if ((counts.down ?? 0) > 0) return STATUS_PILL.down;
+  // `suspended` is a down-family outage but shown distinctly; it ranks below a
+  // hard `down` but above merely-degraded.
+  if ((counts.suspended ?? 0) > 0) return STATUS_PILL.suspended;
   if ((counts.degraded ?? 0) > 0 || counts.openIncidents > 0) return STATUS_PILL.degraded;
   return STATUS_PILL.operational;
 }

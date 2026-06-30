@@ -5,6 +5,7 @@ export const MONITOR_STATES = [
   "up",
   "degraded",
   "down",
+  "suspended",
   "scheduled_off",
   "paused",
   "maintenance",
@@ -12,8 +13,16 @@ export const MONITOR_STATES = [
 
 export type MonitorState = (typeof MONITOR_STATES)[number];
 
-/** Only `down` contributes to incident downtime (PRD §10). */
-export const DOWNTIME_STATES: ReadonlySet<MonitorState> = new Set(["down"]);
+/**
+ * Down-family states that contribute to incident downtime / not-up rollups
+ * (PRD §10). `suspended` (a Render free-tier app turned off) is a real outage:
+ * the service is unavailable, so it accrues downtime exactly like `down` — it is
+ * only stored and displayed under a distinct label.
+ */
+export const DOWNTIME_STATES: ReadonlySet<MonitorState> = new Set([
+  "down",
+  "suspended",
+]);
 
 export const MONITOR_TYPES = ["http", "heartbeat"] as const;
 export type MonitorType = (typeof MONITOR_TYPES)[number];
@@ -28,6 +37,7 @@ export const STATE_META: Record<MonitorState, { label: string; token: string }> 
   up: { label: "Up", token: "up" },
   degraded: { label: "Degraded", token: "degraded" },
   down: { label: "Down", token: "down" },
+  suspended: { label: "Suspended", token: "suspended" },
   scheduled_off: { label: "Scheduled off", token: "scheduled" },
   paused: { label: "Paused", token: "paused" },
   maintenance: { label: "Maintenance", token: "maint" },

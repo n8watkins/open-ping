@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { runHttpCheck } from "./http";
+import { runHttpCheck, isSuspendedResponse } from "./http";
 import type { HttpConfig } from "../../shared/schemas";
 
 /** Build a complete HttpConfig with sensible defaults, overridable per test. */
@@ -25,6 +25,45 @@ function mockFetch(response: Response | Error): ReturnType<typeof vi.fn> {
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
+
+describe("isSuspendedResponse (Render free-tier suspension detector)", () => {
+  it("detects a 503 with an x-render-routing: suspend header", () => {
+    expect(
+      isSuspendedResponse({ statusCode: 503, routingHeader: "suspend" }),
+    ).toBe(true);
+  });
+
+  it("detects a 503 whose body is titled 'Service Suspended'", () => {
+    expect(
+      isSuspendedResponse({
+        statusCode: 503,
+        body: "<html><title>Service Suspended</title></html>",
+      }),
+    ).toBe(true);
+  });
+
+  it("does NOT flag a plain 503 with no suspend signature (stays down)", () => {
+    expect(
+      isSuspendedResponse({ statusCode: 503, body: "upstream unavailable" }),
+    ).toBe(false);
+    expect(isSuspendedResponse({ statusCode: 503 })).toBe(false);
+  });
+
+  it("does NOT flag the suspend signature on a non-503 status", () => {
+    expect(
+      isSuspendedResponse({ statusCode: 200, routingHeader: "suspend" }),
+    ).toBe(false);
+    expect(
+      isSuspendedResponse({ statusCode: 200, body: "Service Suspended" }),
+    ).toBe(false);
+  });
+
+  it("matches the routing header case-insensitively", () => {
+    expect(
+      isSuspendedResponse({ statusCode: 503, routingHeader: "Suspend" }),
+    ).toBe(true);
+  });
+});
 
 describe("runHttpCheck", () => {
   beforeEach(() => {
@@ -56,6 +95,31 @@ describe("runHttpCheck", () => {
     expect(result.ok).toBe(false);
     expect(result.statusCode).toBe(500);
     expect(result.error).toBe("status_out_of_range");
+  });
+
+  it("flags a Render-suspended 503 (suspend header) as suspended", async () => {
+    mockFetch(
+      new Response("Service Suspended", {
+        status: 503,
+        headers: { "x-render-routing": "suspend" },
+      }),
+    );
+
+    const result = await runHttpCheck(makeConfig());
+
+    expect(result.ok).toBe(false);
+    expect(result.statusCode).toBe(503);
+    expect(result.suspended).toBe(true);
+  });
+
+  it("does NOT flag a plain 503 as suspended", async () => {
+    mockFetch(new Response("temporarily unavailable", { status: 503 }));
+
+    const result = await runHttpCheck(makeConfig());
+
+    expect(result.ok).toBe(false);
+    expect(result.statusCode).toBe(503);
+    expect(result.suspended).toBeUndefined();
   });
 
   it("classifies an AbortError as a timeout", async () => {

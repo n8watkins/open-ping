@@ -40,6 +40,7 @@ type ServiceState =
   | "operational"
   | "degraded"
   | "down"
+  | "suspended"
   | "maintenance"
   | "scheduled_off"
   | "unknown";
@@ -179,6 +180,7 @@ const SERVICE_STATE_META: Record<ServiceState, StateMeta> = {
   operational: { dot: "bg-up", text: "text-up", label: "Operational" },
   degraded: { dot: "bg-degraded", text: "text-degraded", label: "Degraded" },
   down: { dot: "bg-down", text: "text-down", label: "Down" },
+  suspended: { dot: "bg-suspended", text: "text-suspended", label: "Suspended" },
   maintenance: { dot: "bg-maint", text: "text-maint", label: "Maintenance" },
   scheduled_off: { dot: "bg-scheduled", text: "text-scheduled", label: "Scheduled off" },
   unknown: { dot: "bg-paused", text: "text-paused", label: "Unknown" },

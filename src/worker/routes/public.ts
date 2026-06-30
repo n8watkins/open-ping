@@ -38,6 +38,7 @@ export type PublicServiceState =
   | "operational"
   | "degraded"
   | "down"
+  | "suspended"
   | "maintenance"
   | "scheduled_off"
   | "unknown";
@@ -97,11 +98,13 @@ interface PublicMaint {
  * Derive the overall page banner from the public service states plus whether a
  * maintenance window is currently active.
  *
- * Precedence (PRD §15): an *outage* (any service `down`) always wins, then an
- * active maintenance window, then a `degraded` service, otherwise operational.
- * "No outages" for the maintenance clause means no `down` services — a degraded
- * service does not block the maintenance banner. `scheduled_off`, `maintenance`
- * and `unknown` service states never count toward an outage.
+ * Precedence (PRD §15): an *outage* (any service `down` or `suspended`) always
+ * wins, then an active maintenance window, then a `degraded` service, otherwise
+ * operational. "No outages" for the maintenance clause means no down/suspended
+ * services — a degraded service does not block the maintenance banner.
+ * `scheduled_off`, `maintenance` and `unknown` service states never count toward
+ * an outage. `suspended` (a turned-off Render app) IS an outage and counts with
+ * `down` toward partial/major outage.
  */
 export function computeOverall(
   services: { state: PublicServiceState }[],
@@ -112,7 +115,7 @@ export function computeOverall(
   let down = 0;
   let degraded = 0;
   for (const s of services) {
-    if (s.state === "down") down += 1;
+    if (s.state === "down" || s.state === "suspended") down += 1;
     else if (s.state === "degraded") degraded += 1;
   }
 
@@ -134,6 +137,10 @@ function mapPublicState(
       return "degraded";
     case "down":
       return "down";
+    case "suspended":
+      // A turned-off Render free-tier app: surfaced distinctly (never collapsed
+      // to operational) and counted as an outage in computeOverall.
+      return "suspended";
     case "maintenance":
       return "maintenance";
     case "scheduled_off":

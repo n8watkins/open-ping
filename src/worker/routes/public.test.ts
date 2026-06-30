@@ -70,6 +70,20 @@ describe("computeOverall", () => {
     );
   });
 
+  it("counts a suspended service as an outage (never operational)", () => {
+    // A suspended (turned-off) service is unavailable, so it behaves like down.
+    expect(computeOverall([svc("suspended")], false)).toBe("major_outage");
+    expect(computeOverall([svc("operational"), svc("suspended")], false)).toBe(
+      "partial_outage",
+    );
+    // Mixed down + suspended is still a full outage when nothing is up.
+    expect(computeOverall([svc("down"), svc("suspended")], false)).toBe(
+      "major_outage",
+    );
+    // An outage (suspended) beats an active maintenance window.
+    expect(computeOverall([svc("suspended")], true)).toBe("major_outage");
+  });
+
   it("returns maintenance when a window is active and there are no outages", () => {
     expect(computeOverall([svc("operational")], true)).toBe("maintenance");
     // Maintenance takes precedence over a merely-degraded service.

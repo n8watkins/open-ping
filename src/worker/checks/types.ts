@@ -2,7 +2,7 @@ import type { MonitorState } from "../../shared/states";
 
 /** The classified result of one full check cycle for a monitor. */
 export interface CheckOutcome {
-  /** Resolved state for this cycle: up | degraded | down. */
+  /** Resolved state for this cycle: up | degraded | down | suspended. */
   state: MonitorState;
   ok: boolean;
   durationMs?: number;

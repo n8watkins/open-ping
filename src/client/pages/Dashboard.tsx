@@ -52,11 +52,12 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Card className="p-4"><Stat label="Monitors" value={counts?.total ?? 0} /></Card>
         <Card className="p-4"><Stat label="Up" value={counts?.up ?? 0} valueClass="text-up" /></Card>
         <Card className="p-4"><Stat label="Degraded" value={counts?.degraded ?? 0} valueClass="text-degraded" /></Card>
         <Card className="p-4"><Stat label="Down" value={counts?.down ?? 0} valueClass="text-down" /></Card>
+        <Card className="p-4"><Stat label="Suspended" value={counts?.suspended ?? 0} valueClass={counts?.suspended ? "text-suspended" : undefined} /></Card>
         <Card className="p-4"><Stat label="Open incidents" value={counts?.openIncidents ?? 0} valueClass={counts?.openIncidents ? "text-down" : undefined} /></Card>
       </div>
 
