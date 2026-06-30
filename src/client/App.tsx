@@ -1,7 +1,7 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Outlet } from "react-router-dom";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
-import { BootstrapProvider } from "./lib/bootstrap";
+import { BootstrapProvider, useBootstrap } from "./lib/bootstrap";
 import { AppLayout } from "./components/AppLayout";
 import PublicStatus from "./pages/PublicStatus";
 import Login from "./pages/Login";
@@ -11,6 +11,9 @@ import NotFound from "./pages/NotFound";
 // Admin pages are code-split (lazy) so the public status page (/status) and the
 // login/setup entry points don't ship the large authenticated dashboard bundle.
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+// The marketing landing page is public; lazy-load it so it doesn't weigh down
+// the other public entry points (/login, /status).
+const Landing = lazy(() => import("./pages/Landing"));
 const Monitors = lazy(() => import("./pages/Monitors"));
 const MonitorDetail = lazy(() => import("./pages/MonitorDetail"));
 const MonitorEditor = lazy(() => import("./pages/MonitorEditor"));
@@ -28,6 +31,24 @@ function PageFallback() {
   );
 }
 
+/**
+ * Gate for the site root "/".
+ *  - while auth is loading: show the shared spinner (avoids a Landing flash);
+ *  - authenticated admin: render <Outlet/> so the nested AppLayout→Dashboard
+ *    renders exactly as before (chrome, nav, status pill, etc.);
+ *  - unauthenticated visitor: render the marketing Landing page.
+ *
+ * This keeps the Dashboard at "/" (so AppLayout's "Overview" nav link is
+ * untouched) while never letting AppLayout's own auth redirect fire for guests,
+ * since the nested layout only mounts when the visitor is authenticated.
+ */
+function RootIndex() {
+  const { loading, me } = useBootstrap();
+  if (loading) return <PageFallback />;
+  if (me?.authenticated) return <Outlet />;
+  return <Landing />;
+}
+
 export default function App() {
   return (
     <BootstrapProvider>
@@ -37,8 +58,14 @@ export default function App() {
           <Route path="/setup" element={<Setup />} />
           <Route path="/status" element={<PublicStatus />} />
 
+          {/* Site root: Landing for guests, Dashboard (in AppLayout) for admins. */}
+          <Route path="/" element={<RootIndex />}>
+            <Route element={<AppLayout />}>
+              <Route index element={<Dashboard />} />
+            </Route>
+          </Route>
+
           <Route element={<AppLayout />}>
-            <Route path="/" element={<Dashboard />} />
             <Route path="/monitors" element={<Monitors />} />
             <Route path="/monitors/new" element={<MonitorEditor />} />
             <Route path="/monitors/:id" element={<MonitorDetail />} />
