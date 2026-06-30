@@ -81,5 +81,8 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
     expect(location).toContain("github.com/login/oauth/authorize");
     expect(location).toContain("client_id=Ov23test");
     expect(res.headers.get("x-frame-options")).toBe("DENY"); // headers still applied
+    // The state cookie MUST survive the redirect (Response.redirect dropped it,
+    // breaking login with "state_invalid"); c.redirect preserves it.
+    expect(res.headers.get("set-cookie") ?? "").toContain("op_oauth_state=");
   });
 });

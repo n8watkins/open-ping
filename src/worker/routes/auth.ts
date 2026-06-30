@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv, Env } from "../types";
 import { randomToken, sha256hex } from "../lib/ids";
@@ -29,15 +29,20 @@ function baseUrl(c: { env: Env; req: { url: string } }): string {
   return c.env.APP_URL?.replace(/\/$/, "") ?? new URL(c.req.url).origin;
 }
 
-function loginRedirect(base: string, error?: string): Response {
+// Use c.redirect (NOT Response.redirect): Response.redirect returns a brand-new
+// Response that discards anything set on c.res — including Set-Cookie headers from
+// setCookie()/createSession(). c.redirect preserves them, so the OAuth state and
+// session cookies actually reach the browser.
+function loginRedirect(c: Context<AppEnv>, error?: string): Response {
+  const base = baseUrl(c);
   const url = error ? `${base}/login?error=${encodeURIComponent(error)}` : `${base}/login`;
-  return Response.redirect(url, 302);
+  return c.redirect(url, 302);
 }
 
 // --- Begin GitHub OAuth ---
 auth.get("/github/start", async (c) => {
   const base = baseUrl(c);
-  if (!c.env.GITHUB_CLIENT_ID) return loginRedirect(base, "github_not_configured");
+  if (!c.env.GITHUB_CLIENT_ID) return loginRedirect(c,"github_not_configured");
 
   // The `state` is single-use and server-validated on callback, AND bound to the
   // initiating browser via a matching HttpOnly cookie (double-submit). The
@@ -65,7 +70,7 @@ auth.get("/github/start", async (c) => {
   authorize.searchParams.set("scope", "read:user");
   authorize.searchParams.set("state", state);
   authorize.searchParams.set("allow_signup", "false");
-  return Response.redirect(authorize.toString(), 302);
+  return c.redirect(authorize.toString(), 302);
 });
 
 // --- GitHub OAuth callback ---
@@ -73,9 +78,9 @@ auth.get("/github/callback", async (c) => {
   const base = baseUrl(c);
   const code = c.req.query("code");
   const state = c.req.query("state");
-  if (!code || !state) return loginRedirect(base, "invalid_callback");
+  if (!code || !state) return loginRedirect(c,"invalid_callback");
   if (!c.env.GITHUB_CLIENT_ID || !c.env.GITHUB_CLIENT_SECRET) {
-    return loginRedirect(base, "github_not_configured");
+    return loginRedirect(c,"github_not_configured");
   }
 
   // Bind to the initiating browser: the state cookie set at /start must match
@@ -83,7 +88,7 @@ auth.get("/github/callback", async (c) => {
   const cookieState = getCookie(c, STATE_COOKIE);
   deleteCookie(c, STATE_COOKIE, { path: "/auth/github" });
   if (!cookieState || !(await timingSafeEqual(cookieState, state))) {
-    return loginRedirect(base, "state_invalid");
+    return loginRedirect(c,"state_invalid");
   }
 
   // Validate + consume single-use state.
@@ -95,7 +100,7 @@ auth.get("/github/callback", async (c) => {
     .first<{ id: string; expires_at: number; used_at: number | null }>();
   await c.env.DB.prepare(`DELETE FROM auth_tokens WHERE id = ?`).bind(stateId).run();
   if (!stateRow || stateRow.used_at || stateRow.expires_at <= Date.now()) {
-    return loginRedirect(base, "state_invalid");
+    return loginRedirect(c,"state_invalid");
   }
 
   // Exchange code for an access token.
@@ -112,10 +117,10 @@ auth.get("/github/callback", async (c) => {
       }),
     });
     const tokenJson = (await tokenRes.json()) as { access_token?: string; error?: string };
-    if (!tokenJson.access_token) return loginRedirect(base, "token_exchange_failed");
+    if (!tokenJson.access_token) return loginRedirect(c,"token_exchange_failed");
     accessToken = tokenJson.access_token;
   } catch {
-    return loginRedirect(base, "token_exchange_failed");
+    return loginRedirect(c,"token_exchange_failed");
   }
 
   // Fetch the GitHub identity.
@@ -125,17 +130,17 @@ auth.get("/github/callback", async (c) => {
       headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/vnd.github+json", "User-Agent": UA },
     });
     const user = (await userRes.json()) as { login?: string };
-    if (!user.login) return loginRedirect(base, "identity_failed");
+    if (!user.login) return loginRedirect(c,"identity_failed");
     login = user.login;
   } catch {
-    return loginRedirect(base, "identity_failed");
+    return loginRedirect(c,"identity_failed");
   }
 
   if (!(await isAllowedGithubLogin(c.env, login))) {
-    return loginRedirect(base, "not_authorized");
+    return loginRedirect(c,"not_authorized");
   }
 
   // Rotate: a fresh session is issued on every login.
   await createSession(c, login, "github");
-  return Response.redirect(`${base}/`, 302);
+  return c.redirect(`${base}/`, 302);
 });

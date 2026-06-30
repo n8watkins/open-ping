@@ -44,9 +44,11 @@ async function baseUrl(c: Ctx): Promise<string> {
   return base.replace(/\/$/, "");
 }
 
-function loginRedirect(base: string, error?: string): Response {
+// c.redirect (NOT Response.redirect) so any Set-Cookie on c.res survives — see
+// the same note in routes/auth.ts.
+function loginRedirect(c: Ctx, base: string, error?: string): Response {
   const url = error ? `${base}/login?error=${encodeURIComponent(error)}` : `${base}/login`;
-  return Response.redirect(url, 302);
+  return c.redirect(url, 302);
 }
 
 /**
@@ -163,7 +165,7 @@ magicApi.post("/request", async (c) => {
 magicFlow.get("/verify", async (c) => {
   const base = await baseUrl(c);
   const token = c.req.query("token");
-  if (!token) return loginRedirect(base, "magic_invalid");
+  if (!token) return loginRedirect(c, base,"magic_invalid");
 
   const id = await sha256hex(token);
   // Single-use, atomically: DELETE ... RETURNING claims the row in one
@@ -178,7 +180,7 @@ magicFlow.get("/verify", async (c) => {
     .first<{ data: string | null; expires_at: number }>();
 
   if (!isConsumedTokenValid(row, Date.now())) {
-    return loginRedirect(base, "magic_invalid");
+    return loginRedirect(c, base,"magic_invalid");
   }
 
   let email: string | undefined;
@@ -188,10 +190,10 @@ magicFlow.get("/verify", async (c) => {
     email = undefined;
   }
   if (!email || !(await isAllowedEmail(c.env, email))) {
-    return loginRedirect(base, "not_authorized");
+    return loginRedirect(c, base,"not_authorized");
   }
 
   // Rotate: a fresh session is issued on every login.
   await createSession(c, email, "email");
-  return Response.redirect(`${base}/`, 302);
+  return c.redirect(`${base}/`, 302);
 });
