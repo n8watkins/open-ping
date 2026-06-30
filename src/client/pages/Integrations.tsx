@@ -811,12 +811,18 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
       </CardHeader>
 
       {error && (
-        <p className="mb-3 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
+        <p
+          role="alert"
+          className="mb-3 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down"
+        >
           {error}
         </p>
       )}
       {notice && (
-        <p className="mb-3 rounded-lg border border-up/40 bg-up/10 px-3 py-2 text-sm text-up">
+        <p
+          role="status"
+          className="mb-3 rounded-lg border border-up/40 bg-up/10 px-3 py-2 text-sm text-up"
+        >
           {notice}
         </p>
       )}

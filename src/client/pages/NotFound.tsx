@@ -4,7 +4,7 @@ export default function NotFound() {
   return (
     <div className="grid min-h-full place-items-center px-4 text-center">
       <div>
-        <div className="text-5xl font-semibold tracking-tight text-ink-faint">404</div>
+        <h1 className="text-5xl font-semibold tracking-tight text-ink-faint">404</h1>
         <p className="mt-3 text-sm text-ink-muted">This page doesn't exist.</p>
         <Link
           to="/"

@@ -335,7 +335,10 @@ function GeneralSection({
                 Save changes
               </button>
               {saved && !saving && (
-                <span className="inline-flex items-center gap-1.5 text-sm text-up">
+                <span
+                  role="status"
+                  className="inline-flex items-center gap-1.5 text-sm text-up"
+                >
                   <CheckCircle2 className="size-4" />
                   Saved
                 </span>
@@ -544,16 +547,16 @@ function DiagnosticsSection({
                   <table className="w-full min-w-[520px] text-left text-sm">
                     <thead>
                       <tr className="border-b border-line text-xs text-ink-faint">
-                        <th className="px-3 py-2 font-medium">Cron</th>
-                        <th className="px-3 py-2 font-medium">Started</th>
-                        <th className="px-3 py-2 font-medium">Status</th>
-                        <th className="px-3 py-2 text-right font-medium">
+                        <th scope="col" className="px-3 py-2 font-medium">Cron</th>
+                        <th scope="col" className="px-3 py-2 font-medium">Started</th>
+                        <th scope="col" className="px-3 py-2 font-medium">Status</th>
+                        <th scope="col" className="px-3 py-2 text-right font-medium">
                           Checked
                         </th>
-                        <th className="px-3 py-2 text-right font-medium">
+                        <th scope="col" className="px-3 py-2 text-right font-medium">
                           Failures
                         </th>
-                        <th className="px-3 py-2 text-right font-medium">
+                        <th scope="col" className="px-3 py-2 text-right font-medium">
                           Duration
                         </th>
                       </tr>
@@ -681,7 +684,10 @@ function SectionSpinner() {
 
 function ErrorBanner({ children }: { children: ReactNode }) {
   return (
-    <p className="rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
+    <p
+      role="alert"
+      className="rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down"
+    >
       {children}
     </p>
   );

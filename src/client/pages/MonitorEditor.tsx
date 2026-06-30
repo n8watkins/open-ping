@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -294,6 +295,9 @@ export default function MonitorEditor() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  // Focused on submit so screen-reader + keyboard users land on the error
+  // summary (which also carries role="alert").
+  const errorSummaryRef = useRef<HTMLDivElement>(null);
   const [preserved, setPreserved] = useState<{
     notify?: unknown;
     public?: unknown;
@@ -528,6 +532,8 @@ export default function MonitorEditor() {
     } catch (err) {
       setErrors(errorMessages(err));
       window.scrollTo({ top: 0, behavior: "smooth" });
+      // Defer to after the summary renders, then move focus to it.
+      requestAnimationFrame(() => errorSummaryRef.current?.focus());
     } finally {
       setSaving(false);
     }
@@ -578,7 +584,12 @@ export default function MonitorEditor() {
       </div>
 
       {errors.length > 0 && (
-        <div className="mb-5 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
+        <div
+          ref={errorSummaryRef}
+          role="alert"
+          tabIndex={-1}
+          className="mb-5 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down outline-none"
+        >
           <p className="font-medium">Please fix the following:</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-5">
             {errors.map((m, i) => (
@@ -591,7 +602,7 @@ export default function MonitorEditor() {
       <form onSubmit={handleSubmit} className="space-y-5">
         {/* 1. Basics */}
         <FormCard title="Basics">
-          <Field label="Name">
+          <Field label="Name" required>
             <input
               value={form.name}
               onChange={(e) => set("name", e.target.value)}
@@ -628,7 +639,7 @@ export default function MonitorEditor() {
         {/* 2. HTTP config */}
         {form.type === "http" && (
           <FormCard title="Request" description="What to send and how to read the response.">
-            <Field label="URL">
+            <Field label="URL" required>
               <input
                 value={form.url}
                 onChange={(e) => set("url", e.target.value)}
@@ -699,6 +710,7 @@ export default function MonitorEditor() {
                           updateHeader(i, { name: e.target.value })
                         }
                         placeholder="Header name"
+                        aria-label="Header name"
                         className="input"
                       />
                       <input
@@ -707,6 +719,7 @@ export default function MonitorEditor() {
                           updateHeader(i, { value: e.target.value })
                         }
                         placeholder="Value"
+                        aria-label="Header value"
                         className="input"
                       />
                       <IconButton
@@ -895,6 +908,7 @@ export default function MonitorEditor() {
                                 updateAssertion(i, { path: e.target.value })
                               }
                               placeholder="JSON path e.g. data.status"
+                              aria-label="JSON path"
                               className="input font-mono"
                             />
                           )}
@@ -905,6 +919,7 @@ export default function MonitorEditor() {
                                 updateAssertion(i, { value: e.target.value })
                               }
                               placeholder="Expected value"
+                              aria-label="Assertion value"
                               className="input"
                             />
                           )}
@@ -1136,6 +1151,7 @@ export default function MonitorEditor() {
                                 onChange={(e) =>
                                   updatePeriod(di, pi, { start: e.target.value })
                                 }
+                                aria-label="Start time"
                                 className="input"
                               />
                               <span className="text-xs text-ink-faint">to</span>
@@ -1145,6 +1161,7 @@ export default function MonitorEditor() {
                                 onChange={(e) =>
                                   updatePeriod(di, pi, { end: e.target.value })
                                 }
+                                aria-label="End time"
                                 className="input"
                               />
                               <IconButton
@@ -1233,16 +1250,24 @@ function FormCard({
 function Field({
   label,
   hint,
+  required,
   children,
 }: {
   label: string;
   hint?: string;
+  required?: boolean;
   children: ReactNode;
 }) {
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-medium text-ink-muted">
         {label}
+        {required && (
+          <span className="text-down" aria-hidden="true">
+            {" "}
+            *
+          </span>
+        )}
       </span>
       {children}
       {hint && <span className="mt-1 block text-xs text-ink-faint">{hint}</span>}

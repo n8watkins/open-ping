@@ -298,6 +298,7 @@ export default function PublicStatus() {
           )}
         </header>
 
+        <main>
         {/* Overall status banner */}
         <section className={cn("mt-8 rounded-card border p-6", overallMeta.card)}>
           <div className="flex items-center gap-4">
@@ -409,6 +410,7 @@ export default function PublicStatus() {
             </Card>
           )}
         </section>
+        </main>
 
         {/* Footer */}
         <footer className="mt-12 border-t border-line pt-6 text-center text-xs text-ink-faint">
@@ -427,6 +429,32 @@ export default function PublicStatus() {
 /* ------------------------------------------------------------------ *
  * Pieces
  * ------------------------------------------------------------------ */
+
+const BAR_STATE_LABEL: Record<BarState, string> = {
+  up: "operational",
+  degraded: "degraded",
+  down: "down",
+  none: "no data",
+};
+
+/**
+ * Text summary of the daily uptime strip so the history is not conveyed by
+ * color/hover alone (WCAG 1.4.1). Reads overall uptime plus per-state day counts.
+ */
+function barsSummary(service: PublicService, bars: UptimeBarPoint[]): string {
+  const counts = bars.reduce<Partial<Record<BarState, number>>>((acc, b) => {
+    acc[b.state] = (acc[b.state] ?? 0) + 1;
+    return acc;
+  }, {});
+  const parts = (Object.keys(counts) as BarState[]).map(
+    (s) => `${counts[s]} ${BAR_STATE_LABEL[s]}`,
+  );
+  const prefix =
+    service.uptime90d != null
+      ? `${formatPct(service.uptime90d)} uptime over ${bars.length} days`
+      : `Uptime history over ${bars.length} days`;
+  return `${prefix}: ${parts.join(", ")}`;
+}
 
 function ServiceRow({ service }: { service: PublicService }) {
   const meta = SERVICE_STATE_META[service.state];
@@ -466,13 +494,18 @@ function ServiceRow({ service }: { service: PublicService }) {
 
       {service.showUptime && bars.length > 0 && (
         <div className="mt-3">
-          <div className="flex h-7 items-stretch gap-px">
+          <div
+            role="img"
+            aria-label={barsSummary(service, bars)}
+            className="flex h-7 items-stretch gap-px"
+          >
             {bars.map((bar, i) => (
               <div
                 key={i}
                 title={`${bar.date}: ${
                   bar.uptimePct == null ? "no data" : formatPct(bar.uptimePct)
                 }`}
+                aria-hidden="true"
                 className={cn(
                   "flex-1 rounded-[2px] first:rounded-l last:rounded-r",
                   BAR_META[bar.state],

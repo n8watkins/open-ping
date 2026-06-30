@@ -109,7 +109,7 @@ export default function Login() {
 
   return (
     <div className="grid min-h-full place-items-center px-4">
-      <div className="w-full max-w-sm">
+      <main className="w-full max-w-sm">
         <div className="mb-8 flex justify-center">
           <Logo />
         </div>
@@ -195,7 +195,7 @@ export default function Login() {
         <p className="mt-6 text-center text-xs text-ink-faint">
           Self-hosted on your own Cloudflare account.
         </p>
-      </div>
+      </main>
     </div>
   );
 }

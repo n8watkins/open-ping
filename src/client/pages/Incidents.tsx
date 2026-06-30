@@ -230,6 +230,7 @@ export default function Incidents() {
           <input
             className="input pl-9"
             placeholder="Search incidents…"
+            aria-label="Search incidents"
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
             onKeyDown={(e) => {

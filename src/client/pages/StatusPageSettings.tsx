@@ -269,11 +269,12 @@ export default function StatusPageSettings() {
                     onChange={(e) => mark(setAccent, e.target.value)}
                     placeholder={DEFAULT_ACCENT}
                     aria-invalid={!accentValid}
+                    aria-describedby={!accentValid ? "accent-hex-error" : undefined}
                     className={cn("input font-mono", !accentValid && "border-down")}
                   />
                 </div>
                 {!accentValid && (
-                  <p className="mt-1.5 text-xs text-down">
+                  <p id="accent-hex-error" role="alert" className="mt-1.5 text-xs text-down">
                     Use a 3- or 6-digit hex color, e.g. #6d8bff.
                   </p>
                 )}

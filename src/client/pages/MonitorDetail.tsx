@@ -329,6 +329,7 @@ export default function MonitorDetail() {
 
       {notice && (
         <div
+          role={notice.tone === "error" ? "alert" : "status"}
           className={cn(
             "mt-4 rounded-lg border px-3 py-2 text-sm",
             NOTICE_CLASS[notice.tone],

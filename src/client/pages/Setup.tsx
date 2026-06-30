@@ -210,7 +210,7 @@ export default function Setup() {
         </ol>
 
         {/* Panel */}
-        <div className="rounded-card border border-line bg-surface p-6">
+        <main className="rounded-card border border-line bg-surface p-6">
           <StepBody
             id={current.id}
             status={status}
@@ -224,7 +224,10 @@ export default function Setup() {
           />
 
           {error && (
-            <p className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
+            <p
+              role="alert"
+              className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down"
+            >
               {error}
             </p>
           )}
@@ -266,7 +269,7 @@ export default function Setup() {
               </button>
             )}
           </div>
-        </div>
+        </main>
       </div>
     </div>
   );

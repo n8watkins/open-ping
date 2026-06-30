@@ -15,19 +15,24 @@
 
   --color-ink: #e6edf6;
   --color-ink-muted: #9fb0c5;
-  --color-ink-faint: #6b7d96;
+  /* Lightened from #6b7d96 (failed 4.5:1) so small faint text clears AA on
+     surface (#111b2e ≈ 5.66:1) and surface-2 (#16233a ≈ 5.17:1). */
+  --color-ink-faint: #8595ad;
 
   --color-accent: #6d8bff;
   --color-accent-hover: #859dff;
   --color-accent-soft: #1b2547;
 
+  /* Status tokens double as pill TEXT on bg-surface-2 (#16233a); each must
+     clear 4.5:1 there. down/suspended/scheduled/paused were brightened to
+     pass (was #ef4757 4.27, #a855f7 3.97, #64748b 3.30, #51607a 2.47). */
   --color-up: #2fbf6e;
-  --color-down: #ef4757;
-  --color-suspended: #a855f7;
+  --color-down: #f76d79;
+  --color-suspended: #c084fc;
   --color-degraded: #f5a524;
-  --color-scheduled: #64748b;
+  --color-scheduled: #94a3b8;
   --color-maint: #8b8bf5;
-  --color-paused: #51607a;
+  --color-paused: #8c9bb5;
   --color-warming: #f0b429;
 
   --radius-card: 0.875rem;
@@ -49,9 +54,25 @@
 
   --color-ink: #16233a;
   --color-ink-muted: #475569;
-  --color-ink-faint: #7a8aa0;
+  /* Darkened from #7a8aa0 (≈3.1:1) so faint text clears AA on the light
+     surfaces: surface-2 #eef2f7 ≈4.54:1, canvas #f6f8fb ≈4.80:1, white 5.11:1. */
+  --color-ink-faint: #5f6f87;
 
   --color-accent-soft: #e3e9ff;
+
+  /* The dark status tokens are tuned for dark surfaces and are unreadable on
+     light backgrounds, so re-tune them here. Darker, saturated variants that
+     clear 4.5:1 on the darkest light surface (surface-2 #eef2f7) — and so also
+     on canvas #f6f8fb and white — for pill/label text and ≥3:1 for the large
+     overall-status banner icon/text. */
+  --color-up: #167c3c;
+  --color-down: #cf1b2b;
+  --color-suspended: #9333ea;
+  --color-degraded: #a85a08;
+  --color-scheduled: #475569;
+  --color-maint: #4f46e5;
+  --color-paused: #51607a;
+  --color-warming: #876000;
 }
 
 @layer base {
