@@ -9,20 +9,23 @@ Its defining feature is **schedule-aware monitoring**: applications are checked
 hours they show as `Scheduled off` rather than `Down`, and the inactive period
 does not reduce uptime.
 
-> Status: **V1 complete**, hardened by two post-build review passes (see
-> [`CODE_REVIEW.md`](./CODE_REVIEW.md)). See
-> [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the build history.
+> Status: **V1 complete and deployed.** Hardened by multiple review passes plus a
+> live-deploy verification round that fixed several real production bugs (see
+> [`CODE_REVIEW.md`](./CODE_REVIEW.md)); 295 tests, `tsc -b` + `vite build` clean.
+> See [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the build history.
 
 ## What it does
 
 - HTTP/API monitoring with keyword & JSON assertions
 - Heartbeat / cron-job monitoring
 - Timezone-aware operating schedules with warm-up handling
+- Distinct **Suspended** status for hosts that signal suspension (e.g. Render free-tier)
 - Incidents with automatic recovery, flapping protection, MTBF/MTTR
 - Compact historical uptime (samples → intervals → hourly → daily → monthly)
 - Mobile Web Push (installable Android PWA), email via Resend, Discord, signed webhooks
 - GitHub OAuth + email magic-link auth (single administrator)
 - A polished, configurable public status page
+- Admin **CLI** (`scripts/op.mjs`) + opt-in Bearer API-token auth for scripting/automation
 - Data import/export and transparent Cloudflare usage estimates
 
 ## Tech stack
@@ -51,13 +54,14 @@ npm run test       # vitest
 
 1. `npm run db:create` and copy the `database_id` into `wrangler.jsonc`.
 2. `npm run db:migrate` to apply migrations to your D1 database.
-3. Set Worker secrets (`SESSION_SECRET`, `MASTER_KEY`, GitHub OAuth, Resend, …).
+3. Set Worker secrets (`MASTER_KEY`, GitHub OAuth, Resend, …).
 4. `npm run deploy`.
 5. Open the app and complete the first-run setup wizard.
 
 ## Documentation
 
 - [Install](./docs/INSTALL.md) — from clone to a deployed install (plus a local-dev quickstart)
+- [CLI](./docs/CLI.md) — manage an instance from a terminal/automation via an API token
 - [Upgrade](./docs/UPGRADE.md) — pull, migrate, redeploy
 - [Backup & restore](./docs/BACKUP.md) — JSON export/import and full D1 dumps
 - [Custom domain](./docs/CUSTOM_DOMAIN.md) — put OpenPing on your own hostname

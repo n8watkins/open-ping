@@ -28,8 +28,8 @@ npm run db:migrate:local         # apply migrations to the local D1 database
 npm run dev                      # Vite + workerd dev server at http://localhost:5173
 ```
 
-Fill in `.dev.vars` with at least a `MASTER_KEY` and `SESSION_SECRET`
-(`openssl rand -base64 32` for each) and one admin identity
+Fill in `.dev.vars` with at least a `MASTER_KEY`
+(`openssl rand -base64 32`) and one admin identity
 (`ADMIN_GITHUB_LOGIN` or `ADMIN_EMAIL`). See
 [`docs/INSTALL.md`](./docs/INSTALL.md) for the full list and a from-scratch
 deploy walkthrough.

@@ -108,7 +108,7 @@ This is intentional.
 ## Local dev won't start or behaves oddly
 
 - Ensure `.dev.vars` exists (copy from `.dev.vars.example`) with at least
-  `MASTER_KEY`, `SESSION_SECRET`, an admin identity, and
+  `MASTER_KEY`, an admin identity, and
   `APP_URL=http://localhost:5173`.
 - Run `npm run db:migrate:local` so the local D1 database has the schema.
 - Set the GitHub OAuth callback to `http://localhost:5173/auth/github/callback`

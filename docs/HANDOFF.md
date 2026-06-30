@@ -15,15 +15,46 @@ hours; outside them they show `Scheduled off` and don't count against uptime.
   OAuth, Resend email, Discord, signed webhooks. Single-administrator (no public signup).
 - **Source of truth for scope:** the full PRD (pasted into the first session message) and
   `BUILD_PLAN.md` (phase + §26 acceptance-criteria tracker — all checked).
-- **Repo:** local git, default branch `main`. Post-build review passes have
-  since landed (see `CODE_REVIEW.md`).
-- **Runs at:** `http://localhost:5173` via `npm run dev` (vite + workerd). Not yet deployed
-  to a real Cloudflare account.
+- **Repo:** git, default branch `main`, pushed to `origin` (GitHub). Multiple post-build
+  review passes **plus a live-deploy verification round** have landed (see `CODE_REVIEW.md`).
+- **Runs at:** **DEPLOYED LIVE** to Cloudflare — `https://open-ping.<subdomain>.workers.dev`
+  (single-admin, GitHub-OAuth login, cron every 12 min, remote D1 migrated 0001→0005).
+  Local dev still: `npm run dev` → `http://localhost:5173`.
+
+## Latest session (deploy + verification + features)
+
+Everything below is on `main`, pushed. `tsc -b` + `vite build` clean, **295 tests pass**.
+
+1. **Code review (3 passes total) + all deferred items resolved.** Consolidated in
+   `CODE_REVIEW.md`. Added migrations `0003` (heartbeat backfill), `0004`
+   (`notification_outbox.monitor_id`), `0005` (incident-status triggers); enabled
+   `noUncheckedIndexedAccess`; auth hardening (async constant-time compare, OAuth
+   `state` cookie binding, `revokeAllSessions` + `/api/auth/logout-all`); code-split
+   the admin SPA off the public bundle.
+2. **Deployed to Cloudflare** — created remote D1, set Worker secrets (`MASTER_KEY`,
+   `GITHUB_CLIENT_ID/SECRET`, `ADMIN_GITHUB_LOGIN`, `APP_URL`, `RESEND_API_KEY`,
+   `API_TOKEN`), `npm run deploy`.
+3. **Live-deploy verification caught + fixed 4 real production bugs** the static passes
+   missed (each only triggers on a real server round-trip): `/status` 500 + login 500
+   (`secureHeaders` choking on immutable ASSETS/`Response.redirect` headers → fixed with a
+   global mutable-clone middleware in `index.ts`); an env-admin **setup deadlock** (client
+   forced `/setup` while the lock blocked the anonymous wizard → route to login when an
+   admin is configured); and **OAuth/session cookies dropped by `Response.redirect`**
+   (login never persisted → switched `auth.ts`/`magic.ts` to `c.redirect`). Regression
+   tests in `src/worker/index.test.ts`.
+4. **Features shipped:** signed-in indicator + Sign-out in the header; an admin **CLI**
+   (`scripts/op.mjs`) with **Bearer API-token auth** (opt-in `API_TOKEN` secret, see
+   `docs/CLI.md`); a distinct **Suspended** monitor status (detects Render free-tier
+   suspension — 503 + `x-render-routing: suspend`).
+
+> ⚠️ `wrangler.jsonc` holds the placeholder `database_id` in the repo; the live install's
+> real id is set in the deployer's **local** working copy only (never committed — keeps the
+> public template clean). The `API_TOKEN` value lives in a gitignored `.op-token`.
 
 ## State
 
-**V1 implementation COMPLETE**, plus follow-up review passes (see `CODE_REVIEW.md`).
-All 6 PRD phases done; 253 unit tests pass; `tsc -b`
+**V1 implementation COMPLETE + deployed**, plus the review/verification above (see
+`CODE_REVIEW.md`). All 6 PRD phases done; **295 unit tests pass**; `tsc -b`
 and `vite build` clean. The original build session's commits (oldest→newest), all on `main`:
 
 | Phase | Commits |
@@ -43,14 +74,16 @@ generic response, all dashboard read APIs, public-API redaction (no URL/token le
 maintenance CRUD, SSRF blocking, JSON export (no secrets), and **encryption-at-rest**
 (secret stored as `v1:…` ciphertext, redacted in API, still usable by the checker).
 
-**Implemented but NOT yet validated on a real deploy** (environmental limits of local
-workerd+vite — flagged `⊕` in `BUILD_PLAN.md` §26):
-- The 12-min **cron cadence** (the vite dev plugin doesn't expose a scheduled trigger).
+**Validated on the live deploy:** the 12-min **cron cadence**, **GitHub OAuth** full
+round-trip (start → callback → session, after the cookie fix), the public status page,
+the **Suspended** detector (live test-check against the suspended Render apps returns
+`state: suspended`), and the **CLI** (created/updated the live monitors over the Bearer API).
+
+**Still NOT exercised on the live deploy:**
 - **Real-device PWA install** + **Web Push wire encryption** (RFC 8291 aes128gcm is
   hand-rolled and unit-tested for structure only; needs a real browser/push service).
-- **Live email/Discord delivery** (no `RESEND_API_KEY` / webhook locally — senders are
-  verified to execute and handle errors, not to deliver).
-- GitHub OAuth **code exchange** (needs a real GitHub app).
+- **Live email (Resend) / Discord delivery** end-to-end (`RESEND_API_KEY` is set, but no
+  real down→recovery alert has been observed delivering yet; no Discord webhook configured).
 
 Nothing is half-done or broken. No known failing tests.
 
@@ -58,13 +91,12 @@ Nothing is half-done or broken. No known failing tests.
 
 > Focus for the next agent (if any was given): see top of this file; otherwise start here.
 
-1. **Deploy to a real Cloudflare account and validate the `⊕` items.** Follow
-   `docs/INSTALL.md`: `npm run db:create` → paste `database_id` into `wrangler.jsonc`
-   → set Worker secrets → `npm run db:migrate` → `npm run deploy` → complete the setup
-   wizard. Then confirm: cron fires every 12 min (check `scheduler_runs` / Diagnostics),
-   GitHub OAuth round-trips, a real down→recovery sends email/Discord, PWA installs on
-   Android and a test push arrives + deep-links. Acceptance = each `⊕` in `BUILD_PLAN.md`
-   observed working.
+1. **Finish validating the live deploy.** Deploy is DONE (cron + OAuth + status page +
+   CLI + Suspended all confirmed). Remaining: observe a real down→recovery **email/Discord
+   delivery**, and a **real-device PWA install + Web Push** arriving and deep-linking.
+   Optional infra the owner asked about: a **cleaner URL** — change the account `workers.dev`
+   subdomain (dashboard) or add a **custom domain** (`docs/CUSTOM_DOMAIN.md`); afterward
+   update the `APP_URL` secret + the GitHub OAuth callback to the new URL and redeploy.
 2. **Full accessibility audit.** Baseline only so far (semantic HTML, `focus-visible`
    outlines in `src/client/index.css`, `aria-disabled`). Run axe/Lighthouse over the
    dashboard + public page; fix contrast/labels/keyboard-nav gaps.
@@ -85,10 +117,11 @@ Nothing is half-done or broken. No known failing tests.
 - **Dev server + local D1:** `npm run dev` serves at `:5173`; local D1 lives in
   `.wrangler/state`. Apply migrations locally with `npm run db:migrate:local`. The vite
   plugin and `wrangler d1 execute --local` share the same local D1 store.
-- **Testing auth-protected routes locally without OAuth:** insert a session row whose `id`
-  is `sha256(cookieToken)` and set `csrf_secret`; then send `Cookie: op_session=<token>` +
-  `x-csrf-token: <csrf_secret>`. Example:
-  `ID=$(printf '%s' "$TOKEN" | sha256sum | awk '{print $1}')` → INSERT into `sessions`.
+- **Hitting auth-protected routes without a browser session:** set the `API_TOKEN` Worker
+  secret and send `Authorization: Bearer <API_TOKEN>` — `requireAuth` treats it as admin
+  (no CSRF, since Bearer isn't ambient). The `scripts/op.mjs` CLI uses exactly this (see
+  `docs/CLI.md`). (The old trick — inserting a `sessions` row with `id = sha256(token)` and
+  sending the cookie + `x-csrf-token` — still works but is rarely needed now.)
 - **`.dev.vars`** (gitignored) holds local secrets: `GITHUB_CLIENT_ID/SECRET`,
   `ADMIN_GITHUB_LOGIN`, `MASTER_KEY` (base64 32 bytes — enables config encryption locally).
   `.dev.vars.example` is the committed template (force-added past the `.dev.vars.*` ignore
@@ -126,5 +159,9 @@ Nothing is half-done or broken. No known failing tests.
 - `src/worker/lib/*` — `crypto.ts`, `secret-config.ts`, `ssrf.ts`, `sessions.ts`, `admin.ts`, `ids.ts`, `lease.ts`, `schedule.ts` (timezone/DST).
 - `src/client/*` — `App.tsx` (routes), `components/AppLayout.tsx` (shell+nav), `components/ui/*` (primitives), `lib/{api,useFetch,bootstrap,format,types}.ts`, `pages/*` (Dashboard, Monitors, MonitorDetail, MonitorEditor, Incidents, Integrations, Settings, Maintenance, StatusPageSettings, PublicStatus, Setup, Login).
 - `migrations/0001_init.sql` — full v1 D1 schema (16 tables).
-- `migrations/0002_review_fixes.sql` — security-review additions: `monitor_state.last_beat_at` + unique partial index `idx_incidents_one_open`.
-- `docs/*` — INSTALL, UPGRADE, BACKUP, TROUBLESHOOTING, CUSTOM_DOMAIN, FREE_TIER (+ this HANDOFF).
+- `migrations/0002_review_fixes.sql` — `monitor_state.last_beat_at` + unique partial index `idx_incidents_one_open`.
+- `migrations/0003_heartbeat_backfill.sql` — backfills `last_beat_at` (avoids false-DOWN on upgrade).
+- `migrations/0004_outbox_monitor_id.sql` — `notification_outbox.monitor_id` (+ index) so deletes purge queued alerts.
+- `migrations/0005_incident_status_check.sql` — triggers enforcing `incidents.status ∈ {open,resolved}`.
+- `scripts/op.mjs` — admin CLI (Bearer API-token auth); see `docs/CLI.md`.
+- `docs/*` — INSTALL, CLI, UPGRADE, BACKUP, TROUBLESHOOTING, CUSTOM_DOMAIN, FREE_TIER (+ this HANDOFF).

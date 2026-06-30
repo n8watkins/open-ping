@@ -10,12 +10,19 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
-- **Active phase:** ✅ V1 COMPLETE + post-build review passes applied.
-- **Last completed:** A third pass — 8-agent parallel review (disjoint domains) →
-  7-agent parallel fix (disjoint files) — landed 4 High + ~13 Medium + ~24 Low fixes
-  (heartbeat×schedule seams, setup bootstrap lock, SSRF/validation hardening) and
-  migration `0003_heartbeat_backfill.sql`. **277 tests pass**; `tsc -b` + `vite build`
-  clean. Consolidated record: [`CODE_REVIEW.md`](./CODE_REVIEW.md).
+- **Active phase:** ✅ V1 COMPLETE, review passes applied, and **DEPLOYED LIVE** to
+  Cloudflare (`https://open-ping.<subdomain>.workers.dev`).
+- **Last completed:** **Live-deploy verification** caught and fixed 4 real production
+  bugs that all 3 static review passes + unit tests missed (every one only triggers on a
+  real server round-trip): `/status` 500 + login 500 (secureHeaders vs immutable
+  ASSETS/redirect headers), an env-admin setup deadlock, and OAuth/session cookies being
+  dropped by `Response.redirect` (login never persisted). Then shipped features:
+  signed-in/sign-out UI, an admin **CLI + Bearer API-token auth** (`scripts/op.mjs`,
+  `docs/CLI.md`), and a distinct **Suspended** monitor status (Render free-tier detection).
+  Migrations now run **0001→0005**. **295 tests pass**; `tsc -b` + `vite build` clean.
+- **Before that:** an 8-agent review → 7-agent fix pass (4 High + ~13 Medium + ~24 Low) +
+  all 11 of its deferred items resolved (migrations `0003`/`0004`/`0005`). Consolidated
+  record: [`CODE_REVIEW.md`](./CODE_REVIEW.md).
 - **Earlier:** A 9-agent **security + coding review** (adversarially verified) landed
   21 confirmed fixes + migration `0002_review_fixes.sql` (253 tests); and before that,
   a parallel multi-agent review against §26 (245 tests).

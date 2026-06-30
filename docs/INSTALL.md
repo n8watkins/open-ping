@@ -102,7 +102,6 @@ npx wrangler secret put <NAME>
 | Secret | Required? | What it is |
 | --- | --- | --- |
 | `MASTER_KEY` | **Yes** | Base64 32-byte AES-GCM key used to encrypt sensitive config at rest. Generate with `openssl rand -base64 32`. |
-| `SESSION_SECRET` | **Yes** | Random string used to sign session + CSRF tokens. Generate with `openssl rand -base64 32`. |
 | `APP_URL` | **Yes** | Public base URL of this install, e.g. `https://status.example.com`. Used for OAuth callbacks, magic links, and push. |
 | `GITHUB_CLIENT_ID` | For GitHub sign-in | From the OAuth app in step 4. |
 | `GITHUB_CLIENT_SECRET` | For GitHub sign-in | From the OAuth app in step 4. |
@@ -112,17 +111,17 @@ npx wrangler secret put <NAME>
 | `VAPID_PUBLIC_KEY` | Optional | Web Push public key. You can instead generate VAPID keys in-app under **Integrations**. |
 | `VAPID_PRIVATE_KEY` | Optional | Web Push private key. |
 | `VAPID_SUBJECT` | Optional | Web Push `mailto:` or URL subject. |
+| `API_TOKEN` | Optional | Admin token for the CLI / automation (Bearer auth = full admin; see [CLI](./CLI.md)). Generate with `openssl rand -base64 32`. |
 
 > **You must configure at least one admin identity** (`ADMIN_GITHUB_LOGIN` or
 > `ADMIN_EMAIL`) — the setup wizard refuses to complete without one. To use
 > GitHub sign-in you need both `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
 > To use email/magic-link sign-in you need `RESEND_API_KEY` plus `ADMIN_EMAIL`.
 
-Generate the two random keys quickly:
+Generate the master key:
 
 ```bash
 openssl rand -base64 32   # use the output for MASTER_KEY
-openssl rand -base64 32   # use the output for SESSION_SECRET
 ```
 
 ## 6. Deploy
@@ -169,7 +168,7 @@ npm run dev                      # http://localhost:5173
 ```
 
 - `.dev.vars` uses the **same names** as the production secrets above and is
-  gitignored. At minimum set `MASTER_KEY`, `SESSION_SECRET`, one admin identity,
+  gitignored. At minimum set `MASTER_KEY`, one admin identity,
   and `APP_URL=http://localhost:5173`. See
   [`.dev.vars.example`](../.dev.vars.example).
 - For GitHub OAuth locally, set the OAuth app's callback to

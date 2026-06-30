@@ -10,8 +10,6 @@ export interface Env {
   ASSETS: Fetcher;
 
   // --- Worker secrets (set via `wrangler secret put` / dashboard) ---
-  /** HMAC key for signing/validating session + CSRF tokens. */
-  SESSION_SECRET?: string;
   /** AES-GCM master key (base64) for encrypting sensitive D1 values. */
   MASTER_KEY?: string;
 
