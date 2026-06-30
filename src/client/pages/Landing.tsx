@@ -1,40 +1,144 @@
-import { useEffect, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   Activity,
   ArrowRight,
+  ArrowUpRight,
   Bell,
+  Bug,
   CalendarClock,
   Check,
   Cloud,
   Code2,
+  Coffee,
   Database,
   ExternalLink,
   Gauge,
+  GitFork,
   Github,
   Globe,
   HeartPulse,
+  Infinity as InfinityIcon,
   KeyRound,
   LineChart,
+  LogIn,
+  Menu,
   MessageSquare,
   PauseCircle,
   Server,
   ShieldCheck,
   Smartphone,
+  Star,
   Terminal,
   Webhook,
+  X,
   Zap,
   type LucideIcon,
 } from "lucide-react";
 import { Logo } from "../components/Logo";
 import { DashboardMockup } from "../components/landing/DashboardMockup";
 import { StatusMockup } from "../components/landing/StatusMockup";
+import { PhoneMockup } from "../components/landing/PhoneMockup";
+import { ComparisonTable } from "../components/landing/ComparisonTable";
+import { FaqAccordion, type FaqItem } from "../components/landing/FaqAccordion";
+import { SignInModal } from "../components/landing/SignInModal";
+import { useCountUp, useReveal } from "../components/landing/useReveal";
 
 const GITHUB_URL = "https://github.com/n8watkins/open-ping";
+const GITHUB_ISSUES_URL = "https://github.com/n8watkins/open-ping/issues";
+const N8BUILDS_URL = "https://n8builds.dev";
+// TODO: swap in the real Ko-fi URL — the Support CTAs auto-appear once it's set.
+const KOFI_URL = "https://ko-fi.com/REPLACE_ME";
+const KOFI_ENABLED = !KOFI_URL.includes("REPLACE_ME");
+
+/* ------------------------------------------------------------------ *
+ * Scoped landing-only animation styles.
+ *
+ * Per the brief these keyframes/utility classes live in a <style> element
+ * rendered by a landing component instead of editing src/client/index.css. They
+ * are global once mounted (so the portaled sign-in modal can use them too) and
+ * every nonessential animation is disabled under prefers-reduced-motion.
+ * ------------------------------------------------------------------ */
+
+function LandingStyles() {
+  return (
+    <style>{`
+      .op-reveal {
+        opacity: 0;
+        transform: translateY(24px);
+        transition: opacity .7s cubic-bezier(.16,1,.3,1), transform .7s cubic-bezier(.16,1,.3,1);
+        will-change: opacity, transform;
+      }
+      .op-reveal.op-in { opacity: 1; transform: none; }
+
+      .op-lift { transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; }
+      .op-lift:hover {
+        transform: translateY(-4px);
+        border-color: rgba(133,149,173,0.4);
+        box-shadow: 0 18px 40px -24px rgba(0,0,0,0.75);
+      }
+
+      @keyframes op-float-a { 0%,100% { transform: translate3d(0,0,0) } 50% { transform: translate3d(26px,-30px,0) } }
+      @keyframes op-float-b { 0%,100% { transform: translate3d(0,0,0) } 50% { transform: translate3d(-28px,22px,0) } }
+      .op-blob-a { animation: op-float-a 16s ease-in-out infinite; }
+      .op-blob-b { animation: op-float-b 21s ease-in-out infinite; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .op-reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+        .op-lift { transition: none !important; }
+        .op-lift:hover { transform: none !important; }
+        .op-blob-a, .op-blob-b { animation: none !important; }
+      }
+    `}</style>
+  );
+}
 
 /* ------------------------------------------------------------------ *
  * Small presentational helpers (local to the landing page).
  * ------------------------------------------------------------------ */
+
+/** Scroll-reveal wrapper: fades/slides its children in as they enter view. */
+function Reveal({
+  children,
+  className = "",
+  delay = 0,
+}: {
+  children: ReactNode;
+  className?: string;
+  delay?: number;
+}) {
+  const { ref, visible } = useReveal<HTMLDivElement>();
+  return (
+    <div
+      ref={ref}
+      className={`op-reveal ${visible ? "op-in" : ""} ${className}`}
+      style={delay ? { transitionDelay: `${delay}ms` } : undefined}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Animated count-up number that starts when scrolled into view. */
+function StatNumber({
+  value,
+  prefix = "",
+  suffix = "",
+}: {
+  value: number;
+  prefix?: string;
+  suffix?: string;
+}) {
+  const { ref, visible } = useReveal<HTMLSpanElement>();
+  const n = useCountUp(value, visible);
+  return (
+    <span ref={ref}>
+      {prefix}
+      {Math.round(n)}
+      {suffix}
+    </span>
+  );
+}
 
 function Section({
   id,
@@ -46,7 +150,7 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <section id={id} className={`px-4 sm:px-6 ${className}`}>
+    <section id={id} className={`px-4 sm:px-6 ${id ? "scroll-mt-24" : ""} ${className}`}>
       <div className="mx-auto max-w-6xl">{children}</div>
     </section>
   );
@@ -95,7 +199,7 @@ function FeatureCard({
 }) {
   return (
     <div
-      className={`group rounded-card border bg-surface p-5 transition-colors hover:border-ink-faint/40 ${
+      className={`op-lift group rounded-card border bg-surface p-5 ${
         accent ? "border-accent/40 bg-accent-soft/30" : "border-line"
       }`}
     >
@@ -126,7 +230,7 @@ function PrimaryCTA({
       href={href}
       target="_blank"
       rel="noreferrer"
-      className={`inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-5 py-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 transition-colors hover:bg-accent-hover ${className}`}
+      className={`op-lift inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-5 py-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover ${className}`}
     >
       {children}
     </a>
@@ -138,18 +242,24 @@ function PrimaryCTA({
  * ------------------------------------------------------------------ */
 
 export default function Landing() {
+  const [signInOpen, setSignInOpen] = useState(false);
+  const openSignIn = useCallback(() => setSignInOpen(true), []);
+  const closeSignIn = useCallback(() => setSignInOpen(false), []);
+
   useEffect(() => {
     document.title = "OpenPing — Self-hosted uptime monitoring on your Cloudflare account";
   }, []);
 
   return (
     <div className="min-h-full scroll-smooth bg-canvas text-ink">
-      <Nav />
+      <LandingStyles />
+      <Nav onSignIn={openSignIn} />
 
       <main>
-        <Hero />
+        <Hero onSignIn={openSignIn} />
         <TrustStrip />
         <MonitoringTypes />
+        <Comparison />
         <FreeTierBand />
         <OpenSourceProof />
         <ScheduleAware />
@@ -158,58 +268,86 @@ export default function Landing() {
         <AdvancedFeatures />
         <Integrations />
         <MobileMonitoring />
-        <Faq />
+        <FaqSection />
+        <Contribute />
         <BottomCta />
       </main>
 
-      <Footer />
+      <Footer onSignIn={openSignIn} />
+
+      <SignInModal open={signInOpen} onClose={closeSignIn} />
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 1. Nav
+ * 1. Nav — transparent at the top, solid + shrunk on scroll, hamburger on mobile
  * ------------------------------------------------------------------ */
 
-function Nav() {
+const NAV_LINKS = [
+  { href: "#features", label: "Features" },
+  { href: "#schedule-aware", label: "Schedule-aware" },
+  { href: "#comparison", label: "Compare" },
+  { href: "#status-pages", label: "Status pages" },
+  { href: "/tools", label: "Free tools" },
+  { href: "#faq", label: "FAQ" },
+];
+
+function Nav({ onSignIn }: { onSignIn: () => void }) {
+  const [scrolled, setScrolled] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
-    <header className="sticky top-0 z-30 border-b border-line/80 bg-canvas/80 backdrop-blur">
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
+    <header
+      className={`sticky top-0 z-40 transition-all duration-300 ${
+        scrolled
+          ? "border-b border-line bg-surface/90 shadow-lg shadow-black/20 backdrop-blur"
+          : "border-b border-transparent bg-transparent"
+      }`}
+    >
+      <div
+        className={`mx-auto flex max-w-6xl items-center justify-between px-4 transition-all duration-300 sm:px-6 ${
+          scrolled ? "h-14" : "h-16 sm:h-20"
+        }`}
+      >
         <Link to="/" aria-label="OpenPing home">
           <Logo />
         </Link>
 
-        <nav className="hidden items-center gap-7 text-sm text-ink-muted md:flex">
-          <a href="#features" className="transition-colors hover:text-ink">
-            Features
-          </a>
-          <a href="#schedule-aware" className="transition-colors hover:text-ink">
-            Schedule-aware
-          </a>
-          <a href="#status-pages" className="transition-colors hover:text-ink">
-            Status pages
-          </a>
-          <a href="#faq" className="transition-colors hover:text-ink">
-            FAQ
-          </a>
-          <a
-            href={GITHUB_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 transition-colors hover:text-ink"
-          >
-            <Github className="size-4" />
-            GitHub
-          </a>
+        <nav className="hidden items-center gap-7 text-sm text-ink-muted lg:flex">
+          {NAV_LINKS.map((l) => (
+            <a key={l.href} href={l.href} className="transition-colors hover:text-ink">
+              {l.label}
+            </a>
+          ))}
         </nav>
 
-        <div className="flex items-center gap-2">
-          <Link
-            to="/login"
+        <div className="hidden items-center gap-1.5 md:flex">
+          {KOFI_ENABLED && (
+            <a
+              href={KOFI_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:text-ink"
+            >
+              <Coffee className="size-4" />
+              Support
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={onSignIn}
             className="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:text-ink"
           >
             Sign in
-          </Link>
+          </button>
           <a
             href={GITHUB_URL}
             target="_blank"
@@ -221,7 +359,71 @@ function Nav() {
             <span className="sm:hidden">Deploy</span>
           </a>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-label={menuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={menuOpen}
+          aria-controls="mobile-nav"
+          className="grid size-11 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink md:hidden"
+        >
+          {menuOpen ? <X className="size-5" /> : <Menu className="size-5" />}
+        </button>
       </div>
+
+      {menuOpen && (
+        <div
+          id="mobile-nav"
+          className="border-t border-line bg-surface/95 backdrop-blur md:hidden"
+        >
+          <nav className="mx-auto flex max-w-6xl flex-col gap-1 px-4 py-3 text-sm">
+            {NAV_LINKS.map((l) => (
+              <a
+                key={l.href}
+                href={l.href}
+                onClick={() => setMenuOpen(false)}
+                className="rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                {l.label}
+              </a>
+            ))}
+            <div className="my-2 h-px bg-line" />
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                onSignIn();
+              }}
+              className="rounded-lg px-3 py-3 text-left text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              Sign in
+            </button>
+            {KOFI_ENABLED && (
+              <a
+                href={KOFI_URL}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setMenuOpen(false)}
+                className="inline-flex items-center gap-2 rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                <Coffee className="size-4" />
+                Support OpenPing
+              </a>
+            )}
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setMenuOpen(false)}
+              className="mt-1 inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-3.5 py-3 font-semibold text-canvas transition-colors hover:bg-accent-hover"
+            >
+              <Github className="size-4" />
+              Deploy your own
+            </a>
+          </nav>
+        </div>
+      )}
     </header>
   );
 }
@@ -236,7 +438,7 @@ const HERO_BULLETS = [
   "Incidents, status pages, and alerts to Email, Discord & Web Push",
 ];
 
-function Hero() {
+function Hero({ onSignIn }: { onSignIn: () => void }) {
   return (
     <div className="relative overflow-hidden">
       {/* Mesh / gradient flourish (inline styles only — no index.css edits). */}
@@ -247,6 +449,17 @@ function Hero() {
           background:
             "radial-gradient(60% 50% at 50% -5%, rgba(109,139,255,0.22), transparent 70%), radial-gradient(40% 40% at 85% 10%, rgba(47,191,110,0.10), transparent 70%)",
         }}
+      />
+      {/* Slowly drifting accent blobs (disabled under reduced motion). */}
+      <div
+        aria-hidden
+        className="op-blob-a pointer-events-none absolute -left-24 -top-24 -z-10 size-72 rounded-full opacity-50 blur-3xl"
+        style={{ background: "radial-gradient(circle, rgba(109,139,255,0.28), transparent 70%)" }}
+      />
+      <div
+        aria-hidden
+        className="op-blob-b pointer-events-none absolute -right-16 top-10 -z-10 size-72 rounded-full opacity-40 blur-3xl"
+        style={{ background: "radial-gradient(circle, rgba(47,191,110,0.18), transparent 70%)" }}
       />
       <div
         aria-hidden
@@ -260,9 +473,9 @@ function Hero() {
         }}
       />
 
-      <Section className="pt-16 pb-12 sm:pt-24 sm:pb-16">
+      <Section className="pt-12 pb-12 sm:pt-20 sm:pb-16">
         <div className="grid items-center gap-12 lg:grid-cols-2">
-          <div>
+          <Reveal>
             <a
               href={GITHUB_URL}
               target="_blank"
@@ -300,9 +513,17 @@ function Hero() {
                 Deploy your own
                 <ArrowRight className="size-4" />
               </PrimaryCTA>
+              <button
+                type="button"
+                onClick={onSignIn}
+                className="op-lift inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink hover:bg-surface-2"
+              >
+                <LogIn className="size-4" />
+                Sign in
+              </button>
               <Link
                 to="/status"
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink transition-colors hover:bg-surface-2"
+                className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold text-ink-muted transition-colors hover:text-ink"
               >
                 <Globe className="size-4" />
                 View live status
@@ -312,9 +533,9 @@ function Hero() {
             <p className="mt-4 text-xs text-ink-faint">
               Worker + D1 + a cron trigger. Deploy with Wrangler in a few minutes.
             </p>
-          </div>
+          </Reveal>
 
-          <div className="relative">
+          <Reveal delay={150} className="relative">
             <div
               aria-hidden
               className="absolute -inset-4 -z-10 rounded-[2rem] opacity-60 blur-2xl"
@@ -324,7 +545,7 @@ function Hero() {
               }}
             />
             <DashboardMockup />
-          </div>
+          </Reveal>
         </div>
       </Section>
     </div>
@@ -346,16 +567,18 @@ const TRUST_ITEMS: { icon: LucideIcon; label: string }[] = [
 function TrustStrip() {
   return (
     <Section className="pb-12">
-      <div className="rounded-card border border-line bg-surface/50 px-6 py-5">
-        <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-4 text-sm text-ink-muted">
-          {TRUST_ITEMS.map(({ icon: Icon, label }) => (
-            <span key={label} className="inline-flex items-center gap-2">
-              <Icon className="size-4 text-accent" />
-              {label}
-            </span>
-          ))}
+      <Reveal>
+        <div className="rounded-card border border-line bg-surface/50 px-6 py-5">
+          <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-4 text-sm text-ink-muted">
+            {TRUST_ITEMS.map(({ icon: Icon, label }) => (
+              <span key={label} className="inline-flex items-center gap-2">
+                <Icon className="size-4 text-accent" />
+                {label}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
+      </Reveal>
     </Section>
   );
 }
@@ -367,13 +590,15 @@ function TrustStrip() {
 function MonitoringTypes() {
   return (
     <Section id="features" className="py-16 sm:py-20">
-      <SectionHeading
-        eyebrow="Monitoring"
-        title="Watch everything that matters"
-        subtitle="From public endpoints to background cron jobs, OpenPing checks the things your users depend on — and tells you the moment they break."
-      />
+      <Reveal>
+        <SectionHeading
+          eyebrow="Monitoring"
+          title="Watch everything that matters"
+          subtitle="From public endpoints to background cron jobs, OpenPing checks the things your users depend on — and tells you the moment they break."
+        />
+      </Reveal>
 
-      <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <Reveal delay={120} className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <FeatureCard icon={CalendarClock} title="Schedule-aware checks" accent>
           The OpenPing signature. Check (and optionally keep awake) apps only
           during the operating hours that matter. Outside them they read
@@ -399,80 +624,139 @@ function MonitoringTypes() {
           A 200 isn't always healthy. Require a body to contain a phrase, or a
           JSON field to equal a value, before a check passes.
         </FeatureCard>
-      </div>
+      </Reveal>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 5. Free-tier / scale band (replaces UR's enterprise CTA — honest)
+ * 5. Comparison — OpenPing vs hosted uptime SaaS
+ * ------------------------------------------------------------------ */
+
+const COMPARISON_STATS: { value: ReactNode; label: string; aria?: string }[] = [
+  {
+    value: <InfinityIcon className="mx-auto size-7" aria-hidden />,
+    label: "Monitors",
+    aria: "Unlimited monitors",
+  },
+  { value: "$0", label: "Per month" },
+  { value: <StatNumber value={90} suffix="-day" />, label: "Uptime history" },
+  { value: <StatNumber value={4} />, label: "Alert channels" },
+];
+
+function Comparison() {
+  return (
+    <Section id="comparison" className="py-16 sm:py-20">
+      <Reveal>
+        <SectionHeading
+          eyebrow="OpenPing vs hosted SaaS"
+          title="Essentially unlimited monitoring"
+          subtitle="Hosted uptime tools cap your monitors, charge more for faster checks, and keep your data on their servers. OpenPing runs on your own Cloudflare account — so the limits, the bill, and the data are yours."
+        />
+      </Reveal>
+
+      <Reveal delay={100} className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {COMPARISON_STATS.map((s, i) => (
+          <div
+            key={i}
+            className="rounded-card border border-line bg-surface px-4 py-5 text-center"
+          >
+            <div
+              className="text-2xl font-semibold text-accent sm:text-3xl"
+              aria-label={s.aria}
+            >
+              {s.value}
+            </div>
+            <div className="mt-1 text-xs font-medium uppercase tracking-wide text-ink-faint">
+              {s.label}
+            </div>
+          </div>
+        ))}
+      </Reveal>
+
+      <Reveal delay={160} className="mt-8">
+        <ComparisonTable />
+      </Reveal>
+
+      <p className="mt-4 text-center text-xs text-ink-faint">
+        Comparison reflects common hosted-uptime plan tiers; OpenPing claims only
+        features it actually ships.
+      </p>
+    </Section>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 6. Free-tier / scale band
  * ------------------------------------------------------------------ */
 
 function FreeTierBand() {
   return (
     <Section className="py-4">
-      <div className="relative overflow-hidden rounded-card border border-accent/30 bg-accent-soft/40 px-6 py-12 sm:px-12">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10 opacity-60"
-          style={{
-            background:
-              "radial-gradient(50% 120% at 100% 0%, rgba(109,139,255,0.20), transparent 70%)",
-          }}
-        />
-        <div className="grid items-center gap-8 lg:grid-cols-[1.4fr_1fr]">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
-              Built to run for free
-            </h2>
-            <p className="mt-3 max-w-xl text-base leading-relaxed text-ink-muted">
-              OpenPing is a single Cloudflare Worker backed by D1 and a cron
-              trigger that runs every 12 minutes. For typical personal and
-              small-team setups, that fits inside Cloudflare's free tier — so
-              your monitoring bill stays at $0.
-            </p>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <PrimaryCTA href={GITHUB_URL}>
-                <Github className="size-4" />
-                Deploy your own
-              </PrimaryCTA>
-              <a
-                href={GITHUB_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink transition-colors hover:bg-surface-2"
-              >
-                Read the docs
-                <ExternalLink className="size-4" />
-              </a>
+      <Reveal>
+        <div className="relative overflow-hidden rounded-card border border-accent/30 bg-accent-soft/40 px-6 py-12 sm:px-12">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 -z-10 opacity-60"
+            style={{
+              background:
+                "radial-gradient(50% 120% at 100% 0%, rgba(109,139,255,0.20), transparent 70%)",
+            }}
+          />
+          <div className="grid items-center gap-8 lg:grid-cols-[1.4fr_1fr]">
+            <div>
+              <h2 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+                Built to run for free
+              </h2>
+              <p className="mt-3 max-w-xl text-base leading-relaxed text-ink-muted">
+                OpenPing is a single Cloudflare Worker backed by D1 and a cron
+                trigger that runs every 12 minutes. For typical personal and
+                small-team setups, that fits inside Cloudflare's free tier — so
+                your monitoring bill stays at $0.
+              </p>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <PrimaryCTA href={GITHUB_URL}>
+                  <Github className="size-4" />
+                  Deploy your own
+                </PrimaryCTA>
+                <a
+                  href={GITHUB_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="op-lift inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink hover:bg-surface-2"
+                >
+                  Read the docs
+                  <ExternalLink className="size-4" />
+                </a>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { k: "Worker", v: "1 endpoint" },
+                { k: "Database", v: "D1 (SQLite)" },
+                { k: "Schedule", v: "cron / 12 min" },
+                { k: "Monthly cost", v: "$0" },
+              ].map((s) => (
+                <div
+                  key={s.k}
+                  className="rounded-card border border-line bg-surface/70 p-4"
+                >
+                  <div className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+                    {s.k}
+                  </div>
+                  <div className="mt-1 text-lg font-semibold text-ink">{s.v}</div>
+                </div>
+              ))}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { k: "Worker", v: "1 endpoint" },
-              { k: "Database", v: "D1 (SQLite)" },
-              { k: "Schedule", v: "cron / 12 min" },
-              { k: "Monthly cost", v: "$0" },
-            ].map((s) => (
-              <div
-                key={s.k}
-                className="rounded-card border border-line bg-surface/70 p-4"
-              >
-                <div className="text-xs font-medium uppercase tracking-wide text-ink-faint">
-                  {s.k}
-                </div>
-                <div className="mt-1 text-lg font-semibold text-ink">{s.v}</div>
-              </div>
-            ))}
-          </div>
         </div>
-      </div>
+      </Reveal>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 6. Open-source proof (replaces fabricated testimonials/ratings)
+ * 7. Open-source proof
  * ------------------------------------------------------------------ */
 
 const PROOF_POINTS: { icon: LucideIcon; title: string; body: string }[] = [
@@ -496,17 +780,19 @@ const PROOF_POINTS: { icon: LucideIcon; title: string; body: string }[] = [
 function OpenSourceProof() {
   return (
     <Section className="py-16 sm:py-20">
-      <SectionHeading
-        eyebrow="Why self-host"
-        title="Honest monitoring, owned by you"
-        subtitle="No fake star counts here. The pitch is simpler: you run the code, you hold the data, and you can verify every claim on this page in the repo."
-      />
+      <Reveal>
+        <SectionHeading
+          eyebrow="Why self-host"
+          title="Honest monitoring, owned by you"
+          subtitle="No fake star counts here. The pitch is simpler: you run the code, you hold the data, and you can verify every claim on this page in the repo."
+        />
+      </Reveal>
 
-      <div className="mt-12 grid gap-4 md:grid-cols-3">
+      <Reveal delay={120} className="mt-12 grid gap-4 md:grid-cols-3">
         {PROOF_POINTS.map(({ icon: Icon, title, body }) => (
           <div
             key={title}
-            className="rounded-card border border-line bg-surface p-6"
+            className="op-lift rounded-card border border-line bg-surface p-6"
           >
             <span className="grid size-10 place-items-center rounded-lg bg-accent-soft text-accent">
               <Icon className="size-5" />
@@ -515,9 +801,9 @@ function OpenSourceProof() {
             <p className="mt-2 text-sm leading-relaxed text-ink-muted">{body}</p>
           </div>
         ))}
-      </div>
+      </Reveal>
 
-      <div className="mt-6 flex flex-col items-center justify-between gap-4 rounded-card border border-line bg-surface/60 px-6 py-5 sm:flex-row">
+      <Reveal delay={180} className="mt-6 flex flex-col items-center justify-between gap-4 rounded-card border border-line bg-surface/60 px-6 py-5 sm:flex-row">
         <p className="text-sm text-ink-muted">
           Read the source, open an issue, or send a pull request.
         </p>
@@ -525,19 +811,19 @@ function OpenSourceProof() {
           href={GITHUB_URL}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-surface-2"
+          className="op-lift inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink hover:bg-surface-2"
         >
           <Github className="size-4" />
           View on GitHub
           <ExternalLink className="size-3.5 text-ink-faint" />
         </a>
-      </div>
+      </Reveal>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 7. Schedule-aware deep-dive (the differentiator)
+ * 8. Schedule-aware deep-dive (the differentiator)
  * ------------------------------------------------------------------ */
 
 const SCHEDULE_POINTS = [
@@ -551,7 +837,7 @@ function ScheduleAware() {
   return (
     <Section id="schedule-aware" className="py-16 sm:py-20">
       <div className="grid items-center gap-12 lg:grid-cols-2">
-        <div className="order-2 lg:order-1">
+        <Reveal className="order-2 lg:order-1">
           <div className="rounded-card border border-line bg-surface p-6">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-ink">
               <CalendarClock className="size-4 text-accent" />
@@ -588,9 +874,9 @@ function ScheduleAware() {
               numbers reflect the hours that actually matter.
             </p>
           </div>
-        </div>
+        </Reveal>
 
-        <div className="order-1 lg:order-2">
+        <Reveal delay={120} className="order-1 lg:order-2">
           <SectionHeading
             align="left"
             eyebrow="The differentiator"
@@ -610,21 +896,21 @@ function ScheduleAware() {
               </li>
             ))}
           </ul>
-        </div>
+        </Reveal>
       </div>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 8. Status pages section (live demo CTA)
+ * 9. Status pages section (live demo CTA)
  * ------------------------------------------------------------------ */
 
 function StatusPages() {
   return (
     <Section id="status-pages" className="py-16 sm:py-20">
       <div className="grid items-center gap-12 lg:grid-cols-2">
-        <div>
+        <Reveal>
           <SectionHeading
             align="left"
             eyebrow="Public status pages"
@@ -647,16 +933,16 @@ function StatusPages() {
           <div className="mt-8">
             <Link
               to="/status"
-              className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 transition-colors hover:bg-accent-hover"
+              className="op-lift inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover"
             >
               <Globe className="size-4" />
               View the live demo status page
               <ArrowRight className="size-4" />
             </Link>
           </div>
-        </div>
+        </Reveal>
 
-        <div className="relative">
+        <Reveal delay={120} className="relative">
           <div
             aria-hidden
             className="absolute -inset-4 -z-10 rounded-[2rem] opacity-50 blur-2xl"
@@ -666,14 +952,14 @@ function StatusPages() {
             }}
           />
           <StatusMockup />
-        </div>
+        </Reveal>
       </div>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 9. Quick start ("start in seconds")
+ * 10. Quick start ("start in seconds")
  * ------------------------------------------------------------------ */
 
 const STEPS: { n: string; title: string; body: string }[] = [
@@ -697,14 +983,16 @@ const STEPS: { n: string; title: string; body: string }[] = [
 function QuickStart() {
   return (
     <Section className="py-16 sm:py-20">
-      <SectionHeading
-        eyebrow="Quick setup"
-        title="From clone to monitoring in minutes"
-        subtitle="No account to create on someone else's platform. Deploy once, and it's yours."
-      />
-      <div className="mt-12 grid gap-4 md:grid-cols-3">
+      <Reveal>
+        <SectionHeading
+          eyebrow="Quick setup"
+          title="From clone to monitoring in minutes"
+          subtitle="No account to create on someone else's platform. Deploy once, and it's yours."
+        />
+      </Reveal>
+      <Reveal delay={120} className="mt-12 grid gap-4 md:grid-cols-3">
         {STEPS.map((s, i) => (
-          <div key={s.n} className="relative rounded-card border border-line bg-surface p-6">
+          <div key={s.n} className="op-lift relative rounded-card border border-line bg-surface p-6">
             <div className="flex size-9 items-center justify-center rounded-full bg-accent text-sm font-bold text-canvas">
               {s.n}
             </div>
@@ -715,9 +1003,9 @@ function QuickStart() {
             )}
           </div>
         ))}
-      </div>
+      </Reveal>
 
-      <div className="mt-6 overflow-hidden rounded-card border border-line bg-surface">
+      <Reveal delay={160} className="mt-6 overflow-hidden rounded-card border border-line bg-surface">
         <div className="flex items-center gap-2 border-b border-line bg-surface-2/60 px-4 py-2 text-xs text-ink-faint">
           <Terminal className="size-3.5" />
           terminal
@@ -735,24 +1023,26 @@ function QuickStart() {
             <span className="text-up"># → live on your *.workers.dev</span>
           </code>
         </pre>
-      </div>
+      </Reveal>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 10. Advanced features (6 modules)
+ * 11. Advanced features (6 modules)
  * ------------------------------------------------------------------ */
 
 function AdvancedFeatures() {
   return (
     <Section className="py-16 sm:py-20">
-      <SectionHeading
-        eyebrow="Under the hood"
-        title="Serious monitoring internals"
-        subtitle="The details that separate a toy from a tool you can rely on."
-      />
-      <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <Reveal>
+        <SectionHeading
+          eyebrow="Under the hood"
+          title="Serious monitoring internals"
+          subtitle="The details that separate a toy from a tool you can rely on."
+        />
+      </Reveal>
+      <Reveal delay={120} className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <FeatureCard icon={ShieldCheck} title="Incidents & recovery">
           Outages open incidents automatically and close on recovery, with
           flapping protection so a flaky check doesn't spam you.
@@ -777,13 +1067,13 @@ function AdvancedFeatures() {
           Runs on Cloudflare Workers and D1, close to the network — fast checks
           without servers to patch or scale.
         </FeatureCard>
-      </div>
+      </Reveal>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 11. Integrations
+ * 12. Integrations
  * ------------------------------------------------------------------ */
 
 const CHANNELS: { icon: LucideIcon; title: string; body: string }[] = [
@@ -812,16 +1102,18 @@ const CHANNELS: { icon: LucideIcon; title: string; body: string }[] = [
 function Integrations() {
   return (
     <Section className="py-16 sm:py-20">
-      <SectionHeading
-        eyebrow="Notifications"
-        title="Get told the instant something breaks"
-        subtitle="Route alerts where your team already is. Configure one channel or all of them."
-      />
-      <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <Reveal>
+        <SectionHeading
+          eyebrow="Notifications"
+          title="Get told the instant something breaks"
+          subtitle="Route alerts where your team already is. Configure one channel or all of them."
+        />
+      </Reveal>
+      <Reveal delay={120} className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {CHANNELS.map(({ icon: Icon, title, body }) => (
           <div
             key={title}
-            className="rounded-card border border-line bg-surface p-5 text-center"
+            className="op-lift rounded-card border border-line bg-surface p-5 text-center"
           >
             <span className="mx-auto grid size-12 place-items-center rounded-xl bg-accent-soft text-accent">
               <Icon className="size-6" />
@@ -830,20 +1122,20 @@ function Integrations() {
             <p className="mt-1.5 text-sm leading-relaxed text-ink-muted">{body}</p>
           </div>
         ))}
-      </div>
+      </Reveal>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 12. Mobile monitoring
+ * 13. Mobile monitoring → phone-device mockup
  * ------------------------------------------------------------------ */
 
 function MobileMonitoring() {
   return (
     <Section className="py-16 sm:py-20">
       <div className="grid items-center gap-12 lg:grid-cols-2">
-        <div>
+        <Reveal>
           <SectionHeading
             align="left"
             eyebrow="On the go"
@@ -858,68 +1150,26 @@ function MobileMonitoring() {
               "Same dashboard, sized for a phone.",
             ].map((p) => (
               <li key={p} className="flex items-start gap-3 text-sm text-ink-muted">
-                <Check className="mt-0.5 size-4 shrink-0 text-up" />
+                <Smartphone className="mt-0.5 size-4 shrink-0 text-accent" />
                 <span>{p}</span>
               </li>
             ))}
           </ul>
-        </div>
+        </Reveal>
 
-        <div className="flex justify-center">
-          {/* Original phone mockup, tokens only. */}
-          <div className="w-64 rounded-[2rem] border border-line bg-surface p-3 shadow-2xl shadow-black/40">
-            <div className="rounded-[1.4rem] border border-line bg-canvas p-4">
-              <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-line" />
-              <div className="flex items-center justify-between">
-                <Logo compact />
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-up/30 bg-up/10 px-2 py-0.5 text-[10px] font-medium text-up">
-                  <span className="size-1 rounded-full bg-up" />
-                  Up
-                </span>
-              </div>
-              <div className="mt-4 space-y-2.5">
-                {[
-                  { n: "api.acme.dev", s: "up", t: "118 ms" },
-                  { n: "checkout", s: "degraded", t: "410 ms" },
-                  { n: "staging", s: "scheduled", t: "off-hours" },
-                ].map((m) => (
-                  <div
-                    key={m.n}
-                    className="flex items-center justify-between rounded-lg border border-line bg-surface-2/50 px-3 py-2"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`size-1.5 rounded-full ${
-                          m.s === "up"
-                            ? "bg-up"
-                            : m.s === "degraded"
-                              ? "bg-degraded"
-                              : "bg-scheduled"
-                        }`}
-                      />
-                      <span className="text-xs font-medium text-ink">{m.n}</span>
-                    </div>
-                    <span className="text-[10px] text-ink-faint">{m.t}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-soft/40 px-3 py-2 text-[10px] text-ink-muted">
-                <Bell className="size-3.5 text-accent" />
-                Push: checkout-service degraded
-              </div>
-            </div>
-          </div>
-        </div>
+        <Reveal delay={120} className="flex justify-center">
+          <PhoneMockup />
+        </Reveal>
       </div>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 13. FAQ (native details/summary — accessible, zero-JS)
+ * 14. FAQ — animated accessible accordion
  * ------------------------------------------------------------------ */
 
-const FAQS: { q: string; a: ReactNode }[] = [
+const FAQS: FaqItem[] = [
   {
     q: "Is OpenPing really free?",
     a: "The software is free and open source under the MIT license. It runs on Cloudflare Workers, D1, and a cron trigger, which for typical personal and small-team usage fits inside Cloudflare's free tier — so your running cost is $0. Very large installs may eventually exceed free-tier limits.",
@@ -968,75 +1218,126 @@ const FAQS: { q: string; a: ReactNode }[] = [
   },
 ];
 
-function Faq() {
+function FaqSection() {
   return (
     <Section id="faq" className="py-16 sm:py-20">
-      <SectionHeading eyebrow="FAQ" title="Frequently asked questions" />
-      <div className="mx-auto mt-12 max-w-3xl space-y-3">
-        {FAQS.map((f) => (
-          <details
-            key={f.q}
-            className="group rounded-card border border-line bg-surface px-5 [&_summary::-webkit-details-marker]:hidden"
-          >
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-4 text-sm font-semibold text-ink">
-              {f.q}
-              <ArrowRight className="size-4 shrink-0 text-ink-faint transition-transform group-open:rotate-90" />
-            </summary>
-            <div className="pb-5 text-sm leading-relaxed text-ink-muted">{f.a}</div>
-          </details>
-        ))}
-      </div>
+      <Reveal>
+        <SectionHeading eyebrow="FAQ" title="Frequently asked questions" />
+      </Reveal>
+      <Reveal delay={120} className="mx-auto mt-12 max-w-3xl">
+        <FaqAccordion items={FAQS} />
+      </Reveal>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 14. Bottom CTA band
+ * 15. Contribute / GitHub issues
+ * ------------------------------------------------------------------ */
+
+function Contribute() {
+  return (
+    <Section className="py-16 sm:py-20">
+      <Reveal>
+        <SectionHeading
+          eyebrow="Open source"
+          title="Built in the open — come build with us"
+          subtitle="OpenPing is MIT licensed and developed in public. Found a rough edge or have an idea? Issues and pull requests are genuinely welcome."
+        />
+      </Reveal>
+
+      <Reveal delay={120} className="mt-12 grid gap-4 md:grid-cols-2">
+        <a
+          href={GITHUB_ISSUES_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="op-lift group rounded-card border border-line bg-surface p-6"
+        >
+          <span className="grid size-11 place-items-center rounded-lg bg-accent-soft text-accent">
+            <Bug className="size-5" />
+          </span>
+          <h3 className="mt-4 flex items-center gap-2 text-base font-semibold text-ink">
+            Found a bug? Open an issue
+            <ArrowUpRight className="size-4 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+          </h3>
+          <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+            Report bugs, unexpected behavior, or request a feature on the GitHub
+            issue tracker. Clear repro steps help us fix things fast.
+          </p>
+        </a>
+
+        <a
+          href={GITHUB_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="op-lift group rounded-card border border-line bg-surface p-6"
+        >
+          <span className="grid size-11 place-items-center rounded-lg bg-accent-soft text-accent">
+            <GitFork className="size-5" />
+          </span>
+          <h3 className="mt-4 flex items-center gap-2 text-base font-semibold text-ink">
+            Contributions welcome
+            <ArrowUpRight className="size-4 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+          </h3>
+          <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+            Fork the repo and send a pull request. The project is MIT licensed and
+            ships a CONTRIBUTING.md to get you set up locally in minutes.
+          </p>
+        </a>
+      </Reveal>
+    </Section>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 16. Bottom CTA band
  * ------------------------------------------------------------------ */
 
 function BottomCta() {
   return (
     <Section className="py-16 sm:py-24">
-      <div className="relative overflow-hidden rounded-card border border-line bg-surface px-6 py-14 text-center sm:px-12">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10"
-          style={{
-            background:
-              "radial-gradient(60% 100% at 50% 0%, rgba(109,139,255,0.20), transparent 70%)",
-          }}
-        />
-        <h2 className="mx-auto max-w-2xl text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
-          Own your uptime monitoring today
-        </h2>
-        <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-ink-muted">
-          Deploy OpenPing to your own Cloudflare account in minutes. Free,
-          open source, and entirely yours.
-        </p>
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <PrimaryCTA href={GITHUB_URL}>
-            <Github className="size-4" />
-            Deploy your own
-            <ArrowRight className="size-4" />
-          </PrimaryCTA>
-          <Link
-            to="/status"
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink transition-colors hover:bg-surface-2"
-          >
-            <Globe className="size-4" />
-            View live status
-          </Link>
+      <Reveal>
+        <div className="relative overflow-hidden rounded-card border border-line bg-surface px-6 py-14 text-center sm:px-12">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 -z-10"
+            style={{
+              background:
+                "radial-gradient(60% 100% at 50% 0%, rgba(109,139,255,0.20), transparent 70%)",
+            }}
+          />
+          <h2 className="mx-auto max-w-2xl text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
+            Own your uptime monitoring today
+          </h2>
+          <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-ink-muted">
+            Deploy OpenPing to your own Cloudflare account in minutes. Free,
+            open source, and entirely yours.
+          </p>
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <PrimaryCTA href={GITHUB_URL}>
+              <Github className="size-4" />
+              Deploy your own
+              <ArrowRight className="size-4" />
+            </PrimaryCTA>
+            <Link
+              to="/status"
+              className="op-lift inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink hover:bg-surface-2"
+            >
+              <Globe className="size-4" />
+              View live status
+            </Link>
+          </div>
         </div>
-      </div>
+      </Reveal>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 15. Footer
+ * 17. Footer
  * ------------------------------------------------------------------ */
 
-function Footer() {
+function Footer({ onSignIn }: { onSignIn: () => void }) {
   return (
     <footer className="border-t border-line">
       <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
@@ -1053,8 +1354,8 @@ function Footer() {
             <a href="#features" className="transition-colors hover:text-ink">
               Features
             </a>
-            <a href="#schedule-aware" className="transition-colors hover:text-ink">
-              Schedule-aware
+            <a href="#comparison" className="transition-colors hover:text-ink">
+              Compare
             </a>
             <a href="#status-pages" className="transition-colors hover:text-ink">
               Status pages
@@ -1065,19 +1366,48 @@ function Footer() {
             <Link to="/status" className="transition-colors hover:text-ink">
               Live status
             </Link>
-            <Link to="/login" className="transition-colors hover:text-ink">
+            <button
+              type="button"
+              onClick={onSignIn}
+              className="transition-colors hover:text-ink"
+            >
               Sign in
-            </Link>
+            </button>
+          </nav>
+        </div>
+
+        {/* Support / star / other-projects CTAs */}
+        <div className="mt-10 flex flex-wrap items-center gap-3 border-t border-line pt-8">
+          {KOFI_ENABLED && (
             <a
-              href={GITHUB_URL}
+              href={KOFI_URL}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 transition-colors hover:text-ink"
+              className="op-lift inline-flex items-center gap-2 rounded-lg border border-accent/40 bg-accent-soft/40 px-4 py-2.5 text-sm font-semibold text-ink hover:bg-accent-soft/60"
             >
-              <Github className="size-4" />
-              GitHub
+              <Coffee className="size-4 text-accent" />
+              Support on Ko-fi
             </a>
-          </nav>
+          )}
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="op-lift inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink hover:bg-surface-2"
+          >
+            <Star className="size-4" />
+            Star on GitHub
+          </a>
+          <a
+            href={N8BUILDS_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="op-lift inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink hover:bg-surface-2"
+          >
+            More projects
+            <span className="text-ink-muted">n8builds.dev</span>
+            <ArrowUpRight className="size-4 text-ink-faint" />
+          </a>
         </div>
 
         <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-line pt-6 text-xs text-ink-faint sm:flex-row sm:items-center">

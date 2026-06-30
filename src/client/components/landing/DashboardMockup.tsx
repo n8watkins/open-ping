@@ -36,10 +36,13 @@ interface Row {
   segments: { state: MonitorState; title?: string }[];
 }
 
+// The hero shows exactly three monitors — enough to convey the product without
+// overwhelming the fold — and deliberately keeps one in "Scheduled off" to
+// showcase OpenPing's schedule-aware differentiator.
 const ROWS: Row[] = [
   {
     name: "api.acme.dev",
-    type: "HTTP · every 1 min",
+    type: "HTTP · API check",
     state: "up",
     uptime: "99.98%",
     latency: "118 ms",
@@ -47,13 +50,16 @@ const ROWS: Row[] = [
     segments: strip("up"),
   },
   {
-    name: "Nightly billing job",
-    type: "Heartbeat · cron",
-    state: "up",
-    uptime: "100%",
-    latency: "—",
-    spark: SPARK_C,
-    segments: strip("up"),
+    name: "checkout-service",
+    type: "HTTP · keyword assertion",
+    state: "degraded",
+    uptime: "99.4%",
+    latency: "410 ms",
+    spark: SPARK_B,
+    segments: strip("up", [
+      { at: 18, state: "degraded" },
+      { at: 19, state: "degraded" },
+    ]),
   },
   {
     name: "staging.acme.dev",
@@ -61,7 +67,7 @@ const ROWS: Row[] = [
     state: "scheduled_off",
     uptime: "—",
     latency: "off-hours",
-    spark: SPARK_A,
+    spark: SPARK_C,
     segments: strip("up", [
       { at: 5, state: "scheduled_off" },
       { at: 6, state: "scheduled_off" },
@@ -70,18 +76,6 @@ const ROWS: Row[] = [
       { at: 20, state: "scheduled_off" },
       { at: 21, state: "scheduled_off" },
       { at: 22, state: "scheduled_off" },
-    ]),
-  },
-  {
-    name: "checkout-service",
-    type: "HTTP · every 1 min",
-    state: "degraded",
-    uptime: "99.4%",
-    latency: "410 ms",
-    spark: SPARK_B,
-    segments: strip("up", [
-      { at: 18, state: "degraded" },
-      { at: 19, state: "degraded" },
     ]),
   },
 ];
