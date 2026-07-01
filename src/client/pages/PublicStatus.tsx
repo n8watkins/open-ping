@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useParams } from "react-router-dom";
 import {
   AlertOctagon,
   AlertTriangle,
@@ -198,9 +199,19 @@ const BAR_META: Record<BarState, string> = {
  * ------------------------------------------------------------------ */
 
 export default function PublicStatus() {
-  const { data, loading, error } = useFetch<PublicStatusResponse>(
-    "/api/public/status",
-  );
+  // Optional per-category slug from the `/status/:slug` route; `/status` (no
+  // param) still resolves to the default page. Encode it so it is a safe query
+  // value. The response JSON shape is identical with or without a slug.
+  const { slug } = useParams();
+  const path = `/api/public/status${
+    slug ? `?slug=${encodeURIComponent(slug)}` : ""
+  }`;
+  const { data, loading, error } = useFetch<PublicStatusResponse>(path);
+
+  // An unknown slug returns HTTP 404 `{ error: "not_found" }`; the api() helper
+  // surfaces that server error string as the fetch error, so this is a missing
+  // page (distinct from a generic fetch failure).
+  const notFound = error === "not_found";
 
   useEffect(() => {
     if (data?.page.name) document.title = `${data.page.name} — Status`;
@@ -235,6 +246,15 @@ export default function PublicStatus() {
       <div className="grid min-h-full place-items-center bg-canvas text-ink">
         <Loader2 className="size-6 animate-spin text-ink-faint" />
       </div>
+    );
+  }
+
+  if (notFound) {
+    return (
+      <Notice
+        title="Page not found"
+        message="This status page doesn't exist."
+      />
     );
   }
 
@@ -555,13 +575,18 @@ function Callout({
   );
 }
 
-function Notice({ message }: { message: string }) {
+function Notice({ title, message }: { title?: string; message: string }) {
   return (
     <div className="grid min-h-full place-items-center bg-canvas px-4 text-ink">
       <div className="text-center">
         <div className="mb-5 flex justify-center">
           <Logo />
         </div>
+        {title && (
+          <h1 className="mb-1 text-lg font-semibold tracking-tight text-ink">
+            {title}
+          </h1>
+        )}
         <p className="text-sm text-ink-muted">{message}</p>
       </div>
     </div>

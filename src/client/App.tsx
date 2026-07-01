@@ -33,6 +33,7 @@ const Integrations = lazy(() => import("./pages/Integrations"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Maintenance = lazy(() => import("./pages/Maintenance"));
 const StatusPageSettings = lazy(() => import("./pages/StatusPageSettings"));
+const StatusPageEditor = lazy(() => import("./pages/StatusPageEditor"));
 
 function PageFallback() {
   return (
@@ -68,6 +69,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/setup" element={<Setup />} />
           <Route path="/status" element={<PublicStatus />} />
+          <Route path="/status/:slug" element={<PublicStatus />} />
           <Route path="/embed" element={<Embed />} />
 
           {/* Free public utility tools. */}
@@ -95,6 +97,8 @@ export default function App() {
             <Route path="/integrations" element={<Integrations />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/status-page" element={<StatusPageSettings />} />
+            <Route path="/status-page/new" element={<StatusPageEditor />} />
+            <Route path="/status-page/:id" element={<StatusPageEditor />} />
           </Route>
 
           <Route path="*" element={<NotFound />} />

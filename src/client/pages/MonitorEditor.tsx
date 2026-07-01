@@ -12,6 +12,7 @@ import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { Card } from "../components/ui/Card";
 import { cn } from "../lib/cn";
+import type { Category } from "../lib/types";
 import type {
   Assertion,
   HeartbeatConfig,
@@ -87,6 +88,9 @@ interface FormState {
   customTimezone: string;
   customDays: CustomDayRow[];
   customExcludedDates: string;
+  // Status page
+  categoryId: string | null;
+  publicVisible: boolean;
 }
 
 /** Subset of the monitor record the editor needs for prefill (edit mode). */
@@ -100,6 +104,7 @@ interface LoadedMonitor {
   assertions: Assertion[];
   notify: unknown;
   public: unknown;
+  categoryId?: string | null;
 }
 
 const HTTP_METHODS: HttpMethod[] = [
@@ -177,6 +182,8 @@ function initialForm(): FormState {
     customTimezone: tz,
     customDays: [],
     customExcludedDates: "",
+    categoryId: null,
+    publicVisible: false,
   };
 }
 
@@ -195,6 +202,12 @@ function prefill(m: LoadedMonitor): FormState {
   base.name = m.name;
   base.type = m.type;
   base.enabled = m.enabled;
+  base.categoryId = m.categoryId ?? null;
+  const pub =
+    m.public && typeof m.public === "object"
+      ? (m.public as Record<string, unknown>)
+      : {};
+  base.publicVisible = pub.visible === true;
 
   if (m.type === "http") {
     const c = m.config as HttpConfig;
@@ -302,6 +315,24 @@ export default function MonitorEditor() {
     notify?: unknown;
     public?: unknown;
   }>({});
+  const [categories, setCategories] = useState<Category[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { categories: list } = await api<{ categories: Category[] }>(
+          "/api/categories",
+        );
+        if (!cancelled) setCategories(list);
+      } catch {
+        // Categories are optional; a load failure just leaves "None" selectable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -446,14 +477,25 @@ export default function MonitorEditor() {
 
   function buildPayload(): Record<string, unknown> {
     const schedule = buildSchedule();
+    // Set public.visible from the toggle while preserving the other public.*
+    // fields (sortOrder, showUptime, showResponseTime, showIncidentDetails,
+    // showScheduledOff, name/description/group) round-tripped from the load. On
+    // create there's nothing to preserve, so zod fills the rest from defaults.
+    const publicBase =
+      preserved.public && typeof preserved.public === "object"
+        ? (preserved.public as Record<string, unknown>)
+        : {};
+    const publicConfig = { ...publicBase, visible: form.publicVisible };
+
     const common: Record<string, unknown> = {
       name: form.name.trim(),
       enabled: form.enabled,
       schedule,
-      // Preserve notify/public prefs (out of this form's scope) on edit so a
+      categoryId: form.categoryId,
+      public: publicConfig,
+      // Preserve notify prefs (out of this form's scope) on edit so a
       // full-replace update doesn't reset them to defaults.
       ...(preserved.notify !== undefined ? { notify: preserved.notify } : {}),
-      ...(preserved.public !== undefined ? { public: preserved.public } : {}),
     };
 
     if (form.type === "http") {
@@ -1193,6 +1235,35 @@ export default function MonitorEditor() {
               </Field>
             </>
           )}
+        </FormCard>
+
+        {/* 6. Status page */}
+        <FormCard
+          title="Status page"
+          description="Group this monitor and control its visibility on public status pages."
+        >
+          <Field
+            label="Category"
+            hint="Groups the monitor on category status pages."
+          >
+            <select
+              value={form.categoryId ?? ""}
+              onChange={(e) => set("categoryId", e.target.value || null)}
+              className="input"
+            >
+              <option value="">None</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={cat.id}>
+                  {cat.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Checkbox
+            label="Show on public status pages"
+            checked={form.publicVisible}
+            onChange={(v) => set("publicVisible", v)}
+          />
         </FormCard>
 
         {/* Actions */}

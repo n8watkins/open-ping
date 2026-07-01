@@ -153,9 +153,14 @@ export default function Embed() {
   // Default to dark to match OpenPing; only an explicit ?theme=light flips it.
   const theme = params.get("theme") === "light" ? "light" : "dark";
 
-  const { data, loading, error, reload } = useFetch<WidgetResponse>(
-    "/api/public/status",
-  );
+  // Optional per-category slug: scopes the widget to one status page. Absent =>
+  // the default page (unchanged behavior). Encoded so it is a safe query value.
+  const slug = params.get("slug");
+  const path = `/api/public/status${
+    slug ? `?slug=${encodeURIComponent(slug)}` : ""
+  }`;
+
+  const { data, loading, error, reload } = useFetch<WidgetResponse>(path);
 
   // Keep the embedded card live without reloading the host page.
   useEffect(() => {
@@ -271,7 +276,7 @@ export default function Embed() {
         <div className="mt-2 flex items-center justify-between text-[11px] text-ink-faint">
           <span className="truncate">{pageName}</span>
           <a
-            href="/status"
+            href={`/status${slug ? `/${encodeURIComponent(slug)}` : ""}`}
             target="_blank"
             rel="noreferrer"
             className="shrink-0 transition-colors hover:text-ink-muted"

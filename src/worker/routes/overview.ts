@@ -3,6 +3,7 @@ import type { AppEnv } from "../types";
 import { requireAuth } from "../middleware/auth";
 import { listMonitors } from "../db/monitors";
 import { listChannels } from "../db/channels";
+import { listCategories } from "../db/categories";
 import { computeUptime } from "../history/metrics";
 import type { MonitorState } from "../../shared/states";
 
@@ -26,6 +27,11 @@ const DAY = 24 * 60 * 60 * 1000;
 overview.get("/", async (c) => {
   const now = Date.now();
   const monitors = await listMonitors(c.env);
+
+  // Resolve category names in one query: id → name for the badge on each row.
+  const categoryNames = new Map<string, string>(
+    (await listCategories(c.env)).map((cat) => [cat.id, cat.name]),
+  );
 
   const stateRes = await c.env.DB.prepare(
     `SELECT monitor_id, state, state_since, last_checked_at, last_duration_ms,
@@ -69,6 +75,8 @@ overview.get("/", async (c) => {
         stateSince: st?.state_since ?? null,
         uptime24h: uptime.uptimePct,
         publicVisible: m.public?.visible ?? false,
+        categoryId: m.categoryId,
+        categoryName: m.categoryId ? categoryNames.get(m.categoryId) ?? null : null,
       };
     }),
   );

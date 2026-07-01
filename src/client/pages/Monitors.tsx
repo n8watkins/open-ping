@@ -63,7 +63,14 @@ export default function Monitors() {
               <div className="flex min-w-0 items-center gap-3">
                 <StatusPill state={m.state} />
                 <div className="min-w-0">
-                  <div className="truncate font-medium">{m.name}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-medium">{m.name}</span>
+                    {m.categoryName && (
+                      <span className="shrink-0 rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[10px] text-ink-faint">
+                        {m.categoryName}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-ink-faint capitalize">
                     {m.type} · {m.scheduleMode.replace("_", " ")}
                   </div>

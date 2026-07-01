@@ -1,391 +1,227 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Loader2, CheckCircle2, ExternalLink } from "lucide-react";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  Loader2,
+  Plus,
+  Pencil,
+  Trash2,
+  ExternalLink,
+  Star,
+  LayoutTemplate,
+} from "lucide-react";
 import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
-import { cn } from "../lib/cn";
 import { useBootstrap } from "../lib/bootstrap";
-import { Card, CardHeader, CardTitle } from "../components/ui/Card";
+import { Card } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { CategoriesManager } from "../components/CategoriesManager";
+import type { StatusPage } from "../lib/types";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface StatusPageSettingsShape {
-  status_page_enabled?: unknown;
-  status_page_name?: unknown;
-  status_page_description?: unknown;
-  status_page_logo?: unknown;
-  status_page_accent?: unknown;
-  status_page_theme?: unknown;
-  status_page_homepage?: unknown;
-  status_page_footer?: unknown;
-  status_page_attribution?: unknown;
-  [key: string]: unknown;
-}
-interface SettingsResponse {
-  settings: StatusPageSettingsShape;
-}
-
-type Theme = "light" | "dark" | "system";
-
-const DEFAULT_ACCENT = "#6d8bff";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+/**
+ * Status-page management screen (PRD §16). Lists the published public pages from
+ * GET /api/status-pages — each with its slug, enabled state, default badge, a
+ * link to its public view, and edit/delete actions — plus an inline categories
+ * manager. Per-page branding and monitor selection are edited on the dedicated
+ * editor at /status-page/new and /status-page/:id. The default page is served at
+ * /status and cannot be deleted, so its delete action is hidden.
+ */
 
 function errMessage(e: unknown, fallback: string): string {
   if (e instanceof ApiError) {
-    const d = e.data as { error?: string } | null;
+    const d = e.data as { error?: string; message?: string } | null;
+    if (e.status === 400 && d?.error === "default_not_deletable")
+      return "The default status page cannot be deleted.";
+    if (d && typeof d.message === "string") return d.message;
     if (d && typeof d.error === "string") return d.error;
   }
   return e instanceof Error ? e.message : fallback;
 }
 
-/** Settings booleans are stored as the strings "true" / "false". */
-function parseBool(v: unknown, fallback = false): boolean {
-  if (v === true || v === "true") return true;
-  if (v === false || v === "false") return false;
-  return fallback;
+/** Public URL for a page: the default page lives at /status, others at /status/<slug>. */
+function publicHref(page: StatusPage): string {
+  return page.isDefault ? "/status" : `/status/${page.slug}`;
 }
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-
-function parseTheme(v: unknown): Theme {
-  return v === "light" || v === "dark" || v === "system" ? v : "system";
-}
-
-/** Hex color pattern the server accepts (see worker routes/settings.ts): #rgb or #rrggbb. */
-const ACCENT_PATTERN = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-
-function isValidAccent(v: string): boolean {
-  return ACCENT_PATTERN.test(v.trim());
-}
-
-/**
- * A `#rrggbb` value for the native color input, which only accepts 6-digit hex:
- * expand a valid `#rgb`, pass `#rrggbb` through, else fall back to the default.
- */
-function accentSwatchValue(v: string): string {
-  const t = v.trim();
-  if (/^#[0-9a-fA-F]{6}$/.test(t)) return t;
-  if (/^#[0-9a-fA-F]{3}$/.test(t)) {
-    const [, r, g, b] = t;
-    return `#${r}${r}${g}${g}${b}${b}`;
-  }
-  return DEFAULT_ACCENT;
-}
-
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
 
 export default function StatusPageSettings() {
   const { csrf } = useBootstrap();
   const { data, loading, error, reload } =
-    useFetch<SettingsResponse>("/api/settings");
+    useFetch<{ statusPages: StatusPage[] }>("/api/status-pages");
+  const pages = data?.statusPages ?? [];
 
-  const [enabled, setEnabled] = useState(false);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [logo, setLogo] = useState("");
-  const [accent, setAccent] = useState(DEFAULT_ACCENT);
-  const [theme, setTheme] = useState<Theme>("system");
-  const [homepage, setHomepage] = useState("");
-  const [footer, setFooter] = useState("");
-  const [attribution, setAttribution] = useState(true);
+  const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({});
+  const [rowError, setRowError] = useState<string | null>(null);
 
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    const s = data?.settings;
-    if (!s) return;
-    setEnabled(parseBool(s.status_page_enabled));
-    setName(str(s.status_page_name));
-    setDescription(str(s.status_page_description));
-    setLogo(str(s.status_page_logo));
-    setAccent(str(s.status_page_accent) || DEFAULT_ACCENT);
-    setTheme(parseTheme(s.status_page_theme));
-    setHomepage(str(s.status_page_homepage));
-    setFooter(str(s.status_page_footer));
-    // Attribution defaults on when unset.
-    setAttribution(parseBool(s.status_page_attribution, true));
-  }, [data]);
-
-  // Any change clears the "Saved" confirmation.
-  function mark<T>(setter: (v: T) => void, value: T) {
-    setter(value);
-    setSaved(false);
-  }
-
-  async function save() {
-    // Validate the accent client-side with the same pattern the server uses so a
-    // typo surfaces as inline guidance instead of an opaque server 400.
-    if (!isValidAccent(accent)) {
-      setSaved(false);
-      setSaveError("Enter a valid hex color, e.g. #6d8bff or #abc.");
+  async function remove(page: StatusPage) {
+    if (
+      !window.confirm(
+        `Delete status page "${page.name}"? This cannot be undone.`,
+      )
+    )
       return;
-    }
-    setSaving(true);
-    setSaveError(null);
-    setSaved(false);
+    setRowBusy((m) => ({ ...m, [page.id]: true }));
+    setRowError(null);
     try {
-      await api("/api/settings", {
-        method: "PUT",
+      await api(`/api/status-pages/${page.id}`, {
+        method: "DELETE",
         csrf: csrf ?? undefined,
-        json: {
-          settings: {
-            status_page_enabled: enabled ? "true" : "false",
-            status_page_name: name,
-            status_page_description: description,
-            status_page_logo: logo,
-            status_page_accent: accent.trim(),
-            status_page_theme: theme,
-            status_page_homepage: homepage,
-            status_page_footer: footer,
-            status_page_attribution: attribution ? "true" : "false",
-          },
-        },
       });
-      setSaved(true);
-      void reload();
+      await reload();
     } catch (e) {
-      setSaveError(errMessage(e, "Could not save status page settings."));
+      setRowError(errMessage(e, "Could not delete the status page."));
     } finally {
-      setSaving(false);
+      setRowBusy((m) => ({ ...m, [page.id]: false }));
     }
   }
-
-  const accentValid = isValidAccent(accent);
-  const accentSwatch = accentSwatchValue(accent);
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto max-w-4xl">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Status page</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Status pages</h1>
           <p className="mt-1 text-sm text-ink-muted">
-            Customize the public status page visitors see at{" "}
-            <span className="font-mono text-ink-faint">/status</span>.
+            Publish one or more public status pages, each with its own branding
+            and monitor selection.
           </p>
         </div>
-        <a
-          href="/status"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+        <Link
+          to="/status-page/new"
+          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
         >
-          View public page
-          <ExternalLink className="size-4" />
-        </a>
+          <Plus className="size-4" />
+          New status page
+        </Link>
       </div>
 
-      <section className="mt-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Customization</CardTitle>
-          </CardHeader>
+      {rowError && (
+        <p className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
+          {rowError}
+        </p>
+      )}
 
-          {loading && !data ? (
-            <div className="grid place-items-center py-10">
-              <Loader2 className="size-5 animate-spin text-ink-faint" />
-            </div>
-          ) : error ? (
-            <p className="rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
-              Could not load settings: {error}
-            </p>
-          ) : (
-            <div className="space-y-4">
-              <label className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/40 p-3">
-                <input
-                  type="checkbox"
-                  checked={enabled}
-                  onChange={(e) => mark(setEnabled, e.target.checked)}
-                  className="mt-0.5 size-4 accent-accent"
-                />
-                <span>
-                  <span className="block text-sm font-medium text-ink">
-                    Enable public status page
-                  </span>
-                  <span className="mt-0.5 block text-xs text-ink-faint">
-                    When off, the public page at /status is hidden.
-                  </span>
-                </span>
-              </label>
-
-              <Field
-                label="Page name"
-                hint="Shown as the heading and browser title."
+      {loading && !data ? (
+        <div className="mt-6 grid place-items-center py-10">
+          <Loader2 className="size-5 animate-spin text-ink-faint" />
+        </div>
+      ) : error ? (
+        <p className="mt-6 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
+          Could not load status pages: {error}
+        </p>
+      ) : pages.length === 0 ? (
+        <div className="mt-6">
+          <EmptyState
+            icon={<LayoutTemplate className="size-6 text-accent" />}
+            title="No status pages yet"
+            description="Create a public status page to share live and historical uptime with your users."
+            action={
+              <Link
+                to="/status-page/new"
+                className="inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
               >
-                <input
-                  value={name}
-                  onChange={(e) => mark(setName, e.target.value)}
-                  placeholder="Acme Status"
-                  className="input"
-                />
-              </Field>
-
-              <Field
-                label="Description"
-                hint="A short tagline displayed under the page name."
-              >
-                <textarea
-                  value={description}
-                  onChange={(e) => mark(setDescription, e.target.value)}
-                  placeholder="Live and historical status of Acme services."
-                  rows={2}
-                  className="input resize-y"
-                />
-              </Field>
-
-              <Field label="Logo URL" hint="Optional. Displayed in the header.">
-                <input
-                  value={logo}
-                  onChange={(e) => mark(setLogo, e.target.value)}
-                  placeholder="https://example.com/logo.svg"
-                  type="url"
-                  className="input"
-                />
-              </Field>
-
-              <Field
-                label="Accent color"
-                hint="Used for highlights and the operational status banner."
-              >
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={accentSwatch}
-                    onChange={(e) => mark(setAccent, e.target.value)}
-                    aria-label="Accent color picker"
-                    className="size-9 shrink-0 cursor-pointer rounded-lg border border-line bg-surface-2"
-                  />
-                  <input
-                    value={accent}
-                    onChange={(e) => mark(setAccent, e.target.value)}
-                    placeholder={DEFAULT_ACCENT}
-                    aria-invalid={!accentValid}
-                    aria-describedby={!accentValid ? "accent-hex-error" : undefined}
-                    className={cn("input font-mono", !accentValid && "border-down")}
-                  />
-                </div>
-                {!accentValid && (
-                  <p id="accent-hex-error" role="alert" className="mt-1.5 text-xs text-down">
-                    Use a 3- or 6-digit hex color, e.g. #6d8bff.
-                  </p>
-                )}
-              </Field>
-
-              <Field label="Theme">
-                <select
-                  value={theme}
-                  onChange={(e) => mark(setTheme, e.target.value as Theme)}
-                  className="input"
-                >
-                  <option value="system">System (match visitor)</option>
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
-              </Field>
-
-              <Field
-                label="Homepage URL"
-                hint="Where the logo and name link back to."
-              >
-                <input
-                  value={homepage}
-                  onChange={(e) => mark(setHomepage, e.target.value)}
-                  placeholder="https://example.com"
-                  type="url"
-                  className="input"
-                />
-              </Field>
-
-              <Field
-                label="Footer text"
-                hint="Optional note shown at the bottom of the page."
-              >
-                <textarea
-                  value={footer}
-                  onChange={(e) => mark(setFooter, e.target.value)}
-                  placeholder="© Acme Inc. · Contact support@acme.com"
-                  rows={2}
-                  className="input resize-y"
-                />
-              </Field>
-
-              <label className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/40 p-3">
-                <input
-                  type="checkbox"
-                  checked={attribution}
-                  onChange={(e) => mark(setAttribution, e.target.checked)}
-                  className="mt-0.5 size-4 accent-accent"
-                />
-                <span>
-                  <span className="block text-sm font-medium text-ink">
-                    Show "Powered by OpenPing"
-                  </span>
-                  <span className="mt-0.5 block text-xs text-ink-faint">
-                    Display a small attribution link in the footer.
-                  </span>
-                </span>
-              </label>
-
-              {saveError && (
-                <p className="rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
-                  {saveError}
-                </p>
-              )}
-
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => void save()}
-                  disabled={saving}
-                  className="inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover disabled:opacity-60"
-                >
-                  {saving && <Loader2 className="size-4 animate-spin" />}
-                  Save changes
-                </button>
-                {saved && !saving && (
-                  <span className="inline-flex items-center gap-1.5 text-sm text-up">
-                    <CheckCircle2 className="size-4" />
-                    Saved
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
+                <Plus className="size-4" />
+                New status page
+              </Link>
+            }
+          />
+        </div>
+      ) : (
+        <Card className="mt-6 divide-y divide-line p-0">
+          {pages.map((p) => (
+            <StatusPageRow
+              key={p.id}
+              page={p}
+              busy={!!rowBusy[p.id]}
+              onDelete={() => void remove(p)}
+            />
+          ))}
         </Card>
+      )}
+
+      <section className="mt-8">
+        <CategoriesManager />
       </section>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Shared field wrapper
-// ---------------------------------------------------------------------------
-
-function Field({
-  label,
-  hint,
-  children,
+function StatusPageRow({
+  page,
+  busy,
+  onDelete,
 }: {
-  label: string;
-  hint?: string;
-  children: ReactNode;
+  page: StatusPage;
+  busy: boolean;
+  onDelete: () => void;
 }) {
   return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-medium text-ink-muted">
-        {label}
+    <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="truncate font-medium">{page.name}</span>
+          {page.isDefault && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-accent">
+              <Star className="size-3" />
+              Default
+            </span>
+          )}
+          <EnabledPill enabled={page.enabled} />
+        </div>
+        <div className="mt-0.5 font-mono text-xs text-ink-faint">
+          {page.isDefault ? "/status" : `/status/${page.slug}`}
+        </div>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1">
+        <a
+          href={publicHref(page)}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+        >
+          View public page
+          <ExternalLink className="size-3.5" />
+        </a>
+        <Link
+          to={`/status-page/${page.id}`}
+          title="Edit"
+          aria-label="Edit"
+          className="grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+        >
+          <Pencil className="size-4" />
+        </Link>
+        {!page.isDefault && (
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={busy}
+            title="Delete"
+            aria-label="Delete"
+            className="grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-down disabled:opacity-40"
+          >
+            {busy ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Trash2 className="size-4" />
+            )}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EnabledPill({ enabled }: { enabled: boolean }) {
+  if (enabled) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-up/40 bg-up/10 px-2.5 py-0.5 text-[11px] font-medium text-up">
+        <span className="size-1.5 rounded-full bg-up" />
+        Enabled
       </span>
-      {children}
-      {hint && <span className="mt-1 block text-xs text-ink-faint">{hint}</span>}
-    </label>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-ink-faint">
+      <span className="size-1.5 rounded-full bg-paused" />
+      Disabled
+    </span>
   );
 }

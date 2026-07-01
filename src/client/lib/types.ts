@@ -14,6 +14,39 @@ export interface MonitorSummary {
   stateSince: number | null;
   uptime24h: number;
   publicVisible: boolean;
+  categoryId?: string | null;
+  categoryName?: string | null;
+}
+
+export interface Category {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  sortOrder: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StatusPage {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  isDefault: boolean;
+  includeMode: "all" | "categories" | "monitors";
+  categoryIds: string[];
+  monitorIds: string[];
+  theme: "dark" | "light" | "system";
+  accent: string;
+  logo: string | null;
+  homepage: string | null;
+  footer: string | null;
+  attribution: boolean;
+  sortOrder: number;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface ChannelHealth {
