@@ -3,6 +3,13 @@ import type { AppEnv, Env } from "../types";
 import { listMonitors } from "../db/monitors";
 import { getSetting } from "../db/settings";
 import { publicMaintenance, type MaintenanceWindow } from "../db/maintenance";
+import {
+  getDefaultPage,
+  getStatusPageBySlug,
+  selectPageMonitors,
+  type IncludeMode,
+  type StatusPageRecord,
+} from "../db/status-pages";
 import type { MonitorState } from "../../shared/states";
 
 /**
@@ -262,17 +269,30 @@ function toPublicMaint(w: MaintenanceWindow): PublicMaint {
  * weekly window is only "active" during its actual recurring slot, not for the
  * whole multi-month envelope. Only `public_message` (never `private_notes`) is
  * exposed; empty messages are dropped.
+ *
+ * Per-page scoping: a `global` window is relevant to every page, but a
+ * `monitors`-scoped window is shown only when at least one of its monitors is on
+ * this page (`pageMonitorIds`). This mirrors the incident scoping so a window
+ * about a monitor that isn't on this page can never surface on it.
  */
 async function loadMaintenance(
   env: Env,
   now: number,
+  pageMonitorIds: Set<string>,
 ): Promise<{ active: PublicMaint[]; upcoming: PublicMaint[] }> {
   const { active, upcoming } = await publicMaintenance(env, now);
   const hasMessage = (w: MaintenanceWindow) =>
     w.publicMessage != null && w.publicMessage !== "";
+  const onPage = (w: MaintenanceWindow) =>
+    w.scope === "global" ||
+    (w.monitorIds ?? []).some((id) => pageMonitorIds.has(id));
   return {
-    active: active.filter(hasMessage).map(toPublicMaint),
-    upcoming: upcoming.filter(hasMessage).map(toPublicMaint).slice(0, UPCOMING_MAINT_LIMIT),
+    active: active.filter(hasMessage).filter(onPage).map(toPublicMaint),
+    upcoming: upcoming
+      .filter(hasMessage)
+      .filter(onPage)
+      .map(toPublicMaint)
+      .slice(0, UPCOMING_MAINT_LIMIT),
   };
 }
 
@@ -310,19 +330,100 @@ function toPublicIncident(
   };
 }
 
+/**
+ * Load the public incidents (active + recent-resolved) for exactly the monitors
+ * on this page. The `monitor_id IN (...)` clause is the redaction boundary: an
+ * incident for a monitor that isn't on this page can never appear on it, even if
+ * that incident is itself flagged public. Only public-safe columns are selected
+ * (never `error`, `title`, or notes). `LIMIT 10` is applied per page to the
+ * resolved list, preserving the original semantics. An empty page short-circuits
+ * (an `IN ()` is invalid SQL and there is nothing to return anyway).
+ */
+async function loadPublicIncidents(
+  env: Env,
+  monitorIds: string[],
+): Promise<{ active: PublicIncidentRow[]; recent: PublicIncidentRow[] }> {
+  if (monitorIds.length === 0) return { active: [], recent: [] };
+  const placeholders = monitorIds.map(() => "?").join(", ");
+  const [activeRes, recentRes] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, monitor_id, started_at, resolved_at, duration_seconds, public_message
+         FROM incidents
+        WHERE public = 1 AND status = 'open' AND monitor_id IN (${placeholders})
+        ORDER BY started_at DESC`,
+    )
+      .bind(...monitorIds)
+      .all<PublicIncidentRow>(),
+    env.DB.prepare(
+      `SELECT id, monitor_id, started_at, resolved_at, duration_seconds, public_message
+         FROM incidents
+        WHERE public = 1 AND status = 'resolved' AND monitor_id IN (${placeholders})
+        ORDER BY resolved_at DESC
+        LIMIT ?`,
+    )
+      .bind(...monitorIds, RECENT_INCIDENT_LIMIT)
+      .all<PublicIncidentRow>(),
+  ]);
+  return { active: activeRes.results ?? [], recent: recentRes.results ?? [] };
+}
+
 // ---------------------------------------------------------------------------
-// GET /status — the entire public status page payload.
+// Page resolution (PRD §16 — multiple per-category status pages).
+//
+// A request may target a specific published page via `?slug=`; otherwise it gets
+// the single default page. Either way we normalize to a `ResolvedPage`: the
+// branding block (identical wire shape to the legacy settings-driven page so the
+// SPA needs no change), the kill-switch `enabled` flag, and the monitor-include
+// config that drives per-page filtering. When no `status_pages` row exists (a
+// fresh install or a test env that only seeds legacy `status_page_*` settings) we
+// synthesize a default page from those settings so nothing regresses.
 // ---------------------------------------------------------------------------
 
-publicStatus.get("/status", async (c) => {
-  const env = c.env;
-  const now = Date.now();
+interface ResolvedPageBranding {
+  name: string;
+  description: string | null;
+  logo: string | null;
+  accent: string;
+  theme: string;
+  homepage: string | null;
+  footer: string | null;
+  attribution: boolean;
+}
 
-  // Let the CDN serve repeat hits; applies to both the disabled early-return
-  // below and the full payload.
-  c.header("Cache-Control", `public, max-age=${STATUS_CACHE_SECONDS}`);
+interface ResolvedPage {
+  page: ResolvedPageBranding;
+  enabled: boolean;
+  include: {
+    includeMode: IncludeMode;
+    categoryIds: string[];
+    monitorIds: string[];
+  };
+}
 
-  // --- Page branding/config (settings keys status_page_*) ---
+/** Map a persisted `status_pages` row to a ResolvedPage (branding + include). */
+function fromRecord(row: StatusPageRecord): ResolvedPage {
+  return {
+    page: {
+      name: row.name,
+      description: row.description,
+      logo: row.logo,
+      accent: row.accent ?? "#6d8bff",
+      theme: row.theme ?? "dark",
+      homepage: row.homepage,
+      footer: row.footer,
+      attribution: row.attribution,
+    },
+    enabled: row.enabled,
+    include: {
+      includeMode: row.includeMode,
+      categoryIds: row.categoryIds,
+      monitorIds: row.monitorIds,
+    },
+  };
+}
+
+/** Legacy fallback: synthesize the default page from `status_page_*` settings. */
+async function fromSettings(env: Env): Promise<ResolvedPage> {
   const [
     name,
     description,
@@ -344,18 +445,59 @@ publicStatus.get("/status", async (c) => {
     getSetting(env, "status_page_attribution"),
     getSetting(env, "status_page_enabled"),
   ]);
-
-  const page = {
-    name: name ?? "OpenPing",
-    description: description ?? null,
-    logo: logo ?? null,
-    accent: accent ?? "#6d8bff",
-    theme: theme ?? "dark",
-    homepage: homepage ?? null,
-    footer: footer ?? null,
-    attribution: attributionRaw == null ? true : attributionRaw === "true",
+  return {
+    page: {
+      name: name ?? "OpenPing",
+      description: description ?? null,
+      logo: logo ?? null,
+      accent: accent ?? "#6d8bff",
+      theme: theme ?? "dark",
+      homepage: homepage ?? null,
+      footer: footer ?? null,
+      attribution: attributionRaw == null ? true : attributionRaw === "true",
+    },
+    enabled: enabledRaw === "true",
+    // Legacy single page shows every visible monitor (current behavior).
+    include: { includeMode: "all", categoryIds: [], monitorIds: [] },
   };
-  const enabled = enabledRaw === "true";
+}
+
+/**
+ * Resolve the page for this request. Returns "not_found" only when an explicit
+ * `?slug=` was given that matches no page (so a bad slug is a hard 404, never a
+ * silent fallthrough to the default page — that would leak the wrong page's
+ * monitors).
+ */
+async function resolvePage(
+  env: Env,
+  slug: string | undefined,
+): Promise<ResolvedPage | "not_found"> {
+  if (slug != null) {
+    const row = await getStatusPageBySlug(env, slug);
+    return row ? fromRecord(row) : "not_found";
+  }
+  const def = await getDefaultPage(env);
+  return def ? fromRecord(def) : fromSettings(env);
+}
+
+// ---------------------------------------------------------------------------
+// GET /status — the entire public status page payload.
+// ---------------------------------------------------------------------------
+
+publicStatus.get("/status", async (c) => {
+  const env = c.env;
+  const now = Date.now();
+
+  // Let the CDN serve repeat hits; applies to both the disabled early-return
+  // below and the full payload.
+  c.header("Cache-Control", `public, max-age=${STATUS_CACHE_SECONDS}`);
+
+  // --- Resolve the target page (by ?slug=, else the default page) ---
+  const resolved = await resolvePage(env, c.req.query("slug"));
+  if (resolved === "not_found") {
+    return c.json({ error: "not_found" }, 404);
+  }
+  const { page, enabled, include } = resolved;
 
   // Enforce the operator's kill switch server-side: when the status page is not
   // explicitly enabled, expose nothing but the page name. None of the work
@@ -364,10 +506,13 @@ publicStatus.get("/status", async (c) => {
     return c.json({ enabled: false, page: { name: page.name } });
   }
 
-  // --- Visible monitors only ---
+  // --- Visible monitors, then narrowed to the ones on THIS page ---
   const visible = (await listMonitors(env)).filter(
     (m) => m.public?.visible === true,
   );
+  const pageMonitors = selectPageMonitors(include, visible);
+  const pageMonitorIds = pageMonitors.map((m) => m.id);
+  const pageMonitorIdSet = new Set(pageMonitorIds);
 
   // Current state per monitor (no last_error / no last_status_code).
   const stateRes = await env.DB.prepare(
@@ -377,16 +522,17 @@ publicStatus.get("/status", async (c) => {
     (stateRes.results ?? []).map((s) => [s.monitor_id, s]),
   );
 
-  // Public display name per visible monitor (for incident attribution).
+  // Public display name per on-page monitor (for incident attribution). Scoped
+  // to this page's monitors — incidents are queried against the same set.
   const publicNames = new Map<string, string>();
-  for (const m of visible) {
+  for (const m of pageMonitors) {
     publicNames.set(m.id, m.public.name || m.name);
   }
 
   // --- Build services (with grouping metadata carried alongside) ---
   let updatedAt = 0;
   const built = await Promise.all(
-    visible.map(async (m) => {
+    pageMonitors.map(async (m) => {
       const st = stateMap.get(m.id);
       if (st?.last_checked_at != null && st.last_checked_at > updatedAt) {
         updatedAt = st.last_checked_at;
@@ -455,36 +601,19 @@ publicStatus.get("/status", async (c) => {
     })
     .map((g) => ({ name: g.name, services: g.services }));
 
-  // --- Maintenance + overall banner ---
-  const maintenance = await loadMaintenance(env, now);
+  // --- Maintenance + overall banner (scoped to this page's monitors) ---
+  const maintenance = await loadMaintenance(env, now, pageMonitorIdSet);
   const overall = computeOverall(
     built.map((b) => b.service),
     maintenance.active.length > 0,
   );
 
-  // --- Public incidents (public=1 only; safe columns only) ---
-  const [activeRes, recentRes] = await Promise.all([
-    env.DB.prepare(
-      `SELECT id, monitor_id, started_at, resolved_at, duration_seconds, public_message
-         FROM incidents
-        WHERE public = 1 AND status = 'open'
-        ORDER BY started_at DESC`,
-    ).all<PublicIncidentRow>(),
-    env.DB.prepare(
-      `SELECT id, monitor_id, started_at, resolved_at, duration_seconds, public_message
-         FROM incidents
-        WHERE public = 1 AND status = 'resolved'
-        ORDER BY resolved_at DESC
-        LIMIT ?`,
-    )
-      .bind(RECENT_INCIDENT_LIMIT)
-      .all<PublicIncidentRow>(),
-  ]);
-
-  const activeIncidents = (activeRes.results ?? []).map((r) =>
+  // --- Public incidents (public=1 AND on this page; safe columns only) ---
+  const incidents = await loadPublicIncidents(env, pageMonitorIds);
+  const activeIncidents = incidents.active.map((r) =>
     toPublicIncident(r, publicNames),
   );
-  const recentIncidents = (recentRes.results ?? []).map((r) =>
+  const recentIncidents = incidents.recent.map((r) =>
     toPublicIncident(r, publicNames),
   );
 
@@ -571,8 +700,10 @@ publicStatus.get("/badge.svg", async (c) => {
 
   const label = (c.req.query("label") ?? "status").slice(0, 40);
 
-  const enabledRaw = await getSetting(env, "status_page_enabled");
-  if (enabledRaw !== "true") {
+  // Same page resolution as /status. A disabled page — or a `?slug=` that matches
+  // no page — renders the neutral "unknown" badge rather than breaking the <img>.
+  const resolved = await resolvePage(env, c.req.query("slug"));
+  if (resolved === "not_found" || !resolved.enabled) {
     const m = BADGE_META.unknown;
     return c.body(renderBadge(label, m.label, m.color));
   }
@@ -580,6 +711,9 @@ publicStatus.get("/badge.svg", async (c) => {
   const visible = (await listMonitors(env)).filter(
     (mon) => mon.public?.visible === true,
   );
+  const pageMonitors = selectPageMonitors(resolved.include, visible);
+  const pageMonitorIdSet = new Set(pageMonitors.map((mon) => mon.id));
+
   const stateRes = await env.DB.prepare(
     `SELECT monitor_id, state FROM monitor_state`,
   ).all<{ monitor_id: string; state: MonitorState }>();
@@ -587,13 +721,13 @@ publicStatus.get("/badge.svg", async (c) => {
     (stateRes.results ?? []).map((s) => [s.monitor_id, s.state]),
   );
 
-  const services = visible.map((mon) => ({
+  const services = pageMonitors.map((mon) => ({
     state: mapPublicState(
       stateMap.get(mon.id) ?? "unknown",
       mon.public.showScheduledOff,
     ),
   }));
-  const maintenance = await loadMaintenance(env, now);
+  const maintenance = await loadMaintenance(env, now, pageMonitorIdSet);
   const overall = computeOverall(services, maintenance.active.length > 0);
 
   const m = BADGE_META[overall];
