@@ -18,13 +18,16 @@ import {
   Github,
   Globe,
   HeartPulse,
+  Hourglass,
   Infinity as InfinityIcon,
   KeyRound,
   LineChart,
   LogIn,
   Menu,
   MessageSquare,
+  Network,
   PauseCircle,
+  Plug,
   Server,
   ShieldCheck,
   Smartphone,
@@ -583,7 +586,7 @@ function TrustStrip() {
 }
 
 /* ------------------------------------------------------------------ *
- * 4. Monitoring types grid (6 cards)
+ * 4. Monitoring types grid (9 cards)
  * ------------------------------------------------------------------ */
 
 function MonitoringTypes() {
@@ -610,6 +613,20 @@ function MonitoringTypes() {
         <FeatureCard icon={HeartPulse} title="Heartbeat / cron">
           Give any scheduled job a heartbeat URL to ping. If the expected ping
           doesn't arrive in time, OpenPing opens an incident.
+        </FeatureCard>
+        <FeatureCard icon={Network} title="DNS record monitoring">
+          Resolve A, AAAA, CNAME, MX, or TXT records and alert on failures.
+          Optionally assert that the resolved value equals or contains what you
+          expect.
+        </FeatureCard>
+        <FeatureCard icon={Plug} title="TCP port monitoring">
+          Open a TCP connection to any host and port to confirm a service is
+          accepting connections — databases, brokers, and other non-HTTP
+          services.
+        </FeatureCard>
+        <FeatureCard icon={Hourglass} title="Domain-expiry monitoring">
+          Track a domain's registration expiry via RDAP and get a heads-up as the
+          renewal date approaches, so a domain never lapses by surprise.
         </FeatureCard>
         <FeatureCard icon={Gauge} title="Response-time thresholds">
           Flag a monitor as degraded before it goes fully down by setting

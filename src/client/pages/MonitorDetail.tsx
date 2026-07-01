@@ -24,6 +24,7 @@ import {
   formatDateTime,
 } from "../lib/format";
 import { STATE_META, type MonitorState } from "../../shared/states";
+import { monitorTypeLabel, type MonitorType } from "../lib/types";
 import { StatusPill } from "../components/ui/StatusPill";
 import { UptimeBar } from "../components/ui/UptimeBar";
 import { Sparkline } from "../components/ui/Sparkline";
@@ -35,7 +36,7 @@ import { EmptyState } from "../components/ui/EmptyState";
 interface MonitorInfo {
   id: string;
   name: string;
-  type: "http" | "heartbeat";
+  type: MonitorType;
   config: { url?: string } & Record<string, unknown>;
   schedule: { mode: string } & Record<string, unknown>;
   heartbeatToken: string | null;
@@ -64,6 +65,9 @@ interface Sample {
   durationMs: number | null;
   statusCode: number | null;
   error: string | null;
+  // Type-specific detail (DNS resolved records, domain expiry, …). Present only
+  // when the backend includes it; always read defensively.
+  meta?: unknown;
 }
 
 interface IncidentRow {
@@ -99,6 +103,25 @@ interface TestOutcome {
   durationMs?: number | null;
   statusCode?: number | null;
   error?: string | null;
+  meta?: unknown;
+}
+
+/** Defensive reader for the type-specific `meta` blob on a sample/outcome. */
+interface SampleMeta {
+  records?: string[];
+  expiresAt?: string;
+  daysUntil?: number;
+}
+function readMeta(meta: unknown): SampleMeta {
+  if (!meta || typeof meta !== "object") return {};
+  const m = meta as Record<string, unknown>;
+  const out: SampleMeta = {};
+  if (Array.isArray(m.records)) {
+    out.records = m.records.filter((r): r is string => typeof r === "string");
+  }
+  if (typeof m.expiresAt === "string") out.expiresAt = m.expiresAt;
+  if (typeof m.daysUntil === "number") out.daysUntil = m.daysUntil;
+  return out;
 }
 
 const btn =
@@ -182,6 +205,17 @@ export default function MonitorDetail() {
   const targetUrl = monitor.config.url ?? null;
   const safeTargetUrl = safeHttpUrl(targetUrl);
 
+  // Per-type target fields (config is an untyped blob; read each defensively).
+  const cfg = monitor.config as Record<string, unknown>;
+  const dnsHostname = typeof cfg.hostname === "string" ? cfg.hostname : null;
+  const dnsRecordType = typeof cfg.recordType === "string" ? cfg.recordType : null;
+  const tcpHost = typeof cfg.host === "string" ? cfg.host : null;
+  const tcpPort = typeof cfg.port === "number" ? cfg.port : null;
+  const domainName = typeof cfg.domain === "string" ? cfg.domain : null;
+
+  // Latest sample's type-specific detail (resolved DNS records, domain expiry).
+  const latestMeta = readMeta(recentSamples.at(-1)?.meta);
+
   const latencyPoints = recentSamples
     .filter((s) => s.durationMs != null)
     .map((s) => s.durationMs as number);
@@ -201,11 +235,20 @@ export default function MonitorDetail() {
         { method: "POST", csrf: csrf ?? undefined },
       );
       const o = res.outcome;
+      const meta = readMeta(o.meta);
       const parts = [
         STATE_META[o.state].label,
         o.statusCode != null ? `HTTP ${o.statusCode}` : null,
         o.durationMs != null ? formatMs(o.durationMs) : null,
         o.error ? o.error : null,
+        meta.records && meta.records.length > 0
+          ? meta.records.join(", ")
+          : null,
+        meta.expiresAt
+          ? `expires ${new Date(meta.expiresAt).toLocaleDateString()}${
+              meta.daysUntil != null ? ` (in ${meta.daysUntil}d)` : ""
+            }`
+          : null,
       ].filter(Boolean);
       setNotice({ tone: o.ok ? "ok" : "error", text: `Test: ${parts.join(" · ")}` });
     } catch (e) {
@@ -287,12 +330,12 @@ export default function MonitorDetail() {
             ) : null}
           </div>
           <p className="mt-1 text-sm capitalize text-ink-muted">
-            {monitor.type} · {scheduleMode}
+            {monitorTypeLabel(monitor.type)} · {scheduleMode}
           </p>
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {monitor.type === "http" && (
+          {monitor.type !== "heartbeat" && (
             <button onClick={onTest} disabled={pending !== null} className={btn}>
               {pending === "test" ? (
                 <Loader2 className="size-4 animate-spin" />
@@ -341,32 +384,7 @@ export default function MonitorDetail() {
 
       {/* Target */}
       <Card className="mt-4">
-        {monitor.type === "http" ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-xs font-medium text-ink-muted">Target</div>
-              {safeTargetUrl ? (
-                <a
-                  href={safeTargetUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-1 block truncate font-mono text-sm text-accent hover:underline"
-                >
-                  {targetUrl}
-                </a>
-              ) : targetUrl ? (
-                <span className="mt-1 block truncate font-mono text-sm text-ink">
-                  {targetUrl}
-                </span>
-              ) : (
-                <span className="mt-1 block text-sm text-ink-faint">—</span>
-              )}
-            </div>
-            <span className="shrink-0 text-xs text-ink-faint">
-              Checks every {formatDuration(monitor.intervalSeconds)}
-            </span>
-          </div>
-        ) : (
+        {monitor.type === "heartbeat" ? (
           <div>
             <div className="text-xs font-medium text-ink-muted">Heartbeat ingest URL</div>
             <div className="mt-1 flex items-center gap-2">
@@ -384,6 +402,70 @@ export default function MonitorDetail() {
               Expected every {formatDuration(monitor.intervalSeconds)} · grace{" "}
               {formatDuration(monitor.graceSeconds ?? 0)}
             </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-ink-muted">Target</div>
+              {monitor.type === "http" ? (
+                safeTargetUrl ? (
+                  <a
+                    href={safeTargetUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 block truncate font-mono text-sm text-accent hover:underline"
+                  >
+                    {targetUrl}
+                  </a>
+                ) : targetUrl ? (
+                  <span className="mt-1 block truncate font-mono text-sm text-ink">
+                    {targetUrl}
+                  </span>
+                ) : (
+                  <span className="mt-1 block text-sm text-ink-faint">—</span>
+                )
+              ) : monitor.type === "dns" ? (
+                <>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="truncate font-mono text-sm text-ink">
+                      {dnsHostname ?? "—"}
+                    </span>
+                    {dnsRecordType && (
+                      <span className="shrink-0 rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-ink-faint">
+                        {dnsRecordType}
+                      </span>
+                    )}
+                  </div>
+                  {latestMeta.records && latestMeta.records.length > 0 && (
+                    <div className="mt-1 truncate font-mono text-xs text-ink-faint">
+                      Resolved: {latestMeta.records.join(", ")}
+                    </div>
+                  )}
+                </>
+              ) : monitor.type === "tcp" ? (
+                <span className="mt-1 block truncate font-mono text-sm text-ink">
+                  {tcpHost ?? "—"}
+                  {tcpPort != null ? `:${tcpPort}` : ""}
+                </span>
+              ) : (
+                <>
+                  <span className="mt-1 block truncate font-mono text-sm text-ink">
+                    {domainName ?? "—"}
+                  </span>
+                  {latestMeta.expiresAt && (
+                    <div className="mt-1 text-xs text-ink-faint">
+                      Expires {new Date(latestMeta.expiresAt).toLocaleDateString()}
+                      {latestMeta.daysUntil != null
+                        ? ` · in ${latestMeta.daysUntil} days`
+                        : ""}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <span className="shrink-0 text-xs text-ink-faint">
+              Checks every {formatDuration(monitor.intervalSeconds)}
+            </span>
           </div>
         )}
       </Card>

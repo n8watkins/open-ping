@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { Activity, Plus, Loader2, AlertTriangle } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
-import type { OverviewResponse } from "../lib/types";
+import { monitorTypeLabel, type OverviewResponse } from "../lib/types";
 import { StatusPill } from "../components/ui/StatusPill";
 import { Card } from "../components/ui/Card";
 import { Stat } from "../components/ui/Stat";
@@ -83,7 +83,7 @@ export default function Dashboard() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="truncate font-medium">{m.name}</div>
-                    <div className="mt-0.5 text-xs text-ink-faint capitalize">{m.type}</div>
+                    <div className="mt-0.5 text-xs text-ink-faint capitalize">{monitorTypeLabel(m.type)}</div>
                   </div>
                   <StatusPill state={m.state} />
                 </div>

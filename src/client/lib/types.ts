@@ -1,9 +1,25 @@
 import type { MonitorState } from "../../shared/states";
 
+/** Every monitor kind the client can render/label. */
+export type MonitorType = "http" | "heartbeat" | "dns" | "tcp" | "domain";
+
+const MONITOR_TYPE_LABELS: Record<MonitorType, string> = {
+  http: "HTTP",
+  heartbeat: "Heartbeat",
+  dns: "DNS",
+  tcp: "TCP",
+  domain: "Domain",
+};
+
+/** Friendly display label for a monitor type (falls back to upper-casing). */
+export function monitorTypeLabel(type: string): string {
+  return MONITOR_TYPE_LABELS[type as MonitorType] ?? type.toUpperCase();
+}
+
 export interface MonitorSummary {
   id: string;
   name: string;
-  type: "http" | "heartbeat";
+  type: MonitorType;
   state: MonitorState;
   paused: boolean;
   scheduleMode: string;

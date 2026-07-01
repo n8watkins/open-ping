@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { Activity, Plus, Loader2 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
-import type { OverviewResponse } from "../lib/types";
+import { monitorTypeLabel, type OverviewResponse } from "../lib/types";
 import { StatusPill } from "../components/ui/StatusPill";
 import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -72,7 +72,7 @@ export default function Monitors() {
                     )}
                   </div>
                   <div className="text-xs text-ink-faint capitalize">
-                    {m.type} · {m.scheduleMode.replace("_", " ")}
+                    {monitorTypeLabel(m.type)} · {m.scheduleMode.replace("_", " ")}
                   </div>
                 </div>
               </div>

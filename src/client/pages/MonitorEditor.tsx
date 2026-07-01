@@ -15,10 +15,13 @@ import { cn } from "../lib/cn";
 import type { Category } from "../lib/types";
 import type {
   Assertion,
+  DnsConfig,
+  DomainConfig,
   HeartbeatConfig,
   HttpConfig,
   HttpMethod,
   Schedule,
+  TcpConfig,
 } from "../../shared/schemas";
 
 /**
@@ -29,10 +32,12 @@ import type {
  * returns `{ issues }` on 400 which we surface inline.
  */
 
-type MonitorType = "http" | "heartbeat";
+type MonitorType = "http" | "heartbeat" | "dns" | "tcp" | "domain";
 type AuthType = "none" | "basic" | "bearer";
 type AssertionKind = Assertion["kind"];
 type ScheduleMode = Schedule["mode"];
+type DnsRecordType = DnsConfig["recordType"];
+type DnsExpectedMode = "equals" | "contains";
 
 interface HeaderRow {
   name: string;
@@ -79,6 +84,21 @@ interface FormState {
   graceSeconds: number;
   secret: string;
   acceptedMethods: HttpMethod[];
+  // DNS config
+  dnsHostname: string;
+  dnsRecordType: DnsRecordType;
+  dnsExpectedEnabled: boolean;
+  dnsExpectedMode: DnsExpectedMode;
+  dnsExpectedValue: string;
+  dnsTimeoutMs: number;
+  // TCP config
+  tcpHost: string;
+  tcpPort: number;
+  tcpTimeoutMs: number;
+  // Domain-expiry config
+  domainName: string;
+  domainWarnDays: number;
+  domainTimeoutMs: number;
   // Schedule
   scheduleMode: ScheduleMode;
   bizWeekdays: number[];
@@ -99,7 +119,7 @@ interface LoadedMonitor {
   type: MonitorType;
   name: string;
   enabled: boolean;
-  config: HttpConfig | HeartbeatConfig;
+  config: HttpConfig | HeartbeatConfig | DnsConfig | TcpConfig | DomainConfig;
   schedule: Schedule;
   assertions: Assertion[];
   notify: unknown;
@@ -118,6 +138,17 @@ const HTTP_METHODS: HttpMethod[] = [
 ];
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const DNS_RECORD_TYPES: DnsRecordType[] = ["A", "AAAA", "CNAME", "MX", "TXT"];
+
+/** One-line description shown under the page title for each monitor type. */
+const TYPE_DESCRIPTIONS: Record<MonitorType, string> = {
+  http: "Poll an HTTP endpoint and assert on its response.",
+  heartbeat: "Expect a periodic ping from a job or device.",
+  dns: "Resolve a DNS record and optionally assert its value.",
+  tcp: "Open a TCP connection to a host and port.",
+  domain: "Track a domain's registration expiry.",
+};
 
 const ASSERTION_KINDS: { value: AssertionKind; label: string }[] = [
   { value: "contains", label: "Body contains" },
@@ -174,6 +205,18 @@ function initialForm(): FormState {
     graceSeconds: 300,
     secret: "",
     acceptedMethods: [],
+    dnsHostname: "",
+    dnsRecordType: "A",
+    dnsExpectedEnabled: false,
+    dnsExpectedMode: "equals",
+    dnsExpectedValue: "",
+    dnsTimeoutMs: 10000,
+    tcpHost: "",
+    tcpPort: 443,
+    tcpTimeoutMs: 10000,
+    domainName: "",
+    domainWarnDays: 30,
+    domainTimeoutMs: 15000,
     scheduleMode: "always",
     bizWeekdays: [1, 2, 3, 4, 5],
     bizStart: "08:00",
@@ -237,6 +280,24 @@ function prefill(m: LoadedMonitor): FormState {
     base.assertions = Array.isArray(m.assertions)
       ? m.assertions.map(toAssertionRow)
       : [];
+  } else if (m.type === "dns") {
+    const c = m.config as DnsConfig;
+    base.dnsHostname = c.hostname ?? "";
+    base.dnsRecordType = c.recordType ?? "A";
+    base.dnsExpectedEnabled = c.expected != null;
+    base.dnsExpectedMode = c.expected?.mode ?? "equals";
+    base.dnsExpectedValue = c.expected?.value ?? "";
+    base.dnsTimeoutMs = c.timeoutMs ?? 10000;
+  } else if (m.type === "tcp") {
+    const c = m.config as TcpConfig;
+    base.tcpHost = c.host ?? "";
+    base.tcpPort = c.port ?? 443;
+    base.tcpTimeoutMs = c.timeoutMs ?? 10000;
+  } else if (m.type === "domain") {
+    const c = m.config as DomainConfig;
+    base.domainName = c.domain ?? "";
+    base.domainWarnDays = c.warnDays ?? 30;
+    base.domainTimeoutMs = c.timeoutMs ?? 15000;
   } else {
     const c = m.config as HeartbeatConfig;
     base.intervalSeconds = c.intervalSeconds ?? 3600;
@@ -545,6 +606,39 @@ export default function MonitorEditor() {
       return { type: "http", ...common, config, assertions };
     }
 
+    if (form.type === "dns") {
+      const config: DnsConfig = {
+        hostname: form.dnsHostname.trim(),
+        recordType: form.dnsRecordType,
+        timeoutMs: form.dnsTimeoutMs,
+      };
+      if (form.dnsExpectedEnabled && form.dnsExpectedValue.trim() !== "") {
+        config.expected = {
+          mode: form.dnsExpectedMode,
+          value: form.dnsExpectedValue.trim(),
+        };
+      }
+      return { type: "dns", ...common, config };
+    }
+
+    if (form.type === "tcp") {
+      const config: TcpConfig = {
+        host: form.tcpHost.trim(),
+        port: form.tcpPort,
+        timeoutMs: form.tcpTimeoutMs,
+      };
+      return { type: "tcp", ...common, config };
+    }
+
+    if (form.type === "domain") {
+      const config: DomainConfig = {
+        domain: form.domainName.trim(),
+        warnDays: form.domainWarnDays,
+        timeoutMs: form.domainTimeoutMs,
+      };
+      return { type: "domain", ...common, config };
+    }
+
     const config: HeartbeatConfig = {
       intervalSeconds: form.intervalSeconds,
       graceSeconds: form.graceSeconds,
@@ -619,9 +713,7 @@ export default function MonitorEditor() {
           {isEdit ? "Edit monitor" : "New monitor"}
         </h1>
         <p className="mt-1 text-sm text-ink-muted">
-          {form.type === "http"
-            ? "Poll an HTTP endpoint and assert on its response."
-            : "Expect a periodic ping from a job or device."}
+          {TYPE_DESCRIPTIONS[form.type]}
         </p>
       </div>
 
@@ -666,6 +758,9 @@ export default function MonitorEditor() {
               >
                 <option value="http">HTTP</option>
                 <option value="heartbeat">Heartbeat</option>
+                <option value="dns">DNS record</option>
+                <option value="tcp">TCP port</option>
+                <option value="domain">Domain expiry</option>
               </select>
             </Field>
             <div className="flex items-end">
@@ -1053,6 +1148,198 @@ export default function MonitorEditor() {
                 ))}
               </div>
             </div>
+          </FormCard>
+        )}
+
+        {/* 4a. DNS config */}
+        {form.type === "dns" && (
+          <FormCard
+            title="DNS record"
+            description="Resolve a record over DNS-over-HTTPS and optionally assert its value."
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Hostname" required>
+                <input
+                  value={form.dnsHostname}
+                  onChange={(e) => set("dnsHostname", e.target.value)}
+                  placeholder="example.com"
+                  required
+                  className="input"
+                />
+              </Field>
+              <Field label="Record type">
+                <select
+                  value={form.dnsRecordType}
+                  onChange={(e) =>
+                    set("dnsRecordType", e.target.value as DnsRecordType)
+                  }
+                  className="input"
+                >
+                  {DNS_RECORD_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <div>
+              <Checkbox
+                label="Assert on the resolved value"
+                checked={form.dnsExpectedEnabled}
+                onChange={(v) => set("dnsExpectedEnabled", v)}
+              />
+              {form.dnsExpectedEnabled && (
+                <div className="mt-3 grid gap-4 sm:grid-cols-3">
+                  <Field label="Match">
+                    <select
+                      value={form.dnsExpectedMode}
+                      onChange={(e) =>
+                        set("dnsExpectedMode", e.target.value as DnsExpectedMode)
+                      }
+                      className="input"
+                    >
+                      <option value="equals">Equals</option>
+                      <option value="contains">Contains</option>
+                    </select>
+                  </Field>
+                  <div className="sm:col-span-2">
+                    <Field
+                      label="Expected value"
+                      hint="Checked against each resolved record."
+                    >
+                      <input
+                        value={form.dnsExpectedValue}
+                        onChange={(e) => set("dnsExpectedValue", e.target.value)}
+                        placeholder="1.2.3.4"
+                        className="input"
+                      />
+                    </Field>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <details className="rounded-lg border border-line bg-surface-2/40 p-3">
+              <summary className="cursor-pointer text-xs font-medium text-ink-muted">
+                Advanced
+              </summary>
+              <div className="mt-3">
+                <Field label="Timeout (ms)">
+                  <input
+                    type="number"
+                    min={1000}
+                    max={30000}
+                    value={form.dnsTimeoutMs}
+                    onChange={(e) => set("dnsTimeoutMs", Number(e.target.value))}
+                    className="input"
+                  />
+                </Field>
+              </div>
+            </details>
+          </FormCard>
+        )}
+
+        {/* 4b. TCP config */}
+        {form.type === "tcp" && (
+          <FormCard
+            title="TCP port"
+            description="Open a TCP connection to confirm a service is accepting connections."
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Host" required>
+                <input
+                  value={form.tcpHost}
+                  onChange={(e) => set("tcpHost", e.target.value)}
+                  placeholder="db.example.com"
+                  required
+                  className="input"
+                />
+              </Field>
+              <Field label="Port" required hint="1–65535. Port 25 is blocked by the runtime.">
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={form.tcpPort}
+                  onChange={(e) => set("tcpPort", Number(e.target.value))}
+                  required
+                  className="input"
+                />
+              </Field>
+            </div>
+
+            <details className="rounded-lg border border-line bg-surface-2/40 p-3">
+              <summary className="cursor-pointer text-xs font-medium text-ink-muted">
+                Advanced
+              </summary>
+              <div className="mt-3">
+                <Field label="Timeout (ms)">
+                  <input
+                    type="number"
+                    min={1000}
+                    max={30000}
+                    value={form.tcpTimeoutMs}
+                    onChange={(e) => set("tcpTimeoutMs", Number(e.target.value))}
+                    className="input"
+                  />
+                </Field>
+              </div>
+            </details>
+          </FormCard>
+        )}
+
+        {/* 4c. Domain-expiry config */}
+        {form.type === "domain" && (
+          <FormCard
+            title="Domain expiry"
+            description="Track a domain's registration expiry via RDAP."
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Domain" required>
+                <input
+                  value={form.domainName}
+                  onChange={(e) => set("domainName", e.target.value)}
+                  placeholder="example.com"
+                  required
+                  className="input"
+                />
+              </Field>
+              <Field
+                label="Warn within (days)"
+                hint="Mark degraded once expiry is this close."
+              >
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={form.domainWarnDays}
+                  onChange={(e) => set("domainWarnDays", Number(e.target.value))}
+                  className="input"
+                />
+              </Field>
+            </div>
+
+            <details className="rounded-lg border border-line bg-surface-2/40 p-3">
+              <summary className="cursor-pointer text-xs font-medium text-ink-muted">
+                Advanced
+              </summary>
+              <div className="mt-3">
+                <Field label="Timeout (ms)">
+                  <input
+                    type="number"
+                    min={1000}
+                    max={30000}
+                    value={form.domainTimeoutMs}
+                    onChange={(e) =>
+                      set("domainTimeoutMs", Number(e.target.value))
+                    }
+                    className="input"
+                  />
+                </Field>
+              </div>
+            </details>
           </FormCard>
         )}
 
