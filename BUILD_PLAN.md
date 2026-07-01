@@ -1,4 +1,4 @@
-# OpenPing — V1 Build Plan & Progress Tracker
+# OpenPing - V1 Build Plan & Progress Tracker
 
 This file is the source of truth for the autonomous build loop. Each iteration:
 read it, pick the **next unchecked task** (top-to-bottom, respecting phase order),
@@ -10,6 +10,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
 
 ## Current status
 
+> **Note:** this file is a **V1 historical record** - the phase tracker and §26
+> acceptance criteria below document the original V1 build and its review passes.
+> Work has continued since (categories + multiple status pages, three new monitor
+> types, a `/tools` suite, an embeddable widget/badge, a landing page, and more).
+> For the current state of the project, see [`docs/HANDOFF.md`](./docs/HANDOFF.md).
+
 - **Active phase:** ✅ V1 COMPLETE, review passes applied, and **DEPLOYED LIVE** to
   Cloudflare (`https://open-ping.<subdomain>.workers.dev`).
 - **Last completed:** **Live-deploy verification** caught and fixed 4 real production
@@ -19,50 +25,50 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note
   dropped by `Response.redirect` (login never persisted). Then shipped features:
   signed-in/sign-out UI, an admin **CLI + Bearer API-token auth** (`scripts/op.mjs`,
   `docs/CLI.md`), and a distinct **Suspended** monitor status (Render free-tier detection).
-  Migrations now run **0001→0005**. **295 tests pass**; `tsc -b` + `vite build` clean.
+  Migrations now run **0001→0007**. **397 tests pass**; `tsc -b` + `vite build` clean.
 - **Before that:** an 8-agent review → 7-agent fix pass (4 High + ~13 Medium + ~24 Low) +
   all 11 of its deferred items resolved (migrations `0003`/`0004`/`0005`). Consolidated
   record: [`CODE_REVIEW.md`](./CODE_REVIEW.md).
 - **Earlier:** A 9-agent **security + coding review** (adversarially verified) landed
   21 confirmed fixes + migration `0002_review_fixes.sql` (253 tests); and before that,
   a parallel multi-agent review against §26 (245 tests).
-- **Status:** Build loop STOPPED — implementation complete. Items that can only be exercised
+- **Status:** Build loop STOPPED - implementation complete. Items that can only be exercised
   on a real deployment (cron trigger cadence, real-device PWA install + Web Push wire
   encryption, live Resend/Discord delivery, GitHub OAuth code exchange) are implemented and
   unit/integration-verified to the extent the local workerd+vite environment allows.
-- **To ship:** follow docs/INSTALL.md — db:create, set secrets, db:migrate, deploy, run setup.
+- **To ship:** follow docs/INSTALL.md - db:create, set secrets, db:migrate, deploy, run setup.
 
-### Post-build review — issues found & fixed (2026-06-29)
+### Post-build review - issues found & fixed (2026-06-29)
 
 A 6-domain parallel review caught real defects behind several "VERIFIED ✓" claims. Fixed:
 
-- **SSRF redirect bypass** — checks now follow redirects manually and re-validate EVERY hop
+- **SSRF redirect bypass** - checks now follow redirects manually and re-validate EVERY hop
   (`checks/http.ts`); the request timeout also covers the response-body read. (+ tests)
-- **Heartbeat uptime** — a down heartbeat no longer reads ~100% uptime: missed cycles now
+- **Heartbeat uptime** - a down heartbeat no longer reads ~100% uptime: missed cycles now
   accrue downtime in the rollups every cycle; a brand-new heartbeat monitor is no longer
   marked down before its first interval elapses (`scheduler.ts`, `checks/state.ts`).
-- **Rollup corruption** — daily/monthly summaries are now *sealed* once their source rows
+- **Rollup corruption** - daily/monthly summaries are now *sealed* once their source rows
   age out, so pruning can't silently shrink long-term history; `status_intervals` is now
   pruned; the configurable `retention` setting actually drives prune horizons (`history/rollups.ts`).
-- **365-day uptime** — now summed from `day` summaries (was hour-only → capped at hourly
+- **365-day uptime** - now summed from `day` summaries (was hour-only → capped at hourly
   retention) (`history/metrics.ts`).
-- **Warm-up** — a failed cold-start cycle is `warming_up` (one grace cycle), not an instant
+- **Warm-up** - a failed cold-start cycle is `warming_up` (one grace cycle), not an instant
   incident; real outages still alarm the next cycle (`checks/runner.ts`, `state.ts`, `scheduler.ts`).
-- **Maintenance** — a failing heartbeat received during a maintenance window no longer opens
+- **Maintenance** - a failing heartbeat received during a maintenance window no longer opens
   an incident (`routes/heartbeats.ts`, `state.ts`).
-- **HTTP cadence** — due-gate slack so checks don't slip to a ~24-min interval (`scheduler.ts`).
-- **Channel secrets** — Discord URL / webhook HMAC secret now encrypted at rest + redacted in
+- **HTTP cadence** - due-gate slack so checks don't slip to a ~24-min interval (`scheduler.ts`).
+- **Channel secrets** - Discord URL / webhook HMAC secret now encrypted at rest + redacted in
   the API (were plaintext) (`db/channels.ts`, `routes/channels.ts`).
-- **Backup import** — incidents are actually restored and the dry-run counts are honest
+- **Backup import** - incidents are actually restored and the dry-run counts are honest
   (`routes/data.ts`).
-- **Public status page** — `enabled` flag enforced server-side; maintenance respects recurrence
+- **Public status page** - `enabled` flag enforced server-side; maintenance respects recurrence
   (`routes/public.ts`); theme is applied (light/dark/system) (`client/pages/PublicStatus.tsx`).
-- **Login** — the magic-link email flow is now wired in the UI (was a disabled stub), so
+- **Login** - the magic-link email flow is now wired in the UI (was a disabled stub), so
   email-only installs can sign in (`client/pages/Login.tsx`).
-- **Frontend** — offline/stale banner; header "Operational" pill derived from real state;
+- **Frontend** - offline/stale banner; header "Operational" pill derived from real state;
   Dashboard/Monitors show fetch errors; `api()` no longer throws on non-JSON error bodies;
   incident date filters send epoch-ms; `useFetch` drops out-of-order responses.
-- **Hardening** — setup routes enforce CSRF; magic-link no longer leaks the admin email via a
+- **Hardening** - setup routes enforce CSRF; magic-link no longer leaks the admin email via a
   timing oracle; constant-time secret compares; SSRF trailing-dot host; timezone +
   expected-status validation; webhook signature covers the timestamp; weekly summary anchored
   to a weekday/hour; flapping recovery notifications suppressed.
@@ -75,7 +81,7 @@ push wire delivery, live email/Discord, OAuth code exchange).
 
 ---
 
-## Phase 1 — Foundation
+## Phase 1 - Foundation
 
 - [x] Repo structure, git, .gitignore, package.json
 - [x] Tooling config: tsconfig (refs), vite + cloudflare plugin, tailwind v4
@@ -91,7 +97,7 @@ push wire delivery, live email/Discord, OAuth code exchange).
 - [x] Responsive app layout + mobile bottom nav
 - [x] Verify: `npm run build` passes; worker boots in dev; `/api/health` responds
 
-## Phase 2 — Monitoring Engine
+## Phase 2 - Monitoring Engine
 
 - [x] Monitor CRUD API + zod schemas (HTTP + heartbeat types)
 - [x] HTTP/API check executor (methods, headers, body, auth, timeout, redirects)
@@ -107,7 +113,7 @@ push wire delivery, live email/Discord, OAuth code exchange).
 - [x] Manual test actions (no-history / apply done; send-test notif = Phase 4)
 - [~] Schedule preview computation (active hours/mo done; est hosted hours TODO)
 
-## Phase 3 — Incidents & History
+## Phase 3 - Incidents & History
 
 - [x] Incident lifecycle: open (1 failed cycle), ongoing, recovery, dedupe
 - [x] Flapping detection (is_flapping flag; flapping-warning NOTIFICATION = Phase 4)
@@ -118,7 +124,7 @@ push wire delivery, live email/Discord, OAuth code exchange).
 - [x] MTBF / MTTR / longest / most-recent metrics
 - [x] Compaction + retention cleanup (idempotent, runs in scheduler after checks)
 
-## Phase 4 — Notifications & PWA
+## Phase 4 - Notifications & PWA
 
 - [x] Notification outbox (per-channel delivery records, retries, max attempts)
 - [x] Resend email channel (sender + HTML/text render; used by dispatcher)
@@ -131,9 +137,9 @@ push wire delivery, live email/Discord, OAuth code exchange).
 - [~] Android install flow + permission guidance + test push (SW+client helper done; UI in Phase 5)
 - [x] Notification defaults + per-event channel matrix
 - [x] Dispatcher + incident enqueue hooks + channel CRUD/test API (engine glue)
-- [ ] Weekly summary email (scheduler-driven, opt-in) — carry to Phase 6
+- [ ] Weekly summary email (scheduler-driven, opt-in) - carry to Phase 6
 
-## Phase 5 — Dashboard & Status Page
+## Phase 5 - Dashboard & Status Page
 
 - [x] Read APIs: /api/overview, /api/monitors/:id/detail, /api/incidents (+export), /api/diagnostics (+usage)
 - [x] Client UI primitives (StatusPill, UptimeBar, Sparkline, Card, Stat, EmptyState, format)
@@ -150,16 +156,16 @@ push wire delivery, live email/Discord, OAuth code exchange).
 - [x] Public-safety: never leak URLs/creds/headers/bodies/internal errors (VERIFIED no leak)
 - [x] Mobile navigation (bottom nav present; refine in hardening)
 
-## Phase 6 — Hardening & Release
+## Phase 6 - Hardening & Release
 
 - [x] Encryption: AES-GCM config secrets at rest + redaction in API responses (VERIFIED)
 - [x] SSRF protection (reject loopback/link-local/metadata/private/creds) + executor short-circuit
-- [x] Idempotency (outbox event_key, incident dedupe, rollup upserts, heartbeat) — review done
+- [x] Idempotency (outbox event_key, incident dedupe, rollup upserts, heartbeat) - review done
 - [x] Execution lease / overlap protection (lib/lease, used in scheduler)
-- [x] Accessibility baseline (semantic HTML, focus-visible outlines, aria-disabled) — full audit post-V1
+- [x] Accessibility baseline (semantic HTML, focus-visible outlines, aria-disabled) - full audit post-V1
 - [x] Import/export (JSON full backup, no secrets; CSV incidents export)
 - [x] Usage estimates + diagnostics (APIs + Settings UI)
-- [x] Automated tests (schedule/DST, classification, assertions, SSRF, outbox, metrics, crypto) — 235 pass
+- [x] Automated tests (schedule/DST, classification, assertions, SSRF, outbox, metrics, crypto) - 397 pass
 - [x] Docs: install, upgrade, backup, troubleshooting, custom domain, free-tier
 - [x] Free-tier budget validation note (docs/FREE_TIER.md)
 - [x] Open-source release prep (LICENSE, CONTRIBUTING, .dev.vars.example)
@@ -167,7 +173,7 @@ push wire delivery, live email/Discord, OAuth code exchange).
 
 ---
 
-## Acceptance criteria (PRD §26) — final gate ✅ ALL MET
+## Acceptance criteria (PRD §26) - final gate ✅ ALL MET
 
 Legend: ✓ = implemented + locally verified · ⊕ = implemented, validate on real deploy.
 

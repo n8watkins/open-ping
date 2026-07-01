@@ -1,7 +1,7 @@
 # OpenPing
 
 Open-source, self-hosted **uptime monitoring and public status pages** that run
-entirely inside your own Cloudflare account — no central service, no operational
+entirely inside your own Cloudflare account - no central service, no operational
 database to manage, no monitoring subscription.
 
 Its defining feature is **schedule-aware monitoring**: applications are checked
@@ -9,10 +9,15 @@ Its defining feature is **schedule-aware monitoring**: applications are checked
 hours they show as `Scheduled off` rather than `Down`, and the inactive period
 does not reduce uptime.
 
-> Status: **V1 complete and deployed.** Hardened by multiple review passes plus a
-> live-deploy verification round that fixed several real production bugs (see
-> [`CODE_REVIEW.md`](./CODE_REVIEW.md)); 295 tests, `tsc -b` + `vite build` clean.
-> See [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the build history.
+> Status: **V1 shipped and running live at
+> [openping.n8builds.dev](https://openping.n8builds.dev).** It has since grown
+> beyond core uptime checks - monitor categories and multiple public status
+> pages, five monitor types, a free `/tools` suite, an embeddable widget/badge,
+> and a marketing landing page (all listed below). Hardened by multiple review
+> passes plus a live-deploy verification round that fixed several real production
+> bugs (see [`CODE_REVIEW.md`](./CODE_REVIEW.md)); 397 tests, `tsc -b` +
+> `vite build` clean. See [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the build
+> history.
 
 ## What it does
 
@@ -27,7 +32,10 @@ does not reduce uptime.
 - Compact historical uptime (samples → intervals → hourly → daily → monthly)
 - Mobile Web Push (installable Android PWA), email via Resend, Discord, signed webhooks
 - GitHub OAuth + email magic-link auth (single administrator)
-- A polished, configurable public status page
+- Monitor **categories** and **multiple public status pages** (a default page at `/status`, per-category pages at `/status/:slug`), each polished and configurable
+- An **embeddable status widget** (`<iframe>`) plus an **SVG status badge** for READMEs and dashboards
+- A free **`/tools` suite** (uptime & subnet calculators, cron tester, DNS/MX lookup, and an **"Is it down?" checker**)
+- A marketing **landing page** at `/` for signed-out visitors
 - Admin **CLI** (`scripts/op.mjs`) + opt-in Bearer API-token auth for scripting/automation
 - Data import/export and transparent Cloudflare usage estimates
 
@@ -66,20 +74,23 @@ minutes. The outline:
 5. Open the app, finish the first-run setup wizard, and add monitors.
 
 **Follow the full, copy-pasteable walkthrough in
-[docs/INSTALL.md](./docs/INSTALL.md)** — it covers the GitHub OAuth app, every
+[docs/INSTALL.md](./docs/INSTALL.md)** - it covers the GitHub OAuth app, every
 secret, custom domains, and a verify-it's-working checklist.
 
 ## Documentation
 
-- [Install](./docs/INSTALL.md) — from clone to a deployed install (plus a local-dev quickstart)
-- [Monitor types](./docs/MONITOR_TYPES.md) — every check type, its config, and what the runtime can't do
-- [CLI](./docs/CLI.md) — manage an instance from a terminal/automation via an API token
-- [Upgrade](./docs/UPGRADE.md) — pull, migrate, redeploy
-- [Backup & restore](./docs/BACKUP.md) — JSON export/import and full D1 dumps
-- [Custom domain](./docs/CUSTOM_DOMAIN.md) — put OpenPing on your own hostname
-- [Free tier](./docs/FREE_TIER.md) — how usage maps to Cloudflare's free plan
-- [Troubleshooting](./docs/TROUBLESHOOTING.md) — common issues and fixes
-- [Contributing](./CONTRIBUTING.md) — dev setup and PR guidelines
+- [Install](./docs/INSTALL.md) - from clone to a deployed install (plus a local-dev quickstart)
+- [Monitor types](./docs/MONITOR_TYPES.md) - every check type, its config, and what the runtime can't do
+- [Status pages](./docs/STATUS_PAGES.md) - categories and multiple per-category public status pages
+- [Status widget & badge](./docs/WIDGET.md) - embed the live status widget or an SVG badge on another site
+- [Free tools](./docs/TOOLS.md) - the public `/tools` suite and the "Is it down?" API
+- [CLI](./docs/CLI.md) - manage an instance from a terminal/automation via an API token
+- [Upgrade](./docs/UPGRADE.md) - pull, migrate, redeploy
+- [Backup & restore](./docs/BACKUP.md) - JSON export/import and full D1 dumps
+- [Custom domain](./docs/CUSTOM_DOMAIN.md) - put OpenPing on your own hostname
+- [Free tier](./docs/FREE_TIER.md) - how usage maps to Cloudflare's free plan
+- [Troubleshooting](./docs/TROUBLESHOOTING.md) - common issues and fixes
+- [Contributing](./CONTRIBUTING.md) - dev setup and PR guidelines
 
 ## License
 

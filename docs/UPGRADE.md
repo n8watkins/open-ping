@@ -26,13 +26,13 @@ npm run deploy           # build + wrangler deploy
 
 That's the whole process. Notes:
 
-- **`git pull`** — if you have local changes, stash or commit them first.
-- **`npm install`** — picks up dependency changes from the new `package-lock.json`.
-- **`npm run db:migrate`** — runs `wrangler d1 migrations apply open-ping
+- **`git pull`** - if you have local changes, stash or commit them first.
+- **`npm install`** - picks up dependency changes from the new `package-lock.json`.
+- **`npm run db:migrate`** - runs `wrangler d1 migrations apply open-ping
   --remote`. Migrations are **additive and tracked by Wrangler**, so only
   migrations you haven't applied yet will run; re-running is a no-op when
   nothing is pending. (For a local dev database, use `npm run db:migrate:local`.)
-- **`npm run deploy`** — runs `vite build && wrangler deploy`, publishing the
+- **`npm run deploy`** - runs `vite build && wrangler deploy`, publishing the
   new Worker and SPA assets. The Cron Trigger (`*/12 * * * *`) is reapplied
   from `wrangler.jsonc` automatically.
 
@@ -46,7 +46,7 @@ That's the whole process. Notes:
 ## Secrets and config
 
 Upgrades **do not** touch your Worker secrets or your `wrangler.jsonc`
-`database_id` — those persist across deploys. If a release introduces a new
+`database_id` - those persist across deploys. If a release introduces a new
 secret, it will be listed in the release notes and added to
 [`.dev.vars.example`](../.dev.vars.example) and the `Env` interface in
 `src/worker/types.ts`; set it with `npx wrangler secret put <NAME>` before (or

@@ -1,7 +1,7 @@
 # OpenPing CLI
 
 A small admin CLI (`scripts/op.mjs`) for managing an OpenPing instance from a
-terminal or automation — no browser session required.
+terminal or automation - no browser session required.
 
 ## Authentication
 
@@ -16,7 +16,7 @@ npx wrangler deploy   # API_TOKEN takes effect on the next deploy
 When `API_TOKEN` is set, any request with `Authorization: Bearer <API_TOKEN>` is
 treated as the admin. Because a Bearer header is not sent ambiently by browsers,
 there is **no CSRF surface**, so the CLI path intentionally skips the cookie/CSRF
-checks the browser uses. The token grants full admin API access — treat it like a
+checks the browser uses. The token grants full admin API access - treat it like a
 password, keep it out of version control, and rotate it by changing the secret.
 
 ## Configuration
@@ -46,7 +46,7 @@ node scripts/op.mjs monitors create \
 # always-on (24/7) schedule
 node scripts/op.mjs monitors create --name "My App" --url "https://..." --schedule always
 
-# update an existing monitor (full replace — re-pass name + url)
+# update an existing monitor (full replace - re-pass name + url)
 node scripts/op.mjs monitors update <id> --name "My App" --url "https://..." \
   --schedule business --tz "America/Los_Angeles"
 

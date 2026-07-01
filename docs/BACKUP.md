@@ -2,10 +2,10 @@
 
 OpenPing gives you two complementary ways to back up your install:
 
-1. **In-app export/import** — a portable, secret-free JSON backup of your
+1. **In-app export/import** - a portable, secret-free JSON backup of your
    configuration and public history. Best for migrating, sharing, or restoring
    monitors.
-2. **Full D1 dump** — a complete database snapshot via Wrangler. Best for a
+2. **Full D1 dump** - a complete database snapshot via Wrangler. Best for a
    true disaster-recovery copy of everything.
 
 ## 1. In-app export (recommended)
@@ -39,6 +39,13 @@ This is by design. The exporter redacts everything sensitive:
 Because secrets aren't in the backup, you'll re-enter monitor credentials and
 re-set Worker secrets after a restore.
 
+> **Caveat: categories and status-page definitions are not exported.** A
+> monitor's `categoryId` is included, but the **category records** and
+> **status-page definitions** themselves are not - so restoring into a fresh
+> instance can leave monitors pointing at category ids that don't exist there
+> (dangling references). Recreate your categories and status pages manually after
+> a restore, then reassign monitors as needed.
+
 ## Restore / import
 
 Import is **validation-first and preview-able**, and defaults to **not**
@@ -51,8 +58,8 @@ CSRF is enforced like other mutations). Body shape:
 {
   "data": { /* the exported backup object */ },
   "options": {
-    "dryRun": true,        // preview only — reports counts + name collisions
-    "skipExisting": true   // default true — skip monitors whose name exists
+    "dryRun": true,        // preview only - reports counts + name collisions
+    "skipExisting": true   // default true - skip monitors whose name exists
   }
 }
 ```
@@ -68,14 +75,14 @@ How it behaves:
   (`skipExisting` defaults to true), so a restore can't silently overwrite live
   config. Set `skipExisting: false` only if you intend to add duplicates.
 - **Secrets are never imported** (they aren't in the backup), and **settings are
-  intentionally not imported** in v1 — re-apply settings/secrets manually.
+  intentionally not imported** in v1 - re-apply settings/secrets manually.
 
 Tip: always run a `dryRun` first to see what will change.
 
 ## 2. Full database dump (disaster recovery)
 
-For a complete snapshot — including secrets stored encrypted in D1, sessions,
-samples, and summaries — use Wrangler's D1 export:
+For a complete snapshot - including secrets stored encrypted in D1, sessions,
+samples, and summaries - use Wrangler's D1 export:
 
 ```bash
 # Dump the remote database to SQL
@@ -84,7 +91,7 @@ npx wrangler d1 export open-ping --remote --output openping-d1-backup.sql
 
 This produces a SQL file you can keep as an offline backup or use to recreate
 the database. Note that encrypted values in this dump can only be decrypted with
-the original `MASTER_KEY`, so back that key up separately and securely — without
+the original `MASTER_KEY`, so back that key up separately and securely - without
 it, encrypted config is unrecoverable.
 
 ## What to back up, and how often

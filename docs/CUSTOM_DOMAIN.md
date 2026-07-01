@@ -45,12 +45,12 @@ Developer settings → OAuth Apps → your app**:
 - **Homepage URL:** `https://status.example.com`
 - **Authorization callback URL:** `https://status.example.com/auth/github/callback`
 
-(The `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` don't change — only the URLs.)
+(The `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` don't change - only the URLs.)
 
 ## 4. Verify
 
 - Open `https://status.example.com` and confirm the app loads over HTTPS.
-- Sign in with GitHub — if you get "invalid callback" or a redirect-URI error,
+- Sign in with GitHub - if you get "invalid callback" or a redirect-URI error,
   the callback URL in step 3 doesn't exactly match `APP_URL` + `/auth/github/
   callback`.
 - If you use Web Push, re-subscribe from your device so the subscription is tied

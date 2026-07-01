@@ -21,8 +21,8 @@ OpenPing checks monitors from a **Cron Trigger that fires every 12 minutes**
   Triggers → Cron Triggers**.
 - Check **Diagnostics** / `scheduler_runs` for recent runs and errors. No rows
   at all usually means the trigger isn't firing or the deploy didn't include it.
-- Make sure the monitor is **enabled and not paused**, and that — for
-  schedule-aware monitors — the current time is within its operating schedule.
+- Make sure the monitor is **enabled and not paused**, and that - for
+  schedule-aware monitors - the current time is within its operating schedule.
   Outside scheduled hours a monitor shows `Scheduled off`, which is expected,
   not a failure.
 - Remember the cadence: with a 12-minute cron, a monitor is checked at most once
@@ -50,7 +50,7 @@ OpenPing checks monitors from a **Cron Trigger that fires every 12 minutes**
 - The browser/device must have **granted notification permission** and the PWA
   must be subscribed (a `push_subscriptions` row exists).
 - **Real-device caveat:** background Web Push is unreliable in some
-  environments — notably iOS requires the PWA to be **installed to the home
+  environments - notably iOS requires the PWA to be **installed to the home
   screen**, and desktop/emulator behavior can differ from a real phone. Test on
   the actual device you care about.
 - Subscriptions that repeatedly fail are auto-disabled (`disabled` flag /
@@ -80,7 +80,7 @@ you're using:
 - Local dev: `npm run db:migrate:local`
 
 Also confirm the `database_id` in `wrangler.jsonc` matches the database you
-created with `npm run db:create` — pointing at the wrong (empty) database
+created with `npm run db:create` - pointing at the wrong (empty) database
 produces the same symptoms.
 
 ## A monitor reports `blocked_url`
@@ -98,8 +98,8 @@ URL. (These targets fail permanently and are not retried, by design.)
 The first-run wizard requires:
 
 - **At least one admin identity** configured (`ADMIN_GITHUB_LOGIN` or
-  `ADMIN_EMAIL`) — otherwise you'll see `no_admin_configured`.
-- A **timezone** chosen — otherwise `timezone_required`.
+  `ADMIN_EMAIL`) - otherwise you'll see `no_admin_configured`.
+- A **timezone** chosen - otherwise `timezone_required`.
 
 Once setup is complete it **locks**: the setup API returns `setup_locked` for
 unauthenticated writes, and further changes require signing in as the admin.

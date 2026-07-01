@@ -6,7 +6,7 @@ external site with a single `<iframe>`. It shows the overall banner
 plus a per-service list with status pills.
 
 The widget renders **only** the already-public, redacted data served by
-`GET /api/public/status` — the exact same payload the public status page uses. It
+`GET /api/public/status` - the exact same payload the public status page uses. It
 never exposes monitor URLs, request bodies, auth/credentials, headers, heartbeat
 tokens, or internal error messages, and it honours the **status page enabled**
 kill switch (when the status page is off, the widget shows
@@ -30,7 +30,7 @@ domain):
 ></iframe>
 ```
 
-That's it — the card polls for fresh data every ~60s on its own.
+That's it - the card polls for fresh data every ~60s on its own.
 
 ---
 
@@ -41,6 +41,20 @@ All options are query-string parameters on the `/embed` URL.
 | Param   | Values            | Default | Description                                              |
 | ------- | ----------------- | ------- | -------------------------------------------------------- |
 | `theme` | `dark` \| `light` | `dark`  | Color scheme. The card background is transparent so it blends into the host page; only the inner cards are tinted by the theme. |
+| `slug`  | a status-page slug | default page | Scopes the widget to a specific per-category status page. Omit it (the default) to show the default page. The slug is the same one that appears in that page's public URL `/status/<slug>` (see [`STATUS_PAGES.md`](./STATUS_PAGES.md)). The "View status" link at the bottom of the widget deep-links to the matching public page. An unknown slug renders "Status unavailable." |
+
+For example, to embed a widget scoped to the status page with slug `api`:
+
+```html
+<iframe
+  src="https://openping.n8builds.dev/embed?theme=dark&slug=api"
+  title="API status"
+  width="100%"
+  height="320"
+  style="border:0;max-width:480px;color-scheme:normal"
+  loading="lazy"
+></iframe>
+```
 
 ### Sizing
 
@@ -94,7 +108,7 @@ Add origins space-separated, for example:
 const ALLOWED_FRAME_ANCESTORS = "https://*.n8builds.dev https://example.com";
 ```
 
-then redeploy (`npm run deploy`). This is scoped to `/embed` only — all other
+then redeploy (`npm run deploy`). This is scoped to `/embed` only - all other
 routes keep `X-Frame-Options` and `frame-ancestors 'none'`.
 
 > Note: this only changes framing for `/embed`. The override drops
@@ -106,7 +120,7 @@ routes keep `X-Frame-Options` and `frame-ancestors 'none'`.
 ## Bonus: SVG status badge
 
 For a tiny shields.io-style badge (great for READMEs / dashboards), use a plain
-`<img>` — no framing changes needed, since images aren't subject to
+`<img>` - no framing changes needed, since images aren't subject to
 `frame-ancestors`:
 
 ```html
@@ -121,4 +135,16 @@ Markdown:
 
 The badge shows only the aggregate status (`operational`, `degraded`,
 `partial outage`, `major outage`, `maintenance`, `no services`) and respects the
-status-page kill switch. Optional `?label=uptime` overrides the left-hand label.
+status-page kill switch.
+
+Two optional query parameters:
+
+- `?label=uptime` overrides the left-hand label (defaults to `status`).
+- `?slug=<slug>` scopes the badge to a specific per-category status page, exactly
+  like the widget's `slug` param above. Omit it for the default page. A disabled
+  page, or a slug that matches no page, renders a neutral `unknown` badge rather
+  than breaking the `<img>`.
+
+```md
+![API status](https://openping.n8builds.dev/api/public/badge.svg?slug=api&label=API)
+```

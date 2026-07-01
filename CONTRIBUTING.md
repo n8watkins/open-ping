@@ -2,7 +2,7 @@
 
 Thanks for your interest in improving OpenPing! It's an open-source,
 self-hosted uptime monitor that runs entirely inside your own Cloudflare
-account (Worker + D1 + a static SPA). Contributions of all sizes are welcome —
+account (Worker + D1 + a static SPA). Contributions of all sizes are welcome -
 bug reports, docs, tests, and features.
 
 ## Ways to contribute
@@ -66,7 +66,7 @@ Guidelines:
 - **Keep changes focused.** One logical change per PR where possible.
 - **Add or update tests** for behavior changes. The codebase favors small pure
   functions (e.g. SSRF checks, import validation, export redaction) so they can
-  be unit-tested without a live D1 binding — follow that pattern.
+  be unit-tested without a live D1 binding - follow that pattern.
 - **Database changes are additive migrations.** Add a new numbered file in
   `migrations/` (e.g. `0002_*.sql`); never edit an applied migration. Migrations
   are tracked by Wrangler, so existing installs upgrade cleanly with
@@ -80,7 +80,7 @@ Guidelines:
 ## Security
 
 OpenPing handles credentials (OAuth secrets, encrypted monitor auth, push
-keys). If you find a security issue, please **do not** open a public issue —
+keys). If you find a security issue, please **do not** open a public issue -
 report it privately to the maintainers first. Note that the outbound HTTP
 checker intentionally blocks loopback/private/metadata targets (SSRF guard);
 that behavior is by design, not a bug.

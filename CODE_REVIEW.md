@@ -1,4 +1,4 @@
-# OpenPing — Code Review
+# OpenPing - Code Review
 
 Consolidated review record for OpenPing (Cloudflare Worker + D1 + React status-page
 app). This is the single source of truth for review findings; it supersedes the
@@ -15,7 +15,7 @@ earlier `SECURITY_REVIEW.md` (Pass 1, folded into the appendix below).
 
 ---
 
-## Pass 2 (2026-06-29) — second detailed review
+## Pass 2 (2026-06-29) - second detailed review
 
 A fresh detailed pass after Pass 1. Eight reviewer agents each owned a disjoint
 slice of the codebase (crypto/SSRF, authn/authz, DB, monitoring engine,
@@ -26,28 +26,28 @@ over **disjoint file sets** (so parallel edits could not collide), followed by o
 central verification pass (typecheck + full test suite + build).
 
 **Headline:** the most impactful cluster was the interaction between **heartbeat
-monitors, schedule-aware gating, and migration `0002`** — three independent
+monitors, schedule-aware gating, and migration `0002`** - three independent
 reviewers converged there. Pass 1 hardened the *pure* schedule functions; Pass 2
 found that the heartbeat ↔ schedule *seams* still broke the defining
 "scheduled-off must not count against uptime" invariant, and that `0002` shipped a
-column with no backfill. None of these require an attacker — they degrade core
+column with no backfill. None of these require an attacker - they degrade core
 alerting accuracy for ordinary users.
 
-### High (4) — all fixed
+### High (4) - all fixed
 
-#### H1 — Migration `0002` added `last_beat_at` with no backfill → false DOWN storm on upgrade
+#### H1 - Migration `0002` added `last_beat_at` with no backfill → false DOWN storm on upgrade
 `migrations/0002_review_fixes.sql` adds `monitor_state.last_beat_at` but never
 backfills it, so existing rows are `NULL`. The scheduler bases the heartbeat
 deadline on `last_beat_at ?? createdAt` (`scheduler.ts`); with `NULL` it falls back
 to the (old) `createdAt`, making every heartbeat monitor instantly "overdue" on the
-first post-upgrade cron — and the freshness guard in `markHeartbeatMissed` is
+first post-upgrade cron - and the freshness guard in `markHeartbeatMissed` is
 *bypassed* precisely because `last_beat_at` is `NULL`. Result: every healthy
 heartbeat monitor flips DOWN, opens a spurious incident, dents uptime, and pages
 the operator.
-**Fix:** new migration `migrations/0003_heartbeat_backfill.sql` —
+**Fix:** new migration `migrations/0003_heartbeat_backfill.sql` -
 `UPDATE monitor_state SET last_beat_at = COALESCE(last_success_at, last_checked_at) WHERE last_beat_at IS NULL;`
 
-#### H2 — Heartbeat missed-deadline ignored the schedule → false DOWN on every window reopen
+#### H2 - Heartbeat missed-deadline ignored the schedule → false DOWN on every window reopen
 `scheduler.ts` / `checks/state.ts`. After a `scheduled_off` period, the deadline
 base was the pre-off `last_beat_at` (hours/days old), so the *first in-window tick*
 after (e.g.) a weekend was instantly overdue → spurious incident + alert before the
@@ -57,20 +57,20 @@ job could send its first beat. Recurred on every reopen.
 deadline base to `now`, state → `warming_up`). Genuine misses are still caught on
 subsequent ticks.
 
-#### H3 — Heartbeat *ingestion* was not schedule-aware → off-hours beats counted against uptime
+#### H3 - Heartbeat *ingestion* was not schedule-aware → off-hours beats counted against uptime
 `routes/heartbeats.ts` / `checks/state.ts`. The public `/hb/:token` path checked
 maintenance but never the schedule, so an off-hours beat opened incidents, fired
-alerts, and wrote `down_seconds` / `monitored_seconds` — violating the
+alerts, and wrote `down_seconds` / `monitored_seconds` - violating the
 scheduled-off invariant for the entire heartbeat monitor type.
 **Fix:** `recordHeartbeat` now takes `opts.scheduledOff`; the route computes
 `!isActiveAt(monitor.schedule, …)` and, when off-schedule, records the beat as
 `scheduled_off` with no incident/notification/rollup side effects (mirroring
 `setScheduledOff`) while still advancing `last_beat_at`.
 
-#### H4 — Setup write-lock keyed on `setup_complete`, not on an existing admin → bootstrap-window admin injection
+#### H4 - Setup write-lock keyed on `setup_complete`, not on an existing admin → bootstrap-window admin injection
 `routes/setup.ts`. `guardWrite` rejected anonymous writes only when setup was
 *complete*, so during the pre-completion window any anonymous caller could
-`POST /api/setup/save` an `adminEmail`, `/complete`, then log in — even on a
+`POST /api/setup/save` an `adminEmail`, `/complete`, then log in - even on a
 deployment that had pre-seeded an env admin (per-key precedence left the *email*
 identity unset). The intended guard, `hasAdminConfigured()`, was defined but never
 called.
@@ -79,68 +79,68 @@ called.
 instance still bootstraps anonymously; the first write that establishes an admin
 still succeeds; every subsequent mutation requires a session.
 
-### Medium (~13) — all fixed
+### Medium (~13) - all fixed
 
-- **`resolveIncident` was not idempotent** (`db/incidents.ts`) — no `status='open'`
+- **`resolveIncident` was not idempotent** (`db/incidents.ts`) - no `status='open'`
   guard; a double/raced resolve (reachable from the unlocked heartbeat route)
   re-stamped `resolved_at`, inflated `duration_seconds`, and inserted a second
   "recovered" timeline event. **Fix:** `… WHERE id=? AND status='open'`; the
   recovered-event INSERT runs only when `meta.changes === 1`. (Pass 1 hardened the
   symmetric *open* path with a unique index but left *resolve* unguarded.)
-- **Web Push endpoint not SSRF-validated** (`notifications/push/webpush.ts`) — the
+- **Web Push endpoint not SSRF-validated** (`notifications/push/webpush.ts`) - the
   push path lacked the `assertSafeUrl` guard channels got in Pass 1, and the test
   route reflected ~200 B of the target response. **Fix:** validate
   `subscription.endpoint` before fetch (covers test + outbox); invalid/blocked →
   pruned, not retried.
-- **Cross-origin redirect forwarded the request body** (`checks/http.ts`) — headers
+- **Cross-origin redirect forwarded the request body** (`checks/http.ts`) - headers
   were stripped on a cross-origin hop but a 307/308 still re-sent the body (which
   may carry a secret) to the server-chosen target. **Fix:** drop the body on any
   cross-origin hop too.
-- **No per-run batch cap** (`scheduler.ts`) — unbounded due-monitor fan-out could
+- **No per-run batch cap** (`scheduler.ts`) - unbounded due-monitor fan-out could
   exhaust the Worker subrequest/CPU budget (→ mass false `network_error`) and run
   past the 12-min cadence / 5-min lease (→ overlapping crons double-count).
   **Fix:** order by `next_check_at`, cap at `MAX_CHECKS_PER_RUN=200`, `log` deferred
   work (no silent cap).
-- **One monitor's DB error aborted the whole cycle** (`scheduler.ts`) — the
+- **One monitor's DB error aborted the whole cycle** (`scheduler.ts`) - the
   `setScheduledOff`/`setMaintenanceState` skip-paths had no try/catch. **Fix:**
   per-monitor try/catch, matching the HTTP/heartbeat branches.
-- **`url` schema accepted `javascript:`/`data:`/`file:`** (`shared/schemas.ts`) —
+- **`url` schema accepted `javascript:`/`data:`/`file:`** (`shared/schemas.ts`) -
   `z.string().url()` passes them, and the value is rendered as a clickable admin
   link. **Fix:** `.max(2048)` + http(s)-scheme refine.
 - **Public status-page URLs unvalidated** (`routes/settings.ts` +
-  `client/pages/PublicStatus.tsx`, `MonitorDetail.tsx`) — `status_page_homepage` /
+  `client/pages/PublicStatus.tsx`, `MonitorDetail.tsx`) - `status_page_homepage` /
   `status_page_logo` had no server validator and were rendered as `href`/`src` on
   the *public* page. **Fix:** server validators mirroring `app_url`, plus a client
-  `safeHttpUrl()` guard that only emits http(s) `href`/`src` (defense-in-depth — see
+  `safeHttpUrl()` guard that only emits http(s) `href`/`src` (defense-in-depth - see
   note vs Pass 1 below).
-- **Missing length/array bounds across schemas** (`shared/schemas.ts`) — a 2 MB
+- **Missing length/array bounds across schemas** (`shared/schemas.ts`) - a 2 MB
   `url` validated; arrays were uncapped. **Fix:** `.max()` on body (64 KB), header
   value (8 KB), public name/description/group (256), etc.; `.max()` counts on
   headers/assertions/weekdays/days/periods/excludedDates/channels; `weekdays.min(1)`
   (a no-weekday schedule silently never ran); `excludedDates` regex-validated.
 - **No outbound timeouts on notifications** (`channels/discord|resend|webhook`,
-  `push/webpush`) — one hung endpoint stalled the sequential outbox drain and the
+  `push/webpush`) - one hung endpoint stalled the sequential outbox drain and the
   post-drain rollup/weekly/cleanup. **Fix:** `signal: AbortSignal.timeout(10000)` on
   all four.
 - **Web Push bypassed per-monitor channel restriction** (`notifications/enqueue.ts`)
-  — a monitor scoped to one channel still pushed to every device. **Fix:** push is
+  - a monitor scoped to one channel still pushed to every device. **Fix:** push is
   suppressed under a restriction unless opted in via a `"push"` sentinel in
   `notify.channels`.
-- **No coalescing → flapping notification storm** (`notifications/enqueue.ts`) — a
+- **No coalescing → flapping notification storm** (`notifications/enqueue.ts`) - a
   flapping monitor emitted one alert per incident (dozens/hour). **Fix:** per-monitor
   per-event-type cooldown (1 h, mirrors `FLAP_WINDOW`) checked against the outbox;
   fails *open*; never suppresses `recovered`.
-- **Unbounded heartbeat payload** (`routes/heartbeats.ts`) — the one public write
+- **Unbounded heartbeat payload** (`routes/heartbeats.ts`) - the one public write
   path persisted uncapped `message`/`metrics` into `samples.meta`, so a leaked token
   could bloat storage / exhaust the D1 write budget. **Fix:** cap `message` (1000),
-  `runId` (200), `metrics` (50 keys). *(Per-token rate-limiting deferred — see
+  `runId` (200), `metrics` (50 keys). *(Per-token rate-limiting deferred - see
   below.)*
 - **Encryption silently failed open when `MASTER_KEY` unset** (`lib/secret-config.ts`)
-  — all secrets stored plaintext with no signal. **Fix:** a one-time `console.warn`
-  when a real secret is persisted without a key (kept best-effort — does not throw,
+  - all secrets stored plaintext with no signal. **Fix:** a one-time `console.warn`
+  when a real secret is persisted without a key (kept best-effort - does not throw,
   so no-key deploys still run).
 
-### Low (~24) — fixed
+### Low (~24) - fixed
 
 Monitoring/schedule: excluded-overnight divergence between `isActiveAt` and
 `nextActivePeriod` + clamp `setScheduledOff` `nextAt` to `max(start, now)`
@@ -174,7 +174,7 @@ unmount/stale guard (`lib/useFetch.ts`); Maintenance badges tick with wall-clock
 time (`pages/Maintenance.tsx`); accent input validates/normalizes with the server's
 hex pattern (`pages/StatusPageSettings.tsx`).
 
-### Deferred items — now resolved (follow-up pass)
+### Deferred items - now resolved (follow-up pass)
 
 All 11 Pass-2 deferrals were subsequently fixed in a sequence of focused, verified
 commits (each `tsc -b` + tests green; migrations validated on SQLite via the full
@@ -187,7 +187,7 @@ commits (each `tsc -b` + tests green; migrations validated on SQLite via the ful
 | Recurring windows in public "upcoming" (`db/maintenance.ts`) | Added `nextRecurringOccurrence()`; recurring windows are projected to their next occurrence (within the validity range) and shown in `upcoming`. +5 tests. |
 | `deleteMonitor` outbox purge (`db/monitors.ts`) | Migration `0004` adds `notification_outbox.monitor_id` (+ index); enqueue stamps it, deleteMonitor purges it, and flap-coalescing now matches the indexed column. |
 | OAuth `state` browser-binding (`routes/auth.ts`) | Bound to an HttpOnly cookie set at `/start` and verified (constant-time) on callback (double-submit). |
-| Session revocation beyond self-logout (`lib/sessions.ts`) | Added `revokeAllSessions()` + `POST /api/auth/logout-all`. *Scope:* the capability/endpoint exists; no client account-menu UI was wired (none exists today — a separate follow-up). |
+| Session revocation beyond self-logout (`lib/sessions.ts`) | Added `revokeAllSessions()` + `POST /api/auth/logout-all`. *Scope:* the capability/endpoint exists; no client account-menu UI was wired (none exists today - a separate follow-up). |
 | `noUncheckedIndexedAccess` | Enabled in all 3 tsconfig projects; fixed all 27 resulting errors (regex groups, loop indices, `SORT_COLUMNS as const`, count defaults, a `STEPS[step]` crash guard). |
 | `CHECK` constraints on enum columns | Migration `0005` adds `BEFORE INSERT/UPDATE` triggers enforcing `incidents.status ∈ {open,resolved}` (no risky table rebuild). *Scope:* only the index-backing `status` column; other enums are left to the TS types. |
 | Placeholder `database_id` (`wrangler.jsonc`) | Replaced the zero-UUID with `REPLACE_WITH_YOUR_D1_DATABASE_ID` + comment so a missed step fails loudly; verified the build still loads (id is remote-only). |
@@ -198,19 +198,19 @@ commits (each `tsc -b` + tests green; migrations validated on SQLite via the ful
 
 Pass 1 explicitly *rejected* two items as "by design under the single-admin model."
 Pass 2 added **defense-in-depth** for both (cheap, and they align the schema/render
-boundary with what the code already assumes) — not a reversal, a hardening:
+boundary with what the code already assumes) - not a reversal, a hardening:
 
-- **Public-page `homepage`/`logo` URL** — Pass 1: only the trusted admin can set it.
+- **Public-page `homepage`/`logo` URL** - Pass 1: only the trusted admin can set it.
   Pass 2: added http(s) scheme validation (server + client) so a `javascript:` value
   can never reach a public-page `href`/`src`, consistent with the `app_url` validator
   Pass 1 itself added for the email path.
-- **Magic-link base URL from request `Host`** — Pass 1: the Workers model fixes the
+- **Magic-link base URL from request `Host`** - Pass 1: the Workers model fixes the
   origin. Pass 2: require `app_url` at setup completion so the security-sensitive
   sign-in link never depends on the request `Host`.
 
 ---
 
-## Appendix — Pass 1 (2026-06-29) summary
+## Appendix - Pass 1 (2026-06-29) summary
 
 Full security + coding review via 9 parallel reviewer agents + an adversarial
 verifier; 24 raw → 21 confirmed (0 Critical, 0 High, 7 Medium, 12 Low, 2 Info),
@@ -232,6 +232,6 @@ escaped · weekly-summary defaults unreachable · `scheduler_runs` grew unbounde
 heartbeat-ingestion vs scheduler race.
 **Info:** unbounded incident-annotation fields · heartbeat secret input not masked.
 
-(Several Pass 2 findings are the *seams left by* Pass 1 fixes — e.g. the `0002`
+(Several Pass 2 findings are the *seams left by* Pass 1 fixes - e.g. the `0002`
 column without a backfill, and the open-incident hardening that covered `open` but
 not `resolve`.)
