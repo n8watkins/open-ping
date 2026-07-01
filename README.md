@@ -18,6 +18,9 @@ does not reduce uptime.
 
 - HTTP/API monitoring with keyword & JSON assertions
 - Heartbeat / cron-job monitoring
+- DNS record monitoring (A/AAAA/CNAME/MX/TXT) with optional value assertions
+- TCP port monitoring (connection-accepted checks)
+- Domain-expiry monitoring (RDAP) with an early-warning window
 - Timezone-aware operating schedules with warm-up handling
 - Distinct **Suspended** status for hosts that signal suspension (e.g. Render free-tier)
 - Incidents with automatic recovery, flapping protection, MTBF/MTTR
@@ -69,6 +72,7 @@ secret, custom domains, and a verify-it's-working checklist.
 ## Documentation
 
 - [Install](./docs/INSTALL.md) — from clone to a deployed install (plus a local-dev quickstart)
+- [Monitor types](./docs/MONITOR_TYPES.md) — every check type, its config, and what the runtime can't do
 - [CLI](./docs/CLI.md) — manage an instance from a terminal/automation via an API token
 - [Upgrade](./docs/UPGRADE.md) — pull, migrate, redeploy
 - [Backup & restore](./docs/BACKUP.md) — JSON export/import and full D1 dumps

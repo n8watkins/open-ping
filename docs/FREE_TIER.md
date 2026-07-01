@@ -16,6 +16,16 @@ OpenPing's footprint has three parts:
    roughly **360 outbound checks per day** (≈ `120 runs × 3`). More monitors, or
    shorter intervals, scale this up proportionally — but schedule-aware monitors
    are only checked during their operating hours, which reduces it.
+
+   The newer check types behave the same way, just with a different transport:
+   **DNS** and **domain-expiry** checks are ordinary outbound `fetch`
+   subrequests (to Cloudflare's DNS-over-HTTPS resolver and to RDAP,
+   respectively), and **TCP** checks open a `connect()` socket instead of a
+   `fetch`. Each still counts as roughly one check, and the scheduler caps every
+   run at **200 checks** (most-overdue first; any excess defers to the next
+   tick), so no single run can fan out unboundedly. In other words, the new
+   types add work in the same proportional, bounded way as HTTP monitors and
+   still fit comfortably in the free tier.
 3. **D1 reads/writes.** Each run does light database work: reading which monitors
    are due and their state, then writing samples, state updates, interval/summary
    rollups, and any queued notifications. This is small and roughly proportional
