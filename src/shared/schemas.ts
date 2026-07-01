@@ -297,8 +297,10 @@ export const categorySchema = z.object({
 export type CategoryInput = z.infer<typeof categorySchema>;
 
 // --- Status pages (multiple, per-category public pages) ---
-// Slugs that would collide with top-level routes / the default page.
-const RESERVED_PAGE_SLUGS = ["default", "embed", "api", "tools", "login", "setup"];
+// Slugs to keep clear of app routes. NOT "default": the seeded default page
+// legitimately owns that slug, and the UNIQUE(slug) index already blocks any new
+// page from taking it - reserving it here would make the default page uneditable.
+const RESERVED_PAGE_SLUGS = ["embed", "api", "tools", "login", "setup"];
 const hexColor = z
   .string()
   .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "must be a 3- or 6-digit hex color");
