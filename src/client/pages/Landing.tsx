@@ -47,8 +47,7 @@ import { useCountUp, useReveal } from "../components/landing/useReveal";
 const GITHUB_URL = "https://github.com/n8watkins/open-ping";
 const GITHUB_ISSUES_URL = "https://github.com/n8watkins/open-ping/issues";
 const N8BUILDS_URL = "https://n8builds.dev";
-// TODO: swap in the real Ko-fi URL — the Support CTAs auto-appear once it's set.
-const KOFI_URL = "https://ko-fi.com/REPLACE_ME";
+const KOFI_URL = "https://ko-fi.com/n8watkins";
 const KOFI_ENABLED = !KOFI_URL.includes("REPLACE_ME");
 
 /* ------------------------------------------------------------------ *
