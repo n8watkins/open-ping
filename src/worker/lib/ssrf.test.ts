@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   assertSafeUrl,
+  assertSafeHost,
   isIPv4,
   isBlockedIPv4,
   isBlockedIPv6,
@@ -70,6 +71,49 @@ describe("assertSafeUrl", () => {
     expect(reasonOf("http://169.254.169.254")).toBe("metadata_host");
     expect(reasonOf("http://10.1.2.3")).toBe("private_ipv4");
     expect(reasonOf("http://[::1]")).toBe("private_ipv6");
+  });
+});
+
+describe("assertSafeHost", () => {
+  const reasonOf = (h: string): string | undefined => {
+    const r = assertSafeHost(h);
+    return r.ok ? undefined : r.reason;
+  };
+
+  it("blocks loopback / .local / .localhost names", () => {
+    expect(reasonOf("localhost")).toBe("loopback_host");
+    expect(reasonOf("printer.local")).toBe("loopback_host");
+    expect(reasonOf("api.localhost")).toBe("loopback_host");
+  });
+
+  it("blocks cloud-metadata endpoints", () => {
+    expect(reasonOf("metadata.google.internal")).toBe("metadata_host");
+    expect(reasonOf("169.254.169.254")).toBe("metadata_host");
+  });
+
+  it("blocks private/loopback IPv4 literals", () => {
+    expect(reasonOf("10.0.0.1")).toBe("private_ipv4");
+    expect(reasonOf("127.0.0.1")).toBe("private_ipv4");
+    expect(reasonOf("192.168.1.1")).toBe("private_ipv4");
+  });
+
+  it("blocks private IPv6 literals, bracketed or bare", () => {
+    expect(reasonOf("[::1]")).toBe("private_ipv6");
+    expect(reasonOf("::1")).toBe("private_ipv6");
+    expect(reasonOf("fc00::1")).toBe("private_ipv6");
+    expect(reasonOf("[fe80::1]")).toBe("private_ipv6");
+  });
+
+  it("rejects an empty host", () => {
+    expect(reasonOf("")).toBe("invalid_host");
+    expect(reasonOf("   ")).toBe("invalid_host");
+  });
+
+  it("allows public hostnames and IP literals", () => {
+    expect(assertSafeHost("example.com").ok).toBe(true);
+    expect(assertSafeHost("api.github.com").ok).toBe(true);
+    expect(assertSafeHost("1.1.1.1").ok).toBe(true);
+    expect(assertSafeHost("[2606:4700:4700::1111]").ok).toBe(true);
   });
 });
 

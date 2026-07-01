@@ -24,10 +24,11 @@ import { cleanupExpiredSessions, cleanupExpiredAuthTokens } from "./lib/sessions
 const LEASE_NAME = "scheduler";
 const LEASE_TTL_MS = 5 * 60 * 1000; // shorter than the 12-min cadence
 const CONCURRENCY = 6;
-// Upper bound on HTTP checks run in a single cron tick. At CONCURRENCY=6 an
-// unbounded backlog could blow the Worker subrequest/CPU budget and run past the
-// 12-min cadence / 5-min lease (→ overlapping crons double-counting). Excess due
-// monitors (oldest next_check_at first) are deferred to the next tick.
+// Upper bound on polled checks (http/dns/tcp/domain) run in a single cron tick.
+// At CONCURRENCY=6 an unbounded backlog could blow the Worker subrequest/CPU
+// budget and run past the 12-min cadence / 5-min lease (→ overlapping crons
+// double-counting). Excess due monitors (oldest next_check_at first) are
+// deferred to the next tick.
 const MAX_CHECKS_PER_RUN = 200;
 // Half the 12-min cadence: a monitor whose next check lands within this window
 // is run now rather than slipping to the following tick (which would otherwise
@@ -60,8 +61,9 @@ async function mapLimit<T>(
 
 /**
  * Every-12-minute check cycle (PRD §9). Acquires an execution lease, evaluates
- * each enabled monitor against its schedule, runs due HTTP checks concurrently
- * (with warm-up + retries via the runner), detects missed heartbeats, applies
+ * each enabled monitor against its schedule, runs due polled checks
+ * (http/dns/tcp/domain) concurrently (with warm-up + retries via the runner),
+ * detects missed heartbeats, applies
  * the incident lifecycle, flushes queued notifications, runs history rollups +
  * retention/cleanup, and records run diagnostics.
  */
@@ -99,7 +101,7 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
       windows.filter((w) => w.scope === "monitors").flatMap((w) => w.monitorIds ?? []),
     );
 
-    const dueHttp: MonitorRecord[] = [];
+    const duePolled: MonitorRecord[] = [];
 
     for (const m of monitors) {
       if (!m.enabled || m.paused) {
@@ -171,12 +173,13 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
         continue;
       }
 
-      // HTTP monitor: due if next_check_at lands within this cycle (+slack).
+      // Polled monitor (http/dns/tcp/domain): due if next_check_at lands within
+      // this cycle (+slack).
       if ((st?.next_check_at ?? 0) > now + DUE_SLACK_MS) {
         skipped++;
         continue;
       }
-      dueHttp.push(m);
+      duePolled.push(m);
     }
 
     // Run the most-overdue monitors first (oldest next_check_at), then cap the
@@ -184,17 +187,17 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
     // subrequest/CPU budget and overrun the 12-min cadence / 5-min lease. The
     // remainder carries over to the next tick, where its already-past
     // next_check_at keeps it due — logged, never silently dropped.
-    dueHttp.sort(
+    duePolled.sort(
       (a, b) =>
         (states.get(a.id)?.next_check_at ?? 0) - (states.get(b.id)?.next_check_at ?? 0),
     );
-    let toCheck = dueHttp;
-    if (dueHttp.length > MAX_CHECKS_PER_RUN) {
-      const deferred = dueHttp.length - MAX_CHECKS_PER_RUN;
-      toCheck = dueHttp.slice(0, MAX_CHECKS_PER_RUN);
+    let toCheck = duePolled;
+    if (duePolled.length > MAX_CHECKS_PER_RUN) {
+      const deferred = duePolled.length - MAX_CHECKS_PER_RUN;
+      toCheck = duePolled.slice(0, MAX_CHECKS_PER_RUN);
       skipped += deferred;
       console.log(
-        `[scheduler] ${dueHttp.length} HTTP checks due; running ${MAX_CHECKS_PER_RUN}, deferring ${deferred} to the next tick`,
+        `[scheduler] ${duePolled.length} polled checks due; running ${MAX_CHECKS_PER_RUN}, deferring ${deferred} to the next tick`,
       );
     }
 

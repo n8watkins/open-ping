@@ -1,4 +1,5 @@
 import type { HttpConfig } from "../../shared/schemas";
+import type { ProbeResult } from "./types";
 import { b64encode } from "../lib/crypto";
 import { assertSafeUrl } from "../lib/ssrf";
 
@@ -45,17 +46,8 @@ const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 /** Maximum redirect hops followed before giving up. */
 const MAX_REDIRECTS = 5;
 
-export interface HttpCheckResult {
-  ok: boolean;
+export interface HttpCheckResult extends ProbeResult {
   statusCode?: number;
-  durationMs: number;
-  /** Short machine code: "timeout", "status_out_of_range", "response_too_slow",
-   * "network_error", "tls_error", "dns_error". */
-  error?: string;
-  /** Human-readable detail (safe — never contains secrets). */
-  errorMessage?: string;
-  /** True when slower than degradedResponseMs but still ok. */
-  degraded?: boolean;
   /** True when the response matches the Render "Service Suspended" signature. */
   suspended?: boolean;
   /** Response text, capped at MAX_BODY_CHARS. */

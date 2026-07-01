@@ -1,33 +1,46 @@
 import type { Env } from "../types";
 import { newId, randomToken } from "../lib/ids";
 import { encryptConfig, decryptConfig, mergeSecrets } from "../lib/secret-config";
+import { MONITOR_TYPES, type MonitorType } from "../../shared/states";
 import type {
   Assertion,
   CreateMonitorInput,
+  DnsConfig,
+  DomainConfig,
   HeartbeatConfig,
   HttpConfig,
   NotifyPrefs,
   PublicConfig,
   Schedule,
+  TcpConfig,
 } from "../../shared/schemas";
+
+/** Config shapes across every monitor type, stored as JSON in the `config` column. */
+type MonitorConfig =
+  | HttpConfig
+  | HeartbeatConfig
+  | DnsConfig
+  | TcpConfig
+  | DomainConfig;
 
 /**
  * Monitor CRUD data layer. The `monitors` table stores config/schedule/
  * assertions/notify/public as JSON TEXT and booleans as 0/1 integers; this
  * module maps rows to/from a camelCase `MonitorRecord` with parsed objects.
- * Timestamps are epoch milliseconds. HTTP monitors poll on a fixed interval
- * (720s); heartbeat monitors derive interval/grace from their config.
+ * Timestamps are epoch milliseconds. Polled monitors (http/dns/tcp/domain) run
+ * on a fixed interval (720s); heartbeat monitors derive interval/grace from
+ * their config.
  */
 
 export interface MonitorRecord {
   id: string;
-  type: "http" | "heartbeat";
+  type: MonitorType;
   name: string;
   enabled: boolean;
   paused: boolean;
   intervalSeconds: number;
   graceSeconds: number | null;
-  config: HttpConfig | HeartbeatConfig;
+  config: MonitorConfig;
   schedule: Schedule;
   assertions: Assertion[];
   notify: NotifyPrefs;
@@ -84,16 +97,17 @@ const DEFAULT_PUBLIC: PublicConfig = {
 function rowToMonitor(row: MonitorRow): MonitorRecord {
   return {
     id: row.id,
-    type: row.type === "heartbeat" ? "heartbeat" : "http",
+    // Validate against the known set; fall back to "http" for an unknown/corrupt
+    // value so a bad row can't produce an off-union `type`.
+    type: (MONITOR_TYPES as readonly string[]).includes(row.type)
+      ? (row.type as MonitorType)
+      : "http",
     name: row.name,
     enabled: row.enabled !== 0,
     paused: row.paused !== 0,
     intervalSeconds: row.interval_seconds,
     graceSeconds: row.grace_seconds ?? null,
-    config: parseJson<HttpConfig | HeartbeatConfig>(
-      row.config,
-      {} as HttpConfig | HeartbeatConfig,
-    ),
+    config: parseJson<MonitorConfig>(row.config, {} as MonitorConfig),
     schedule: parseJson<Schedule>(row.schedule, { mode: "always" }),
     assertions: parseJson<Assertion[]>(row.assertions, []),
     notify: parseJson<NotifyPrefs>(row.notify, DEFAULT_NOTIFY),

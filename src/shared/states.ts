@@ -24,7 +24,7 @@ export const DOWNTIME_STATES: ReadonlySet<MonitorState> = new Set([
   "suspended",
 ]);
 
-export const MONITOR_TYPES = ["http", "heartbeat"] as const;
+export const MONITOR_TYPES = ["http", "heartbeat", "dns", "tcp", "domain"] as const;
 export type MonitorType = (typeof MONITOR_TYPES)[number];
 
 export const SCHEDULE_MODES = ["always", "business_hours", "custom"] as const;

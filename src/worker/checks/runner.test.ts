@@ -3,10 +3,19 @@ import type { HttpCheckResult } from "./http";
 import type { MonitorRecord } from "../db/monitors";
 
 vi.mock("./http", () => ({ runHttpCheck: vi.fn() }));
+vi.mock("./dns", () => ({ runDnsCheck: vi.fn() }));
+vi.mock("./tcp", () => ({ runTcpCheck: vi.fn() }));
+vi.mock("./domain", () => ({ runDomainCheck: vi.fn() }));
 import { runHttpCheck } from "./http";
+import { runDnsCheck } from "./dns";
+import { runTcpCheck } from "./tcp";
+import { runDomainCheck } from "./domain";
 import { classifyCheck, runMonitorCheck } from "./runner";
 
 const mockedRun = vi.mocked(runHttpCheck);
+const mockedDns = vi.mocked(runDnsCheck);
+const mockedTcp = vi.mocked(runTcpCheck);
+const mockedDomain = vi.mocked(runDomainCheck);
 
 function result(over: Partial<HttpCheckResult> = {}): HttpCheckResult {
   return { ok: true, durationMs: 100, statusCode: 200, ...over };
@@ -155,5 +164,74 @@ describe("runMonitorCheck", () => {
     expect(o.state).toBe("down");
     expect(o.error).toBe("timeout");
     expect(mockedRun).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("runMonitorCheck dispatch by type", () => {
+  beforeEach(() => {
+    mockedRun.mockReset();
+    mockedDns.mockReset();
+    mockedTcp.mockReset();
+    mockedDomain.mockReset();
+  });
+
+  const monitorOf = (type: string, config: unknown): MonitorRecord =>
+    ({
+      id: "mon_x",
+      type,
+      config,
+      assertions: [],
+      intervalSeconds: 720,
+      schedule: { mode: "always" },
+    }) as unknown as MonitorRecord;
+
+  it("dispatches DNS checks and threads meta into the outcome", async () => {
+    mockedDns.mockResolvedValue({
+      ok: true,
+      durationMs: 12,
+      meta: { records: ["1.2.3.4"] },
+    });
+    const o = await runMonitorCheck(
+      monitorOf("dns", { hostname: "x.test", recordType: "A" }),
+      { now: 1000 },
+    );
+    expect(mockedDns).toHaveBeenCalledOnce();
+    expect(mockedRun).not.toHaveBeenCalled();
+    expect(o.state).toBe("up");
+    expect(o.meta).toEqual({ records: ["1.2.3.4"] });
+  });
+
+  it("dispatches TCP checks and does not retry a blocked_host", async () => {
+    mockedTcp.mockResolvedValue({ ok: false, durationMs: 0, error: "blocked_host" });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const o = await runMonitorCheck(monitorOf("tcp", { host: "x.test", port: 80 }), {
+      sleep,
+      now: 2000,
+    });
+    expect(o.ok).toBe(false);
+    expect(o.error).toBe("blocked_host");
+    expect(mockedTcp).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("dispatches domain checks and threads a degraded result", async () => {
+    mockedDomain.mockResolvedValue({
+      ok: true,
+      durationMs: 5,
+      degraded: true,
+      meta: { daysUntil: 10 },
+    });
+    const o = await runMonitorCheck(monitorOf("domain", { domain: "x.test" }), {
+      now: 3000,
+    });
+    expect(mockedDomain).toHaveBeenCalledOnce();
+    expect(o.state).toBe("degraded");
+    expect(o.meta).toEqual({ daysUntil: 10 });
+  });
+
+  it("throws for a heartbeat monitor (push-driven, never routed here)", async () => {
+    await expect(
+      runMonitorCheck(monitorOf("heartbeat", {}), { now: 4000 }),
+    ).rejects.toThrow();
   });
 });

@@ -1,4 +1,5 @@
 import type { Env } from "../types";
+import type { MonitorType } from "../../shared/states";
 import { encryptValue, decryptValue } from "./crypto";
 
 /**
@@ -10,6 +11,7 @@ import { encryptValue, decryptValue } from "./crypto";
  * Sensitive locations:
  *   - http monitor:      `auth.password` (basic), `auth.token` (bearer)
  *   - heartbeat monitor: `secret`
+ *   - dns/tcp/domain:    none (no secret-bearing config fields)
  *
  * Encryption is BEST-EFFORT: when `env.MASTER_KEY` is not configured the config
  * is stored as plaintext, and decryption silently leaves non-ciphertext (or
@@ -17,10 +19,18 @@ import { encryptValue, decryptValue } from "./crypto";
  * produced by `encryptValue` (see ./crypto).
  */
 
-/** Sensitive paths to encrypt for a given monitor type. */
-const SECRET_PATHS: Record<"http" | "heartbeat", readonly string[]> = {
+/**
+ * Sensitive paths to encrypt for a given monitor type. Every `MonitorType` MUST
+ * have an entry: `encryptConfig` does `SECRET_PATHS[type].some(...)`, so a
+ * missing key would be `undefined.some(...)` and throw on every create/update.
+ * The polled types (dns/tcp/domain) carry no secrets → empty arrays.
+ */
+const SECRET_PATHS: Record<MonitorType, readonly string[]> = {
   http: ["auth.password", "auth.token"],
   heartbeat: ["secret"],
+  dns: [],
+  tcp: [],
+  domain: [],
 };
 
 /** Every known sensitive location, scanned when the type is unknown. */
@@ -87,7 +97,7 @@ function setPath(obj: Record<string, unknown>, path: string, value: unknown): vo
  */
 export async function encryptConfig(
   env: Env,
-  type: "http" | "heartbeat",
+  type: MonitorType,
   config: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const clone = structuredClone(config);

@@ -153,12 +153,13 @@ monitors.post("/:id/resume", async (c) => {
 /**
  * Manual test (PRD §9). Runs a check now and returns the outcome. By default it
  * does NOT affect stored history/state; pass ?apply=1 to persist the result.
- * HTTP monitors only — heartbeats are push-driven.
+ * Available for all polled types (http/dns/tcp/domain); heartbeats are
+ * push-driven and cannot be actively probed.
  */
 monitors.post("/:id/test", async (c) => {
   const monitor = await getMonitor(c.env, c.req.param("id"));
   if (!monitor) return c.json({ error: "not_found" }, 404);
-  if (monitor.type !== "http") {
+  if (monitor.type === "heartbeat") {
     return c.json({ error: "not_testable", message: "Heartbeat monitors are push-driven." }, 400);
   }
   const apply = c.req.query("apply") === "1" || c.req.query("apply") === "true";

@@ -181,6 +181,50 @@ export const heartbeatConfigSchema = z.object({
   secret: z.string().optional(),
 });
 
+// --- DNS / TCP / domain-expiry configs (new polled monitor types) ---
+// Permissive DNS name: dot-separated labels of letters/digits/hyphen (plus
+// underscore, which appears in TXT/SRV names like `_dmarc` / `_acme-challenge`),
+// each 1–63 chars, no leading/trailing hyphen, optional trailing root dot.
+const dnsNameRegex =
+  /^(?!-)[A-Za-z0-9_-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9_-]{1,63}(?<!-))*\.?$/;
+// Registrable domain: like a DNS name but with at least one dot and no
+// underscores (a real, WHOIS/RDAP-queryable domain such as `example.com`).
+const domainRegex =
+  /^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+\.?$/;
+
+export const dnsConfigSchema = z.object({
+  hostname: z.string().min(1).max(253).regex(dnsNameRegex, "must be a valid DNS name"),
+  recordType: z.enum(["A", "AAAA", "CNAME", "MX", "TXT"]),
+  // Optional value assertion against the resolved records.
+  expected: z
+    .object({
+      mode: z.enum(["equals", "contains"]),
+      value: z.string().min(1).max(2048),
+    })
+    .optional(),
+  timeoutMs: z.number().int().min(1000).max(30000).default(10000),
+});
+
+export const tcpConfigSchema = z.object({
+  host: z.string().min(1).max(253),
+  port: z
+    .number()
+    .int()
+    .min(1)
+    .max(65535)
+    // Port 25 (SMTP) outbound is blocked by the Cloudflare Workers runtime, so a
+    // TCP check against it can never succeed — reject it at validation time.
+    .refine((p) => p !== 25, "port 25 is blocked by the runtime"),
+  timeoutMs: z.number().int().min(1000).max(30000).default(10000),
+});
+
+export const domainConfigSchema = z.object({
+  domain: z.string().min(1).max(253).regex(domainRegex, "must be a valid domain"),
+  // Warn (degraded) once the domain is within this many days of expiry.
+  warnDays: z.number().int().min(1).max(365).default(30),
+  timeoutMs: z.number().int().min(1000).max(30000).default(15000),
+});
+
 // --- Monitor create/update ---
 const baseMonitorFields = {
   name: z.string().min(1).max(120),
@@ -207,12 +251,30 @@ export const createMonitorSchema = z.discriminatedUnion("type", [
     ...baseMonitorFields,
     config: heartbeatConfigSchema,
   }),
+  z.object({
+    type: z.literal("dns"),
+    ...baseMonitorFields,
+    config: dnsConfigSchema,
+  }),
+  z.object({
+    type: z.literal("tcp"),
+    ...baseMonitorFields,
+    config: tcpConfigSchema,
+  }),
+  z.object({
+    type: z.literal("domain"),
+    ...baseMonitorFields,
+    config: domainConfigSchema,
+  }),
 ]);
 
 // Inferred types
 export type HttpMethod = z.infer<typeof httpMethodSchema>;
 export type HttpConfig = z.infer<typeof httpConfigSchema>;
 export type HeartbeatConfig = z.infer<typeof heartbeatConfigSchema>;
+export type DnsConfig = z.infer<typeof dnsConfigSchema>;
+export type TcpConfig = z.infer<typeof tcpConfigSchema>;
+export type DomainConfig = z.infer<typeof domainConfigSchema>;
 export type Assertion = z.infer<typeof assertionSchema>;
 export type Schedule = z.infer<typeof scheduleSchema>;
 export type NotifyPrefs = z.infer<typeof notifySchema>;

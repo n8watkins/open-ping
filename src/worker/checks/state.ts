@@ -211,6 +211,16 @@ export async function applyCheckResult(
     )
     .run();
 
+  // Merge executor-supplied meta (resolved DNS records, domain expiry, …) with
+  // any assertion failures so both are persisted on the sample.
+  const sampleMeta: Record<string, unknown> = {};
+  if (outcome.meta && typeof outcome.meta === "object") {
+    Object.assign(sampleMeta, outcome.meta as Record<string, unknown>);
+  }
+  if (outcome.assertionFailures?.length) {
+    sampleMeta.assertionFailures = outcome.assertionFailures;
+  }
+
   await insertSample(env, monitor.id, {
     at: now,
     ok: outcome.ok,
@@ -221,9 +231,7 @@ export async function applyCheckResult(
     attempts: outcome.attempts,
     warmup: outcome.warmup,
     retryRecovered: outcome.retryRecovered,
-    meta: outcome.assertionFailures?.length
-      ? { assertionFailures: outcome.assertionFailures }
-      : undefined,
+    meta: Object.keys(sampleMeta).length ? sampleMeta : undefined,
   });
 
   await safe("interval", () =>

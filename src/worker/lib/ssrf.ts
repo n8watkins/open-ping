@@ -126,6 +126,55 @@ function hextetsToV4(hiHex: string, loHex: string): string {
   return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
 }
 
+/** Host-level SSRF verdict: safe, or blocked with a machine-readable reason. */
+export type HostResult = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Host-only SSRF check, shared by `assertSafeUrl` (HTTP/DNS/domain URLs) and the
+ * raw-socket TCP executor (which has a bare host, no URL). Rejects loopback /
+ * `.local` / `.localhost` names, cloud-metadata endpoints, and IP literals that
+ * fall inside private/reserved ranges. Accepts the host with or without the
+ * `[ ]` brackets the WHATWG parser adds to IPv6 literals.
+ */
+export function assertSafeHost(host: string): HostResult {
+  const rawHost = host.trim();
+  if (!rawHost) {
+    return { ok: false, reason: "invalid_host" };
+  }
+  // Strip a single trailing dot (FQDN root): "localhost." resolves the same as
+  // "localhost" but would otherwise slip past the literal hostname checks below.
+  const normalized = rawHost.toLowerCase().replace(/\.$/, "");
+
+  if (
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized.endsWith(".local")
+  ) {
+    return { ok: false, reason: "loopback_host" };
+  }
+
+  // Cloud metadata: GCE name, or any encoding that normalizes to 169.254.169.254.
+  const hostUint = ipv4ToUint32(normalized);
+  if (
+    normalized === "metadata.google.internal" ||
+    (hostUint !== null && hostUint === ipv4ToUint32("169.254.169.254"))
+  ) {
+    return { ok: false, reason: "metadata_host" };
+  }
+
+  if (isIPv4(normalized) && isBlockedIPv4(normalized)) {
+    return { ok: false, reason: "private_ipv4" };
+  }
+
+  // IPv6 literal, bracketed (URL hostname) or bare (TCP host). `isBlockedIPv6`
+  // handles both forms and strips a `%zone`; on a non-IPv6 name it returns false.
+  if (isBlockedIPv6(rawHost)) {
+    return { ok: false, reason: "private_ipv6" };
+  }
+
+  return { ok: true };
+}
+
 /**
  * Validate an outbound URL before it is fetched. Returns `{ ok: true, url }`
  * with the parsed URL on success, or `{ ok: false, reason }` with a short
@@ -151,35 +200,9 @@ export function assertSafeUrl(rawUrl: string): SsrfResult {
   if (!rawHost) {
     return { ok: false, reason: "invalid_host" };
   }
-  // Strip a single trailing dot (FQDN root): "localhost." resolves the same as
-  // "localhost" but would otherwise slip past the literal hostname checks below.
-  const host = rawHost.toLowerCase().replace(/\.$/, "");
 
-  if (
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".local")
-  ) {
-    return { ok: false, reason: "loopback_host" };
-  }
-
-  // Cloud metadata: GCE name, or any encoding that normalizes to 169.254.169.254.
-  const hostUint = ipv4ToUint32(host);
-  if (
-    host === "metadata.google.internal" ||
-    (hostUint !== null && hostUint === ipv4ToUint32("169.254.169.254"))
-  ) {
-    return { ok: false, reason: "metadata_host" };
-  }
-
-  if (isIPv4(host) && isBlockedIPv4(host)) {
-    return { ok: false, reason: "private_ipv4" };
-  }
-
-  // The WHATWG parser wraps IPv6 literals in brackets in `hostname`.
-  if (rawHost.startsWith("[") && isBlockedIPv6(rawHost)) {
-    return { ok: false, reason: "private_ipv6" };
-  }
+  const hostCheck = assertSafeHost(rawHost);
+  if (!hostCheck.ok) return hostCheck;
 
   return { ok: true, url };
 }
