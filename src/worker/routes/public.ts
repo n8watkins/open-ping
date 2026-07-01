@@ -658,8 +658,20 @@ function escapeXml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** A safe hex color (#RGB or #RRGGBB) or null. Guards SVG attribute injection. */
+function sanitizeHexColor(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const withHash = raw[0] === "#" ? raw : `#${raw}`;
+  return /^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$/.test(withHash) ? withHash : null;
+}
+
 /** Build a minimal flat "label | value" SVG badge (shields.io style). */
-function renderBadge(label: string, value: string, color: string): string {
+function renderBadge(
+  label: string,
+  value: string,
+  color: string,
+  labelColor = "#555",
+): string {
   // ~6.2px per glyph is a good monospace-ish approximation for 11px text.
   const charW = 6.2;
   const pad = 6;
@@ -677,7 +689,7 @@ function renderBadge(label: string, value: string, color: string): string {
   <linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>
   <clipPath id="r"><rect width="${total}" height="20" rx="3" fill="#fff"/></clipPath>
   <g clip-path="url(#r)">
-    <rect width="${labelW}" height="20" fill="#555"/>
+    <rect width="${labelW}" height="20" fill="${labelColor}"/>
     <rect x="${labelW}" width="${valueW}" height="20" fill="${color}"/>
     <rect width="${total}" height="20" fill="url(#s)"/>
   </g>
@@ -699,13 +711,16 @@ publicStatus.get("/badge.svg", async (c) => {
   c.header("Content-Type", "image/svg+xml; charset=utf-8");
 
   const label = (c.req.query("label") ?? "status").slice(0, 40);
+  // Optional branded label-side color (?labelColor=0f172a); the value side stays
+  // status-colored (green/amber/red) since that carries meaning. Default gray.
+  const labelColor = sanitizeHexColor(c.req.query("labelColor")) ?? "#555";
 
   // Same page resolution as /status. A disabled page — or a `?slug=` that matches
   // no page — renders the neutral "unknown" badge rather than breaking the <img>.
   const resolved = await resolvePage(env, c.req.query("slug"));
   if (resolved === "not_found" || !resolved.enabled) {
     const m = BADGE_META.unknown;
-    return c.body(renderBadge(label, m.label, m.color));
+    return c.body(renderBadge(label, m.label, m.color, labelColor));
   }
 
   const visible = (await listMonitors(env)).filter(
@@ -731,5 +746,5 @@ publicStatus.get("/badge.svg", async (c) => {
   const overall = computeOverall(services, maintenance.active.length > 0);
 
   const m = BADGE_META[overall];
-  return c.body(renderBadge(label, m.label, m.color));
+  return c.body(renderBadge(label, m.label, m.color, labelColor));
 });

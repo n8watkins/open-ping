@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   AlertOctagon,
@@ -55,7 +55,7 @@ interface ServiceGroup {
 }
 
 interface WidgetResponse {
-  page?: { name?: string };
+  page?: { name?: string; accent?: string };
   enabled?: boolean;
   overall?: Overall;
   updatedAt?: number;
@@ -161,6 +161,18 @@ export default function Embed() {
   }`;
 
   const { data, loading, error, reload } = useFetch<WidgetResponse>(path);
+
+  // Optional accent override (?accent=22d3ee or #22d3ee) so the widget's brand
+  // touches match the host site; falls back to the status page's configured
+  // accent, then OpenPing's default. Validated (3/6-digit hex) before it is
+  // interpolated into a CSS variable.
+  const rawAccent = params.get("accent") ?? data?.page?.accent ?? null;
+  const accent =
+    rawAccent && /^#?[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$/.test(rawAccent)
+      ? rawAccent[0] === "#"
+        ? rawAccent
+        : `#${rawAccent}`
+      : null;
 
   // Keep the embedded card live without reloading the host page.
   useEffect(() => {
@@ -270,16 +282,23 @@ export default function Embed() {
   const pageName = data?.page?.name ?? "OpenPing";
 
   return (
-    <div data-theme={theme} className="text-ink">
+    <div
+      data-theme={theme}
+      className="text-ink"
+      style={accent ? ({ "--color-accent": accent } as CSSProperties) : undefined}
+    >
       <div className="mx-auto max-w-md p-3">
         {body}
         <div className="mt-2 flex items-center justify-between text-[11px] text-ink-faint">
-          <span className="truncate">{pageName}</span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+            <span className="truncate">{pageName}</span>
+          </span>
           <a
             href={`/status${slug ? `/${encodeURIComponent(slug)}` : ""}`}
             target="_blank"
             rel="noreferrer"
-            className="shrink-0 transition-colors hover:text-ink-muted"
+            className="shrink-0 font-medium text-accent/85 transition-colors hover:text-accent"
           >
             View status →
           </a>
