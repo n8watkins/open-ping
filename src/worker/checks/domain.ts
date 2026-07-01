@@ -47,7 +47,16 @@ export async function runDomainCheck(config: DomainConfig): Promise<ProbeResult>
   const startedAt = Date.now();
 
   try {
-    const res = await fetch(url, { redirect: "follow", signal: controller.signal });
+    const res = await fetch(url, {
+      redirect: "follow",
+      signal: controller.signal,
+      // RDAP servers (and the rdap.org redirector) commonly 403/406 requests that
+      // don't advertise the RDAP media type or carry no User-Agent.
+      headers: {
+        accept: "application/rdap+json, application/json",
+        "user-agent": "OpenPing/1.0 (+https://github.com/n8watkins/open-ping)",
+      },
+    });
     const durationMs = Date.now() - startedAt;
 
     if (!res.ok) {

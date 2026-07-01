@@ -207,7 +207,11 @@ display.
 > runtime's hop cap. Coverage depends on the registry: most gTLDs (`.com`,
 > `.net`, `.org`, and many others) publish RDAP with an expiration event; some
 > ccTLDs expose limited or no RDAP data, in which case the check reports
-> `rdap_no_expiry`.
+> `rdap_no_expiry`. A few registries — notably Google's `.dev`/`.app` — reject
+> automated RDAP requests from Cloudflare's network with an `rdap_error` (HTTP
+> 403); domain-expiry monitoring isn't available for those TLDs. (DNS and TCP
+> monitoring of hosts on those domains work fine — this only affects the
+> registration-expiry lookup.)
 
 ---
 
