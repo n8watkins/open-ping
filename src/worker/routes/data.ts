@@ -120,6 +120,7 @@ export function redactMonitorForExport(monitor: MonitorRecord): ExportedMonitor 
     assertions: monitor.assertions,
     notify: monitor.notify,
     public: monitor.public,
+    categoryId: monitor.categoryId,
     sortOrder: monitor.sortOrder,
     createdAt: monitor.createdAt,
     updatedAt: monitor.updatedAt,

@@ -190,6 +190,9 @@ const baseMonitorFields = {
   notify: notifySchema.default(() => notifySchema.parse({})),
   public: publicConfigSchema.default(() => publicConfigSchema.parse({})),
   enabled: z.boolean().default(true),
+  // Optional primary category (a `categories` row id) for grouping + driving
+  // which per-category status page a monitor appears on. Null/absent = uncategorized.
+  categoryId: z.string().max(64).nullable().optional(),
 };
 
 export const createMonitorSchema = z.discriminatedUnion("type", [
@@ -215,3 +218,44 @@ export type Schedule = z.infer<typeof scheduleSchema>;
 export type NotifyPrefs = z.infer<typeof notifySchema>;
 export type PublicConfig = z.infer<typeof publicConfigSchema>;
 export type CreateMonitorInput = z.infer<typeof createMonitorSchema>;
+
+// --- Categories ---
+const slugSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9-]+$/, "slug must be lowercase letters, numbers, and hyphens");
+
+export const categorySchema = z.object({
+  name: z.string().min(1).max(120),
+  slug: slugSchema,
+  description: z.string().max(500).optional(),
+  sortOrder: z.number().int().default(0),
+});
+export type CategoryInput = z.infer<typeof categorySchema>;
+
+// --- Status pages (multiple, per-category public pages) ---
+// Slugs that would collide with top-level routes / the default page.
+const RESERVED_PAGE_SLUGS = ["default", "embed", "api", "tools", "login", "setup"];
+const hexColor = z
+  .string()
+  .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "must be a 3- or 6-digit hex color");
+const optionalUrl = z.string().max(2048).url().optional().or(z.literal(""));
+
+export const statusPageSchema = z.object({
+  slug: slugSchema.refine((s) => !RESERVED_PAGE_SLUGS.includes(s), "slug is reserved"),
+  name: z.string().min(1).max(120),
+  description: z.string().max(1000).optional(),
+  enabled: z.boolean().default(false),
+  includeMode: z.enum(["all", "categories", "monitors"]).default("all"),
+  categoryIds: z.array(z.string().max(64)).max(200).default([]),
+  monitorIds: z.array(z.string().max(64)).max(1000).default([]),
+  theme: z.enum(["dark", "light", "system"]).default("dark"),
+  accent: hexColor.default("#6d8bff"),
+  logo: optionalUrl,
+  homepage: optionalUrl,
+  footer: z.string().max(2000).optional(),
+  attribution: z.boolean().default(true),
+  sortOrder: z.number().int().default(0),
+});
+export type StatusPageInput = z.infer<typeof statusPageSchema>;

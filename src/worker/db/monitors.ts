@@ -32,6 +32,7 @@ export interface MonitorRecord {
   assertions: Assertion[];
   notify: NotifyPrefs;
   public: PublicConfig;
+  categoryId: string | null;
   heartbeatToken: string | null;
   sortOrder: number;
   createdAt: number;
@@ -52,6 +53,7 @@ interface MonitorRow {
   assertions: string | null;
   notify: string | null;
   public: string | null;
+  category_id: string | null;
   heartbeat_token: string | null;
   sort_order: number;
   created_at: number;
@@ -96,6 +98,7 @@ function rowToMonitor(row: MonitorRow): MonitorRecord {
     assertions: parseJson<Assertion[]>(row.assertions, []),
     notify: parseJson<NotifyPrefs>(row.notify, DEFAULT_NOTIFY),
     public: parseJson<PublicConfig>(row.public, DEFAULT_PUBLIC),
+    categoryId: row.category_id ?? null,
     heartbeatToken: row.heartbeat_token,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
@@ -167,9 +170,9 @@ export async function createMonitor(
     env.DB.prepare(
       `INSERT INTO monitors (
          id, type, name, enabled, paused, interval_seconds, grace_seconds,
-         config, schedule, assertions, notify, public, heartbeat_token,
+         config, schedule, assertions, notify, public, category_id, heartbeat_token,
          sort_order, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       id,
       input.type,
@@ -183,6 +186,7 @@ export async function createMonitor(
       assertions == null ? null : JSON.stringify(assertions),
       JSON.stringify(input.notify),
       JSON.stringify(input.public),
+      input.categoryId ?? null,
       heartbeatToken,
       0,
       now,
@@ -228,7 +232,7 @@ export async function updateMonitor(
     `UPDATE monitors SET
        name = ?, enabled = ?, interval_seconds = ?, grace_seconds = ?,
        config = ?, schedule = ?, assertions = ?, notify = ?, public = ?,
-       updated_at = ?
+       category_id = ?, updated_at = ?
      WHERE id = ?`,
   )
     .bind(
@@ -241,6 +245,7 @@ export async function updateMonitor(
       assertions == null ? null : JSON.stringify(assertions),
       JSON.stringify(input.notify),
       JSON.stringify(input.public),
+      input.categoryId ?? null,
       now,
       id,
     )

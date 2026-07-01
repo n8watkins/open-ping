@@ -35,6 +35,7 @@ function makeMonitor(
       showIncidentDetails: true,
       showScheduledOff: false,
     },
+    categoryId: null,
     heartbeatToken: "hb-token-SECRET",
     sortOrder: 0,
     createdAt: 1,
