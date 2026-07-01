@@ -25,6 +25,7 @@ const SubnetCalculator = lazy(() => import("./pages/tools/SubnetCalculator"));
 const CronTester = lazy(() => import("./pages/tools/CronTester"));
 const DnsLookup = lazy(() => import("./pages/tools/DnsLookup"));
 const MxLookup = lazy(() => import("./pages/tools/MxLookup"));
+const IsItDown = lazy(() => import("./pages/tools/IsItDown"));
 const Monitors = lazy(() => import("./pages/Monitors"));
 const MonitorDetail = lazy(() => import("./pages/MonitorDetail"));
 const MonitorEditor = lazy(() => import("./pages/MonitorEditor"));
@@ -79,6 +80,7 @@ export default function App() {
           <Route path="/tools/cron-tester" element={<CronTester />} />
           <Route path="/tools/dns-lookup" element={<DnsLookup />} />
           <Route path="/tools/mx-lookup" element={<MxLookup />} />
+          <Route path="/tools/is-it-down" element={<IsItDown />} />
 
           {/* Site root: Landing for guests, Dashboard (in AppLayout) for admins. */}
           <Route path="/" element={<RootIndex />}>

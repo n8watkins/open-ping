@@ -9,6 +9,7 @@ import {
   Mail,
   Network,
   Percent,
+  Radar,
   Search,
   type LucideIcon,
 } from "lucide-react";
@@ -25,6 +26,12 @@ export interface ToolMeta {
 }
 
 export const TOOLS: ToolMeta[] = [
+  {
+    slug: "is-it-down",
+    title: "Is it down?",
+    tagline: "Check whether a URL is up right now, from Cloudflare's edge.",
+    icon: Radar,
+  },
   {
     slug: "uptime-calculator",
     title: "Uptime calculator",

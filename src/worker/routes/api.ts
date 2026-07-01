@@ -15,6 +15,7 @@ import { settings } from "./settings";
 import { maintenance } from "./maintenance";
 import { publicStatus } from "./public";
 import { data } from "./data";
+import { isItDown } from "./is-it-down";
 
 export const api = new Hono<AppEnv>();
 
@@ -35,6 +36,9 @@ api.route("/push", push);
 
 // Public, UNAUTHENTICATED status-page data (redacted).
 api.route("/public", publicStatus);
+
+// Public, UNAUTHENTICATED "is it down?" checker (SSRF-guarded + rate-limited).
+api.route("/tools/is-it-down", isItDown);
 
 /** Liveness/readiness probe. Reports whether core wiring is present. */
 api.get("/health", (c) => {
