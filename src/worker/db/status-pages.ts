@@ -32,6 +32,12 @@ export class StatusPageError extends Error {
   }
 }
 
+/** True when a thrown D1 error is a UNIQUE-constraint violation. */
+function isUniqueViolation(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /UNIQUE constraint failed/i.test(msg);
+}
+
 export type IncludeMode = "all" | "categories" | "monitors";
 
 export interface StatusPageRecord {
@@ -171,34 +177,44 @@ export async function createStatusPage(
   const id = newId("sp");
   const now = Date.now();
 
-  await env.DB.prepare(
-    `INSERT INTO status_pages (
+  try {
+    await env.DB.prepare(
+      `INSERT INTO status_pages (
        id, slug, name, description, enabled, is_default, include_mode,
        category_ids, monitor_ids, theme, accent, logo, homepage, footer,
        attribution, sort_order, created_at, updated_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(
-      id,
-      input.slug,
-      input.name,
-      input.description ?? null,
-      input.enabled ? 1 : 0,
-      0, // is_default: new pages are never the default.
-      input.includeMode,
-      JSON.stringify(input.categoryIds),
-      JSON.stringify(input.monitorIds),
-      input.theme,
-      input.accent,
-      input.logo || null,
-      input.homepage || null,
-      input.footer ?? null,
-      input.attribution ? 1 : 0,
-      input.sortOrder,
-      now,
-      now,
     )
-    .run();
+      .bind(
+        id,
+        input.slug,
+        input.name,
+        input.description ?? null,
+        input.enabled ? 1 : 0,
+        0, // is_default: new pages are never the default.
+        input.includeMode,
+        JSON.stringify(input.categoryIds),
+        JSON.stringify(input.monitorIds),
+        input.theme,
+        input.accent,
+        input.logo || null,
+        input.homepage || null,
+        input.footer ?? null,
+        input.attribution ? 1 : 0,
+        input.sortOrder,
+        now,
+        now,
+      )
+      .run();
+  } catch (err) {
+    // A concurrent create can win the slug between the pre-check and here; the
+    // UNIQUE(slug) index still protects us, so map it to a typed 409 (mirrors
+    // db/categories.ts) rather than letting a raw D1 error surface as a 500.
+    if (isUniqueViolation(err)) {
+      throw new StatusPageError("slug_conflict", `slug "${input.slug}" is already in use`);
+    }
+    throw err;
+  }
 
   const created = await getStatusPage(env, id);
   if (!created) {
@@ -229,32 +245,39 @@ export async function updateStatusPage(
     );
   }
 
-  await env.DB.prepare(
-    `UPDATE status_pages SET
+  try {
+    await env.DB.prepare(
+      `UPDATE status_pages SET
        slug = ?, name = ?, description = ?, enabled = ?, include_mode = ?,
        category_ids = ?, monitor_ids = ?, theme = ?, accent = ?, logo = ?,
        homepage = ?, footer = ?, attribution = ?, sort_order = ?, updated_at = ?
      WHERE id = ?`,
-  )
-    .bind(
-      input.slug,
-      input.name,
-      input.description ?? null,
-      input.enabled ? 1 : 0,
-      input.includeMode,
-      JSON.stringify(input.categoryIds),
-      JSON.stringify(input.monitorIds),
-      input.theme,
-      input.accent,
-      input.logo || null,
-      input.homepage || null,
-      input.footer ?? null,
-      input.attribution ? 1 : 0,
-      input.sortOrder,
-      Date.now(),
-      id,
     )
-    .run();
+      .bind(
+        input.slug,
+        input.name,
+        input.description ?? null,
+        input.enabled ? 1 : 0,
+        input.includeMode,
+        JSON.stringify(input.categoryIds),
+        JSON.stringify(input.monitorIds),
+        input.theme,
+        input.accent,
+        input.logo || null,
+        input.homepage || null,
+        input.footer ?? null,
+        input.attribution ? 1 : 0,
+        input.sortOrder,
+        Date.now(),
+        id,
+      )
+      .run();
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw new StatusPageError("slug_conflict", `slug "${input.slug}" is already in use`);
+    }
+    throw err;
+  }
 
   return getStatusPage(env, id);
 }

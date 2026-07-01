@@ -172,10 +172,36 @@ export async function updateCategory(
 
 export async function deleteCategory(env: Env, id: string): Promise<void> {
   // Explicit cleanup mirroring deleteMonitor: null out the FK on any monitors
-  // that reference this category, then delete the row — batched as one
+  // that reference this category, then delete the row - batched as one
   // transaction so it works regardless of whether FK enforcement is active.
   await env.DB.batch([
     env.DB.prepare("UPDATE monitors SET category_id = NULL WHERE category_id = ?").bind(id),
     env.DB.prepare("DELETE FROM categories WHERE id = ?").bind(id),
   ]);
+
+  // Also scrub the deleted id from any status page's category_ids JSON array.
+  // Filtering happens on live monitor.categoryId so a stale id already fails
+  // closed (no leak), but leaving dead ids around is untidy and could silently
+  // shrink a page. Read-modify-write only the affected pages.
+  const affected = await env.DB.prepare(
+    "SELECT id, category_ids FROM status_pages WHERE category_ids LIKE ?",
+  )
+    .bind(`%${id}%`)
+    .all<{ id: string; category_ids: string | null }>();
+  const now = Date.now();
+  for (const page of affected.results ?? []) {
+    let ids: string[];
+    try {
+      ids = JSON.parse(page.category_ids ?? "[]") as string[];
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(ids) || !ids.includes(id)) continue;
+    const next = ids.filter((c) => c !== id);
+    await env.DB.prepare(
+      "UPDATE status_pages SET category_ids = ?, updated_at = ? WHERE id = ?",
+    )
+      .bind(JSON.stringify(next), now, page.id)
+      .run();
+  }
 }

@@ -15,7 +15,19 @@ import { assertSafeHost } from "../lib/ssrf";
  */
 
 export async function runTcpCheck(config: TcpConfig): Promise<ProbeResult> {
-  const hostCheck = assertSafeHost(config.host);
+  // Normalize the host the same way the HTTP path does (WHATWG URL parsing) so
+  // shorthand/numeric loopback forms - 127.1, 0x7f000001, 2130706433, or a
+  // bracketed IPv6 - canonicalize before the SSRF check, instead of slipping
+  // past assertSafeHost's dotted-quad-only parser on the raw string.
+  let hostForCheck = config.host;
+  try {
+    hostForCheck = new URL(`http://${config.host}`).hostname;
+  } catch {
+    // Not URL-parseable (e.g. a bare uncompressed IPv6): fall back to the raw
+    // host - assertSafeHost still blocks the compressed loopback/private forms,
+    // and the cloudflare:sockets runtime blocks internal destinations regardless.
+  }
+  const hostCheck = assertSafeHost(hostForCheck);
   if (!hostCheck.ok) {
     return {
       ok: false,

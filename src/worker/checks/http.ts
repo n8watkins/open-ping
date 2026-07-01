@@ -114,7 +114,7 @@ function classifyFetchError(err: unknown): {
 
 export async function runHttpCheck(
   config: HttpConfig,
-  opts?: { warmup?: boolean },
+  opts?: { warmup?: boolean; skipBody?: boolean },
 ): Promise<HttpCheckResult> {
   // SSRF guard (PRD §19): reject loopback/link-local/metadata/private/credentialed
   // targets before making any outbound request.
@@ -259,11 +259,21 @@ export async function runHttpCheck(
     // Read the body for later assertion evaluation; the timer still covers it.
     // The cap is enforced DURING the read (streaming) so an oversized response
     // can't exhaust isolate memory before being truncated.
-    try {
-      body = await readCappedText(res!, MAX_BODY_CHARS);
-    } catch (err) {
-      if (timedOut) throw err; // a stalled body that hit the timeout is a timeout
+    //
+    // skipBody: a reachability-only caller (e.g. the public "Is it down?" tool)
+    // has no assertions to run, so we cancel the body instead of pulling up to
+    // MAX_BODY_CHARS from the target - avoids turning the endpoint into a
+    // bandwidth-amplification primitive.
+    if (opts?.skipBody) {
+      await res!.body?.cancel().catch(() => {});
       body = undefined;
+    } else {
+      try {
+        body = await readCappedText(res!, MAX_BODY_CHARS);
+      } catch (err) {
+        if (timedOut) throw err; // a stalled body that hit the timeout is a timeout
+        body = undefined;
+      }
     }
   } catch (err) {
     clearTimeout(timer);

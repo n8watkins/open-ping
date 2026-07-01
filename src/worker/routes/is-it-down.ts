@@ -70,17 +70,20 @@ isItDown.post("/", async (c) => {
     return c.json({ error: "blocked_url" }, 400);
   }
 
-  // Rate limit: per client IP first, then a global ceiling. Both are fixed
-  // one-minute windows counted in D1. Run sequentially so the two writes don't
-  // contend on the same D1 session.
+  // Rate limit: per client IP first, THEN a global ceiling. Short-circuit on the
+  // per-IP check so an already-over-limit IP can't keep spending global slots -
+  // otherwise one IP sending ~GLOBAL_LIMIT requests/min could 429 the tool for
+  // everyone. This way a single IP can only ever consume its PER_IP_LIMIT share
+  // of the global budget.
   const ip = c.req.header("cf-connecting-ip") ?? UNKNOWN_IP;
   const ipHit = await hitRateLimit(c.env, `iid:ip:${ip}`, PER_IP_LIMIT);
+  if (!ipHit.allowed) {
+    c.header("Retry-After", String(ipHit.retryAfterSeconds));
+    return c.json({ error: "rate_limited" }, 429);
+  }
   const globalHit = await hitRateLimit(c.env, "iid:global", GLOBAL_LIMIT);
-  if (!ipHit.allowed || !globalHit.allowed) {
-    c.header(
-      "Retry-After",
-      String(Math.max(ipHit.retryAfterSeconds, globalHit.retryAfterSeconds)),
-    );
+  if (!globalHit.allowed) {
+    c.header("Retry-After", String(globalHit.retryAfterSeconds));
     return c.json({ error: "rate_limited" }, 429);
   }
 
@@ -95,7 +98,8 @@ isItDown.post("/", async (c) => {
     followRedirects: true,
   });
 
-  const result = await runHttpCheck(config);
+  // skipBody: we return reachability only, so don't download the target's body.
+  const result = await runHttpCheck(config, { skipBody: true });
 
   const status = result.statusCode ?? null;
   // "Up" = the server answered with a non-5xx HTTP status. A 5xx, or any
