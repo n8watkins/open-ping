@@ -42,15 +42,15 @@ export default function ToolsIndex() {
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-12 sm:px-6 sm:py-16">
         <div className="max-w-2xl">
           <div className="mb-3 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-accent">
-            Free · No sign-up · Runs in your browser
+            Free · No sign-up · No tracking
           </div>
           <h1 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
             Free tools<span className="text-accent">.</span>
           </h1>
           <p className="mt-4 text-base leading-relaxed text-ink-muted sm:text-lg">
             A handful of fast, no-nonsense utilities for people who keep things
-            online. Everything runs entirely in your browser — nothing is sent to
-            a server.
+            online. Free, no sign-up, no tracking. Most run entirely in your
+            browser; the "Is it down?" check runs from Cloudflare's edge.
           </p>
         </div>
 
