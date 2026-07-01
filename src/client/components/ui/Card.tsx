@@ -25,7 +25,7 @@ export function CardHeader({
   className?: string;
 }) {
   return (
-    <div className={cn("mb-3 flex items-center justify-between gap-3", className)}>
+    <div className={cn("mb-3 flex flex-wrap items-center justify-between gap-3", className)}>
       {children}
     </div>
   );

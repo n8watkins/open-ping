@@ -33,11 +33,11 @@ export default function Monitors() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Monitors</h1>
         <Link
           to="/monitors/new"
-          className="inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
+          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
         >
           <Plus className="size-4" />
           Add monitor

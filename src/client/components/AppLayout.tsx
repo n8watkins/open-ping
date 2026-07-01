@@ -178,7 +178,10 @@ export function AppLayout() {
           </div>
         )}
 
-        <main id="main-content" className="flex-1 px-4 py-6 pb-24 md:px-6 md:pb-8">
+        <main
+          id="main-content"
+          className="flex-1 px-4 py-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-6 md:pb-8"
+        >
           <Outlet />
         </main>
       </div>
@@ -186,7 +189,7 @@ export function AppLayout() {
       {/* Mobile bottom nav */}
       <nav
         aria-label="Mobile"
-        className="fixed inset-x-0 bottom-0 z-20 flex border-t border-line bg-surface/95 backdrop-blur md:hidden"
+        className="fixed inset-x-0 bottom-0 z-20 flex border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
       >
         {NAV.map((item) => (
           <BottomLink key={item.to} item={item} />
@@ -225,13 +228,13 @@ function BottomLink({ item }: { item: NavItem }) {
       end={item.to === "/"}
       className={({ isActive }) =>
         cn(
-          "flex flex-1 flex-col items-center gap-1 py-2 text-[10px] font-medium transition-colors",
+          "flex min-w-0 flex-1 flex-col items-center gap-1 px-0.5 py-2 text-[10px] font-medium transition-colors",
           isActive ? "text-accent" : "text-ink-muted",
         )
       }
     >
-      <Icon className="size-5" />
-      {item.label}
+      <Icon className="size-5 shrink-0" />
+      <span className="w-full truncate text-center leading-tight">{item.label}</span>
     </NavLink>
   );
 }

@@ -36,7 +36,7 @@ export default function Dashboard() {
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
           <p className="mt-1 text-sm text-ink-muted">
@@ -45,7 +45,7 @@ export default function Dashboard() {
         </div>
         <Link
           to="/monitors/new"
-          className="inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
+          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
         >
           <Plus className="size-4" />
           Add monitor

@@ -115,6 +115,10 @@
   /* Shared form control styling. */
   .input {
     width: 100%;
+    /* Inputs otherwise keep an intrinsic ~20ch min-width, which makes two
+       controls in a flex row (e.g. the monitor editor's header/assertion rows,
+       date range filters) overflow narrow screens. Let them shrink to fit. */
+    min-width: 0;
     border-radius: 0.5rem;
     border: 1px solid var(--color-line);
     background-color: var(--color-surface-2);

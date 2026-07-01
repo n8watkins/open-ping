@@ -38,7 +38,7 @@ export default function UptimeCalculator() {
       intro="Translate an uptime SLA into the downtime it actually permits — or work backwards from a downtime budget to the percentage it represents."
     >
       <div
-        className="mb-6 inline-flex rounded-lg border border-line bg-surface p-1"
+        className="mb-6 flex w-full rounded-lg border border-line bg-surface p-1 sm:inline-flex sm:w-auto"
         role="tablist"
         aria-label="Calculation mode"
       >
@@ -75,7 +75,7 @@ function ModeTab({
       role="tab"
       aria-selected={active}
       onClick={() => onSelect(value)}
-      className={`rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${
+      className={`min-w-0 flex-1 rounded-md px-3.5 py-1.5 text-center text-sm font-medium transition-colors sm:flex-none ${
         active ? "bg-accent text-canvas" : "text-ink-muted hover:text-ink"
       }`}
     >
