@@ -22,6 +22,11 @@ Keep a separate backup of every Worker secret that is required to restore the in
 Although some values such as `APP_URL` are not confidential, they use the same Worker binding mechanism.
 The setup wizard can instead write `APP_URL`, `ADMIN_GITHUB_LOGIN`, and `ADMIN_EMAIL` to plaintext D1 settings, with a Worker binding taking precedence when both exist.
 
+Local development secrets live in the gitignored `.dev.vars` file.
+The Cloudflare Vite production build can copy that file into the gitignored `dist/open_ping/.dev.vars` output for local Worker tooling.
+Do not archive, publish, or share `dist`, and remove old build output when it is no longer needed.
+Wrangler deploys configured Worker secrets separately rather than using local development values as the production secret store.
+
 ## `MASTER_KEY` and AES-GCM
 
 `MASTER_KEY` must be a base64-encoded 32-byte key.
@@ -120,6 +125,7 @@ See [Backup and restore](./BACKUP.md) for export and import commands.
 
 - Use independent randomly generated values for `MASTER_KEY`, `SETUP_TOKEN`, and `API_TOKEN`.
 - Keep `.dev.vars` out of version control and never copy production secrets into test fixtures or issue reports.
+- Restrict `.dev.vars` permissions and treat local `dist` output as sensitive when it contains a copied development-secret file.
 - Apply every D1 migration before deploying new application code.
 - Restrict Cloudflare account and D1 access with least privilege and multifactor authentication.
 - Rotate a heartbeat token immediately if its URL is logged, shared, or otherwise exposed.
