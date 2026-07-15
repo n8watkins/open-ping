@@ -1,8 +1,11 @@
 # OpenPing - Code Review
 
-Consolidated review record for OpenPing (Cloudflare Worker + D1 + React status-page
-app). This is the single source of truth for review findings; it supersedes the
-earlier `SECURITY_REVIEW.md` (Pass 1, folded into the appendix below).
+> **Historical snapshot:** This file records the review passes completed on 2026-06-29 and the verification state at that time.
+> Counts, migrations, architecture notes, and deferred items below are not the current project status.
+> Consult the current README, installation guide, upgrade guide, and git history before making operational decisions.
+
+This consolidated historical record covers OpenPing's Cloudflare Worker, D1, and React status-page application.
+It superseded the earlier `SECURITY_REVIEW.md`, whose first pass is folded into the appendix below.
 
 | Pass | Date | Method | Findings | Status |
 |------|------|--------|----------|--------|

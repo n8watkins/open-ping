@@ -1,60 +1,74 @@
 # Upgrading OpenPing
 
-OpenPing upgrades are a code pull plus (sometimes) a database migration and a
-redeploy. Because everything runs in your own Cloudflare account, you control
-when you upgrade.
+An OpenPing upgrade consists of pulling code, applying pending database migrations, and deploying the Worker and SPA.
+You control when each self-hosted installation is upgraded.
 
 ## Before you start
 
-**Take a backup.** Upgrades are designed to be safe and migrations are additive,
-but a backup costs nothing and protects you. See [`BACKUP.md`](./BACKUP.md):
+Take a backup even though migrations are designed to be additive.
+See [Backup & restore](./BACKUP.md).
 
-- Use the in-app export (**Settings/Integrations → Export**, or
-  `GET /api/data/export`) for a portable JSON backup of your monitors,
-  maintenance windows, and public incident history.
-- Optionally take a full database dump with
-  `npx wrangler d1 export open-ping --remote --output backup.sql`.
+- Use `GET /api/data/export` for a portable, credential-free JSON backup.
+- Optionally create a full D1 dump with `npx wrangler d1 export open-ping --remote --output backup.sql`.
+- Preserve `MASTER_KEY`, other Worker secrets, and active heartbeat URLs separately because they are not recoverable from the portable export.
 
 ## Steps
 
 ```bash
 git pull                 # get the latest code
-npm install              # install any new/updated dependencies
-npm run db:migrate       # apply any new migrations to remote D1
-npm run deploy           # build + wrangler deploy
+npm install              # install updated dependencies
+npm run db:migrate       # apply pending migrations to remote D1
+npm run deploy           # build and deploy the Worker and SPA
 ```
 
-That's the whole process. Notes:
+The commands have these effects:
 
-- **`git pull`** - if you have local changes, stash or commit them first.
-- **`npm install`** - picks up dependency changes from the new `package-lock.json`.
-- **`npm run db:migrate`** - runs `wrangler d1 migrations apply open-ping
-  --remote`. Migrations are **additive and tracked by Wrangler**, so only
-  migrations you haven't applied yet will run; re-running is a no-op when
-  nothing is pending. (For a local dev database, use `npm run db:migrate:local`.)
-- **`npm run deploy`** - runs `vite build && wrangler deploy`, publishing the
-  new Worker and SPA assets. The Cron Trigger (`*/12 * * * *`) is reapplied
-  from `wrangler.jsonc` automatically.
+- `git pull` updates the working copy, so commit or stash local changes first.
+- `npm install` installs dependency versions from the updated lockfile.
+- `npm run db:migrate` runs `wrangler d1 migrations apply open-ping --remote` and applies only pending migrations.
+- `npm run db:migrate:local` performs the equivalent operation for the local development database.
+- `npm run deploy` runs `vite build && wrangler deploy` and reapplies the Cron Trigger from `wrangler.jsonc`.
+
+## Security migrations in `0008` and `0009`
+
+Migrations `0008_push_subscription_secrets.sql` and `0009_heartbeat_token_hash.sql` add lookup hashes that allow capability credentials to be protected without breaking existing installations.
+The SQL migrations cannot encrypt or hash an unknown plaintext credential by themselves, so existing rows upgrade lazily.
+
+- New and updated monitor configurations are sealed as one AES-GCM document when `MASTER_KEY` is configured.
+- A legacy monitor configuration remains readable and is sealed the next time that monitor is edited and saved.
+- New Web Push subscriptions are encrypted when `MASTER_KEY` is configured.
+- A legacy push subscription is encrypted the next time that browser or device registers the same endpoint.
+- A legacy plaintext heartbeat ingestion token is replaced by its SHA-256 hash the next time the existing URL is used.
+- Rotating a heartbeat URL immediately stores only the new token hash and invalidates the previous URL.
+
+After upgrading an older installation, edit and save monitors that contain sensitive URLs, headers, query parameters, bodies, or credentials.
+Re-enable push on each active device so its endpoint and key material are rewritten in encrypted form.
+Use each existing heartbeat URL once or rotate it from the monitor detail screen.
+
+Existing installations can continue to read legacy plaintext rows for compatibility.
+Until each row is rewritten, a full D1 dump may contain those plaintext values.
 
 ## After upgrading
 
-- Open the app and confirm you can sign in and see your monitors.
-- Check **Integrations** for any channel health warnings.
-- If checks don't seem to resume, see
-  [Troubleshooting → Checks aren't running](./TROUBLESHOOTING.md).
+- Confirm that sign-in succeeds and the monitor list loads.
+- Check **Integrations** for channel and push-device health warnings.
+- Confirm that monitors containing secrets were saved after `MASTER_KEY` was configured.
+- Send a test notification to each important channel and push device.
+- Confirm that heartbeat jobs still receive `200` responses.
+- If checks do not resume, see [Troubleshooting: Checks aren't running](./TROUBLESHOOTING.md#checks-arent-running).
 
-## Secrets and config
+## Worker secrets and configuration
 
-Upgrades **do not** touch your Worker secrets or your `wrangler.jsonc`
-`database_id` - those persist across deploys. If a release introduces a new
-secret, it will be listed in the release notes and added to
-[`.dev.vars.example`](../.dev.vars.example) and the `Env` interface in
-`src/worker/types.ts`; set it with `npx wrangler secret put <NAME>` before (or
-right after) deploying.
+Database migrations and deployments do not copy or rotate Cloudflare Worker secrets.
+They also do not replace the `database_id` in `wrangler.jsonc`.
+
+If a release introduces a new secret, it is documented in [`.dev.vars.example`](../.dev.vars.example) and the `Env` interface in `src/worker/types.ts`.
+Set it with `npx wrangler secret put <NAME>` for the target Worker.
+Back up `MASTER_KEY` before changing it because previously encrypted values cannot be decrypted with a replacement key.
 
 ## Rolling back
 
-If something goes wrong, you can redeploy a previous commit:
+Redeploy a previous commit if an application rollback is needed:
 
 ```bash
 git checkout <previous-tag-or-commit>
@@ -62,6 +76,6 @@ npm install
 npm run deploy
 ```
 
-Because migrations are additive (they only add schema, they don't drop it),
-older code generally runs fine against a newer database. If a restore of data
-is needed, import your JSON backup (see [`BACKUP.md`](./BACKUP.md)).
+Migrations are additive, so older code generally tolerates a newer schema.
+Do not assume that a rollback reverses data transformations or restores secrets.
+Use the backup procedure when data restoration is required.

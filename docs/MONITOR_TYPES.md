@@ -68,30 +68,107 @@ thresholds.
 
 ## Heartbeat / cron
 
-For things that *push* to you instead of being polled: backups, cron jobs,
-queue workers, batch pipelines. OpenPing gives you a URL to ping at the end of a
-successful run and alerts you when a ping is **late**.
+Heartbeat monitors cover jobs that report their own completion, such as backups, cron jobs, queue workers, and batch pipelines.
+OpenPing gives the job an ingestion URL and alerts when an expected ping is late.
 
-**What it does.** Records the time of each incoming ping and compares "now"
-against the last ping plus your interval and grace window.
+**What it does.** OpenPing records each accepted ping and compares the current time with the last ping plus the configured interval and grace window.
 
 **Config fields.**
 
-- `intervalSeconds` - how often you expect a ping (default `3600`, i.e. hourly;
-  min 60s).
+- `intervalSeconds` - how often you expect a ping, with a default of `3600` seconds and a minimum of 60 seconds.
 - `graceSeconds` - slack before a missing ping counts as late (default `300`).
-- `acceptedMethods` - optionally restrict which HTTP methods the ping endpoint
-  accepts.
+- `acceptedMethods` - HTTP methods accepted by the endpoint.
 - `secret` - optional shared secret that must accompany the ping.
+
+### Copy and protect the ingestion URL
+
+The full ingestion URL is shown once when a heartbeat monitor is created.
+OpenPing stores only a SHA-256 hash of its token, so the URL cannot be recovered from the database or displayed again later.
+Store it in the calling job's secret manager before leaving the monitor detail screen.
+
+If the URL is lost or exposed, select **Generate new URL** or **Rotate** on the monitor detail screen.
+Rotation shows the replacement once and immediately invalidates the previous URL.
+
+An imported heartbeat monitor also receives a new token.
+The data import API returns it once in the response's `heartbeatMonitors` array.
+
+### Send a heartbeat
+
+`POST` and `HEAD` are accepted when `acceptedMethods` is omitted or empty.
+`GET` is intentionally rejected by default because link previews, browser prefetching, and address-bar visits could otherwise record false successes.
+Add `GET` to `acceptedMethods` only when a client cannot send `POST` or `HEAD`.
+
+Send a basic successful heartbeat with:
+
+```bash
+curl -X POST "https://status.example.com/hb/<token>"
+```
+
+Use `HEAD` when the caller does not need a response body:
+
+```bash
+curl --head "https://status.example.com/hb/<token>"
+```
+
+An accepted heartbeat returns HTTP `200` with an `ok` JSON response for ordinary requests.
+Requests using a method outside the allowlist return `405`.
+
+### Authenticate with an optional shared secret
+
+The ingestion token in the URL is already a bearer capability.
+The optional `secret` adds a second credential and can be supplied in one of three ways:
+
+```bash
+# Recommended header
+curl -X POST "https://status.example.com/hb/<token>" \
+  -H "X-Heartbeat-Secret: $HEARTBEAT_SECRET"
+
+# Bearer header
+curl -X POST "https://status.example.com/hb/<token>" \
+  -H "Authorization: Bearer $HEARTBEAT_SECRET"
+
+# Query parameter, which may be exposed in logs and history
+curl -X POST "https://status.example.com/hb/<token>?secret=$HEARTBEAT_SECRET"
+```
+
+Prefer a header because query strings are commonly retained in access logs, shell history, and monitoring systems.
+A missing or incorrect configured secret returns `401`.
+
+### Report job metadata and failures
+
+A JSON `POST` can include execution metadata:
+
+```bash
+curl -X POST "https://status.example.com/hb/<token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "durationMs": 1842,
+    "exitStatus": 0,
+    "message": "Backup completed",
+    "runId": "backup-2026-07-15",
+    "metrics": {
+      "files": 4821,
+      "bytesMb": 913.4
+    }
+  }'
+```
+
+- `durationMs` records the job duration.
+- `exitStatus` marks the beat up when omitted or `0`, and down when nonzero.
+- `message` stores a short diagnostic message with the sample.
+- `runId` associates the sample with an external execution identifier.
+- `metrics` accepts finite numeric values for up to 50 named metrics.
+
+The same scalar fields can be supplied as query parameters for simple clients.
+Supported aliases include `duration`, `durationMs`, or `ms`; `status`, `exitStatus`, or `exit`; `message` or `msg`; and `runId`, `run_id`, or `rid`.
+JSON body values take precedence over query values.
 
 **How up / degraded / down is decided.**
 
 - **Up** - a ping arrived within `intervalSeconds + graceSeconds`.
-- **Down (missed)** - no ping arrived by the deadline; OpenPing keeps it marked
-  missed each cycle until a ping resumes.
+- **Down (missed)** - no ping arrived by the deadline, and OpenPing keeps it marked missed each cycle until a ping resumes.
 
-> Heartbeats are the one type that isn't affected by the Workers *outbound*
-> limits below - nothing is dialed out; you call in.
+> Heartbeats are not affected by the Workers outbound connection limits below because OpenPing does not dial the monitored job.
 
 ---
 

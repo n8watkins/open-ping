@@ -1,107 +1,131 @@
 # Backup & restore
 
-OpenPing gives you two complementary ways to back up your install:
+OpenPing provides two complementary backup methods.
 
-1. **In-app export/import** - a portable, secret-free JSON backup of your
-   configuration and public history. Best for migrating, sharing, or restoring
-   monitors.
-2. **Full D1 dump** - a complete database snapshot via Wrangler. Best for a
-   true disaster-recovery copy of everything.
+1. **API export/import** produces a portable JSON backup with credentials removed.
+2. **Full D1 dump** captures the complete database for disaster recovery.
 
-## 1. In-app export (recommended)
+## 1. API export
 
-Export from the UI (**Settings/Integrations → Export**) or directly via the API:
+OpenPing does not currently expose export or import controls in the web interface.
+Use the authenticated API endpoints directly.
+
+The simplest automation path is an [`API_TOKEN`](./CLI.md):
 
 ```bash
 curl -L https://status.example.com/api/data/export \
-  -H "Cookie: <your authenticated session cookie>" \
+  -H "Authorization: Bearer $OPENPING_TOKEN" \
   -o openping-backup.json
 ```
 
-The export is a single JSON file (`openping-backup.json`, `version: 1`)
-containing your **monitors**, **maintenance windows**, **public incident
-history**, and **non-secret settings**.
+An authenticated browser session cookie also works for this read-only endpoint.
 
-### Exports never contain secrets
+The export is a single JSON file named `openping-backup.json` with `version: 1`.
+It contains monitors, maintenance windows, public-safe incident history, and non-secret settings.
 
-This is by design. The exporter redacts everything sensitive:
+### Exports remove credentials
 
-- HTTP monitor **auth** credentials are stripped (basic passwords blanked,
-  bearer tokens dropped; the non-secret username is kept).
-- Request **header values** are blanked (names preserved), and request
-  **bodies** are dropped.
-- Heartbeat **secrets** and the per-monitor **ingestion/heartbeat token** are
-  removed.
-- Settings are filtered to non-secret keys (anything VAPID-, `key`-, `secret`-,
-  `token`- or `password`-named is excluded), and incidents expose only
-  public-safe columns (no internal error text or private notes).
+The exporter applies these protections:
 
-Because secrets aren't in the backup, you'll re-enter monitor credentials and
-re-set Worker secrets after a restore.
+- HTTP authentication credentials are removed, although a basic-auth username is retained.
+- Request header names are retained while their values are blanked.
+- Request bodies are removed.
+- Heartbeat shared secrets and ingestion tokens are removed.
+- Secret-looking settings are excluded.
+- Internal incident errors and private notes are excluded.
 
-> **Caveat: categories and status-page definitions are not exported.** A
-> monitor's `categoryId` is included, but the **category records** and
-> **status-page definitions** themselves are not - so restoring into a fresh
-> instance can leave monitors pointing at category ids that don't exist there
-> (dangling references). Recreate your categories and status pages manually after
-> a restore, then reassign monitors as needed.
+An export contains no usable credentials, but it can still contain operationally sensitive metadata such as monitor URLs, names, schedules, usernames, incident history, and public messages.
+Store it with access controls appropriate for that information.
+
+You must re-enter monitor credentials and restore Worker secrets separately.
+
+> **Category and status-page limitation:** Category records and status-page definitions are not exported.
+> A monitor's `categoryId` is retained, so a fresh restore can contain category references that do not exist in the destination.
+> Recreate categories and status pages, then reassign restored monitors.
 
 ## Restore / import
 
-Import is **validation-first and preview-able**, and defaults to **not**
-overwriting anything.
+Import is validation-first, supports a dry run, and does not overwrite same-named monitors by default.
 
-Endpoint: `POST /api/data/import` (requires an authenticated admin session;
-CSRF is enforced like other mutations). Body shape:
+Send `POST /api/data/import` with Bearer authentication.
+The following dry run uses `jq` to wrap the exported document in the import request envelope:
 
-```jsonc
+```bash
+jq -n --slurpfile backup openping-backup.json \
+  '{data: $backup[0], options: {dryRun: true, skipExisting: true}}' |
+  curl https://status.example.com/api/data/import \
+    -H "Authorization: Bearer $OPENPING_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data-binary @-
+```
+
+Set `dryRun` to `false` only after reviewing the preview.
+A cookie-authenticated request is also supported, but mutations made with a session cookie must include the session's CSRF token.
+
+Import behaves as follows:
+
+- The backup envelope and every monitor are validated before any writes occur.
+- Invalid input returns `400 invalid_import` with specific errors.
+- `dryRun: true` returns counts and same-name monitor collisions without writing data.
+- `skipExisting` defaults to `true`, so a same-named monitor is left unchanged and reused when restoring relationships.
+- Setting `skipExisting: false` creates another monitor with that name.
+- Monitor credentials and settings are not imported.
+- Incident monitor references are remapped to restored or reused monitors.
+- Monitor-scoped maintenance references are remapped to restored or reused monitors.
+- A monitor-scoped maintenance window is skipped when none of its target monitors survive the import.
+- The response reports imported and skipped maintenance counts.
+
+### Capture restored heartbeat tokens
+
+Every newly imported heartbeat monitor receives a new ingestion token.
+The import response returns these credentials once in `heartbeatMonitors`:
+
+```json
 {
-  "data": { /* the exported backup object */ },
-  "options": {
-    "dryRun": true,        // preview only - reports counts + name collisions
-    "skipExisting": true   // default true - skip monitors whose name exists
-  }
+  "heartbeatMonitors": [
+    {
+      "id": "mon_example",
+      "name": "Nightly backup",
+      "heartbeatToken": "one-time-token"
+    }
+  ]
 }
 ```
 
-How it behaves:
+Construct each new URL as `https://status.example.com/hb/<heartbeatToken>` and update the corresponding job immediately.
+OpenPing stores only a hash after creation, so it cannot display the token again.
+If you lose it, open the monitor detail screen and rotate the heartbeat URL.
 
-- The backup envelope and **every monitor** are validated up front. If anything
-  is invalid you get `400 invalid_import` with a list of specific errors, and
-  nothing is written.
-- With `dryRun: true` you get a **preview**: counts of monitors / maintenance /
-  incidents and a list of `duplicateMonitors` (names that already exist).
-- On a real import, monitors whose **name already exists are skipped by default**
-  (`skipExisting` defaults to true), so a restore can't silently overwrite live
-  config. Set `skipExisting: false` only if you intend to add duplicates.
-- **Secrets are never imported** (they aren't in the backup), and **settings are
-  intentionally not imported** in v1 - re-apply settings/secrets manually.
+Always perform a dry run first, then securely capture the real import response before closing the terminal or automation job.
 
-Tip: always run a `dryRun` first to see what will change.
+## 2. Full database dump
 
-## 2. Full database dump (disaster recovery)
-
-For a complete snapshot - including secrets stored encrypted in D1, sessions,
-samples, and summaries - use Wrangler's D1 export:
+Use Wrangler for a complete D1 snapshot:
 
 ```bash
-# Dump the remote database to SQL
 npx wrangler d1 export open-ping --remote --output openping-d1-backup.sql
 ```
 
-This produces a SQL file you can keep as an offline backup or use to recreate
-the database. Note that encrypted values in this dump can only be decrypted with
-the original `MASTER_KEY`, so back that key up separately and securely - without
-it, encrypted config is unrecoverable.
+A full dump includes sessions, samples, summaries, encrypted values, and compatibility rows that may still be plaintext after an older upgrade.
+Treat the SQL file as highly sensitive even when `MASTER_KEY` is configured.
 
-## What to back up, and how often
+Monitor configuration and Web Push capability credentials written by current versions are encrypted with `MASTER_KEY`.
+The original `MASTER_KEY` is required to decrypt those values after a restore, so back it up separately in a secret manager.
+Cloudflare Worker secrets such as `MASTER_KEY`, `SETUP_TOKEN`, OAuth credentials, `RESEND_API_KEY`, and `API_TOKEN` live outside D1 and are never included in either backup format.
+
+Heartbeat ingestion tokens are stored as SHA-256 hashes.
+A D1 dump preserves those hashes, so existing heartbeat URLs continue to work when the database is restored intact, but the raw token cannot be recovered from the dump.
+Keep the active heartbeat URL in the calling job's secret store, or rotate it after recovery.
+
+## What to back up
 
 | Item | Tool | Notes |
 | --- | --- | --- |
-| Monitors, maintenance, public incidents | In-app export | Portable, secret-free; safe to store anywhere |
-| Full database | `wrangler d1 export` | Complete snapshot incl. encrypted blobs |
-| `MASTER_KEY` (and other secrets) | Your secret manager | Required to decrypt a full D1 dump; never in exports |
+| Portable configuration and public-safe history | `GET /api/data/export` | Credentials removed, but operational metadata remains sensitive |
+| Complete database | `wrangler d1 export` | Sensitive snapshot containing encrypted and possibly legacy plaintext rows |
+| `MASTER_KEY` and other Worker secrets | Your secret manager | Required separately because Worker secrets are outside D1 |
+| Active heartbeat URLs | The calling job's secret manager | Raw tokens cannot be recovered from their D1 hashes |
 
-A good rhythm: take a JSON export **before every upgrade** (see
-[`UPGRADE.md`](./UPGRADE.md)) and whenever you make significant config changes,
-plus an occasional full D1 dump for peace of mind.
+Take an API export before every upgrade and after significant configuration changes.
+Take periodic full D1 dumps according to your recovery requirements.
+See [Upgrading OpenPing](./UPGRADE.md) for the upgrade sequence.
