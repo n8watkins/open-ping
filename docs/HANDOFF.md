@@ -62,6 +62,7 @@ The principal implementation commits are:
 - `70a05b9` streamlines the setup wizard and accepts an empty unused administrator identity field.
 - `aa2cb16` adds workerd integration tests that apply the real D1 migrations and exercise an authenticated heartbeat-monitor lifecycle.
 - `c18b7b1` verifies backup restore credentials and related-record remapping against D1.
+- `0b5f847` verifies missed-heartbeat scheduler transactions, incident deduplication, rollups, and run diagnostics against D1.
 
 The documentation pass adds an explicit security and storage inventory, corrects installation and recovery instructions, documents heartbeat behavior, and labels historical review material as historical.
 
@@ -87,7 +88,7 @@ Keep the active `MASTER_KEY` backed up outside D1 because changing it without re
 The final verification completed successfully on 2026-07-15:
 
 - `npm run typecheck` passed.
-- `npm test` passed with 457 Node tests across 40 files and two workerd/D1 integration tests in a separate file.
+- `npm test` passed with 457 Node tests across 40 files and three workerd/D1 integration tests in a separate file.
 - `npm run build` passed.
 - `npm audit` reported zero vulnerabilities.
 - `git diff --check` passed.
@@ -104,6 +105,7 @@ The final verification completed successfully on 2026-07-15:
 - The deployed public status page was browser-verified with all three services and no console errors or error overlay.
 - The local workerd integration suite now repeats the authenticated heartbeat lifecycle against D1 with all nine migrations applied and verifies ciphertext storage, one-way token storage, redaction, state and sample writes, and cascade deletion.
 - The same integration suite verifies replacement heartbeat credentials, maintenance-window remapping, incident remapping, restored incident privacy, and cleanup during backup import.
+- Two consecutive scheduler runs against an overdue heartbeat were verified to keep one open incident and one transition sample while accruing downtime and recording run diagnostics on both cycles.
 
 Use the same gate after further changes:
 
@@ -119,7 +121,7 @@ git status --short --branch
 ## Known gaps and recommended next work
 
 1. Expand D1-backed integration coverage.
-   Monitor, heartbeat, and backup import relationships are covered, but scheduler transactions and notification dispatcher behavior should also run against workerd and D1.
+   Monitor, heartbeat, backup import, and missed-heartbeat scheduler transactions are covered, but polled-check scheduling and notification dispatcher behavior should also run against workerd and D1.
 
 2. Close the remaining secret-management gaps.
    Define a safe `MASTER_KEY` rotation and re-encryption workflow, decide whether generic webhook capability URLs and notification outbox payloads require additional sealing, and document any accepted plaintext operational metadata.
