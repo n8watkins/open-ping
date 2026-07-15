@@ -11,8 +11,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "postbuild": "node scripts/secure-build-output.mjs",
     "preview": "vite preview",
-    "deploy": "vite build && wrangler deploy",
+    "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc -b",
     "lint": "tsc -b",
     "test": "vitest run",

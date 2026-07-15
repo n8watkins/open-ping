@@ -24,6 +24,7 @@ The setup wizard can instead write `APP_URL`, `ADMIN_GITHUB_LOGIN`, and `ADMIN_E
 
 Local development secrets live in the gitignored `.dev.vars` file.
 The Cloudflare Vite production build can copy that file into the gitignored `dist/open_ping/.dev.vars` output for local Worker tooling.
+The `postbuild` script restricts that generated copy to owner-only permissions.
 Do not archive, publish, or share `dist`, and remove old build output when it is no longer needed.
 Wrangler deploys configured Worker secrets separately rather than using local development values as the production secret store.
 
