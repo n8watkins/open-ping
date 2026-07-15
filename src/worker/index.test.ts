@@ -22,9 +22,14 @@ function immutableAssetResponse(): Response {
   return res;
 }
 
-function makeEnv(): Env {
+function makeEnv(onAssetFetch?: (request: Request) => void): Env {
   return {
-    ASSETS: { fetch: async () => immutableAssetResponse() },
+    ASSETS: {
+      fetch: async (request: Request) => {
+        onAssetFetch?.(request);
+        return immutableAssetResponse();
+      },
+    },
   } as unknown as Env;
 }
 
@@ -35,13 +40,19 @@ const ctx = {
 
 describe("worker fetch — SPA fallback + secureHeaders", () => {
   it("serves a direct-loaded client route (/status) as 200 with security headers", async () => {
+    let assetUrl = "";
     const res = await worker.fetch!(
       new Request("https://example.com/status"),
-      makeEnv(),
+      makeEnv((request) => {
+        assetUrl = request.url;
+      }),
       ctx,
     );
     // Before the fix this threw on the immutable ASSETS headers → 500.
     expect(res.status).toBe(200);
+    // Nested SPA routes must load the root entry so Vite applies its HTML
+    // transforms (including the React refresh preamble) during development.
+    expect(assetUrl).toBe("https://example.com/");
     expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("content-security-policy")).toContain(
       "frame-ancestors 'none'",

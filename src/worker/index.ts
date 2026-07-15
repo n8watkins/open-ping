@@ -8,6 +8,7 @@ import { heartbeats } from "./routes/heartbeats";
 import { runScheduled } from "./scheduler";
 
 const app = new Hono<AppEnv>();
+const isViteDev = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
 
 // ---------------------------------------------------------------------------
 // Embeddable status widget: framing override (scoped to /embed ONLY).
@@ -64,7 +65,11 @@ app.use(
       baseUri: ["'self'"],
       frameAncestors: ["'none'"],
       objectSrc: ["'none'"],
-      scriptSrc: ["'self'"],
+      // Vite injects an inline React Fast Refresh preamble into transformed
+      // HTML during local development. Permit that development-only script so
+      // direct SPA routes can boot; production builds contain no inline script
+      // and retain the strict self-only policy.
+      scriptSrc: isViteDev ? ["'self'", "'unsafe-inline'"] : ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "https:"],
       fontSrc: ["'self'", "data:"],
@@ -105,8 +110,14 @@ app.all("*", (c) => {
   if (c.req.path === "/api" || c.req.path.startsWith("/api/")) {
     return c.json({ error: "not_found", path: c.req.path }, 404);
   }
-  // The mutable-clone middleware above handles the immutable ASSETS headers.
-  return c.env.ASSETS.fetch(c.req.raw);
+  // Always ask the assets binding for the HTML entry point. Passing the nested
+  // client route through (for example `/monitors`) makes the Cloudflare Vite
+  // plugin serve its SPA fallback without Vite's HTML transforms in dev. React
+  // Fast Refresh then aborts with "can't detect preamble" and leaves a blank
+  // page on direct navigation. The browser URL remains unchanged, so React
+  // Router still resolves the requested route after the transformed shell loads.
+  const entryUrl = new URL("/", c.req.url);
+  return c.env.ASSETS.fetch(new Request(entryUrl, c.req.raw));
 });
 
 export default {
