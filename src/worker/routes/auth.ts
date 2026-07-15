@@ -5,6 +5,7 @@ import { randomToken, sha256hex } from "../lib/ids";
 import { isAllowedGithubLogin } from "../lib/admin";
 import { createSession } from "../lib/sessions";
 import { timingSafeEqual } from "../lib/timing";
+import { getSetting } from "../db/settings";
 
 /**
  * Browser-facing auth flows mounted at /auth. GitHub OAuth (PRD §13):
@@ -20,29 +21,41 @@ const STATE_TTL_MS = 1000 * 60 * 10; // 10 minutes
 const STATE_COOKIE = "op_oauth_state";
 const UA = "OpenPing";
 
-// NOTE: only honors the APP_URL env override, not the `app_url` setting the
-// setup wizard writes; when APP_URL is unset this falls back to the spoofable
-// request Host header. GitHub validates redirect_uri against the registered
-// callback so the blast radius is limited, but set APP_URL in production for a
-// stable OAuth base. (magic.ts baseUrl additionally reads the app_url setting.)
-function baseUrl(c: { env: Env; req: { url: string } }): string {
-  return c.env.APP_URL?.replace(/\/$/, "") ?? new URL(c.req.url).origin;
+/** Resolve the configured OAuth origin before falling back to the request URL. */
+async function baseUrl(c: { env: Env; req: { url: string } }): Promise<string> {
+  const configured = c.env.APP_URL ?? (await getSetting(c.env, "app_url"));
+  if (configured) {
+    try {
+      const url = new URL(configured);
+      if (
+        (url.protocol === "https:" ||
+          (url.protocol === "http:" &&
+            (url.hostname === "localhost" || url.hostname === "127.0.0.1"))) &&
+        !url.username &&
+        !url.password
+      ) {
+        return url.origin;
+      }
+    } catch {
+      // Invalid legacy setting: use the request origin rather than emitting it.
+    }
+  }
+  return new URL(c.req.url).origin;
 }
 
 // Use c.redirect (NOT Response.redirect): Response.redirect returns a brand-new
 // Response that discards anything set on c.res — including Set-Cookie headers from
 // setCookie()/createSession(). c.redirect preserves them, so the OAuth state and
 // session cookies actually reach the browser.
-function loginRedirect(c: Context<AppEnv>, error?: string): Response {
-  const base = baseUrl(c);
+function loginRedirect(c: Context<AppEnv>, base: string, error?: string): Response {
   const url = error ? `${base}/login?error=${encodeURIComponent(error)}` : `${base}/login`;
   return c.redirect(url, 302);
 }
 
 // --- Begin GitHub OAuth ---
 auth.get("/github/start", async (c) => {
-  const base = baseUrl(c);
-  if (!c.env.GITHUB_CLIENT_ID) return loginRedirect(c,"github_not_configured");
+  const base = await baseUrl(c);
+  if (!c.env.GITHUB_CLIENT_ID) return loginRedirect(c, base, "github_not_configured");
 
   // The `state` is single-use and server-validated on callback, AND bound to the
   // initiating browser via a matching HttpOnly cookie (double-submit). The
@@ -75,12 +88,12 @@ auth.get("/github/start", async (c) => {
 
 // --- GitHub OAuth callback ---
 auth.get("/github/callback", async (c) => {
-  const base = baseUrl(c);
+  const base = await baseUrl(c);
   const code = c.req.query("code");
   const state = c.req.query("state");
-  if (!code || !state) return loginRedirect(c,"invalid_callback");
+  if (!code || !state) return loginRedirect(c, base, "invalid_callback");
   if (!c.env.GITHUB_CLIENT_ID || !c.env.GITHUB_CLIENT_SECRET) {
-    return loginRedirect(c,"github_not_configured");
+    return loginRedirect(c, base, "github_not_configured");
   }
 
   // Bind to the initiating browser: the state cookie set at /start must match
@@ -90,7 +103,7 @@ auth.get("/github/callback", async (c) => {
   if (!cookieState || !(await timingSafeEqual(cookieState, state))) {
     // Cookie absent or ≠ the returned state: stale/replayed callback link, a
     // second tab clobbering the singleton cookie, or a direct callback hit.
-    return loginRedirect(c,"state_missing");
+    return loginRedirect(c, base, "state_missing");
   }
 
   // Validate + consume single-use state.
@@ -104,7 +117,7 @@ auth.get("/github/callback", async (c) => {
   if (!stateRow || stateRow.used_at || stateRow.expires_at <= Date.now()) {
     // Server-side state row gone/used/expired: usually the 10-min TTL lapsed
     // while the user sat on GitHub's authorize/2FA screen.
-    return loginRedirect(c,"state_expired");
+    return loginRedirect(c, base, "state_expired");
   }
 
   // Exchange code for an access token.
@@ -121,10 +134,10 @@ auth.get("/github/callback", async (c) => {
       }),
     });
     const tokenJson = (await tokenRes.json()) as { access_token?: string; error?: string };
-    if (!tokenJson.access_token) return loginRedirect(c,"token_exchange_failed");
+    if (!tokenJson.access_token) return loginRedirect(c, base, "token_exchange_failed");
     accessToken = tokenJson.access_token;
   } catch {
-    return loginRedirect(c,"token_exchange_failed");
+    return loginRedirect(c, base, "token_exchange_failed");
   }
 
   // Fetch the GitHub identity.
@@ -134,14 +147,14 @@ auth.get("/github/callback", async (c) => {
       headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/vnd.github+json", "User-Agent": UA },
     });
     const user = (await userRes.json()) as { login?: string };
-    if (!user.login) return loginRedirect(c,"identity_failed");
+    if (!user.login) return loginRedirect(c, base, "identity_failed");
     login = user.login;
   } catch {
-    return loginRedirect(c,"identity_failed");
+    return loginRedirect(c, base, "identity_failed");
   }
 
   if (!(await isAllowedGithubLogin(c.env, login))) {
-    return loginRedirect(c,"not_authorized");
+    return loginRedirect(c, base, "not_authorized");
   }
 
   // Rotate: a fresh session is issued on every login.

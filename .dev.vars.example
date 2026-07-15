@@ -15,6 +15,10 @@
 # Generate one with:  openssl rand -base64 32
 MASTER_KEY=
 
+# One-time credential that protects the unauthenticated first-run wizard.
+# Generate one with: openssl rand -base64 32
+SETUP_TOKEN=
+
 # --- GitHub OAuth (sign-in) ---
 # Create a GitHub OAuth app and set the callback to ${APP_URL}/auth/github/callback.
 # For local dev that's usually http://localhost:5173/auth/github/callback.

@@ -101,12 +101,11 @@ export function AppLayout() {
       </div>
     );
   }
-  // Force the first-run wizard only when setup is incomplete AND no admin is
-  // configured. With an admin already configured (env secret), skip straight to
-  // auth so a logged-in admin can use the app even if setup was never "completed".
-  if (status && !status.setupComplete && !status.githubAdminConfigured && !status.emailAdminConfigured)
-    return <Navigate to="/setup" replace />;
   if (!me?.authenticated) return <Navigate to="/login" replace />;
+  // Once the administrator has authenticated, finish any incomplete setup
+  // before exposing the admin workspace. This also supports deployments that
+  // preconfigure the admin identity as a Worker secret.
+  if (status && !status.setupComplete) return <Navigate to="/setup" replace />;
 
   return (
     <div className="flex min-h-full">

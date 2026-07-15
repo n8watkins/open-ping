@@ -97,18 +97,18 @@ URL. (These targets fail permanently and are not retried, by design.)
 
 The first-run wizard requires:
 
+- A `SETUP_TOKEN` Worker secret for access before an administrator can sign in.
 - **At least one admin identity** configured (`ADMIN_GITHUB_LOGIN` or
   `ADMIN_EMAIL`) - otherwise you'll see `no_admin_configured`.
 - A **timezone** chosen - otherwise `timezone_required`.
 
-Once setup is complete it **locks**: the setup API returns `setup_locked` for
-unauthenticated writes, and further changes require signing in as the admin.
+Once setup is complete it **locks**: the setup API returns `setup_locked` for unauthenticated requests, the setup token is no longer accepted, and further changes require signing in as the admin.
 This is intentional.
 
 ## Local dev won't start or behaves oddly
 
 - Ensure `.dev.vars` exists (copy from `.dev.vars.example`) with at least
-  `MASTER_KEY`, an admin identity, and
+  `MASTER_KEY`, `SETUP_TOKEN`, an admin identity, and
   `APP_URL=http://localhost:5173`.
 - Run `npm run db:migrate:local` so the local D1 database has the schema.
 - Set the GitHub OAuth callback to `http://localhost:5173/auth/github/callback`

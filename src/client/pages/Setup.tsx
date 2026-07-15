@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { Check, Loader2, ArrowRight, ArrowLeft } from "lucide-react";
 import { api } from "../lib/api";
@@ -57,7 +64,12 @@ function timezones(): string[] {
 
 export default function Setup() {
   const navigate = useNavigate();
-  const { refresh } = useBootstrap();
+  const {
+    loading: bootstrapLoading,
+    me,
+    csrf,
+    refresh,
+  } = useBootstrap();
   const tzList = useMemo(timezones, []);
 
   const [loading, setLoading] = useState(true);
@@ -66,25 +78,24 @@ export default function Setup() {
   const [step, setStep] = useState(0);
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [done, setDone] = useState<string[]>([]);
+  const [setupToken, setSetupToken] = useState("");
+  const [unlocked, setUnlocked] = useState(false);
 
   // Form fields
   const [appUrl, setAppUrl] = useState("");
   const [timezone, setTimezone] = useState(guessTimezone());
   const [adminGithubLogin, setAdminGithubLogin] = useState("");
 
-  useEffect(() => {
-    void (async () => {
+  const loadState = useCallback(
+    async (token?: string) => {
+      setLoading(true);
+      setError(null);
       try {
-        const res = await api<StateResponse>("/api/setup/state");
+        const res = await api<StateResponse>("/api/setup/state", {
+          headers: token ? { "x-setup-token": token } : undefined,
+        });
         if (res.status.setupComplete) {
           navigate("/", { replace: true });
-          return;
-        }
-        // An admin is already configured (e.g. via the ADMIN_GITHUB_LOGIN env
-        // secret). The anonymous wizard can't reconfigure the admin and is locked
-        // server-side, so send the operator to sign in instead of a dead-end form.
-        if (res.status.githubAdminConfigured || res.status.emailAdminConfigured) {
-          navigate("/login", { replace: true });
           return;
         }
         setStatus(res.status);
@@ -94,13 +105,43 @@ export default function Setup() {
         setAppUrl((d.appUrl as string) ?? res.status.appUrl ?? window.location.origin);
         setTimezone((d.timezone as string) ?? res.status.timezone ?? guessTimezone());
         setAdminGithubLogin((d.adminGithubLogin as string) ?? "");
-      } catch {
-        setError("Could not load setup state.");
+        setUnlocked(true);
+      } catch (cause) {
+        const code = cause instanceof Error ? cause.message : "error";
+        setError(
+          code === "setup_token_invalid"
+            ? "That setup token is not valid."
+            : code === "setup_token_not_configured"
+              ? "SETUP_TOKEN is not configured on this deployment."
+              : "Could not load setup state.",
+        );
       } finally {
         setLoading(false);
       }
-    })();
-  }, [navigate]);
+    },
+    [navigate],
+  );
+
+  useEffect(() => {
+    if (bootstrapLoading) return;
+    if (me?.authenticated) void loadState();
+    else setLoading(false);
+  }, [bootstrapLoading, loadState, me?.authenticated]);
+
+  function setupRequestOptions() {
+    return me?.authenticated
+      ? { csrf: csrf ?? undefined }
+      : { headers: { "x-setup-token": setupToken } };
+  }
+
+  function unlock(event: FormEvent) {
+    event.preventDefault();
+    if (!setupToken) {
+      setError("Enter the setup token configured for this deployment.");
+      return;
+    }
+    void loadState(setupToken);
+  }
 
   function dataForStep(id: string): Record<string, unknown> {
     switch (id) {
@@ -122,6 +163,7 @@ export default function Setup() {
       const res = await api<StateResponse>("/api/setup/save", {
         method: "POST",
         json: { step: nextStep, stepId, data: dataForStep(stepId) },
+        ...setupRequestOptions(),
       });
       setStatus(res.status);
       setDone(res.state.completedSteps);
@@ -137,7 +179,11 @@ export default function Setup() {
     setSaving(true);
     setError(null);
     try {
-      await api("/api/setup/complete", { method: "POST", json: {} });
+      await api("/api/setup/complete", {
+        method: "POST",
+        json: {},
+        ...setupRequestOptions(),
+      });
       await refresh();
       navigate("/login", { replace: true });
     } catch (e) {
@@ -154,10 +200,61 @@ export default function Setup() {
     }
   }
 
-  if (loading) {
+  if (bootstrapLoading || loading) {
     return (
       <div className="grid min-h-full place-items-center">
         <Loader2 className="size-6 animate-spin text-ink-faint" />
+      </div>
+    );
+  }
+
+  if (!me?.authenticated && !unlocked) {
+    return (
+      <div className="grid min-h-full place-items-center px-4">
+        <main className="w-full max-w-sm">
+          <div className="mb-8 flex justify-center">
+            <Logo />
+          </div>
+          <form
+            onSubmit={unlock}
+            className="rounded-card border border-line bg-surface p-6"
+          >
+            <h1 className="text-center text-lg font-semibold tracking-tight">
+              Unlock setup
+            </h1>
+            <p className="mt-2 text-center text-sm text-ink-muted">
+              Enter the one-time setup token configured as a Worker secret.
+            </p>
+            <label className="mt-6 block">
+              <span className="mb-1.5 block text-xs font-medium text-ink-muted">
+                Setup token
+              </span>
+              <input
+                type="password"
+                value={setupToken}
+                onChange={(event) => setSetupToken(event.target.value)}
+                autoComplete="off"
+                required
+                className="input"
+              />
+            </label>
+            {error && (
+              <p
+                role="alert"
+                className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down"
+              >
+                {error}
+              </p>
+            )}
+            <button
+              type="submit"
+              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
+            >
+              Continue securely
+              <ArrowRight className="size-4" />
+            </button>
+          </form>
+        </main>
       </div>
     );
   }

@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { DateTime } from "luxon";
+import { z } from "zod";
 import type { AppEnv, Env } from "../types";
 import {
   getSetupState,
@@ -7,17 +9,87 @@ import {
   isSetupComplete,
   markSetupComplete,
 } from "../db/setup";
-import { getAdminGithubLogin, getAdminEmail, hasAdminConfigured } from "../lib/admin";
+import { getAdminGithubLogin, getAdminEmail } from "../lib/admin";
 import { getSetting } from "../db/settings";
 import { CSRF_HEADER, getSession } from "../lib/sessions";
 import { timingSafeEqual } from "../lib/timing";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const SETUP_TOKEN_HEADER = "x-setup-token";
+
+const setupStepSchema = z.enum([
+  "welcome",
+  "url",
+  "timezone",
+  "admin",
+  "notifications",
+  "monitor",
+  "finish",
+]);
+
+const appUrlSchema = z
+  .string()
+  .max(2048)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return (
+        (url.protocol === "https:" ||
+          (url.protocol === "http:" &&
+            (url.hostname === "localhost" || url.hostname === "127.0.0.1"))) &&
+        !url.username &&
+        !url.password &&
+        url.pathname === "/" &&
+        !url.search &&
+        !url.hash
+      );
+    } catch {
+      return false;
+    }
+  }, "must be an https origin (http is allowed only for local development)");
+
+const githubLoginSchema = z
+  .string()
+  .max(39)
+  .refine(
+    (value) =>
+      value === "" ||
+      (/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(value) &&
+        !value.includes("--")),
+    "must be a valid GitHub username",
+  );
+
+export const setupSaveSchema = z.object({
+  step: z.number().int().min(0).max(6).optional(),
+  stepId: setupStepSchema.optional(),
+  data: z
+    .object({
+      appUrl: appUrlSchema.optional(),
+      timezone: z
+        .string()
+        .max(100)
+        .refine((value) => DateTime.local().setZone(value).isValid, "invalid timezone")
+        .optional(),
+      adminGithubLogin: githubLoginSchema.optional(),
+      adminEmail: z.string().max(320).email().optional(),
+    })
+    .strict()
+    .optional(),
+});
+
+/** Constant-time setup-token check kept separate for focused security tests. */
+export async function checkSetupToken(
+  configured: string | undefined,
+  provided: string | undefined,
+): Promise<boolean> {
+  return !!configured && !!provided && (await timingSafeEqual(provided, configured));
+}
 
 /**
- * First-run setup API mounted at /api/setup. Writable while setup is incomplete
- * (bootstrap is unauthenticated by necessity); once complete, mutations require
- * an authenticated session so later edits go through the same guard as settings.
+ * First-run setup API mounted at /api/setup. Before an administrator can sign
+ * in, every request requires the deployment's SETUP_TOKEN. Once authenticated,
+ * the admin may finish setup with the normal session + CSRF controls. After
+ * completion, the setup token is no longer accepted.
  */
 export const setup = new Hono<AppEnv>();
 
@@ -34,61 +106,61 @@ async function setupStatus(env: Env) {
 }
 
 /**
- * Block anonymous writes once setup is complete OR an administrator identity
- * already exists (env or settings). Without the latter check, during the
- * pre-completion bootstrap window any anonymous caller could POST /save an
- * adminEmail, /complete, then log in — admin injection. The request that first
- * writes the admin still succeeds because guardWrite runs at request-start,
- * before saveSetupStep persists the identity; every subsequent mutation then
- * requires a session. Whenever a session is present, also enforce CSRF on
- * state-changing methods exactly like middleware/auth.ts, so a completed-setup
- * deployment can't have its admin identity rewritten by a forged cross-site
- * request.
+ * Authorize setup access. A session is sufficient for reads and requires CSRF
+ * for writes. Without a session, setup must still be incomplete and a configured
+ * SETUP_TOKEN must match the dedicated request header. This prevents a newly
+ * deployed public instance from being claimed by whichever anonymous visitor
+ * reaches the wizard first.
  */
-async function guardWrite(c: Context<AppEnv>): Promise<Response | null> {
+async function guardSetup(c: Context<AppEnv>): Promise<Response | null> {
   const session = await getSession(c);
-  if (((await isSetupComplete(c.env)) || (await hasAdminConfigured(c.env))) && !session) {
-    return c.json({ error: "setup_locked" }, 403);
-  }
-  if (session && !SAFE_METHODS.has(c.req.method.toUpperCase())) {
-    const provided = c.req.header(CSRF_HEADER);
-    if (!provided || !(await timingSafeEqual(provided, session.csrf_secret))) {
-      return c.json({ error: "csrf_failed" }, 403);
+  if (session) {
+    if (!SAFE_METHODS.has(c.req.method.toUpperCase())) {
+      const provided = c.req.header(CSRF_HEADER);
+      if (!provided || !(await timingSafeEqual(provided, session.csrf_secret))) {
+        return c.json({ error: "csrf_failed" }, 403);
+      }
     }
+    return null;
   }
+
+  if (await isSetupComplete(c.env)) return c.json({ error: "setup_locked" }, 403);
+  if (!c.env.SETUP_TOKEN) {
+    return c.json({ error: "setup_token_not_configured" }, 503);
+  }
+  const provided = c.req.header(SETUP_TOKEN_HEADER);
+  if (!(await checkSetupToken(c.env.SETUP_TOKEN, provided))) {
+    return c.json({ error: "setup_token_invalid" }, 403);
+  }
+
   return null;
 }
 
 setup.get("/state", async (c) => {
+  const blocked = await guardSetup(c);
+  if (blocked) return blocked;
+
   const status = await setupStatus(c.env);
   const state = await getSetupState(c.env);
-  // The wizard's collected `data` mirrors the administrator's GitHub login /
-  // email. During first-run setup the endpoint is unauthenticated by necessity
-  // (bootstrap), but once setup is complete an anonymous caller must NOT be able
-  // to read that identity back — the sibling /api/auth/status deliberately
-  // exposes only booleans. After completion, redact `data` unless authenticated.
-  if (status.setupComplete && !(await getSession(c))) {
-    return c.json({ state: { ...state, data: {} }, status });
-  }
   return c.json({ state, status });
 });
 
 setup.post("/save", async (c) => {
-  const blocked = await guardWrite(c);
+  const blocked = await guardSetup(c);
   if (blocked) return blocked;
 
-  const body = await c.req.json<{
-    step?: number;
-    stepId?: string;
-    data?: Record<string, unknown>;
-  }>().catch(() => ({}));
+  const body = await c.req.json().catch(() => undefined);
+  const parsed = setupSaveSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "validation", issues: parsed.error.issues }, 400);
+  }
 
-  const state = await saveSetupStep(c.env, body);
+  const state = await saveSetupStep(c.env, parsed.data);
   return c.json({ state, status: await setupStatus(c.env) });
 });
 
 setup.post("/complete", async (c) => {
-  const blocked = await guardWrite(c);
+  const blocked = await guardSetup(c);
   if (blocked) return blocked;
 
   const status = await setupStatus(c.env);
@@ -103,7 +175,7 @@ setup.post("/complete", async (c) => {
   // header, which an attacker can spoof to capture an emailed sign-in token.
   // Require a real app_url (env override or the wizard-written setting) before
   // completion so a finished deployment never depends on that Host fallback.
-  if (!c.env.APP_URL && !status.appUrl) {
+  if (!appUrlSchema.safeParse(c.env.APP_URL ?? status.appUrl).success) {
     return c.json({ error: "app_url_required" }, 400);
   }
   await markSetupComplete(c.env);

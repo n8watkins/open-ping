@@ -83,9 +83,18 @@ const VALIDATORS: Record<string, (v: string) => string | null> = {
   app_url: (v) => {
     try {
       const u = new URL(v);
-      return u.protocol === "http:" || u.protocol === "https:"
+      const validScheme =
+        u.protocol === "https:" ||
+        (u.protocol === "http:" &&
+          (u.hostname === "localhost" || u.hostname === "127.0.0.1"));
+      return validScheme &&
+        !u.username &&
+        !u.password &&
+        u.pathname === "/" &&
+        !u.search &&
+        !u.hash
         ? null
-        : "must be an http(s) URL";
+        : "must be an https origin (http is allowed only for local development)";
     } catch {
       return "must be a valid URL";
     }

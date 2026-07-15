@@ -68,10 +68,9 @@ minutes. The outline:
 
 1. `npm run db:create`, then copy the printed `database_id` into `wrangler.jsonc`.
 2. Create a GitHub OAuth app (sign-in) and generate a `MASTER_KEY`.
-3. Set Worker secrets (`MASTER_KEY`, `APP_URL`, admin identity, GitHub OAuth,
-   optionally Resend).
+3. Set Worker secrets (`MASTER_KEY`, `SETUP_TOKEN`, `APP_URL`, admin identity, GitHub OAuth, optionally Resend).
 4. `npm run db:migrate` to apply migrations, then `npm run deploy`.
-5. Open the app, finish the first-run setup wizard, and add monitors.
+5. Open the app, unlock the first-run wizard with `SETUP_TOKEN`, finish setup, and add monitors.
 
 **Follow the full, copy-pasteable walkthrough in
 [docs/INSTALL.md](./docs/INSTALL.md)** - it covers the GitHub OAuth app, every

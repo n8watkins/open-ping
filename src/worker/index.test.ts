@@ -95,6 +95,7 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
     // immutable just like ASSETS — this 500'd before the mutable-clone fix.
     const env = {
       GITHUB_CLIENT_ID: "Ov23test",
+      APP_URL: "https://example.com",
       DB: {
         prepare: () => ({ bind: () => ({ run: async () => ({}) }) }),
       },

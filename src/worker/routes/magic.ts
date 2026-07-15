@@ -45,8 +45,23 @@ const requestSchema = z.object({ email: z.string().email() });
  */
 async function baseUrl(c: Ctx): Promise<string> {
   const configured = c.env.APP_URL ?? (await getSetting(c.env, "app_url"));
-  const base = configured ?? new URL(c.req.url).origin;
-  return base.replace(/\/$/, "");
+  if (configured) {
+    try {
+      const url = new URL(configured);
+      if (
+        (url.protocol === "https:" ||
+          (url.protocol === "http:" &&
+            (url.hostname === "localhost" || url.hostname === "127.0.0.1"))) &&
+        !url.username &&
+        !url.password
+      ) {
+        return url.origin;
+      }
+    } catch {
+      // Invalid legacy setting: use the request origin rather than emitting it.
+    }
+  }
+  return new URL(c.req.url).origin;
 }
 
 // c.redirect (NOT Response.redirect) so any Set-Cookie on c.res survives — see

@@ -169,6 +169,7 @@ You'll be prompted to paste the value. Here's every secret OpenPing recognizes:
 | Secret | Required? | What it is / how to obtain it |
 | --- | --- | --- |
 | `MASTER_KEY` | **Yes** | Base64 32-byte AES-GCM key for encryption-at-rest. Generate with `openssl rand -base64 32` (step 5). |
+| `SETUP_TOKEN` | **Yes** | One-time credential that protects the first-run wizard before you can sign in. Generate with `openssl rand -base64 32`. |
 | `APP_URL` | **Yes** | Public base URL of this install, e.g. `https://status.example.com`. Used for OAuth callbacks, magic links, and Web Push. Use `https://` and **no trailing slash**. |
 | `ADMIN_GITHUB_LOGIN` | At least one admin | Your GitHub login/username - allowlists the single admin for GitHub sign-in. |
 | `ADMIN_EMAIL` | At least one admin | Your email - allowlists the admin for email magic-link sign-in. |
@@ -180,13 +181,15 @@ You'll be prompted to paste the value. Here's every secret OpenPing recognizes:
 | `VAPID_PRIVATE_KEY` | Optional | Web Push private key. |
 | `VAPID_SUBJECT` | Optional | Web Push subject - a `mailto:` address or URL. |
 
-**The minimum for a working install:** `MASTER_KEY`, `APP_URL`, one admin
-identity, and (for GitHub sign-in) `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET`.
+**The minimum for a working install:** `MASTER_KEY`, `SETUP_TOKEN`, `APP_URL`,
+one admin identity, and (for GitHub sign-in) `GITHUB_CLIENT_ID` +
+`GITHUB_CLIENT_SECRET`.
 
 For example:
 
 ```bash
 npx wrangler secret put MASTER_KEY            # paste the openssl output
+npx wrangler secret put SETUP_TOKEN           # paste another random value
 npx wrangler secret put APP_URL               # e.g. https://status.example.com
 npx wrangler secret put ADMIN_GITHUB_LOGIN    # your github username
 npx wrangler secret put GITHUB_CLIENT_ID
@@ -264,16 +267,18 @@ status page and stable OAuth/push URLs. Full instructions are in
 
 Open your `APP_URL` in a browser.
 
-While setup is incomplete, the **first-run wizard** is reachable without signing
-in (by necessity - it bootstraps the install). It walks you through:
+While setup is incomplete, the **first-run wizard** can be opened before signing in, but it requires the `SETUP_TOKEN` you configured in step 6.
+This prevents an anonymous visitor from claiming a newly deployed instance before you reach it.
+The wizard walks you through:
 
 - confirming your public app URL,
 - choosing a **timezone** (required - schedules and reports use it),
 - confirming your admin identity, and
 - optional integrations (email, push, etc.).
 
-When you finish, **setup locks**: further changes require signing in as the
-admin. Sign in with **GitHub** or an **email magic link**, then:
+When you finish, **setup locks** and the setup token stops working.
+Further changes require signing in as the admin.
+Sign in with **GitHub** or an **email magic link**, then:
 
 - **Configure notification channels** under **Integrations** (email via Resend,
   Web Push, Discord, signed webhooks) and send a test event from each.
@@ -354,7 +359,7 @@ npm run dev                      # http://localhost:5173
 ```
 
 - `.dev.vars` uses the **same names** as the production secrets above and is
-  gitignored. At minimum set `MASTER_KEY`, one admin identity, and
+  gitignored. At minimum set `MASTER_KEY`, `SETUP_TOKEN`, one admin identity, and
   `APP_URL=http://localhost:5173`. See [`.dev.vars.example`](../.dev.vars.example).
 - For GitHub OAuth locally, set the OAuth app's callback to
   `http://localhost:5173/auth/github/callback`.

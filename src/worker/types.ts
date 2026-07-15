@@ -13,6 +13,9 @@ export interface Env {
   /** AES-GCM master key (base64) for encrypting sensitive D1 values. */
   MASTER_KEY?: string;
 
+  /** One-time credential required for unauthenticated first-run setup. */
+  SETUP_TOKEN?: string;
+
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
 
