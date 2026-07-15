@@ -656,7 +656,9 @@ export default function MonitorEditor() {
     setErrors([]);
     try {
       const payload = buildPayload();
-      const result = await api<{ monitor: { id: string } }>(
+      const result = await api<{
+        monitor: { id: string; heartbeatToken?: string | null };
+      }>(
         isEdit ? `/api/monitors/${id}` : "/api/monitors",
         {
           method: isEdit ? "PUT" : "POST",
@@ -664,7 +666,11 @@ export default function MonitorEditor() {
           csrf: csrf ?? undefined,
         },
       );
-      navigate(`/monitors/${result.monitor.id}`);
+      navigate(`/monitors/${result.monitor.id}`, {
+        state: result.monitor.heartbeatToken
+          ? { heartbeatToken: result.monitor.heartbeatToken }
+          : undefined,
+      });
     } catch (err) {
       setErrors(errorMessages(err));
       window.scrollTo({ top: 0, behavior: "smooth" });

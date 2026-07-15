@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { newId, randomToken } from "../lib/ids";
+import { newId, randomToken, sha256hex } from "../lib/ids";
 import { encryptConfig, decryptConfig, mergeSecrets } from "../lib/secret-config";
 import { MONITOR_TYPES, type MonitorType } from "../../shared/states";
 import type {
@@ -68,6 +68,7 @@ interface MonitorRow {
   public: string | null;
   category_id: string | null;
   heartbeat_token: string | null;
+  heartbeat_token_hash: string | null;
   sort_order: number;
   created_at: number;
   updated_at: number;
@@ -150,12 +151,51 @@ export async function getMonitorByHeartbeatToken(
   env: Env,
   token: string,
 ): Promise<MonitorRecord | null> {
-  const row = await env.DB.prepare(
-    "SELECT * FROM monitors WHERE heartbeat_token = ? AND type = 'heartbeat'",
+  const tokenHash = await sha256hex(token);
+  let row = await env.DB.prepare(
+    "SELECT * FROM monitors WHERE heartbeat_token_hash = ? AND type = 'heartbeat'",
   )
-    .bind(token)
+    .bind(tokenHash)
     .first<MonitorRow>();
+
+  // Tokens created before the hash column was introduced remain valid. Once a
+  // legacy token proves possession, replace it with its hash so later reads and
+  // database backups no longer expose the bearer credential.
+  if (!row) {
+    row = await env.DB.prepare(
+      "SELECT * FROM monitors WHERE heartbeat_token = ? AND type = 'heartbeat'",
+    )
+      .bind(token)
+      .first<MonitorRow>();
+    if (row) {
+      await env.DB.prepare(
+        `UPDATE monitors
+         SET heartbeat_token_hash = ?, heartbeat_token = NULL, updated_at = ?
+         WHERE id = ? AND heartbeat_token = ?`,
+      )
+        .bind(tokenHash, Date.now(), row.id, token)
+        .run();
+      row.heartbeat_token = null;
+      row.heartbeat_token_hash = tokenHash;
+    }
+  }
   return row ? decryptRecord(env, rowToMonitor(row)) : null;
+}
+
+/** Replace a heartbeat monitor's ingestion token and return the raw value once. */
+export async function rotateHeartbeatToken(
+  env: Env,
+  id: string,
+): Promise<string | null> {
+  const rawToken = randomToken(18);
+  const result = await env.DB.prepare(
+    `UPDATE monitors
+     SET heartbeat_token = NULL, heartbeat_token_hash = ?, updated_at = ?
+     WHERE id = ? AND type = 'heartbeat'`,
+  )
+    .bind(await sha256hex(rawToken), Date.now(), id)
+    .run();
+  return result.meta.changes > 0 ? rawToken : null;
 }
 
 export async function createMonitor(
@@ -165,6 +205,9 @@ export async function createMonitor(
   const id = newId("mon");
   const now = Date.now();
   const heartbeatToken = input.type === "heartbeat" ? randomToken(18) : null;
+  const heartbeatTokenHash = heartbeatToken
+    ? await sha256hex(heartbeatToken)
+    : null;
   const intervalSeconds =
     input.type === "heartbeat" ? input.config.intervalSeconds : 720;
   const graceSeconds =
@@ -185,8 +228,8 @@ export async function createMonitor(
       `INSERT INTO monitors (
          id, type, name, enabled, paused, interval_seconds, grace_seconds,
          config, schedule, assertions, notify, public, category_id, heartbeat_token,
-         sort_order, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         heartbeat_token_hash, sort_order, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       id,
       input.type,
@@ -201,7 +244,8 @@ export async function createMonitor(
       JSON.stringify(input.notify),
       JSON.stringify(input.public),
       input.categoryId ?? null,
-      heartbeatToken,
+      null,
+      heartbeatTokenHash,
       0,
       now,
       now,
@@ -216,6 +260,9 @@ export async function createMonitor(
 
   const created = await getMonitor(env, id);
   if (!created) throw new Error("createMonitor: failed to read back inserted row");
+  // The raw token is returned only by this creation response. It is never
+  // recoverable from D1 after the request completes.
+  created.heartbeatToken = heartbeatToken;
   return created;
 }
 

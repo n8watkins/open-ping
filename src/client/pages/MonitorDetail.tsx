@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Loader2,
@@ -157,6 +157,7 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
 export default function MonitorDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { csrf } = useBootstrap();
 
   const { data, loading, error, reload } = useFetch<DetailResponse>(
@@ -168,6 +169,19 @@ export default function MonitorDetail() {
     null,
   );
   const [copied, setCopied] = useState(false);
+  const [oneTimeHeartbeatToken, setOneTimeHeartbeatToken] = useState<string | null>(() => {
+    const state = location.state as { heartbeatToken?: unknown } | null;
+    return typeof state?.heartbeatToken === "string" ? state.heartbeatToken : null;
+  });
+
+  // Keep the creation token in component memory only. Clearing router history
+  // state means a reload or later Back navigation cannot reveal it again.
+  useEffect(() => {
+    const state = location.state as { heartbeatToken?: unknown } | null;
+    if (typeof state?.heartbeatToken === "string") {
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
 
   if (loading && !data) {
     return (
@@ -197,8 +211,9 @@ export default function MonitorDetail() {
   const { monitor, state, uptime, latency, incidentMetrics, recentSamples, recentIncidents } = data;
   const scheduleMode = monitor.schedule.mode.replace(/_/g, " ");
   const currentState: MonitorState = state?.state ?? "unknown";
-  const ingestUrl = monitor.heartbeatToken
-    ? `${window.location.origin}/hb/${monitor.heartbeatToken}`
+  const heartbeatToken = oneTimeHeartbeatToken ?? monitor.heartbeatToken;
+  const ingestUrl = heartbeatToken
+    ? `${window.location.origin}/hb/${heartbeatToken}`
     : null;
   // Only link the target when it is http(s); a `javascript:` config value would
   // otherwise execute from the href (rel/target do not prevent that).
@@ -307,6 +322,33 @@ export default function MonitorDetail() {
     }
   }
 
+  async function rotateIngestToken() {
+    if (!id) return;
+    if (ingestUrl && !confirm("Rotate this heartbeat token? The current URL will stop working.")) {
+      return;
+    }
+    setPending("rotate-token");
+    setNotice(null);
+    try {
+      const result = await api<{ heartbeatToken: string }>(
+        `/api/monitors/${id}/rotate-heartbeat-token`,
+        { method: "POST", csrf: csrf ?? undefined },
+      );
+      setOneTimeHeartbeatToken(result.heartbeatToken);
+      setNotice({
+        tone: "ok",
+        text: "Heartbeat token rotated. Copy the new URL now because it cannot be shown again.",
+      });
+    } catch (e) {
+      setNotice({
+        tone: "error",
+        text: e instanceof ApiError ? e.message : "Could not rotate heartbeat token",
+      });
+    } finally {
+      setPending(null);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl">
       <Link
@@ -389,7 +431,7 @@ export default function MonitorDetail() {
             <div className="text-xs font-medium text-ink-muted">Heartbeat ingest URL</div>
             <div className="mt-1 flex items-center gap-2">
               <code className="min-w-0 flex-1 truncate rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-sm text-ink">
-                {ingestUrl ?? "—"}
+                {ingestUrl ?? "Stored securely. Rotate the token to get a new URL."}
               </code>
               {ingestUrl && (
                 <button onClick={copyIngest} className={btn}>
@@ -397,6 +439,18 @@ export default function MonitorDetail() {
                   {copied ? "Copied" : "Copy"}
                 </button>
               )}
+              <button
+                onClick={rotateIngestToken}
+                disabled={pending !== null}
+                className={btn}
+              >
+                {pending === "rotate-token" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <ShieldCheck className="size-4" />
+                )}
+                {ingestUrl ? "Rotate" : "Generate new URL"}
+              </button>
             </div>
             <div className="mt-2 text-xs text-ink-faint">
               Expected every {formatDuration(monitor.intervalSeconds)} · grace{" "}

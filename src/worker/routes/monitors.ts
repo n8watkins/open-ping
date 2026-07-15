@@ -7,6 +7,7 @@ import {
   deleteMonitor,
   getMonitor,
   listMonitors,
+  rotateHeartbeatToken,
   setPaused,
   updateMonitor,
 } from "../db/monitors";
@@ -16,9 +17,23 @@ import { computeUptime, computeIncidentMetrics } from "../history/metrics";
 import { redactConfig } from "../lib/secret-config";
 import type { MonitorRecord } from "../db/monitors";
 
-/** Strip secret config fields before sending a monitor to the client. */
-function redactMonitor(m: MonitorRecord): MonitorRecord {
-  return { ...m, config: redactConfig(m.config as Record<string, unknown>) as MonitorRecord["config"] };
+/** Strip secret config fields and ingestion credentials from normal responses. */
+export function redactMonitor(m: MonitorRecord): MonitorRecord {
+  return {
+    ...m,
+    heartbeatToken: null,
+    config: redactConfig(
+      m.config as Record<string, unknown>,
+    ) as MonitorRecord["config"],
+  };
+}
+
+/** Include a new heartbeat token only in the monitor creation response. */
+export function presentCreatedMonitor(m: MonitorRecord): MonitorRecord {
+  const redacted = redactMonitor(m);
+  return m.type === "heartbeat"
+    ? { ...redacted, heartbeatToken: m.heartbeatToken }
+    : redacted;
 }
 
 /**
@@ -45,7 +60,7 @@ monitors.post("/", async (c) => {
     return c.json({ error: "validation", issues: parsed.error.issues }, 400);
   }
   const monitor = await createMonitor(c.env, parsed.data);
-  return c.json({ monitor: redactMonitor(monitor) }, 201);
+  return c.json({ monitor: presentCreatedMonitor(monitor) }, 201);
 });
 
 monitors.get("/:id", async (c) => {
@@ -148,6 +163,12 @@ monitors.post("/:id/resume", async (c) => {
   const monitor = await setPaused(c.env, c.req.param("id"), false);
   if (!monitor) return c.json({ error: "not_found" }, 404);
   return c.json({ monitor: redactMonitor(monitor) });
+});
+
+monitors.post("/:id/rotate-heartbeat-token", async (c) => {
+  const token = await rotateHeartbeatToken(c.env, c.req.param("id"));
+  if (!token) return c.json({ error: "not_found" }, 404);
+  return c.json({ heartbeatToken: token });
 });
 
 /**
