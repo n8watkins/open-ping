@@ -100,7 +100,7 @@ sign in. (Email magic links are an alternative/backup - see the note below.)
 1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
    (<https://github.com/settings/developers>).
 2. **Application name:** anything you like (e.g. "OpenPing").
-3. **Homepage URL:** your public app URL - the `APP_URL` you'll set in step 6
+3. **Homepage URL:** your public app origin, supplied through the `APP_URL` Worker secret or the setup wizard
    (for example `https://status.example.com`, or your `*.workers.dev` URL).
 4. **Authorization callback URL:**
    `https://<your-domain>/auth/github/callback`
@@ -118,8 +118,8 @@ sign in. (Email magic links are an alternative/backup - see the note below.)
 
 ### Admin identity: `ADMIN_GITHUB_LOGIN` vs `ADMIN_EMAIL`
 
-OpenPing gates the single admin with an allowlist. You must configure **at least
-one** identity:
+OpenPing gates the single admin with an allowlist.
+You must configure **at least one** identity before setup can finish, either as a Worker secret here or on the Administrator step of the setup wizard:
 
 - **`ADMIN_GITHUB_LOGIN`** - your GitHub **login (username)**, e.g. `octocat`
   (not your display name or email). Pairs with the GitHub OAuth app above.
@@ -127,8 +127,8 @@ one** identity:
   as an alternative or backup. This path also requires `RESEND_API_KEY` (step 6)
   so OpenPing can actually send the link.
 
-A common, robust setup is to configure **both**: GitHub for everyday sign-in, and
-email magic link as a fallback in case you ever can't use GitHub.
+A common, robust setup is to configure **both**: GitHub for everyday sign-in, and email magic link as a fallback in case you ever cannot use GitHub.
+Worker-secret values take precedence over identities saved by the wizard, which makes them useful for configuration-as-code.
 
 ---
 
@@ -167,9 +167,9 @@ You'll be prompted to paste the value. Here's every secret OpenPing recognizes:
 | --- | --- | --- |
 | `MASTER_KEY` | **Yes** | Base64 32-byte AES-GCM key for encryption-at-rest. Generate with `openssl rand -base64 32` (step 5). |
 | `SETUP_TOKEN` | **Yes** | One-time credential that protects the first-run wizard before you can sign in. Generate with `openssl rand -base64 32`. |
-| `APP_URL` | **Yes** | Public base URL of this install, e.g. `https://status.example.com`. Used for OAuth callbacks, magic links, and Web Push. Use `https://` and **no trailing slash**. |
-| `ADMIN_GITHUB_LOGIN` | At least one admin | Your GitHub login/username - allowlists the single admin for GitHub sign-in. |
-| `ADMIN_EMAIL` | At least one admin | Your email - allowlists the admin for email magic-link sign-in. |
+| `APP_URL` | Recommended override | Public origin of this install, e.g. `https://status.example.com`; used for OAuth callbacks, magic links, and Web Push; must use `https://` with no path, query, fragment, credentials, or trailing slash; can instead be saved in the setup wizard. |
+| `ADMIN_GITHUB_LOGIN` | Optional override | Your GitHub login/username, which can instead be saved in the setup wizard; at least one GitHub or email administrator must exist before setup can finish. |
+| `ADMIN_EMAIL` | Optional override | Your email for magic-link sign-in, which can instead be saved in the setup wizard; at least one GitHub or email administrator must exist before setup can finish. |
 | `GITHUB_CLIENT_ID` | For GitHub sign-in | Client ID from the OAuth app (step 4). |
 | `GITHUB_CLIENT_SECRET` | For GitHub sign-in | Client secret from the OAuth app (step 4). |
 | `RESEND_API_KEY` | For email / magic links | API key from [Resend](https://resend.com). Required for email notifications and email magic-link sign-in. |
@@ -178,9 +178,9 @@ You'll be prompted to paste the value. Here's every secret OpenPing recognizes:
 | `VAPID_PRIVATE_KEY` | Optional | Web Push private key. |
 | `VAPID_SUBJECT` | Optional | Web Push subject - a `mailto:` address or URL. |
 
-**The minimum for a working install:** `MASTER_KEY`, `SETUP_TOKEN`, `APP_URL`,
-one admin identity, and (for GitHub sign-in) `GITHUB_CLIENT_ID` +
-`GITHUB_CLIENT_SECRET`.
+**The minimum Worker secrets for first-run setup:** a valid `MASTER_KEY` and a high-entropy `SETUP_TOKEN`.
+The wizard can save `APP_URL` and the administrator identity in D1.
+GitHub sign-in additionally requires `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, while email sign-in requires `RESEND_API_KEY`.
 
 For example:
 
@@ -196,10 +196,10 @@ npx wrangler secret put ADMIN_EMAIL
 npx wrangler secret put RESEND_API_KEY
 ```
 
-> **Two rules to remember:** (1) You **must** configure at least one admin
-> identity (`ADMIN_GITHUB_LOGIN` and/or `ADMIN_EMAIL`) - the setup wizard refuses
-> to complete without one. (2) After **changing** a secret, you must **redeploy**
-> (`npm run deploy`) for it to take effect on the live Worker.
+> **Two rules to remember:** (1) `MASTER_KEY` must decode to exactly 32 bytes, and setup will fail closed without it.
+> (2) `SETUP_TOKEN` protects an incomplete public installation from being claimed by its first visitor.
+> Ordinary `wrangler secret put` updates the deployed Worker's secret directly, so it does not require a follow-up deploy.
+> The separate `wrangler versions secret put` workflow creates an undeployed version and does require an explicit versions deployment.
 
 ---
 
@@ -211,7 +211,7 @@ Create the schema in your remote D1 database:
 npm run db:migrate         # wrangler d1 migrations apply open-ping --remote
 ```
 
-This applies every migration in `migrations/` (currently `0001` … `0007`) in
+This applies every migration in `migrations/` (currently `0001` through `0009`) in
 order. Migrations are **additive and tracked by Wrangler**, so re-running is
 safe - only unapplied migrations run. Wrangler will ask you to confirm before
 applying to the remote database.
@@ -234,9 +234,8 @@ The Cron Trigger that runs the checker **every 12 minutes** (`*/12 * * * *`,
 defined in `wrangler.jsonc`) is enabled automatically on deploy - you don't need
 to configure anything for monitoring to start.
 
-> If you deployed first to learn your `*.workers.dev` URL, go back now and set
-> `APP_URL` (step 6) and the GitHub OAuth Homepage/callback URLs (step 4) to
-> match it, then run `npm run deploy` again.
+> If you deployed first to learn your `*.workers.dev` URL, enter that origin in the setup wizard or set `APP_URL` with `wrangler secret put`.
+> Update the GitHub OAuth Homepage and callback URLs from step 4 to match it.
 
 ---
 
@@ -249,10 +248,9 @@ status page and stable OAuth/push URLs. Full instructions are in
 1. Attach the domain to the Worker in the Cloudflare dashboard
    (**Workers & Pages → your worker → Settings → Domains & Routes → Add custom
    domain**). The domain must be on a zone in the **same Cloudflare account**.
-2. Point `APP_URL` at it and redeploy:
+2. Point `APP_URL` at it:
    ```bash
    npx wrangler secret put APP_URL    # enter https://status.example.com
-   npm run deploy
    ```
 3. Update the GitHub OAuth app's **Homepage URL** and **Authorization callback
    URL** to the new domain (`https://status.example.com/auth/github/callback`).
@@ -262,16 +260,17 @@ status page and stable OAuth/push URLs. Full instructions are in
 
 ## 10. First run: complete setup, then add monitors
 
-Open your `APP_URL` in a browser.
+Open the deployed public URL in a browser.
 
 While setup is incomplete, the **first-run wizard** can be opened before signing in, but it requires the `SETUP_TOKEN` you configured in step 6.
 This prevents an anonymous visitor from claiming a newly deployed instance before you reach it.
-The wizard walks you through:
+The wizard saves:
 
 - confirming your public app URL,
 - choosing a **timezone** (required - schedules and reports use it),
-- confirming your admin identity, and
-- optional integrations (email, push, etc.).
+- and configuring at least one admin identity if it was not supplied as a Worker secret.
+
+The Notifications and First monitor steps currently explain what to do after setup; they do not create channels or monitors inside the wizard.
 
 When you finish, **setup locks** and the setup token stops working.
 Further changes require signing in as the admin.
@@ -326,20 +325,19 @@ hits:
   (step 7).
 - **GitHub sign-in fails with a state / callback / "redirect URI" error.** The
   OAuth app's **Authorization callback URL** must be **exactly**
-  `${APP_URL}/auth/github/callback`. A mismatch between `APP_URL` and the
+  `<configured-app-origin>/auth/github/callback`. A mismatch between the configured app origin and the
   registered callback (e.g. after switching to a custom domain) breaks the
   OAuth state check. Re-check both, then redeploy.
-- **"Not authorized" after a successful GitHub login.** `ADMIN_GITHUB_LOGIN`
-  must match your GitHub **login/username** exactly (not display name or email).
+- **"Not authorized" after a successful GitHub login.** The administrator GitHub login saved in the wizard or overridden by `ADMIN_GITHUB_LOGIN` must match your GitHub **login/username** exactly, not your display name or email.
 - **Setup reports that `MASTER_KEY` is required, or the dashboard warns that encryption is disabled.**
-  Configure a valid base64-encoded 32-byte `MASTER_KEY` secret (step 5) and redeploy.
+  Configure a valid base64-encoded 32-byte `MASTER_KEY` secret (step 5).
 - **Magic-link / notification emails don't arrive.** Make sure `RESEND_API_KEY`
   is set and your Resend **sending domain/sender is verified**. For quick
   testing without verifying a domain, Resend lets you send from
   `onboarding@resend.dev` **to your own account email** - useful to confirm the
   pipeline before you set up a real sender.
-- **Changed a secret but nothing changed.** Secrets only take effect on the next
-  deploy - run `npm run deploy` after any `wrangler secret put`.
+- **Changed a secret but nothing changed.** Confirm you used `wrangler secret put`, which updates the deployed Worker directly, and not `wrangler versions secret put`, which creates an undeployed version.
+- **Setup reports `app_url_required`.** Enter the public origin in the wizard or set `APP_URL`; it must be an HTTPS origin with no path, query, fragment, or embedded credentials.
 
 ---
 
@@ -354,9 +352,10 @@ npm run db:migrate:local         # local D1 schema
 npm run dev                      # http://localhost:5173
 ```
 
-- `.dev.vars` uses the **same names** as the production secrets above and is
-  gitignored. At minimum set `MASTER_KEY`, `SETUP_TOKEN`, one admin identity, and
-  `APP_URL=http://localhost:5173`. See [`.dev.vars.example`](../.dev.vars.example).
+- `.dev.vars` uses the **same names** as the production secrets above and is gitignored.
+  At minimum set a valid `MASTER_KEY` and `SETUP_TOKEN`.
+  You may preconfigure an admin identity and `APP_URL=http://localhost:5173`, or enter them in the local setup wizard.
+  See [`.dev.vars.example`](../.dev.vars.example).
 - For GitHub OAuth locally, set the OAuth app's callback to
   `http://localhost:5173/auth/github/callback`.
 - Other handy scripts: `npm run typecheck`, `npm run test`, `npm run build`.

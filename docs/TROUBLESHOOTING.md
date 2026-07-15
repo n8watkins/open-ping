@@ -61,15 +61,14 @@ OpenPing checks monitors from a **Cron Trigger that fires every 12 minutes**
 OpenPing has a **single administrator** gated by an allowlist. If GitHub login
 succeeds but you're rejected:
 
-- Confirm `ADMIN_GITHUB_LOGIN` exactly matches your GitHub **login (username)**,
-  not your display name or email.
+- Confirm the administrator GitHub login saved in setup exactly matches your GitHub **login (username)**, not your display name or email.
+  A configured `ADMIN_GITHUB_LOGIN` Worker secret overrides the wizard value.
 - Confirm `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` belong to an OAuth app
-  whose **callback URL** is `${APP_URL}/auth/github/callback`.
-- After changing any secret, redeploy (or it won't take effect):
-  `npx wrangler secret put ADMIN_GITHUB_LOGIN` then `npm run deploy`.
+  whose **callback URL** is `<configured-app-origin>/auth/github/callback`.
+- Update a Worker-secret override with `npx wrangler secret put ADMIN_GITHUB_LOGIN`.
+  Ordinary `wrangler secret put` updates the deployed Worker directly and does not need a follow-up deploy.
 
-For email/magic-link sign-in, the equivalent allowlist is `ADMIN_EMAIL`
-(plus a working `RESEND_API_KEY`).
+For email/magic-link sign-in, use the administrator email saved in setup or the `ADMIN_EMAIL` Worker-secret override, plus a working `RESEND_API_KEY`.
 
 ## Database errors / "no such table"
 
@@ -86,30 +85,34 @@ produces the same symptoms.
 ## A monitor reports `blocked_url`
 
 This is **expected, not a bug**. OpenPing's outbound checker has an **SSRF
-guard** that refuses to fetch targets that are loopback, `.local`, cloud
+guard** that refuses to fetch targets that are loopback, `.local`, `.internal`,
+`.lan`, `.home`, cloud
 metadata endpoints (e.g. `169.254.169.254`, `metadata.google.internal`),
 private/reserved IP ranges, non-`http(s)` schemes, or URLs with embedded
 credentials. The error message includes the reason (e.g. `loopback_host`,
-`metadata_host`, `private_ipv4`). Point the monitor at a **publicly reachable**
+`private_hostname`, `metadata_host`, `private_ipv4`). Point the monitor at a **publicly reachable**
 URL. (These targets fail permanently and are not retried, by design.)
 
 ## Setup wizard won't complete
 
 The first-run wizard requires:
 
-- A `SETUP_TOKEN` Worker secret for access before an administrator can sign in.
-- **At least one admin identity** configured (`ADMIN_GITHUB_LOGIN` or
-  `ADMIN_EMAIL`) - otherwise you'll see `no_admin_configured`.
+- A high-entropy `SETUP_TOKEN` Worker secret for access before an administrator can sign in.
+- A valid base64-encoded 32-byte `MASTER_KEY` Worker secret, otherwise you will see `master_key_required`.
+- **At least one admin identity** supplied through the wizard or a Worker-secret override (`ADMIN_GITHUB_LOGIN` or `ADMIN_EMAIL`), otherwise you will see `no_admin_configured`.
+- A valid public app origin supplied through the wizard or `APP_URL`, otherwise you will see `app_url_required`.
 - A **timezone** chosen - otherwise `timezone_required`.
+
+The Notifications and First monitor wizard steps are guidance only.
+Configure channels and create monitors after setup finishes and you sign in.
 
 Once setup is complete it **locks**: the setup API returns `setup_locked` for unauthenticated requests, the setup token is no longer accepted, and further changes require signing in as the admin.
 This is intentional.
 
 ## Local dev won't start or behaves oddly
 
-- Ensure `.dev.vars` exists (copy from `.dev.vars.example`) with at least
-  `MASTER_KEY`, `SETUP_TOKEN`, an admin identity, and
-  `APP_URL=http://localhost:5173`.
+- Ensure `.dev.vars` exists (copy from `.dev.vars.example`) with at least a valid `MASTER_KEY` and `SETUP_TOKEN`.
+- Preconfigure an admin identity and `APP_URL=http://localhost:5173`, or enter both in the local setup wizard.
 - Run `npm run db:migrate:local` so the local D1 database has the schema.
 - Set the GitHub OAuth callback to `http://localhost:5173/auth/github/callback`
   for local sign-in.

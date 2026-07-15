@@ -28,11 +28,9 @@ npm run db:migrate:local         # apply migrations to the local D1 database
 npm run dev                      # Vite + workerd dev server at http://localhost:5173
 ```
 
-Fill in `.dev.vars` with at least a `MASTER_KEY`
-(`openssl rand -base64 32`) and one admin identity
-(`ADMIN_GITHUB_LOGIN` or `ADMIN_EMAIL`). See
-[`docs/INSTALL.md`](./docs/INSTALL.md) for the full list and a from-scratch
-deploy walkthrough.
+Fill in `.dev.vars` with a valid base64-encoded 32-byte `MASTER_KEY` (`openssl rand -base64 32`) and a high-entropy `SETUP_TOKEN`.
+You can also preconfigure an administrator identity and `APP_URL`, or enter both in the local setup wizard.
+See [`docs/INSTALL.md`](./docs/INSTALL.md) for the full list and a from-scratch deploy walkthrough.
 
 ## Useful scripts
 
@@ -68,7 +66,7 @@ Guidelines:
   functions (e.g. SSRF checks, import validation, export redaction) so they can
   be unit-tested without a live D1 binding - follow that pattern.
 - **Database changes are additive migrations.** Add a new numbered file in
-  `migrations/` (e.g. `0002_*.sql`); never edit an applied migration. Migrations
+  `migrations/` (the next migration after the current `0009` is `0010_*.sql`); never edit an applied migration. Migrations
   are tracked by Wrangler, so existing installs upgrade cleanly with
   `npm run db:migrate`.
 - **Never commit secrets.** `.dev.vars`, `.env*`, and `*.local` are gitignored.
@@ -82,8 +80,8 @@ Guidelines:
 OpenPing handles credentials (OAuth secrets, encrypted monitor auth, push
 keys). If you find a security issue, please **do not** open a public issue -
 report it privately to the maintainers first. Note that the outbound HTTP
-checker intentionally blocks loopback/private/metadata targets (SSRF guard);
-that behavior is by design, not a bug.
+checker intentionally blocks loopback, private, metadata, and private-hostname targets such as `.local`, `.internal`, `.lan`, and `.home` (SSRF guard).
+That behavior is by design, not a bug.
 
 ## License
 

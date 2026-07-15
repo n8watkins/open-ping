@@ -10,8 +10,10 @@ Set a high-entropy token as the `API_TOKEN` Worker secret:
 
 ```sh
 openssl rand -base64 32 | npx wrangler secret put API_TOKEN
-npx wrangler deploy   # API_TOKEN takes effect on the next deploy
 ```
+
+Ordinary `wrangler secret put` updates the deployed Worker directly, so no follow-up deployment is required.
+Do not confuse it with `wrangler versions secret put`, which creates an undeployed Worker version.
 
 When `API_TOKEN` is set, any request with `Authorization: Bearer <API_TOKEN>` is
 treated as the admin. Because a Bearer header is not sent ambiently by browsers,
