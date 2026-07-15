@@ -16,7 +16,9 @@
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc -b",
     "lint": "tsc -b",
-    "test": "vitest run",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
     "cf-typegen": "wrangler types",
     "db:create": "wrangler d1 create open-ping",
@@ -36,6 +38,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.0.0",
+    "@cloudflare/vitest-pool-workers": "^0.18.5",
     "@cloudflare/workers-types": "^4.20250101.0",
     "@tailwindcss/vite": "^4.0.0",
     "@types/luxon": "^3.4.2",

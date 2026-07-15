@@ -58,7 +58,7 @@ Useful scripts:
 ```bash
 npm run typecheck  # tsc project references
 npm run build      # production build (client + worker)
-npm run test       # vitest
+npm run test       # Node unit tests plus workerd/D1 route integration tests
 ```
 
 ## Deploy your own

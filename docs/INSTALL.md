@@ -359,7 +359,8 @@ npm run dev                      # http://localhost:5173
   See [`.dev.vars.example`](../.dev.vars.example).
 - For GitHub OAuth locally, set the OAuth app's callback to
   `http://localhost:5173/auth/github/callback`.
-- Other handy scripts: `npm run typecheck`, `npm run test`, `npm run build`.
+- `npm run test` runs both the fast Node unit suite and the workerd/D1 route integration suite.
+- Other handy scripts are `npm run typecheck`, `npm run test:unit`, `npm run test:integration`, and `npm run build`.
 
 ---
 
