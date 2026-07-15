@@ -1,4 +1,5 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
 import type { AppEnv, Env } from "./types";
 import { api } from "./routes/api";
@@ -90,6 +91,18 @@ app.use("*", async (c, next) => {
   await next();
   if (c.res) c.res = new Response(c.res.body, c.res);
 });
+
+// Bound attacker-controlled request bodies before any route parses JSON. Public
+// probe/auth/heartbeat endpoints need only tiny payloads; authenticated import
+// and configuration routes get a larger ceiling for legitimate backups.
+const SMALL_BODY_LIMIT = 32 * 1024;
+const API_BODY_LIMIT = 5 * 1024 * 1024;
+const payloadTooLarge = (c: Context) =>
+  c.json({ error: "payload_too_large" }, 413);
+app.use("/api/auth/magic/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
+app.use("/api/tools/is-it-down", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
+app.use("/hb/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
+app.use("/api/*", bodyLimit({ maxSize: API_BODY_LIMIT, onError: payloadTooLarge }));
 
 // JSON API (auth, monitors, incidents, settings, …). Mounted before the SPA
 // fallback so API routes never get swallowed by the asset handler.

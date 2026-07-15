@@ -90,6 +90,23 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
     });
   });
 
+  it("rejects oversized bodies on public endpoints before route parsing", async () => {
+    const oversized = JSON.stringify({ value: "x".repeat(33 * 1024) });
+    for (const path of ["/api/auth/magic/request", "/api/tools/is-it-down", "/hb/token"]) {
+      const res = await worker.fetch!(
+        new Request(`https://example.com${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: oversized,
+        }),
+        makeEnv(),
+        ctx,
+      );
+      expect(res.status).toBe(413);
+      expect(await res.json()).toEqual({ error: "payload_too_large" });
+    }
+  });
+
   it("OAuth start 302-redirects (Response.redirect headers are also immutable)", async () => {
     // The GitHub OAuth start returns Response.redirect(), whose headers are
     // immutable just like ASSETS — this 500'd before the mutable-clone fix.

@@ -76,9 +76,11 @@ describe("parseHeartbeatPayload", () => {
     ).toEqual({ durationMs: 50, exitStatus: 2, message: "boom", runId: "r2" });
   });
 
-  it("coerces numeric strings and ignores NaN", () => {
+  it("coerces numeric strings and ignores non-finite values", () => {
     expect(parseHeartbeatPayload({ duration: "abc" }, undefined)).toEqual({});
     expect(parseHeartbeatPayload({ status: "x1" }, undefined)).toEqual({});
+    expect(parseHeartbeatPayload({ duration: "Infinity" }, undefined)).toEqual({});
+    expect(parseHeartbeatPayload({}, { exitStatus: -Infinity })).toEqual({});
     expect(parseHeartbeatPayload({ duration: "0" }, undefined)).toEqual({
       durationMs: 0,
     });
@@ -112,7 +114,16 @@ describe("parseHeartbeatPayload", () => {
     expect(
       parseHeartbeatPayload(
         {},
-        { metrics: { rows: 10, name: "skip", ratio: 0.5, bad: NaN } },
+        {
+          metrics: {
+            rows: 10,
+            name: "skip",
+            ratio: 0.5,
+            bad: NaN,
+            infinite: Infinity,
+            ["x".repeat(101)]: 1,
+          },
+        },
       ),
     ).toEqual({ metrics: { rows: 10, ratio: 0.5 } });
   });

@@ -64,7 +64,7 @@ export interface HeartbeatPayload {
 function toNumber(v: unknown): number | undefined {
   if (v === undefined || v === null || v === "") return undefined;
   const n = typeof v === "number" ? v : Number(v);
-  return Number.isNaN(n) ? undefined : n;
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /** Coerce a value to a non-empty string (numbers are stringified). */
@@ -81,6 +81,7 @@ function toText(v: unknown): string | undefined {
 const MAX_MESSAGE_CHARS = 1000;
 const MAX_RUNID_CHARS = 200;
 const MAX_METRICS_KEYS = 50;
+const MAX_METRIC_NAME_CHARS = 100;
 
 /**
  * Keep only numeric (finite) values from an arbitrary metrics object, bounded to
@@ -90,7 +91,12 @@ function filterMetrics(v: unknown): Record<string, number> | undefined {
   if (!v || typeof v !== "object") return undefined;
   const out: Record<string, number> = {};
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    if (typeof val === "number" && !Number.isNaN(val)) {
+    if (
+      k.length > 0 &&
+      k.length <= MAX_METRIC_NAME_CHARS &&
+      typeof val === "number" &&
+      Number.isFinite(val)
+    ) {
       out[k] = val;
       if (Object.keys(out).length >= MAX_METRICS_KEYS) break;
     }

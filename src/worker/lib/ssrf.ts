@@ -22,8 +22,12 @@ const BLOCKED_IPV4_CIDRS: ReadonlyArray<readonly [string, number]> = [
   ["169.254.0.0", 16], // link-local (incl. cloud metadata)
   ["172.16.0.0", 12], // RFC1918 private
   ["192.0.0.0", 24], // IETF protocol assignments
+  ["192.0.2.0", 24], // TEST-NET-1 documentation
+  ["192.88.99.0", 24], // deprecated 6to4 relay anycast
   ["192.168.0.0", 16], // RFC1918 private
   ["198.18.0.0", 15], // benchmarking
+  ["198.51.100.0", 24], // TEST-NET-2 documentation
+  ["203.0.113.0", 24], // TEST-NET-3 documentation
   ["224.0.0.0", 4], // multicast
   ["240.0.0.0", 4], // reserved/future use (incl. 255.255.255.255 broadcast)
 ];
@@ -77,6 +81,9 @@ export function isBlockedIPv6(host: string): boolean {
   if (h === "::1") return true; // loopback
   if (h === "::") return true; // unspecified
   if (h.startsWith("fc") || h.startsWith("fd")) return true; // fc00::/7 ULA
+  if (h.startsWith("ff")) return true; // ff00::/8 multicast
+  if (h.startsWith("2001:db8:")) return true; // documentation prefix
+  if (/^2001:(?:0{1,4}:|:)/.test(h)) return true; // Teredo transition range
   // fe80::/10 link-local (fe80–febf) plus deprecated fec0::/10 site-local
   // (fec0–feff); together they fill fe80::/9, none of which is publicly routable.
   if (/^fe[89a-f]/.test(h)) return true;
@@ -160,6 +167,14 @@ export function assertSafeHost(host: string): HostResult {
     (hostUint !== null && hostUint === ipv4ToUint32("169.254.169.254"))
   ) {
     return { ok: false, reason: "metadata_host" };
+  }
+
+  if (
+    normalized.endsWith(".internal") ||
+    normalized.endsWith(".lan") ||
+    normalized.endsWith(".home")
+  ) {
+    return { ok: false, reason: "private_hostname" };
   }
 
   if (isIPv4(normalized) && isBlockedIPv4(normalized)) {

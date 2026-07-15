@@ -196,9 +196,16 @@ function toIso(ms: number | null): string {
  * comma, double-quote, CR, or LF, wrap it in double-quotes and escape embedded
  * quotes by doubling them. Null/undefined become an empty cell.
  */
-function csvCell(value: unknown): string {
+export function csvCell(value: unknown): string {
   if (value === null || value === undefined) return "";
-  const s = String(value);
+  const raw = String(value);
+  // Spreadsheet applications execute cells beginning with these formula
+  // sigils. Prefix attacker-controlled strings with an apostrophe so exported
+  // monitor names, errors, and incident text remain inert when opened in Excel.
+  const s =
+    typeof value === "string" && /^[\t\r ]*[=+\-@]/.test(raw)
+      ? `'${raw}`
+      : raw;
   if (/[",\r\n]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }

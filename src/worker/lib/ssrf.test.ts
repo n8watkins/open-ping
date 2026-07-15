@@ -23,6 +23,10 @@ const BLOCKED = [
   "http://[2002:7f00:0001::]", // 6to4 of 127.0.0.1 -> [2002:7f00:1::]
   "http://[64:ff9b::7f00:1]", // NAT64 of 127.0.0.1
   "http://[fec0::1]", // deprecated site-local fec0::/10
+  "http://[ff02::1]", // multicast
+  "http://[2001:db8::1]", // documentation-only
+  "http://[2001:0000::1]", // Teredo transition range
+  "http://service.internal",
   "http://[::2]", // single-hextet IPv4-compatible -> 0.0.0.2 (0.0.0.0/8)
   // Encoded-loopback forms that rely on WHATWG normalizing the host to a
   // dotted-quad before the IPv4 denylist sees it — regression guards.
@@ -84,6 +88,9 @@ describe("assertSafeHost", () => {
     expect(reasonOf("localhost")).toBe("loopback_host");
     expect(reasonOf("printer.local")).toBe("loopback_host");
     expect(reasonOf("api.localhost")).toBe("loopback_host");
+    expect(reasonOf("service.internal")).toBe("private_hostname");
+    expect(reasonOf("router.lan")).toBe("private_hostname");
+    expect(reasonOf("printer.home")).toBe("private_hostname");
   });
 
   it("blocks cloud-metadata endpoints", () => {
@@ -138,6 +145,9 @@ describe("isBlockedIPv4", () => {
     expect(isBlockedIPv4("127.0.0.1")).toBe(true);
     expect(isBlockedIPv4("169.254.10.10")).toBe(true);
     expect(isBlockedIPv4("100.64.0.1")).toBe(true);
+    expect(isBlockedIPv4("192.0.2.1")).toBe(true);
+    expect(isBlockedIPv4("198.51.100.1")).toBe(true);
+    expect(isBlockedIPv4("203.0.113.1")).toBe(true);
   });
   it("allows public addresses", () => {
     expect(isBlockedIPv4("1.1.1.1")).toBe(false);
@@ -153,6 +163,9 @@ describe("isBlockedIPv6", () => {
     expect(isBlockedIPv6("[fc00::1]")).toBe(true);
     expect(isBlockedIPv6("[fe80::1]")).toBe(true);
     expect(isBlockedIPv6("[::ffff:10.0.0.1]")).toBe(true);
+    expect(isBlockedIPv6("[ff02::1]")).toBe(true);
+    expect(isBlockedIPv6("[2001:db8::1]")).toBe(true);
+    expect(isBlockedIPv6("[2001:0000::1]")).toBe(true);
   });
   it("allows public IPv6", () => {
     expect(isBlockedIPv6("[2606:4700:4700::1111]")).toBe(false);
