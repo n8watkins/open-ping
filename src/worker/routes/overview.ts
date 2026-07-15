@@ -5,6 +5,13 @@ import { listMonitors } from "../db/monitors";
 import { listChannels } from "../db/channels";
 import { listCategories } from "../db/categories";
 import type { MonitorState } from "../../shared/states";
+import type { MonitorRecord } from "../db/monitors";
+import type {
+  DnsConfig,
+  DomainConfig,
+  HttpConfig,
+  TcpConfig,
+} from "../../shared/schemas";
 import {
   computeIncidentOverview,
   computeOverallUptime,
@@ -38,6 +45,30 @@ interface IncidentStartRow {
 }
 
 const DAY = 24 * 60 * 60 * 1000;
+
+/** Human-searchable target shown only to the authenticated administrator. */
+export function monitorTarget(monitor: MonitorRecord): string | null {
+  switch (monitor.type) {
+    case "http": {
+      try {
+        const parsed = new URL((monitor.config as HttpConfig).url);
+        // The compact list needs a searchable host/path, not credentials or
+        // query tokens that could leak into screenshots and shared displays.
+        return `${parsed.origin}${parsed.pathname}`;
+      } catch {
+        return null;
+      }
+    }
+    case "dns":
+      return (monitor.config as DnsConfig).hostname;
+    case "tcp":
+      return `${(monitor.config as TcpConfig).host}:${(monitor.config as TcpConfig).port}`;
+    case "domain":
+      return (monitor.config as DomainConfig).domain;
+    case "heartbeat":
+      return null;
+  }
+}
 
 overview.get("/", async (c) => {
   const now = Date.now();
@@ -140,6 +171,7 @@ overview.get("/", async (c) => {
       id: m.id,
       name: m.name,
       type: m.type,
+      target: monitorTarget(m),
       state,
       paused: m.paused,
       intervalSeconds: m.intervalSeconds,

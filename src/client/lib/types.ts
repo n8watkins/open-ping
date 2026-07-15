@@ -20,6 +20,7 @@ export interface MonitorSummary {
   id: string;
   name: string;
   type: MonitorType;
+  target: string | null;
   state: MonitorState;
   paused: boolean;
   intervalSeconds: number;

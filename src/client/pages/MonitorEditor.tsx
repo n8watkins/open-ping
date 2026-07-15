@@ -6,7 +6,12 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { ArrowLeft, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
@@ -38,6 +43,20 @@ type AssertionKind = Assertion["kind"];
 type ScheduleMode = Schedule["mode"];
 type DnsRecordType = DnsConfig["recordType"];
 type DnsExpectedMode = "equals" | "contains";
+
+const MONITOR_TYPES: MonitorType[] = [
+  "http",
+  "heartbeat",
+  "dns",
+  "tcp",
+  "domain",
+];
+
+function monitorTypeFromQuery(value: string | null): MonitorType {
+  return MONITOR_TYPES.includes(value as MonitorType)
+    ? (value as MonitorType)
+    : "http";
+}
 
 interface HeaderRow {
   name: string;
@@ -179,11 +198,11 @@ function timezones(): string[] {
   return ["UTC", "America/New_York", "America/Los_Angeles", "Europe/London"];
 }
 
-function initialForm(): FormState {
+function initialForm(type: MonitorType = "http"): FormState {
   const tz = guessTimezone();
   return {
     name: "",
-    type: "http",
+    type,
     enabled: true,
     url: "",
     method: "GET",
@@ -360,11 +379,15 @@ function errorMessages(err: unknown): string[] {
 export default function MonitorEditor() {
   const { id } = useParams();
   const isEdit = Boolean(id);
+  const [searchParams] = useSearchParams();
+  const requestedType = monitorTypeFromQuery(searchParams.get("type"));
   const navigate = useNavigate();
   const { csrf } = useBootstrap();
   const tzList = useMemo(timezones, []);
 
-  const [form, setForm] = useState<FormState>(initialForm);
+  const [form, setForm] = useState<FormState>(() =>
+    initialForm(isEdit ? "http" : requestedType),
+  );
   const [loading, setLoading] = useState(isEdit);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
