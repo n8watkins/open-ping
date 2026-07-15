@@ -40,7 +40,7 @@ Store it with access controls appropriate for that information.
 You must re-enter monitor credentials and restore Worker secrets separately.
 
 > **Category and status-page limitation:** Category records and status-page definitions are not exported.
-> A monitor's `categoryId` is retained, so a fresh restore can contain category references that do not exist in the destination.
+> Portable exports clear each monitor's category assignment to avoid dangling references in another installation.
 > Recreate categories and status pages, then reassign restored monitors.
 
 ## Restore / import

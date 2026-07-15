@@ -120,7 +120,9 @@ export function redactMonitorForExport(monitor: MonitorRecord): ExportedMonitor 
     assertions: monitor.assertions,
     notify: monitor.notify,
     public: monitor.public,
-    categoryId: monitor.categoryId,
+    // Categories are not part of the portable backup format. Carrying an id
+    // into another installation can violate the category foreign key.
+    categoryId: null,
     sortOrder: monitor.sortOrder,
     createdAt: monitor.createdAt,
     updatedAt: monitor.updatedAt,

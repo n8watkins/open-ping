@@ -126,6 +126,16 @@ describe("redactMonitorForExport", () => {
     expect(serialized).not.toContain("bearer-secret");
     expect(serialized).not.toContain("hb-token-SECRET");
   });
+
+  it("drops category ids because portable backups do not include categories", () => {
+    const monitor = makeMonitor(
+      "http",
+      { url: "https://example.com" },
+      { categoryId: "cat_from_another_installation" },
+    );
+
+    expect(redactMonitorForExport(monitor).categoryId).toBeNull();
+  });
 });
 
 describe("validateImport", () => {
