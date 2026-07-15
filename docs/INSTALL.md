@@ -144,13 +144,10 @@ openssl rand -base64 32
 
 Copy the output - you'll set it as the `MASTER_KEY` secret in the next step.
 
-> **What if I skip it?** OpenPing still runs, but encryption-at-rest is
-> **disabled**: any secrets it stores go into D1 in **plaintext**, and the Worker
-> logs a one-time warning
-> (`[openping] MASTER_KEY is not configured: encryption-at-rest is DISABLED…`).
-> For any real install, set `MASTER_KEY`. **Back it up somewhere safe** - it's
-> the only thing that can decrypt a full D1 dump (see [`BACKUP.md`](./BACKUP.md)).
-> Changing it later makes previously-encrypted values unreadable.
+> **What if I skip it?** OpenPing can boot for diagnostics, but the first-run wizard will not complete without a valid key.
+> Existing installations created before this requirement display an administrator warning and may store new credentials in plaintext until `MASTER_KEY` is configured.
+> **Back it up somewhere safe** - it is the only thing that can decrypt protected values in a full D1 dump (see [`BACKUP.md`](./BACKUP.md)).
+> Changing it later makes previously encrypted values unreadable.
 
 ---
 
@@ -334,9 +331,8 @@ hits:
   OAuth state check. Re-check both, then redeploy.
 - **"Not authorized" after a successful GitHub login.** `ADMIN_GITHUB_LOGIN`
   must match your GitHub **login/username** exactly (not display name or email).
-- **Worker log warns that `MASTER_KEY` is not configured.** Encryption-at-rest
-  is off and secrets are being stored in plaintext. Set the `MASTER_KEY` secret
-  (step 5) and redeploy.
+- **Setup reports that `MASTER_KEY` is required, or the dashboard warns that encryption is disabled.**
+  Configure a valid base64-encoded 32-byte `MASTER_KEY` secret (step 5) and redeploy.
 - **Magic-link / notification emails don't arrive.** Make sure `RESEND_API_KEY`
   is set and your Resend **sending domain/sender is verified**. For quick
   testing without verifying a domain, Resend lets you send from

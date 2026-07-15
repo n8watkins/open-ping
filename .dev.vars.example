@@ -6,8 +6,8 @@
 #
 # `wrangler` / `npm run dev` loads these into the Worker as `env` bindings,
 # mirroring the production secrets you set with `wrangler secret put <NAME>`.
-# Anything left blank or omitted simply makes that feature "not configured"
-# locally — the app still boots so you can run the first-run setup wizard.
+# Anything left blank or omitted makes that feature "not configured" locally.
+# The app boots for diagnostics, but setup cannot complete without MASTER_KEY.
 
 # --- Required for anything beyond a bare boot ---
 
