@@ -14,7 +14,7 @@ The Worker runs a scheduled monitoring cycle every 12 minutes and supports HTTP,
 Authentication supports GitHub OAuth, email magic links, and a separate bearer token for the administrative CLI.
 
 The source branch is `main` in `https://github.com/n8watkins/open-ping.git`.
-After the handoff commit, the local branch is 25 commits ahead of `origin/main`.
+After the handoff commit, the local branch is 27 commits ahead of `origin/main`.
 The unpushed work described below has not been deployed.
 Do not infer the current production state from older documentation or historical review notes.
 
@@ -23,6 +23,7 @@ Do not infer the current production state from older documentation or historical
 The monitoring workspace was restyled toward the UptimeRobot reference with a permanent side navigation, compact monitor table, current-status summary, recent analytics, search, filtering, sorting, and responsive behavior.
 The uptime and incident summaries now use real metrics instead of placeholders.
 The setup flow now supports GitHub-only, email-only, or combined administrator identity configuration.
+The setup wizard now contains only actionable prerequisite steps and gives clear monitor and integration guidance on its finish screen.
 The monitor workspace now has URL-aware search, category grouping, pause/resume/delete bulk actions, per-row action menus, a monitor-type split menu, type-specific editor entry, and a mobile layout without horizontal overflow.
 
 The security pass made these changes:
@@ -58,6 +59,7 @@ The principal implementation commits are:
 - `991eada` documents local build secret artifacts.
 - `65c96d5` completes monitor-list workspace actions and responsive behavior.
 - `192de3d` makes the build restrict generated development-secret artifacts.
+- `70a05b9` streamlines the setup wizard and accepts an empty unused administrator identity field.
 
 The documentation pass adds an explicit security and storage inventory, corrects installation and recovery instructions, documents heartbeat behavior, and labels historical review material as historical.
 
@@ -80,7 +82,7 @@ Keep the active `MASTER_KEY` backed up outside D1 because changing it without re
 The final verification completed successfully on 2026-07-15:
 
 - `npm run typecheck` passed.
-- `npm test` passed with 456 tests across 40 files.
+- `npm test` passed with 457 tests across 40 files.
 - `npm run build` passed.
 - `npm audit` reported zero vulnerabilities.
 - `git diff --check` passed.
@@ -90,6 +92,8 @@ The final verification completed successfully on 2026-07-15:
 - The authenticated monitor workspace was verified in a real browser at 1920 by 900 and 390 by 844 viewports with no console errors or error overlay.
 - URL search, category grouping, the monitor-type split menu, the row action menu, and a pause-then-resume mutation were exercised against local D1.
 - The mobile browser pass verified that document width equals viewport width after the responsive row fix.
+- The authenticated setup wizard was browser-verified with five actionable steps, finish-screen guidance, and no error overlay.
+- The GitHub-only administrator path was reproduced end to end, which exposed and verified the fix for rejected empty optional email values.
 
 Use the same gate after further changes:
 
@@ -107,26 +111,23 @@ git status --short --branch
 1. Publish and deploy the reviewed branch.
    Push only with user authorization, deploy against the already-migrated D1 database, and smoke-test login, monitor listing, monitor creation, heartbeat creation, and the public status page.
 
-2. Replace or remove the informational setup steps.
-   The Notifications and First monitor steps currently explain what to do after setup instead of configuring those resources inside the wizard.
-
-3. Add D1-backed route and scheduler integration tests.
+2. Add D1-backed route and scheduler integration tests.
    Pure and unit coverage is strong, but authenticated route behavior, scheduler transactions, import responses, and dispatcher behavior should also run against a Workers-compatible D1 test environment.
 
-4. Close the remaining secret-management gaps.
+3. Close the remaining secret-management gaps.
    Define a safe `MASTER_KEY` rotation and re-encryption workflow, decide whether generic webhook capability URLs and notification outbox payloads require additional sealing, and document any accepted plaintext operational metadata.
 
-5. Complete live delivery verification.
+4. Complete live delivery verification.
    Exercise a real browser push subscription, a real push delivery and deep link, a Resend down-and-recovery sequence, a Discord delivery, and at least one real production monitor incident.
 
-6. Perform a pixel-level browser pass after deployment.
+5. Perform a pixel-level browser pass after deployment.
    Compare the deployed desktop and narrow layouts with the supplied UptimeRobot references, with particular attention to table density, side-panel width, sidebar visibility, control alignment, and empty or loading states.
 
 ## Inputs or authorization needed
 
 There is no current blocker for additional local implementation or automated testing.
 
-- Pushing the 25 local commits and deploying them requires explicit user authorization.
+- Pushing the 27 local commits and deploying them requires explicit user authorization.
 - Live Web Push verification requires a real browser or installed mobile PWA whose notification permission the user can approve.
 - Live Resend and Discord verification requires valid production service configuration plus approval to send test notifications to the configured recipients.
 - Creating real production monitors requires the service targets, schedules, notification assignments, and public-page choices from the user.
