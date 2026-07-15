@@ -158,6 +158,22 @@ export interface ImportValidation {
 }
 
 /**
+ * Resolve monitor ids from a backup to ids in the receiving installation.
+ * Unknown ids are dropped so restored maintenance windows cannot point at
+ * monitors that do not exist in this database.
+ */
+export function remapImportedMonitorIds(
+  monitorIds: string[] | null | undefined,
+  monitorIdMap: ReadonlyMap<string, string>,
+): string[] | null {
+  if (monitorIds == null) return null;
+  return monitorIds.flatMap((id) => {
+    const mapped = monitorIdMap.get(id);
+    return mapped == null ? [] : [mapped];
+  });
+}
+
+/**
  * PURE. Validate a backup envelope without throwing. Checks the version, that
  * the monitors/maintenance/incidents arrays are present, and that every monitor
  * parses against `createMonitorSchema` (errors are collected, never thrown).
@@ -365,6 +381,11 @@ data.post("/import", async (c) => {
 
   let importedMonitors = 0;
   let skippedMonitors = 0;
+  const heartbeatMonitors: Array<{
+    id: string;
+    name: string;
+    heartbeatToken: string;
+  }> = [];
   // Maps each backup monitor id to the id it resolves to in THIS instance, so
   // imported incidents reference a monitor that actually exists (avoids a
   // foreign-key failure / orphaned rows on restore into a fresh instance).
@@ -381,17 +402,39 @@ data.post("/import", async (c) => {
     existingNames.add(input.name);
     existingIdByName.set(input.name, created.id);
     if (oldId) monitorIdMap.set(oldId, created.id);
+    if (created.type === "heartbeat" && created.heartbeatToken) {
+      heartbeatMonitors.push({
+        id: created.id,
+        name: created.name,
+        heartbeatToken: created.heartbeatToken,
+      });
+    }
     importedMonitors++;
   }
 
   let importedMaintenance = 0;
+  let skippedMaintenance = 0;
   for (const w of backup.maintenance) {
     const parsed = maintenanceImportSchema.safeParse(w);
-    if (!parsed.success) continue;
+    if (!parsed.success) {
+      skippedMaintenance++;
+      continue;
+    }
+    const monitorIds = remapImportedMonitorIds(
+      parsed.data.monitorIds,
+      monitorIdMap,
+    );
+    if (
+      parsed.data.scope === "monitors" &&
+      (!monitorIds || monitorIds.length === 0)
+    ) {
+      skippedMaintenance++;
+      continue;
+    }
     await createMaintenanceWindow(c.env, {
       title: parsed.data.title ?? null,
       scope: parsed.data.scope,
-      monitorIds: parsed.data.monitorIds ?? null,
+      monitorIds: parsed.data.scope === "global" ? null : monitorIds,
       startsAt: parsed.data.startsAt,
       endsAt: parsed.data.endsAt,
       recurrence: parsed.data.recurrence ?? null,
@@ -450,6 +493,13 @@ data.post("/import", async (c) => {
       maintenance: importedMaintenance,
       incidents: importedIncidents,
     },
-    skipped: { monitors: skippedMonitors, incidents: skippedIncidents },
+    skipped: {
+      monitors: skippedMonitors,
+      maintenance: skippedMaintenance,
+      incidents: skippedIncidents,
+    },
+    // These bearer credentials are generated during restore and cannot be read
+    // from D1 later. Return them once, just like the monitor creation endpoint.
+    heartbeatMonitors,
   });
 });

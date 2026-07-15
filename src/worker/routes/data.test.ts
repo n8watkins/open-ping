@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { redactMonitorForExport, validateImport } from "./data";
+import {
+  redactMonitorForExport,
+  remapImportedMonitorIds,
+  validateImport,
+} from "./data";
 import type { MonitorRecord } from "../db/monitors";
 import type { HttpConfig, HeartbeatConfig } from "../../shared/schemas";
 
@@ -181,5 +185,22 @@ describe("validateImport", () => {
     expect(result.ok).toBe(false);
     expect(result.counts.monitors).toBe(1);
     expect(result.errors.some((e) => e.includes("index 1"))).toBe(true);
+  });
+});
+
+describe("remapImportedMonitorIds", () => {
+  const idMap = new Map([
+    ["old-a", "new-a"],
+    ["old-b", "new-b"],
+  ]);
+
+  it("maps restored monitor ids and drops ids that were not restored", () => {
+    expect(
+      remapImportedMonitorIds(["old-a", "missing", "old-b"], idMap),
+    ).toEqual(["new-a", "new-b"]);
+  });
+
+  it("preserves a null monitor list for global maintenance", () => {
+    expect(remapImportedMonitorIds(null, idMap)).toBeNull();
   });
 });
