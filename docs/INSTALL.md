@@ -270,7 +270,8 @@ The wizard saves:
 - choosing a **timezone** (required - schedules and reports use it),
 - and configuring at least one admin identity if it was not supplied as a Worker secret.
 
-The Notifications and First monitor steps currently explain what to do after setup; they do not create channels or monitors inside the wizard.
+The wizard configures only the prerequisites needed to secure and identify the installation.
+After setup, sign in to create monitors from **Monitoring** and configure delivery channels under **Integrations & API**.
 
 When you finish, **setup locks** and the setup token stops working.
 Further changes require signing in as the admin.

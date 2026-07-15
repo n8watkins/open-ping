@@ -43,4 +43,21 @@ describe("setupSaveSchema", () => {
     expect(setupSaveSchema.safeParse({ data: { appUrl: "http://localhost:5173" } }).success).toBe(true);
     expect(setupSaveSchema.safeParse({ data: { appUrl: "http://127.0.0.1:5173" } }).success).toBe(true);
   });
+
+  it("allows either optional administrator identity field to be empty", () => {
+    expect(
+      setupSaveSchema.safeParse({
+        step: 4,
+        stepId: "admin",
+        data: { adminGithubLogin: "open-ping-admin", adminEmail: "" },
+      }).success,
+    ).toBe(true);
+    expect(
+      setupSaveSchema.safeParse({
+        step: 4,
+        stepId: "admin",
+        data: { adminGithubLogin: "", adminEmail: "admin@example.com" },
+      }).success,
+    ).toBe(true);
+  });
 });

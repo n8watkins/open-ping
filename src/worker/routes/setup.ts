@@ -72,7 +72,7 @@ export const setupSaveSchema = z.object({
         .refine((value) => DateTime.local().setZone(value).isValid, "invalid timezone")
         .optional(),
       adminGithubLogin: githubLoginSchema.optional(),
-      adminEmail: z.string().max(320).email().optional(),
+      adminEmail: z.string().max(320).email().or(z.literal("")).optional(),
     })
     .strict()
     .optional(),

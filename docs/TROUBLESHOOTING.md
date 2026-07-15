@@ -103,7 +103,7 @@ The first-run wizard requires:
 - A valid public app origin supplied through the wizard or `APP_URL`, otherwise you will see `app_url_required`.
 - A **timezone** chosen - otherwise `timezone_required`.
 
-The Notifications and First monitor wizard steps are guidance only.
+The wizard configures installation prerequisites only.
 Configure channels and create monitors after setup finishes and you sign in.
 
 Once setup is complete it **locks**: the setup API returns `setup_locked` for unauthenticated requests, the setup token is no longer accepted, and further changes require signing in as the admin.

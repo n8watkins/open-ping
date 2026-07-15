@@ -39,8 +39,6 @@ const STEPS = [
   { id: "url", title: "Installation URL" },
   { id: "timezone", title: "Timezone" },
   { id: "admin", title: "Administrator" },
-  { id: "notifications", title: "Notifications" },
-  { id: "monitor", title: "First monitor" },
   { id: "finish", title: "Finish" },
 ] as const;
 
@@ -474,22 +472,6 @@ function StepBody(p: BodyProps) {
           </p>
         </Section>
       );
-    case "notifications":
-      return (
-        <Section title="Notifications" desc="Email (Resend), mobile push, Discord, and webhooks can be configured here or later in Integrations.">
-          <p className="text-sm text-ink-muted">
-            You can skip this for now and set up notification channels after the first monitor is running.
-          </p>
-        </Section>
-      );
-    case "monitor":
-      return (
-        <Section title="First monitor" desc="Add your first HTTP or heartbeat monitor.">
-          <p className="text-sm text-ink-muted">
-            Monitor creation becomes available on the dashboard once setup is complete.
-          </p>
-        </Section>
-      );
     case "finish":
       return (
         <Section title="You're all set" desc="Finish setup to start using OpenPing.">
@@ -505,6 +487,11 @@ function StepBody(p: BodyProps) {
               label="Administrator identity recorded"
             />
           </ul>
+          <p className="mt-5 rounded-lg border border-line bg-surface-2/50 px-3 py-2 text-sm text-ink-muted">
+            After signing in, create your first monitor from Monitoring and add
+            email, push, Discord, or webhook delivery under Integrations &amp;
+            API.
+          </p>
         </Section>
       );
     default:
