@@ -15,6 +15,7 @@ import { cn } from "../lib/cn";
 
 interface SetupStatus {
   setupComplete: boolean;
+  encryptionConfigured: boolean;
   githubEnabled: boolean;
   githubAdminConfigured: boolean;
   emailAdminConfigured: boolean;
@@ -195,7 +196,9 @@ export default function Setup() {
           ? "Configure an administrator GitHub login (or email) before finishing."
           : code === "timezone_required"
             ? "Select a timezone before finishing."
-            : "Could not complete setup.",
+            : code === "master_key_required"
+              ? "Configure a valid 32-byte MASTER_KEY before finishing setup."
+              : "Could not complete setup.",
       );
     } finally {
       setSaving(false);
@@ -398,6 +401,7 @@ function StepBody(p: BodyProps) {
           <ul className="space-y-2 text-sm text-ink-muted">
             <Ready ok label="Worker is running" />
             <Ready ok label="Database is reachable" />
+            <Ready ok={p.status?.encryptionConfigured} label="Encryption at rest configured" />
             <Ready ok={p.status?.githubEnabled} label="GitHub OAuth credentials present" optional />
             <Ready ok={p.status?.resendConfigured} label="Resend email configured" optional />
           </ul>

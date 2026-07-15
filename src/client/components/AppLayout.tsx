@@ -197,6 +197,12 @@ export function AppLayout() {
           </div>
         )}
 
+        {status && !status.encryptionConfigured && (
+          <div className="flex items-center justify-center gap-2 border-b border-down/40 bg-down/10 px-4 py-2 text-xs text-down">
+            Encryption at rest is disabled. Configure a valid 32-byte MASTER_KEY before storing credentials.
+          </div>
+        )}
+
         <main
           id="main-content"
           className="flex-1 px-4 py-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-8 md:py-7 md:pb-8"

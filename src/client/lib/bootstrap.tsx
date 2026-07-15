@@ -10,6 +10,7 @@ import { api } from "./api";
 
 export interface AuthStatus {
   setupComplete: boolean;
+  encryptionConfigured: boolean;
   githubEnabled: boolean;
   githubAdminConfigured: boolean;
   emailAdminConfigured: boolean;

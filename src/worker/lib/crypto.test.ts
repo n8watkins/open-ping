@@ -4,6 +4,7 @@ import {
   decryptValue,
   generateMasterKey,
   b64decode,
+  isValidMasterKey,
 } from "./crypto";
 import type { Env } from "../types";
 
@@ -38,5 +39,12 @@ describe("crypto", () => {
 
   it("generates 32-byte keys", () => {
     expect(b64decode(generateMasterKey()).byteLength).toBe(32);
+    expect(isValidMasterKey(generateMasterKey())).toBe(true);
+  });
+
+  it("rejects missing, malformed, and incorrectly sized master keys", () => {
+    expect(isValidMasterKey(undefined)).toBe(false);
+    expect(isValidMasterKey("not base64")).toBe(false);
+    expect(isValidMasterKey(btoa("too short"))).toBe(false);
   });
 });

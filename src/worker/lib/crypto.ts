@@ -21,6 +21,16 @@ export function b64decode(s: string): Uint8Array {
   return out;
 }
 
+/** True when a value is a base64-encoded 256-bit AES key. */
+export function isValidMasterKey(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    return b64decode(value).byteLength === 32;
+  } catch {
+    return false;
+  }
+}
+
 async function getKey(env: Env): Promise<CryptoKey> {
   if (!env.MASTER_KEY) throw new Error("MASTER_KEY secret is not configured");
   const raw = b64decode(env.MASTER_KEY);

@@ -5,6 +5,7 @@ import { getSession, destroySession, revokeAllSessions, SESSION_COOKIE } from ".
 import { getAdminGithubLogin, getAdminEmail } from "../lib/admin";
 import { getSetting } from "../db/settings";
 import { timingSafeEqual } from "../lib/timing";
+import { isValidMasterKey } from "../lib/crypto";
 
 /** Session/identity endpoints mounted at /api/auth. */
 export const apiAuth = new Hono<AppEnv>();
@@ -26,6 +27,7 @@ apiAuth.get("/me", async (c) => {
 apiAuth.get("/status", async (c) => {
   return c.json({
     setupComplete: (await getSetting(c.env, "setup_complete")) === "true",
+    encryptionConfigured: isValidMasterKey(c.env.MASTER_KEY),
     githubEnabled: !!c.env.GITHUB_CLIENT_ID,
     githubAdminConfigured: !!(await getAdminGithubLogin(c.env)),
     emailAdminConfigured: !!(await getAdminEmail(c.env)),

@@ -13,6 +13,7 @@ import { getAdminGithubLogin, getAdminEmail } from "../lib/admin";
 import { getSetting } from "../db/settings";
 import { CSRF_HEADER, getSession } from "../lib/sessions";
 import { timingSafeEqual } from "../lib/timing";
+import { isValidMasterKey } from "../lib/crypto";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const SETUP_TOKEN_HEADER = "x-setup-token";
@@ -96,6 +97,7 @@ export const setup = new Hono<AppEnv>();
 async function setupStatus(env: Env) {
   return {
     setupComplete: await isSetupComplete(env),
+    encryptionConfigured: isValidMasterKey(env.MASTER_KEY),
     githubEnabled: !!env.GITHUB_CLIENT_ID,
     githubAdminConfigured: !!(await getAdminGithubLogin(env)),
     emailAdminConfigured: !!(await getAdminEmail(env)),
@@ -164,6 +166,9 @@ setup.post("/complete", async (c) => {
   if (blocked) return blocked;
 
   const status = await setupStatus(c.env);
+  if (!status.encryptionConfigured) {
+    return c.json({ error: "master_key_required" }, 400);
+  }
   if (!status.githubAdminConfigured && !status.emailAdminConfigured) {
     return c.json({ error: "no_admin_configured" }, 400);
   }
