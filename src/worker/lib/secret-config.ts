@@ -3,40 +3,24 @@ import type { MonitorType } from "../../shared/states";
 import { encryptValue, decryptValue } from "./crypto";
 
 /**
- * Encryption-at-rest helpers for sensitive monitor config fields (PRD §18,
- * acceptance #30). These operate on a loose `Record<string, unknown>` config so
- * the same code serves both monitor types; the caller supplies the monitor
- * `type` where it matters.
+ * Encryption-at-rest helpers for monitor configuration.
  *
- * Sensitive locations:
- *   - http monitor:      `auth.password` (basic), `auth.token` (bearer)
- *   - heartbeat monitor: `secret`
- *   - dns/tcp/domain:    none (no secret-bearing config fields)
+ * New writes seal the entire config document because credentials can appear in
+ * URLs, query parameters, custom headers, and request bodies in addition to the
+ * explicitly modelled authentication fields. Reads also support the older
+ * format where only known secret fields were encrypted.
  *
- * Encryption is BEST-EFFORT: when `env.MASTER_KEY` is not configured the config
- * is stored as plaintext, and decryption silently leaves non-ciphertext (or
- * undecryptable) values untouched. Stored ciphertext uses the `v1:` prefix
- * produced by `encryptValue` (see ./crypto).
+ * Encryption remains best-effort when `MASTER_KEY` is not configured so an
+ * existing no-key deployment keeps working, but it emits an operational warning.
  */
-
-/**
- * Sensitive paths to encrypt for a given monitor type. Every `MonitorType` MUST
- * have an entry: `encryptConfig` does `SECRET_PATHS[type].some(...)`, so a
- * missing key would be `undefined.some(...)` and throw on every create/update.
- * The polled types (dns/tcp/domain) carry no secrets → empty arrays.
- */
-const SECRET_PATHS: Record<MonitorType, readonly string[]> = {
-  http: ["auth.password", "auth.token"],
-  heartbeat: ["secret"],
-  dns: [],
-  tcp: [],
-  domain: [],
-};
 
 /** Every known sensitive location, scanned when the type is unknown. */
 const ALL_SECRET_PATHS: readonly string[] = ["secret", "auth.password", "auth.token"];
 
 const CIPHERTEXT_PREFIX = "v1:";
+const SEALED_CONFIG_KEY = "__openping_sealed_config_v1";
+
+type SealedConfig = { [SEALED_CONFIG_KEY]: string };
 
 /**
  * Guards the "encryption-at-rest disabled" warning so it is emitted at most once
@@ -56,6 +40,16 @@ let encryptionDisabledWarned = false;
  */
 export function isCiphertext(v: unknown): v is string {
   return typeof v === "string" && /^v1:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/.test(v);
+}
+
+/** Identify the intentionally narrow envelope used for whole-config encryption. */
+function isSealedConfig(config: Record<string, unknown>): config is SealedConfig {
+  const keys = Object.keys(config);
+  return (
+    keys.length === 1 &&
+    keys[0] === SEALED_CONFIG_KEY &&
+    isCiphertext(config[SEALED_CONFIG_KEY])
+  );
 }
 
 /** True for a non-empty string value (a secret worth protecting). */
@@ -90,57 +84,61 @@ function setPath(obj: Record<string, unknown>, path: string, value: unknown): vo
 }
 
 /**
- * Deep-clone `config`, encrypting each sensitive field that holds a non-empty
- * plaintext string. Idempotent: values already prefixed `v1:` are left as-is.
- * When `env.MASTER_KEY` is unset the clone is returned UNCHANGED (best-effort
- * encryption — values remain plaintext at rest).
+ * Deep-clone and seal the complete config as one encrypted JSON document.
+ * Existing sealed documents are returned unchanged, making the operation
+ * idempotent. When `MASTER_KEY` is unset, the plaintext clone is returned.
  */
 export async function encryptConfig(
   env: Env,
-  type: MonitorType,
+  _type: MonitorType,
   config: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const clone = structuredClone(config);
   if (!env.MASTER_KEY) {
-    // Stay best-effort (no throw — that would break intentional no-key deploys),
-    // but make the fail-open OBSERVABLE: if we were actually handed a plaintext
-    // secret to persist, warn once that encryption-at-rest is off.
-    if (
-      !encryptionDisabledWarned &&
-      SECRET_PATHS[type].some((path) => {
-        const value = getPath(clone, path);
-        return secretValuePresent(value) && !isCiphertext(value);
-      })
-    ) {
+    if (!encryptionDisabledWarned && Object.keys(clone).length > 0) {
       encryptionDisabledWarned = true;
       console.warn(
         "[openping] MASTER_KEY is not configured: encryption-at-rest is DISABLED. " +
-          "Monitor/channel/VAPID secrets are being stored in PLAINTEXT in D1. " +
+          "Monitor configuration and other secrets may be stored in PLAINTEXT in D1. " +
           "Set the MASTER_KEY Worker secret to enable encryption.",
       );
     }
     return clone;
   }
-  for (const path of SECRET_PATHS[type]) {
-    const value = getPath(clone, path);
-    if (secretValuePresent(value) && !isCiphertext(value)) {
-      setPath(clone, path, await encryptValue(env, value));
-    }
+
+  if (isSealedConfig(clone)) {
+    return clone;
   }
-  return clone;
+
+  return {
+    [SEALED_CONFIG_KEY]: await encryptValue(env, JSON.stringify(clone)),
+  };
 }
 
 /**
- * Deep-clone `config`, decrypting each sensitive field whose value is a `v1:`
- * ciphertext. Plaintext (non-`v1:`) values are left untouched, and a failed
- * decrypt never throws outward — the offending value is left as-is so the rest
- * of the config still resolves.
+ * Decrypt a sealed config document, then decrypt legacy field-level ciphertext.
+ * Plaintext legacy rows remain readable. A failed decrypt does not throw outward
+ * so a missing or rotated key does not make every monitor query fail.
  */
 export async function decryptConfig(
   env: Env,
   config: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const clone = structuredClone(config);
+  let clone = structuredClone(config);
+
+  if (isSealedConfig(clone)) {
+    try {
+      const plaintext = await decryptValue(env, clone[SEALED_CONFIG_KEY]);
+      const parsed: unknown = JSON.parse(plaintext);
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return clone;
+      }
+      clone = parsed as Record<string, unknown>;
+    } catch {
+      return clone;
+    }
+  }
+
   for (const path of ALL_SECRET_PATHS) {
     const value = getPath(clone, path);
     if (typeof value === "string" && value.startsWith(CIPHERTEXT_PREFIX)) {

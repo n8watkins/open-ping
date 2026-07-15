@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { generateMasterKey } from "./crypto";
+import { encryptValue, generateMasterKey } from "./crypto";
 import {
   secretValuePresent,
   isCiphertext,
@@ -45,47 +45,102 @@ describe("a plaintext secret beginning with 'v1:' is still encrypted at rest", (
     const env = envWithKey();
     const hbConfig = { intervalSeconds: 3600, secret: "v1:looks-like-cipher" };
     const enc = await encryptConfig(env, "heartbeat", hbConfig);
-    expect(enc.secret).not.toBe("v1:looks-like-cipher");
-    expect(isCiphertext(enc.secret as string)).toBe(true);
+    expect(JSON.stringify(enc)).not.toContain("looks-like-cipher");
     const dec = await decryptConfig(env, enc);
     expect(dec.secret).toBe("v1:looks-like-cipher");
   });
 });
 
 describe("encrypt/decrypt round-trip with a master key", () => {
-  it("survives a round trip for a bearer token and a heartbeat secret", async () => {
+  it("seals every HTTP config field and restores the complete document", async () => {
     const env = envWithKey();
 
     const httpConfig = {
-      url: "https://example.com",
+      url: "https://api-user:api-pass@example.com/check?token=query-secret",
+      method: "POST",
+      headers: { Authorization: "custom-secret", "X-Api-Key": "header-secret" },
+      body: '{"password":"body-secret"}',
       auth: { type: "bearer", token: "super-secret-token" },
     };
     const encHttp = await encryptConfig(env, "http", httpConfig);
-    const encToken = (encHttp.auth as Record<string, unknown>).token as string;
-    expect(encToken).not.toBe("super-secret-token");
-    expect(encToken.startsWith("v1:")).toBe(true);
-    expect(encHttp.url).toBe("https://example.com");
+    const stored = JSON.stringify(encHttp);
+    expect(Object.keys(encHttp)).toEqual(["__openping_sealed_config_v1"]);
+    expect(stored).not.toContain("api-pass");
+    expect(stored).not.toContain("query-secret");
+    expect(stored).not.toContain("header-secret");
+    expect(stored).not.toContain("body-secret");
+    expect(stored).not.toContain("super-secret-token");
 
     const decHttp = await decryptConfig(env, encHttp);
-    expect((decHttp.auth as Record<string, unknown>).token).toBe(
-      "super-secret-token",
-    );
+    expect(decHttp).toEqual(httpConfig);
+  });
+
+  it("seals and restores heartbeat configuration", async () => {
+    const env = envWithKey();
 
     const hbConfig = { intervalSeconds: 3600, secret: "hb-secret" };
     const encHb = await encryptConfig(env, "heartbeat", hbConfig);
-    expect(encHb.secret).not.toBe("hb-secret");
-    expect((encHb.secret as string).startsWith("v1:")).toBe(true);
+    expect(JSON.stringify(encHb)).not.toContain("hb-secret");
 
     const decHb = await decryptConfig(env, encHb);
-    expect(decHb.secret).toBe("hb-secret");
+    expect(decHb).toEqual(hbConfig);
   });
 
   it("is idempotent: already-encrypted values are not re-encrypted", async () => {
     const env = envWithKey();
     const once = await encryptConfig(env, "heartbeat", { secret: "s" });
     const twice = await encryptConfig(env, "heartbeat", once);
-    expect(twice.secret).toBe(once.secret);
+    expect(twice).toEqual(once);
     expect((await decryptConfig(env, twice)).secret).toBe("s");
+  });
+
+  it("leaves an envelope intact when the key is wrong", async () => {
+    const stored = await encryptConfig(envWithKey(), "http", {
+      url: "https://example.com?token=hidden",
+    });
+
+    await expect(decryptConfig(envWithKey(), stored)).resolves.toEqual(stored);
+  });
+});
+
+describe("legacy config compatibility", () => {
+  it("reads plaintext rows unchanged", async () => {
+    const legacy = {
+      url: "https://example.com",
+      headers: { "X-Legacy": "plain" },
+      auth: { type: "bearer", token: "plain-token" },
+    };
+
+    await expect(decryptConfig(envWithKey(), legacy)).resolves.toEqual(legacy);
+  });
+
+  it("decrypts rows with legacy field-level encryption", async () => {
+    const env = envWithKey();
+    const encryptedToken = await encryptValue(env, "legacy-token");
+    const legacy = {
+      url: "https://example.com",
+      auth: { type: "bearer", token: encryptedToken },
+    };
+
+    await expect(decryptConfig(env, legacy)).resolves.toEqual({
+      url: "https://example.com",
+      auth: { type: "bearer", token: "legacy-token" },
+    });
+  });
+
+  it("migrates legacy field encryption into a sealed document on write", async () => {
+    const env = envWithKey();
+    const encryptedToken = await encryptValue(env, "legacy-token");
+    const stored = await encryptConfig(env, "http", {
+      url: "https://example.com",
+      auth: { type: "bearer", token: encryptedToken },
+    });
+
+    expect(Object.keys(stored)).toEqual(["__openping_sealed_config_v1"]);
+    await expect(decryptConfig(env, stored)).resolves.toEqual({
+      url: "https://example.com",
+      auth: { type: "bearer", token: "legacy-token" },
+    });
   });
 });
 
@@ -134,5 +189,35 @@ describe("mergeSecrets", () => {
     const incoming = { auth: { type: "bearer", token: "new-token" } };
     const merged = mergeSecrets(incoming, existing);
     expect((merged.auth as Record<string, unknown>).token).toBe("new-token");
+  });
+
+  it("preserves a redacted token across decrypt, merge, reseal, and redact", async () => {
+    const env = envWithKey();
+    const stored = await encryptConfig(env, "http", {
+      url: "https://old.example.com?credential=protected",
+      auth: { type: "bearer", token: "existing-token" },
+    });
+    const existing = await decryptConfig(env, stored);
+    const incoming = {
+      url: "https://new.example.com",
+      auth: { type: "bearer", token: "" },
+    };
+
+    const resealed = await encryptConfig(
+      env,
+      "http",
+      mergeSecrets(incoming, existing),
+    );
+    const resolved = await decryptConfig(env, resealed);
+
+    expect(resolved).toEqual({
+      url: "https://new.example.com",
+      auth: { type: "bearer", token: "existing-token" },
+    });
+    expect(redactConfig(resolved)).toEqual({
+      url: "https://new.example.com",
+      auth: { type: "bearer", token: "" },
+    });
+    expect(JSON.stringify(resealed)).not.toContain("existing-token");
   });
 });
