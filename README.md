@@ -15,8 +15,8 @@ does not reduce uptime.
 > pages, five monitor types, a free `/tools` suite, an embeddable widget/badge,
 > and a marketing landing page (all listed below). Hardened by multiple review
 > passes plus a live-deploy verification round that fixed several real production
-> bugs (see [`CODE_REVIEW.md`](./CODE_REVIEW.md)); 397 tests, `tsc -b` +
-> `vite build` clean. See [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the build
+> bugs (see [`CODE_REVIEW.md`](./CODE_REVIEW.md)); the test suite, `tsc -b`, and
+> `vite build` are clean. See [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the build
 > history.
 
 ## What it does
@@ -67,7 +67,7 @@ OpenPing runs entirely in **your own Cloudflare account** and deploys in a few
 minutes. The outline:
 
 1. `npm run db:create`, then copy the printed `database_id` into `wrangler.jsonc`.
-2. Create a GitHub OAuth app (sign-in) and generate a `MASTER_KEY`.
+2. Configure GitHub OAuth and/or email magic-link sign-in, then generate a `MASTER_KEY`.
 3. Set Worker secrets (`MASTER_KEY`, `SETUP_TOKEN`, `APP_URL`, admin identity, GitHub OAuth, optionally Resend).
 4. `npm run db:migrate` to apply migrations, then `npm run deploy`.
 5. Open the app, unlock the first-run wizard with `SETUP_TOKEN`, finish setup, and add monitors.
@@ -86,6 +86,7 @@ secret, custom domains, and a verify-it's-working checklist.
 - [CLI](./docs/CLI.md) - manage an instance from a terminal/automation via an API token
 - [Upgrade](./docs/UPGRADE.md) - pull, migrate, redeploy
 - [Backup & restore](./docs/BACKUP.md) - JSON export/import and full D1 dumps
+- [Security & secret storage](./docs/SECURITY.md) - encryption, hashing, plaintext metadata, legacy upgrades, and backup boundaries
 - [Custom domain](./docs/CUSTOM_DOMAIN.md) - put OpenPing on your own hostname
 - [Free tier](./docs/FREE_TIER.md) - how usage maps to Cloudflare's free plan
 - [Troubleshooting](./docs/TROUBLESHOOTING.md) - common issues and fixes
