@@ -67,6 +67,7 @@ overview.get("/", async (c) => {
         type: m.type,
         state,
         paused: m.paused,
+        intervalSeconds: m.intervalSeconds,
         scheduleMode: m.schedule.mode,
         lastCheckedAt: st?.last_checked_at ?? null,
         lastDurationMs: st?.last_duration_ms ?? null,

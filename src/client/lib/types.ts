@@ -22,6 +22,7 @@ export interface MonitorSummary {
   type: MonitorType;
   state: MonitorState;
   paused: boolean;
+  intervalSeconds: number;
   scheduleMode: string;
   lastCheckedAt: number | null;
   lastDurationMs: number | null;

@@ -11,6 +11,7 @@ import {
   Loader2,
   WifiOff,
   LogOut,
+  MoreHorizontal,
   User,
   type LucideIcon,
 } from "lucide-react";
@@ -47,14 +48,16 @@ function deriveStatus(counts: OverviewResponse["counts"] | undefined) {
 }
 
 const NAV: NavItem[] = [
+  { to: "/monitors", label: "Monitoring", icon: Activity },
   { to: "/", label: "Overview", icon: LayoutDashboard },
-  { to: "/monitors", label: "Monitors", icon: Activity },
   { to: "/incidents", label: "Incidents", icon: AlertTriangle },
+  { to: "/status-page", label: "Status pages", icon: Globe },
   { to: "/maintenance", label: "Maintenance", icon: Wrench },
-  { to: "/integrations", label: "Integrations", icon: Plug },
-  { to: "/status-page", label: "Status page", icon: Globe },
+  { to: "/integrations", label: "Integrations & API", icon: Plug },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
+const MOBILE_NAV = NAV.slice(0, 4);
+const MOBILE_MORE_NAV = NAV.slice(4);
 
 export function AppLayout() {
   const { loading, status, me, csrf } = useBootstrap();
@@ -79,6 +82,7 @@ export function AppLayout() {
   const [online, setOnline] = useState(
     typeof navigator === "undefined" ? true : navigator.onLine,
   );
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   useEffect(() => {
     const goOnline = () => setOnline(true);
     const goOffline = () => setOnline(false);
@@ -115,8 +119,8 @@ export function AppLayout() {
         Skip to content
       </a>
       {/* Desktop sidebar */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-surface/40 px-3 py-5 md:flex">
-        <div className="px-2 pb-6">
+      <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-surface/55 px-3 py-4 md:flex">
+        <div className="px-2 pb-5">
           <Logo />
         </div>
         <nav aria-label="Primary" className="flex flex-1 flex-col gap-1">
@@ -124,19 +128,42 @@ export function AppLayout() {
             <SidebarLink key={item.to} item={item} />
           ))}
         </nav>
-        <div className="px-2 pt-4 text-xs text-ink-faint">
-          OpenPing · v0.1.0
+        <div className="border-t border-line px-2 pt-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <span className={cn("inline-flex items-center gap-1.5 text-xs", pill.text)}>
+              <span className={cn("size-1.5 rounded-full", pill.dot)} />
+              {pill.label}
+            </span>
+            <span className="text-[10px] text-ink-faint">v0.1.0</span>
+          </div>
+          {me?.identity && (
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className="flex min-w-0 items-center gap-1.5 text-xs text-ink-muted"
+                title={`Signed in (${me.identityKind ?? "session"}) as ${me.identity}`}
+              >
+                <User className="size-3.5 shrink-0" />
+                <span className="truncate">{me.identity}</span>
+              </span>
+              <button
+                type="button"
+                onClick={logout}
+                title="Sign out"
+                aria-label="Sign out"
+                className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                <LogOut className="size-3.5" />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center justify-between border-b border-line px-4 md:px-6">
-          <div className="md:hidden">
+        <header className="flex h-14 items-center justify-between border-b border-line px-4 md:hidden">
+          <div>
             <Logo compact />
-          </div>
-          <div className="hidden text-sm text-ink-muted md:block">
-            Self-hosted uptime monitoring
           </div>
           <div className="flex items-center gap-3">
             <span
@@ -150,13 +177,6 @@ export function AppLayout() {
             </span>
             {me?.identity && (
               <div className="flex items-center gap-2 border-l border-line pl-3">
-                <span
-                  className="hidden items-center gap-1.5 text-xs text-ink-muted sm:inline-flex"
-                  title={`Signed in (${me.identityKind ?? "session"})`}
-                >
-                  <User className="size-3.5" />
-                  {me.identity}
-                </span>
                 <button
                   type="button"
                   onClick={logout}
@@ -180,20 +200,56 @@ export function AppLayout() {
 
         <main
           id="main-content"
-          className="flex-1 px-4 py-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-6 md:pb-8"
+          className="flex-1 px-4 py-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-8 md:py-7 md:pb-8"
         >
           <Outlet />
         </main>
       </div>
 
       {/* Mobile bottom nav */}
+      {mobileMenuOpen && (
+        <div className="fixed right-3 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 w-52 rounded-card border border-line bg-surface p-2 shadow-2xl md:hidden">
+          {MOBILE_MORE_NAV.map((item) => {
+            const Icon = item.icon;
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                onClick={() => setMobileMenuOpen(false)}
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium",
+                    isActive ? "bg-accent-soft text-ink" : "text-ink-muted hover:bg-surface-2",
+                  )
+                }
+              >
+                <Icon className="size-[18px]" />
+                {item.label}
+              </NavLink>
+            );
+          })}
+        </div>
+      )}
       <nav
         aria-label="Mobile"
         className="fixed inset-x-0 bottom-0 z-20 flex border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
       >
-        {NAV.map((item) => (
+        {MOBILE_NAV.map((item) => (
           <BottomLink key={item.to} item={item} />
         ))}
+        <button
+          type="button"
+          onClick={() => setMobileMenuOpen((open) => !open)}
+          aria-expanded={mobileMenuOpen}
+          aria-label="More navigation"
+          className={cn(
+            "flex min-w-0 flex-1 flex-col items-center gap-1 px-0.5 py-2 text-[10px] font-medium transition-colors",
+            mobileMenuOpen ? "text-accent" : "text-ink-muted",
+          )}
+        >
+          <MoreHorizontal className="size-5 shrink-0" />
+          <span>More</span>
+        </button>
       </nav>
     </div>
   );
