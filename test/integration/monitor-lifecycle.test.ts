@@ -3,6 +3,7 @@ import { applyD1Migrations } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import "../../src/worker/index";
+import { runScheduled } from "../../src/worker/scheduler";
 
 const API_ORIGIN = "https://openping.test";
 const API_TOKEN = "integration-api-token";
@@ -223,5 +224,88 @@ describe("authenticated monitor lifecycle", () => {
       .bind(replacement.id, maintenance?.id, incidentId)
       .first<{ monitors: number; maintenance: number; incidents: number }>();
     expect(leftovers).toEqual({ monitors: 0, maintenance: 0, incidents: 0 });
+  });
+
+  it("records one incident for a heartbeat missed across scheduler runs", async () => {
+    const createdResponse = await apiRequest("/api/monitors", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "heartbeat",
+        name: "Scheduler integration heartbeat",
+        config: { intervalSeconds: 60, graceSeconds: 0 },
+      }),
+    });
+    const createdBody = await createdResponse.json<{ monitor: { id: string } }>();
+    const monitorId = createdBody.monitor.id;
+    const staleBeatAt = Date.now() - 120_000;
+    await env.DB.prepare(
+      `UPDATE monitor_state
+       SET state = 'warming_up', state_since = ?, last_beat_at = ?, next_check_at = ?
+       WHERE monitor_id = ?`,
+    )
+      .bind(staleBeatAt, staleBeatAt, staleBeatAt + 60_000, monitorId)
+      .run();
+
+    const controller: ScheduledController = {
+      cron: "*/12 * * * *",
+      scheduledTime: Date.now(),
+      noRetry() {},
+    };
+    await runScheduled(controller, env);
+    await runScheduled(controller, env);
+
+    const state = await env.DB.prepare(
+      `SELECT state, last_error, consecutive_failures, active_incident_id
+       FROM monitor_state WHERE monitor_id = ?`,
+    )
+      .bind(monitorId)
+      .first<{
+        state: string;
+        last_error: string | null;
+        consecutive_failures: number;
+        active_incident_id: string | null;
+      }>();
+    expect(state?.state).toBe("down");
+    expect(state?.last_error).toBe("heartbeat_missed");
+    expect(state?.consecutive_failures).toBe(2);
+    expect(state?.active_incident_id).toMatch(/^inc_/);
+
+    const incidents = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM incidents WHERE monitor_id = ? AND status = 'open'",
+    )
+      .bind(monitorId)
+      .first<{ count: number }>();
+    expect(incidents?.count).toBe(1);
+
+    const samples = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM samples WHERE monitor_id = ? AND error = 'heartbeat_missed'",
+    )
+      .bind(monitorId)
+      .first<{ count: number }>();
+    expect(samples?.count).toBe(1);
+
+    const summaries = await env.DB.prepare(
+      `SELECT period, down_seconds
+       FROM summaries WHERE monitor_id = ? ORDER BY period`,
+    )
+      .bind(monitorId)
+      .all<{ period: string; down_seconds: number }>();
+    expect(summaries.results).toEqual([
+      { period: "day", down_seconds: 1440 },
+      { period: "hour", down_seconds: 1440 },
+      { period: "month", down_seconds: 1440 },
+    ]);
+
+    const runs = await env.DB.prepare(
+      `SELECT ok, monitors_checked, check_failures
+       FROM scheduler_runs ORDER BY started_at DESC LIMIT 2`,
+    ).all<{ ok: number; monitors_checked: number; check_failures: number }>();
+    expect(runs.results).toHaveLength(2);
+    for (const run of runs.results) {
+      expect(run).toMatchObject({ ok: 1, monitors_checked: 1, check_failures: 1 });
+    }
+
+    const deleted = await apiRequest(`/api/monitors/${monitorId}`, { method: "DELETE" });
+    expect(deleted.status).toBe(200);
   });
 });
