@@ -119,4 +119,109 @@ describe("authenticated monitor lifecycle", () => {
       .first<{ monitors: number; states: number; samples: number }>();
     expect(remaining).toEqual({ monitors: 0, states: 0, samples: 0 });
   });
+
+  it("restores heartbeat credentials and remaps related records", async () => {
+    const oldMonitorId = "mon_backup_source";
+    const incidentId = "inc_backup_source";
+    const startsAt = Date.now() + 60_000;
+    const importResponse = await apiRequest("/api/data/import", {
+      method: "POST",
+      body: JSON.stringify({
+        data: {
+          version: 1,
+          monitors: [
+            {
+              id: oldMonitorId,
+              type: "heartbeat",
+              name: "Imported integration heartbeat",
+              config: { intervalSeconds: 600, graceSeconds: 60 },
+            },
+          ],
+          maintenance: [
+            {
+              title: "Imported maintenance",
+              scope: "monitors",
+              monitorIds: [oldMonitorId, "mon_missing"],
+              startsAt,
+              endsAt: startsAt + 60_000,
+            },
+          ],
+          incidents: [
+            {
+              id: incidentId,
+              monitorId: oldMonitorId,
+              status: "resolved",
+              title: "Imported incident",
+              startedAt: startsAt - 120_000,
+              resolvedAt: startsAt - 60_000,
+              durationSeconds: 60,
+              publicMessage: "Recovered",
+            },
+          ],
+        },
+      }),
+    });
+    expect(importResponse.status).toBe(200);
+
+    const importBody = await importResponse.json<{
+      imported: { monitors: number; maintenance: number; incidents: number };
+      skipped: { monitors: number; maintenance: number; incidents: number };
+      heartbeatMonitors: Array<{ id: string; name: string; heartbeatToken: string }>;
+    }>();
+    expect(importBody.imported).toEqual({ monitors: 1, maintenance: 1, incidents: 1 });
+    expect(importBody.skipped).toEqual({ monitors: 0, maintenance: 0, incidents: 0 });
+    expect(importBody.heartbeatMonitors).toHaveLength(1);
+
+    const replacement = importBody.heartbeatMonitors[0]!;
+    expect(replacement.id).not.toBe(oldMonitorId);
+    expect(replacement.name).toBe("Imported integration heartbeat");
+    expect(replacement.heartbeatToken).toMatch(/^[A-Za-z0-9_-]+$/);
+
+    const storedMonitor = await env.DB.prepare(
+      "SELECT heartbeat_token, heartbeat_token_hash FROM monitors WHERE id = ?",
+    )
+      .bind(replacement.id)
+      .first<{ heartbeat_token: string | null; heartbeat_token_hash: string | null }>();
+    expect(storedMonitor?.heartbeat_token).toBeNull();
+    expect(storedMonitor?.heartbeat_token_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(storedMonitor?.heartbeat_token_hash).not.toBe(replacement.heartbeatToken);
+
+    const maintenance = await env.DB.prepare(
+      "SELECT id, monitor_ids FROM maintenance_windows WHERE title = ?",
+    )
+      .bind("Imported maintenance")
+      .first<{ id: string; monitor_ids: string }>();
+    expect(JSON.parse(maintenance?.monitor_ids ?? "null")).toEqual([replacement.id]);
+
+    const incident = await env.DB.prepare(
+      "SELECT monitor_id, public FROM incidents WHERE id = ?",
+    )
+      .bind(incidentId)
+      .first<{ monitor_id: string; public: number }>();
+    expect(incident).toEqual({ monitor_id: replacement.id, public: 0 });
+
+    const readResponse = await apiRequest(`/api/monitors/${replacement.id}`);
+    const readBody = await readResponse.json<{ monitor: { heartbeatToken: string | null } }>();
+    expect(readResponse.status).toBe(200);
+    expect(readBody.monitor.heartbeatToken).toBeNull();
+
+    const deleteMaintenance = await apiRequest(`/api/maintenance/${maintenance?.id}`, {
+      method: "DELETE",
+    });
+    expect(deleteMaintenance.status).toBe(200);
+    const deleteMonitor = await apiRequest(`/api/monitors/${replacement.id}`, {
+      method: "DELETE",
+    });
+    expect(deleteMonitor.status).toBe(200);
+
+    const leftovers = await env.DB.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM monitors WHERE id = ?) AS monitors,
+         (SELECT COUNT(*) FROM maintenance_windows WHERE id = ?) AS maintenance,
+         (SELECT COUNT(*) FROM incidents WHERE id = ?) AS incidents`,
+    )
+      .bind(replacement.id, maintenance?.id, incidentId)
+      .first<{ monitors: number; maintenance: number; incidents: number }>();
+    expect(leftovers).toEqual({ monitors: 0, maintenance: 0, incidents: 0 });
+  });
 });
