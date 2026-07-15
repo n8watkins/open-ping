@@ -1,5 +1,7 @@
 import type { Env } from "../types";
-import { newId } from "../lib/ids";
+import { newId, sha256hex } from "../lib/ids";
+import { decryptValue, encryptValue } from "../lib/crypto";
+import { isCiphertext } from "../lib/secret-config";
 
 /**
  * Web Push subscription data layer (PRD §12.1 PWA device management). The
@@ -29,6 +31,7 @@ export interface PushSubscriptionRecord {
 interface PushSubscriptionRow {
   id: string;
   endpoint: string;
+  endpoint_hash: string | null;
   p256dh: string;
   auth: string;
   label: string | null;
@@ -41,13 +44,51 @@ interface PushSubscriptionRow {
   disabled: number;
 }
 
-/** Map a raw row to a typed record, coercing 0/1 to booleans. */
-function rowToSubscription(row: PushSubscriptionRow): PushSubscriptionRecord {
+let encryptionDisabledWarned = false;
+
+/**
+ * Protect browser capability credentials before persistence. Keeping the
+ * no-key behavior preserves compatibility for installations that intentionally
+ * run without MASTER_KEY, but the warning makes that security tradeoff visible.
+ */
+export async function protectPushSecrets(
+  env: Env,
+  values: Pick<PushSubscriptionRecord, "endpoint" | "p256dh" | "auth">,
+): Promise<Pick<PushSubscriptionRecord, "endpoint" | "p256dh" | "auth">> {
+  if (!env.MASTER_KEY) {
+    if (!encryptionDisabledWarned) {
+      encryptionDisabledWarned = true;
+      console.warn(
+        "[openping] MASTER_KEY is not configured: Web Push subscription " +
+          "credentials are being stored in plaintext in D1.",
+      );
+    }
+    return values;
+  }
+  return {
+    // These values arrive from the browser, so always treat them as plaintext.
+    // Prefix sniffing here would let crafted input masquerade as ciphertext and
+    // make every subsequent subscription-list read fail decryption.
+    endpoint: await encryptValue(env, values.endpoint),
+    p256dh: await encryptValue(env, values.p256dh),
+    auth: await encryptValue(env, values.auth),
+  };
+}
+
+async function revealPushSecret(env: Env, value: string): Promise<string> {
+  return isCiphertext(value) ? decryptValue(env, value) : value;
+}
+
+/** Map and decrypt a raw row, while accepting rows written before migration 0008. */
+export async function rowToSubscription(
+  env: Env,
+  row: PushSubscriptionRow,
+): Promise<PushSubscriptionRecord> {
   return {
     id: row.id,
-    endpoint: row.endpoint,
-    p256dh: row.p256dh,
-    auth: row.auth,
+    endpoint: await revealPushSecret(env, row.endpoint),
+    p256dh: await revealPushSecret(env, row.p256dh),
+    auth: await revealPushSecret(env, row.auth),
     label: row.label,
     userAgent: row.user_agent,
     platform: row.platform,
@@ -79,42 +120,89 @@ export async function upsertSubscription(
 ): Promise<PushSubscriptionRecord> {
   const id = newId("psub");
   const now = Date.now();
+  const endpointHash = await sha256hex(input.endpoint);
+  const protectedValues = await protectPushSecrets(env, input);
 
-  await env.DB.prepare(
-    `INSERT INTO push_subscriptions (
-       id, endpoint, p256dh, auth, label, user_agent, platform, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(endpoint) DO UPDATE SET
-       p256dh = excluded.p256dh,
-       auth = excluded.auth,
-       label = excluded.label,
-       user_agent = excluded.user_agent,
-       platform = excluded.platform,
-       disabled = 0,
-       failures = 0,
-       last_failure_at = NULL`,
+  // Migration 0008 cannot hash legacy endpoints in SQL. Claim a matching
+  // plaintext row on its next registration, then encrypt it in place.
+  const legacy = await env.DB.prepare(
+    `SELECT * FROM push_subscriptions
+     WHERE endpoint_hash = ? OR (endpoint_hash IS NULL AND endpoint = ?)
+     LIMIT 1`,
   )
-    .bind(
-      id,
-      input.endpoint,
-      input.p256dh,
-      input.auth,
-      input.label ?? null,
-      input.userAgent ?? null,
-      input.platform ?? null,
-      now,
+    .bind(endpointHash, input.endpoint)
+    .first<PushSubscriptionRow>();
+
+  if (legacy) {
+    await env.DB.prepare(
+      `UPDATE push_subscriptions SET
+         endpoint = ?, endpoint_hash = ?, p256dh = ?, auth = ?, label = ?,
+         user_agent = ?, platform = ?, disabled = 0, failures = 0,
+         last_failure_at = NULL
+       WHERE id = ?`,
     )
-    .run();
+      .bind(
+        protectedValues.endpoint,
+        endpointHash,
+        protectedValues.p256dh,
+        protectedValues.auth,
+        input.label ?? null,
+        input.userAgent ?? null,
+        input.platform ?? null,
+        legacy.id,
+      )
+      .run();
+  } else {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO push_subscriptions (
+         id, endpoint, endpoint_hash, p256dh, auth, label, user_agent, platform,
+         created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        id,
+        protectedValues.endpoint,
+        endpointHash,
+        protectedValues.p256dh,
+        protectedValues.auth,
+        input.label ?? null,
+        input.userAgent ?? null,
+        input.platform ?? null,
+        now,
+      )
+      .run();
+
+    // A concurrent registration can win the unique endpoint-hash insert. An
+    // unconditional refresh makes the operation an upsert without depending on
+    // which unique constraint SQLite checks first in plaintext compatibility
+    // mode.
+    await env.DB.prepare(
+      `UPDATE push_subscriptions SET
+         endpoint = ?, p256dh = ?, auth = ?, label = ?, user_agent = ?,
+         platform = ?, disabled = 0, failures = 0, last_failure_at = NULL
+       WHERE endpoint_hash = ?`,
+    )
+      .bind(
+        protectedValues.endpoint,
+        protectedValues.p256dh,
+        protectedValues.auth,
+        input.label ?? null,
+        input.userAgent ?? null,
+        input.platform ?? null,
+        endpointHash,
+      )
+      .run();
+  }
 
   const row = await env.DB.prepare(
-    "SELECT * FROM push_subscriptions WHERE endpoint = ?",
+    "SELECT * FROM push_subscriptions WHERE endpoint_hash = ?",
   )
-    .bind(input.endpoint)
+    .bind(endpointHash)
     .first<PushSubscriptionRow>();
   if (!row) {
     throw new Error("upsertSubscription: failed to read back upserted row");
   }
-  return rowToSubscription(row);
+  return rowToSubscription(env, row);
 }
 
 export async function listSubscriptions(
@@ -123,7 +211,9 @@ export async function listSubscriptions(
   const res = await env.DB.prepare(
     "SELECT * FROM push_subscriptions ORDER BY created_at",
   ).all<PushSubscriptionRow>();
-  return (res.results ?? []).map(rowToSubscription);
+  return Promise.all(
+    (res.results ?? []).map((row) => rowToSubscription(env, row)),
+  );
 }
 
 /** Subscriptions eligible for delivery (not disabled). */
@@ -133,7 +223,9 @@ export async function listActiveSubscriptions(
   const res = await env.DB.prepare(
     "SELECT * FROM push_subscriptions WHERE disabled = 0 ORDER BY created_at",
   ).all<PushSubscriptionRow>();
-  return (res.results ?? []).map(rowToSubscription);
+  return Promise.all(
+    (res.results ?? []).map((row) => rowToSubscription(env, row)),
+  );
 }
 
 export async function getSubscription(
@@ -145,7 +237,7 @@ export async function getSubscription(
   )
     .bind(id)
     .first<PushSubscriptionRow>();
-  return row ? rowToSubscription(row) : null;
+  return row ? rowToSubscription(env, row) : null;
 }
 
 export async function deleteSubscription(env: Env, id: string): Promise<void> {
