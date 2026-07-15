@@ -7,6 +7,7 @@ import { isAllowedEmail } from "../lib/admin";
 import { createSession } from "../lib/sessions";
 import { getSetting } from "../db/settings";
 import { sendResendEmail } from "../notifications/channels/resend";
+import { hitRateLimit } from "../db/rate-limit";
 import {
   escapeHtml,
   renderEmailLayout,
@@ -33,6 +34,9 @@ const TOKEN_TTL_MS = 1000 * 60 * 15; // 15 minutes
 const COOLDOWN_MS = 1000 * 60; // 60s between sends to one address
 const DEFAULT_FROM = "OpenPing <onboarding@resend.dev>";
 const SUBJECT = "Your OpenPing sign-in link";
+const MAGIC_PER_IP_LIMIT = 10;
+const MAGIC_GLOBAL_LIMIT = 200;
+const UNKNOWN_IP = "unknown";
 
 const requestSchema = z.object({ email: z.string().email() });
 
@@ -139,6 +143,7 @@ magicApi.post("/request", async (c) => {
     return c.json({ error: "validation", issues: parsed.error.issues }, 400);
   }
   const email = parsed.data.email.trim().toLowerCase();
+  const ip = c.req.header("cf-connecting-ip") ?? UNKNOWN_IP;
 
   // Everything past validation is best-effort and must never disclose whether
   // `email` is the administrator — neither by body (always { ok: true }) nor by
@@ -146,6 +151,10 @@ magicApi.post("/request", async (c) => {
   // for allowed addresses only) is deferred to ctx.waitUntil so the response
   // returns before that work runs, leaving no latency oracle to probe.
   const issueAndSend = async () => {
+    const ipHit = await hitRateLimit(c.env, `magic:ip:${ip}`, MAGIC_PER_IP_LIMIT);
+    if (!ipHit.allowed) return;
+    const globalHit = await hitRateLimit(c.env, "magic:global", MAGIC_GLOBAL_LIMIT);
+    if (!globalHit.allowed) return;
     if (!(await isAllowedEmail(c.env, email))) return;
     const data = JSON.stringify({ email });
 

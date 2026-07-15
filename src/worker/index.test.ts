@@ -114,7 +114,12 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
       GITHUB_CLIENT_ID: "Ov23test",
       APP_URL: "https://example.com",
       DB: {
-        prepare: () => ({ bind: () => ({ run: async () => ({}) }) }),
+        prepare: () => ({
+          bind: () => ({
+            first: async () => ({ count: 1 }),
+            run: async () => ({}),
+          }),
+        }),
       },
     } as unknown as Env;
     const res = await worker.fetch!(
@@ -130,5 +135,39 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
     // The state cookie MUST survive the redirect (Response.redirect dropped it,
     // breaking login with "state_invalid"); c.redirect preserves it.
     expect(res.headers.get("set-cookie") ?? "").toContain("op_oauth_state=");
+  });
+
+  it("rate-limits OAuth starts before creating a state token", async () => {
+    let stateInsertAttempted = false;
+    const env = {
+      GITHUB_CLIENT_ID: "Ov23test",
+      APP_URL: "https://example.com",
+      DB: {
+        prepare: (sql: string) => {
+          if (sql.includes("auth_tokens")) stateInsertAttempted = true;
+          return {
+            bind: () => ({
+              first: async () => ({ count: 21 }),
+              run: async () => ({}),
+            }),
+          };
+        },
+      },
+    } as unknown as Env;
+
+    const res = await worker.fetch!(
+      new Request("https://example.com/auth/github/start", {
+        headers: { "cf-connecting-ip": "203.0.113.10" },
+      }),
+      env,
+      ctx,
+    );
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(
+      "https://example.com/login?error=rate_limited",
+    );
+    expect(res.headers.get("retry-after")).toBeTruthy();
+    expect(stateInsertAttempted).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import { isAllowedGithubLogin } from "../lib/admin";
 import { createSession } from "../lib/sessions";
 import { timingSafeEqual } from "../lib/timing";
 import { getSetting } from "../db/settings";
+import { hitRateLimit } from "../db/rate-limit";
 
 /**
  * Browser-facing auth flows mounted at /auth. GitHub OAuth (PRD §13):
@@ -20,6 +21,9 @@ const GITHUB_USER = "https://api.github.com/user";
 const STATE_TTL_MS = 1000 * 60 * 10; // 10 minutes
 const STATE_COOKIE = "op_oauth_state";
 const UA = "OpenPing";
+const OAUTH_PER_IP_LIMIT = 20;
+const OAUTH_GLOBAL_LIMIT = 500;
+const UNKNOWN_IP = "unknown";
 
 /** Resolve the configured OAuth origin before falling back to the request URL. */
 async function baseUrl(c: { env: Env; req: { url: string } }): Promise<string> {
@@ -56,6 +60,18 @@ function loginRedirect(c: Context<AppEnv>, base: string, error?: string): Respon
 auth.get("/github/start", async (c) => {
   const base = await baseUrl(c);
   if (!c.env.GITHUB_CLIENT_ID) return loginRedirect(c, base, "github_not_configured");
+
+  const ip = c.req.header("cf-connecting-ip") ?? UNKNOWN_IP;
+  const ipHit = await hitRateLimit(c.env, `oauth:ip:${ip}`, OAUTH_PER_IP_LIMIT);
+  if (!ipHit.allowed) {
+    c.header("Retry-After", String(ipHit.retryAfterSeconds));
+    return loginRedirect(c, base, "rate_limited");
+  }
+  const globalHit = await hitRateLimit(c.env, "oauth:global", OAUTH_GLOBAL_LIMIT);
+  if (!globalHit.allowed) {
+    c.header("Retry-After", String(globalHit.retryAfterSeconds));
+    return loginRedirect(c, base, "rate_limited");
+  }
 
   // The `state` is single-use and server-validated on callback, AND bound to the
   // initiating browser via a matching HttpOnly cookie (double-submit). The
