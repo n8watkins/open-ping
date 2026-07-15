@@ -30,6 +30,7 @@ export interface MonitorSummary {
   nextCheckAt: number | null;
   stateSince: number | null;
   uptime24h: number;
+  recentChecks: { at: number; state: MonitorState }[];
   publicVisible: boolean;
   categoryId?: string | null;
   categoryName?: string | null;
@@ -91,6 +92,12 @@ export interface SchedulerRun {
 export interface OverviewResponse {
   counts: Record<string, number> & { openIncidents: number };
   monitors: MonitorSummary[];
+  analytics: {
+    overallUptime24h: number;
+    mtbfSeconds24h: number | null;
+    incidents24h: number;
+    withoutIncidentSeconds: number | null;
+  };
   channels: ChannelHealth[];
   lastRun: SchedulerRun | null;
 }

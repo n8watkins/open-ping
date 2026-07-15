@@ -4,8 +4,14 @@ import { requireAuth } from "../middleware/auth";
 import { listMonitors } from "../db/monitors";
 import { listChannels } from "../db/channels";
 import { listCategories } from "../db/categories";
-import { computeUptime } from "../history/metrics";
 import type { MonitorState } from "../../shared/states";
+import {
+  computeIncidentOverview,
+  computeOverallUptime,
+  groupRecentChecks,
+  type RecentCheckRow,
+  type SummaryCountRow,
+} from "../history/overview-analytics";
 
 /** Dashboard overview API mounted at /api/overview. */
 export const overview = new Hono<AppEnv>();
@@ -22,25 +28,96 @@ interface StateRow {
   active_incident_id: string | null;
 }
 
+interface IncidentAggregateRow {
+  open_incidents: number;
+  latest_resolved_at: number | null;
+}
+
+interface IncidentStartRow {
+  started_at: number;
+}
+
 const DAY = 24 * 60 * 60 * 1000;
 
 overview.get("/", async (c) => {
   const now = Date.now();
-  const monitors = await listMonitors(c.env);
+  const since = now - DAY;
+  const [
+    monitors,
+    categories,
+    channelRecords,
+    stateRes,
+    summaryRes,
+    sampleRes,
+    incidentStartsRes,
+    incidentAggregate,
+    lastRun,
+  ] = await Promise.all([
+    listMonitors(c.env),
+    listCategories(c.env),
+    listChannels(c.env),
+    c.env.DB.prepare(
+      `SELECT monitor_id, state, state_since, last_checked_at, last_duration_ms,
+              last_status_code, next_check_at, active_incident_id
+       FROM monitor_state`,
+    ).all<StateRow>(),
+    c.env.DB.prepare(
+      `SELECT monitor_id, SUM(checks) AS checks, SUM(ok_checks) AS ok_checks
+       FROM summaries
+       WHERE period = 'hour' AND bucket_start >= ? AND bucket_start <= ?
+       GROUP BY monitor_id`,
+    )
+      .bind(since, now)
+      .all<SummaryCountRow>(),
+    c.env.DB.prepare(
+      `SELECT monitor_id, at, ok, state
+       FROM (
+         SELECT monitor_id, at, ok, state,
+                ROW_NUMBER() OVER (PARTITION BY monitor_id ORDER BY at DESC) AS row_num
+         FROM samples
+         WHERE at >= ? AND at <= ?
+       )
+       WHERE row_num <= 28
+       ORDER BY monitor_id, at`,
+    )
+      .bind(since, now)
+      .all<RecentCheckRow>(),
+    c.env.DB.prepare(
+      `SELECT started_at FROM incidents
+       WHERE started_at >= ? AND started_at <= ?
+       ORDER BY started_at`,
+    )
+      .bind(since, now)
+      .all<IncidentStartRow>(),
+    c.env.DB.prepare(
+      `SELECT
+         SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_incidents,
+         MAX(CASE WHEN status = 'resolved' THEN resolved_at END) AS latest_resolved_at
+       FROM incidents`,
+    ).first<IncidentAggregateRow>(),
+    c.env.DB.prepare(
+      `SELECT id, cron, started_at AS startedAt, finished_at AS finishedAt, ok,
+              monitors_checked AS monitorsChecked, check_failures AS checkFailures,
+              notification_failures AS notificationFailures, duration_ms AS durationMs
+       FROM scheduler_runs ORDER BY started_at DESC LIMIT 1`,
+    ).first(),
+  ]);
 
-  // Resolve category names in one query: id → name for the badge on each row.
+  // Resolve category names in one query: id -> name for the badge on each row.
   const categoryNames = new Map<string, string>(
-    (await listCategories(c.env)).map((cat) => [cat.id, cat.name]),
+    categories.map((cat) => [cat.id, cat.name]),
   );
-
-  const stateRes = await c.env.DB.prepare(
-    `SELECT monitor_id, state, state_since, last_checked_at, last_duration_ms,
-            last_status_code, next_check_at, active_incident_id
-     FROM monitor_state`,
-  ).all<StateRow>();
   const states = new Map<string, StateRow>(
     (stateRes.results ?? []).map((s) => [s.monitor_id, s]),
   );
+  const summaryRows = summaryRes.results ?? [];
+  const uptimeByMonitor = new Map(
+    summaryRows.map((row) => [
+      row.monitor_id,
+      computeOverallUptime([row]),
+    ]),
+  );
+  const recentChecksByMonitor = groupRecentChecks(sampleRes.results ?? []);
 
   const counts: Record<string, number> = {
     total: monitors.length,
@@ -55,38 +132,50 @@ overview.get("/", async (c) => {
     unknown: 0,
   };
 
-  const summaries = await Promise.all(
-    monitors.map(async (m) => {
-      const st = states.get(m.id);
-      const state: MonitorState = m.paused ? "paused" : (st?.state ?? "unknown");
-      counts[state] = (counts[state] ?? 0) + 1;
-      const uptime = await computeUptime(c.env, m.id, now - DAY, now);
-      return {
-        id: m.id,
-        name: m.name,
-        type: m.type,
-        state,
-        paused: m.paused,
-        intervalSeconds: m.intervalSeconds,
-        scheduleMode: m.schedule.mode,
-        lastCheckedAt: st?.last_checked_at ?? null,
-        lastDurationMs: st?.last_duration_ms ?? null,
-        lastStatusCode: st?.last_status_code ?? null,
-        nextCheckAt: st?.next_check_at ?? null,
-        stateSince: st?.state_since ?? null,
-        uptime24h: uptime.uptimePct,
-        publicVisible: m.public?.visible ?? false,
-        categoryId: m.categoryId,
-        categoryName: m.categoryId ? categoryNames.get(m.categoryId) ?? null : null,
-      };
-    }),
-  );
+  const summaries = monitors.map((m) => {
+    const st = states.get(m.id);
+    const state: MonitorState = m.paused ? "paused" : (st?.state ?? "unknown");
+    counts[state] = (counts[state] ?? 0) + 1;
+    return {
+      id: m.id,
+      name: m.name,
+      type: m.type,
+      state,
+      paused: m.paused,
+      intervalSeconds: m.intervalSeconds,
+      scheduleMode: m.schedule.mode,
+      lastCheckedAt: st?.last_checked_at ?? null,
+      lastDurationMs: st?.last_duration_ms ?? null,
+      lastStatusCode: st?.last_status_code ?? null,
+      nextCheckAt: st?.next_check_at ?? null,
+      stateSince: st?.state_since ?? null,
+      uptime24h: uptimeByMonitor.get(m.id) ?? 100,
+      recentChecks: recentChecksByMonitor.get(m.id) ?? [],
+      publicVisible: m.public?.visible ?? false,
+      categoryId: m.categoryId,
+      categoryName: m.categoryId ? categoryNames.get(m.categoryId) ?? null : null,
+    };
+  });
 
-  const openIncidentsRow = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM incidents WHERE status = 'open'`,
-  ).first<{ n: number }>();
+  const openIncidents = Number(incidentAggregate?.open_incidents) || 0;
+  const incidentAnalytics = computeIncidentOverview({
+    recentIncidentStarts: (incidentStartsRes.results ?? []).map(
+      (row) => row.started_at,
+    ),
+    openIncidents,
+    latestResolvedAt: incidentAggregate?.latest_resolved_at ?? null,
+    earliestMonitorCreatedAt:
+      monitors.length > 0
+        ? Math.min(...monitors.map((monitor) => monitor.createdAt))
+        : null,
+    now,
+  });
+  const analytics = {
+    overallUptime24h: computeOverallUptime(summaryRows),
+    ...incidentAnalytics,
+  };
 
-  const channels = (await listChannels(c.env)).map((ch) => ({
+  const channels = channelRecords.map((ch) => ({
     id: ch.id,
     type: ch.type,
     name: ch.name,
@@ -98,16 +187,10 @@ overview.get("/", async (c) => {
       (ch.lastSuccessAt != null && ch.lastSuccessAt >= ch.lastFailureAt),
   }));
 
-  const lastRun = await c.env.DB.prepare(
-    `SELECT id, cron, started_at AS startedAt, finished_at AS finishedAt, ok,
-            monitors_checked AS monitorsChecked, check_failures AS checkFailures,
-            notification_failures AS notificationFailures, duration_ms AS durationMs
-     FROM scheduler_runs ORDER BY started_at DESC LIMIT 1`,
-  ).first();
-
   return c.json({
-    counts: { ...counts, openIncidents: openIncidentsRow?.n ?? 0 },
+    counts: { ...counts, openIncidents },
     monitors: summaries,
+    analytics,
     channels,
     lastRun,
   });

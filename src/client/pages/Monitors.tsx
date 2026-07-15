@@ -17,7 +17,7 @@ import { monitorTypeLabel, type OverviewResponse } from "../lib/types";
 import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { UptimeBar } from "../components/ui/UptimeBar";
-import { formatPct, formatRelativeTime } from "../lib/format";
+import { formatDuration, formatPct, formatRelativeTime } from "../lib/format";
 import { STATE_META, type MonitorState } from "../../shared/states";
 
 type SortMode = "status" | "name" | "recent";
@@ -40,15 +40,21 @@ function intervalLabel(seconds: number): string {
   return `${Math.round(seconds / 3600)} hr`;
 }
 
-function uptimeSegments(uptime: number, state: MonitorState) {
+function recentCheckSegments(checks: { at: number; state: MonitorState }[]) {
   const count = 28;
-  if (state === "unknown" && uptime === 100) {
-    return Array.from({ length: count }, () => ({ state: "unknown" as const }));
-  }
-  const failed = Math.round(count * Math.max(0, 100 - uptime) / 100);
-  return Array.from({ length: count }, (_, index) => ({
-    state: index >= count - failed ? ("down" as const) : ("up" as const),
+  const recent = [...checks]
+    .sort((a, b) => a.at - b.at)
+    .slice(-count)
+    .map((check) => ({
+      state: check.state,
+      title: `${STATE_META[check.state].label} at ${new Date(check.at).toLocaleString()}`,
+    }));
+  const missing = Array.from({ length: count - recent.length }, () => ({
+    state: "unknown" as const,
+    title: "No check data",
   }));
+
+  return [...missing, ...recent];
 }
 
 export default function Monitors() {
@@ -67,23 +73,31 @@ export default function Monitors() {
         const matchesQuery =
           !normalizedQuery ||
           monitor.name.toLowerCase().includes(normalizedQuery) ||
-          monitorTypeLabel(monitor.type).toLowerCase().includes(normalizedQuery);
+          monitorTypeLabel(monitor.type)
+            .toLowerCase()
+            .includes(normalizedQuery);
         return matchesQuery && (status === "all" || monitor.state === status);
       })
       .sort((a, b) => {
         if (sort === "name") return a.name.localeCompare(b.name);
-        if (sort === "recent") return (b.lastCheckedAt ?? 0) - (a.lastCheckedAt ?? 0);
-        return STATUS_PRIORITY[a.state] - STATUS_PRIORITY[b.state] || a.name.localeCompare(b.name);
+        if (sort === "recent")
+          return (b.lastCheckedAt ?? 0) - (a.lastCheckedAt ?? 0);
+        return (
+          STATUS_PRIORITY[a.state] - STATUS_PRIORITY[b.state] ||
+          a.name.localeCompare(b.name)
+        );
       });
   }, [monitors, query, sort, status]);
 
   const allVisibleSelected =
-    visibleMonitors.length > 0 && visibleMonitors.every((monitor) => selected.has(monitor.id));
+    visibleMonitors.length > 0 &&
+    visibleMonitors.every((monitor) => selected.has(monitor.id));
 
   function toggleAll() {
     setSelected((current) => {
       const next = new Set(current);
-      if (allVisibleSelected) visibleMonitors.forEach((monitor) => next.delete(monitor.id));
+      if (allVisibleSelected)
+        visibleMonitors.forEach((monitor) => next.delete(monitor.id));
       else visibleMonitors.forEach((monitor) => next.add(monitor.id));
       return next;
     });
@@ -97,10 +111,6 @@ export default function Monitors() {
       return next;
     });
   }
-
-  const overallUptime = monitors.length
-    ? monitors.reduce((sum, monitor) => sum + monitor.uptime24h, 0) / monitors.length
-    : 100;
 
   if (loading && !data) {
     return (
@@ -122,6 +132,8 @@ export default function Monitors() {
       </div>
     );
   }
+
+  if (!data) return null;
 
   return (
     <div className="mx-auto max-w-[1320px]">
@@ -176,7 +188,9 @@ export default function Monitors() {
                   <Filter className="pointer-events-none absolute left-3 size-3.5 text-ink-faint" />
                   <select
                     value={status}
-                    onChange={(event) => setStatus(event.target.value as "all" | MonitorState)}
+                    onChange={(event) =>
+                      setStatus(event.target.value as "all" | MonitorState)
+                    }
                     aria-label="Filter monitors by status"
                     className="appearance-none rounded-lg border border-line bg-surface py-2 pr-8 pl-8 text-xs text-ink"
                   >
@@ -193,7 +207,9 @@ export default function Monitors() {
                   <ArrowDownUp className="pointer-events-none absolute left-3 size-3.5 text-ink-faint" />
                   <select
                     value={sort}
-                    onChange={(event) => setSort(event.target.value as SortMode)}
+                    onChange={(event) =>
+                      setSort(event.target.value as SortMode)
+                    }
                     aria-label="Sort monitors"
                     className="appearance-none rounded-lg border border-line bg-surface py-2 pr-8 pl-8 text-xs text-ink"
                   >
@@ -251,7 +267,9 @@ export default function Monitors() {
                         </span>
                         <span>{STATE_META[monitor.state].label}</span>
                         {monitor.lastCheckedAt && (
-                          <span className="hidden sm:inline">· {formatRelativeTime(monitor.lastCheckedAt)}</span>
+                          <span className="hidden sm:inline">
+                            · {formatRelativeTime(monitor.lastCheckedAt)}
+                          </span>
                         )}
                       </div>
                     </Link>
@@ -260,7 +278,9 @@ export default function Monitors() {
                       {intervalLabel(monitor.intervalSeconds)}
                     </span>
                     <div className="hidden md:block">
-                      <UptimeBar segments={uptimeSegments(monitor.uptime24h, monitor.state)} />
+                      <UptimeBar
+                        segments={recentCheckSegments(monitor.recentChecks)}
+                      />
                       <div className="mt-0.5 text-right text-[10px] text-ink-muted">
                         {formatPct(monitor.uptime24h)}
                       </div>
@@ -278,14 +298,18 @@ export default function Monitors() {
             </Card>
           </section>
 
-          <aside aria-label="Monitoring summary" className="hidden space-y-4 xl:block">
+          <aside
+            aria-label="Monitoring summary"
+            className="hidden space-y-4 xl:block"
+          >
             <Card className="p-5">
               <h2 className="text-sm font-semibold">
                 Current status<span className="text-up">.</span>
               </h2>
               <div className="my-5 flex justify-center">
                 <span className="grid size-10 place-items-center rounded-full bg-surface-2 text-ink-muted">
-                  {(counts?.paused ?? 0) === monitors.length && monitors.length > 0 ? (
+                  {(counts?.paused ?? 0) === monitors.length &&
+                  monitors.length > 0 ? (
                     <Pause className="size-4 fill-current" />
                   ) : (
                     <Activity className="size-4" />
@@ -298,7 +322,8 @@ export default function Monitors() {
                 <SummaryMetric label="Paused" value={counts?.paused ?? 0} />
               </div>
               <p className="mt-5 text-center text-xs text-ink-muted">
-                Monitoring {monitors.length} service{monitors.length === 1 ? "" : "s"}.
+                Monitoring {monitors.length} service
+                {monitors.length === 1 ? "" : "s"}.
               </p>
             </Card>
 
@@ -307,13 +332,31 @@ export default function Monitors() {
                 Last 24 hours<span className="text-up">.</span>
               </h2>
               <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-5">
-                <SummaryMetric label="Overall uptime" value={formatPct(overallUptime)} accent />
-                <SummaryMetric label="MTBF" value="N/A" />
+                <SummaryMetric
+                  label="Overall uptime"
+                  value={formatPct(data.analytics.overallUptime24h)}
+                  accent
+                />
+                <SummaryMetric
+                  label="MTBF"
+                  value={
+                    data.analytics.mtbfSeconds24h == null
+                      ? "N/A"
+                      : formatDuration(data.analytics.mtbfSeconds24h)
+                  }
+                />
                 <SummaryMetric
                   label="Without incident"
-                  value={(counts?.openIncidents ?? 0) === 0 ? "1d" : "0d"}
+                  value={
+                    data.analytics.withoutIncidentSeconds == null
+                      ? "N/A"
+                      : formatDuration(data.analytics.withoutIncidentSeconds)
+                  }
                 />
-                <SummaryMetric label="Incidents" value={counts?.openIncidents ?? 0} />
+                <SummaryMetric
+                  label="Incidents"
+                  value={data.analytics.incidents24h}
+                />
               </div>
             </Card>
           </aside>
@@ -334,10 +377,18 @@ function SummaryMetric({
 }) {
   return (
     <div>
-      <div className={accent ? "text-base font-semibold text-up" : "text-base font-semibold text-ink"}>
+      <div
+        className={
+          accent
+            ? "text-base font-semibold text-up"
+            : "text-base font-semibold text-ink"
+        }
+      >
         {value}
       </div>
-      <div className="mt-0.5 text-[11px] leading-tight text-ink-muted">{label}</div>
+      <div className="mt-0.5 text-[11px] leading-tight text-ink-muted">
+        {label}
+      </div>
     </div>
   );
 }
