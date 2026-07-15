@@ -85,6 +85,7 @@ export default function Setup() {
   const [appUrl, setAppUrl] = useState("");
   const [timezone, setTimezone] = useState(guessTimezone());
   const [adminGithubLogin, setAdminGithubLogin] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
 
   const loadState = useCallback(
     async (token?: string) => {
@@ -105,6 +106,7 @@ export default function Setup() {
         setAppUrl((d.appUrl as string) ?? res.status.appUrl ?? window.location.origin);
         setTimezone((d.timezone as string) ?? res.status.timezone ?? guessTimezone());
         setAdminGithubLogin((d.adminGithubLogin as string) ?? "");
+        setAdminEmail((d.adminEmail as string) ?? "");
         setUnlocked(true);
       } catch (cause) {
         const code = cause instanceof Error ? cause.message : "error";
@@ -150,7 +152,7 @@ export default function Setup() {
       case "timezone":
         return { timezone };
       case "admin":
-        return { adminGithubLogin };
+        return { adminGithubLogin, adminEmail };
       default:
         return {};
     }
@@ -318,6 +320,8 @@ export default function Setup() {
             tzList={tzList}
             adminGithubLogin={adminGithubLogin}
             setAdminGithubLogin={setAdminGithubLogin}
+            adminEmail={adminEmail}
+            setAdminEmail={setAdminEmail}
           />
 
           {error && (
@@ -382,6 +386,8 @@ interface BodyProps {
   tzList: string[];
   adminGithubLogin: string;
   setAdminGithubLogin: (v: string) => void;
+  adminEmail: string;
+  setAdminEmail: (v: string) => void;
 }
 
 function StepBody(p: BodyProps) {
@@ -444,6 +450,24 @@ function StepBody(p: BodyProps) {
               className="input"
             />
           </Field>
+          <div className="my-5 flex items-center gap-3 text-xs text-ink-faint">
+            <span className="h-px flex-1 bg-line" />
+            or
+            <span className="h-px flex-1 bg-line" />
+          </div>
+          <Field label="Administrator email address">
+            <input
+              type="email"
+              value={p.adminEmail}
+              onChange={(e) => p.setAdminEmail(e.target.value)}
+              placeholder="admin@example.com"
+              autoComplete="email"
+              className="input"
+            />
+          </Field>
+          <p className="mt-3 text-xs text-ink-faint">
+            Email sign-in also requires Resend to be configured.
+          </p>
         </Section>
       );
     case "notifications":
@@ -468,7 +492,12 @@ function StepBody(p: BodyProps) {
           <ul className="space-y-2 text-sm text-ink-muted">
             <Ready ok={!!p.status?.timezone || !!p.timezone} label={`Timezone: ${p.timezone}`} />
             <Ready
-              ok={p.status?.githubAdminConfigured || p.status?.emailAdminConfigured || !!p.adminGithubLogin}
+              ok={
+                p.status?.githubAdminConfigured ||
+                p.status?.emailAdminConfigured ||
+                !!p.adminGithubLogin ||
+                !!p.adminEmail
+              }
               label="Administrator identity recorded"
             />
           </ul>

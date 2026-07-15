@@ -20,6 +20,7 @@ describe("setupSaveSchema", () => {
           appUrl: "https://status.example.com",
           timezone: "America/Los_Angeles",
           adminGithubLogin: "open-ping-admin",
+          adminEmail: "admin@example.com",
         },
       }).success,
     ).toBe(true);
@@ -31,6 +32,7 @@ describe("setupSaveSchema", () => {
     ["URL with a path", { data: { appUrl: "https://example.com/open-ping" } }],
     ["invalid timezone", { data: { timezone: "Not/A_Zone" } }],
     ["invalid GitHub login", { data: { adminGithubLogin: "-invalid-" } }],
+    ["invalid administrator email", { data: { adminEmail: "not-an-email" } }],
     ["unknown persisted field", { data: { unexpected: "value" } }],
     ["out-of-range step", { step: 99 }],
   ])("rejects %s", (_label, input) => {
