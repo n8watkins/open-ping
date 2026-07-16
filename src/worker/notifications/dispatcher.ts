@@ -9,7 +9,13 @@ import { sendDiscordMessage } from "./channels/discord";
 import { sendWebhook } from "./channels/webhook";
 import { sendWebPush } from "./push/webpush";
 import { getVapid } from "./push/vapid";
-import { toEmailHtml, toEmailText, toDiscordEmbed, type NotificationPayload } from "./payload";
+import {
+  isNotificationPayload,
+  toEmailHtml,
+  toEmailText,
+  toDiscordEmbed,
+  type NotificationPayload,
+} from "./payload";
 import { assertSafeUrl } from "../lib/ssrf";
 
 const MAX_ATTEMPTS = 5;
@@ -99,10 +105,27 @@ export async function processOutbox(
         failed++;
         continue;
       }
+      if (!isNotificationPayload(entry.payload)) {
+        await markFailed(
+          env,
+          entry.id,
+          entry.attempts + 1,
+          "payload_invalid_shape",
+          MAX_ATTEMPTS,
+        );
+        failed++;
+        continue;
+      }
 
       // Web Push entries target a device subscription, not a channel.
       if (entry.channelType === "push") {
-        const r = await deliverPush(env, entry.id, entry.target, entry.attempts, entry.payload as NotificationPayload);
+        const r = await deliverPush(
+          env,
+          entry.id,
+          entry.target,
+          entry.attempts,
+          entry.payload,
+        );
         if (r === "sent") sent++;
         else if (r === "failed") failed++;
         // "pruned" (subscription gone/expired) is neither a send nor a failure.
@@ -116,7 +139,7 @@ export async function processOutbox(
         failed++;
         continue;
       }
-      const result = await deliverToChannel(env, channel, entry.payload as NotificationPayload);
+      const result = await deliverToChannel(env, channel, entry.payload);
       if (result.ok) {
         await markSent(env, entry.id);
         // Bookkeeping only — must never reach the outer catch (which would

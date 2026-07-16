@@ -1,6 +1,6 @@
 import type { MonitorRecord } from "../db/monitors";
 import type { IncidentRecord } from "../db/incidents";
-import type { NotifyEvent } from "../../shared/notifications";
+import { NOTIFY_EVENTS, type NotifyEvent } from "../../shared/notifications";
 import { stateColor, type DiscordEmbed } from "./channels/discord";
 import {
   escapeHtml,
@@ -23,6 +23,48 @@ export interface NotificationPayload {
   detectedAt: number;
   durationSeconds?: number | null;
   incidentId?: string;
+}
+
+const NOTIFY_EVENT_SET = new Set<string>(NOTIFY_EVENTS);
+
+/** Validate untrusted payloads read from the durable notification outbox. */
+export function isNotificationPayload(value: unknown): value is NotificationPayload {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const payload = value as Record<string, unknown>;
+  if (
+    typeof payload.event !== "string" ||
+    !NOTIFY_EVENT_SET.has(payload.event) ||
+    typeof payload.monitorId !== "string" ||
+    typeof payload.monitorName !== "string" ||
+    typeof payload.state !== "string" ||
+    typeof payload.title !== "string" ||
+    typeof payload.body !== "string" ||
+    typeof payload.detectedAt !== "number" ||
+    !Number.isFinite(payload.detectedAt)
+  ) {
+    return false;
+  }
+
+  const optionalString = (field: string): boolean =>
+    payload[field] === undefined || typeof payload[field] === "string";
+  const optionalNullableString = (field: string): boolean =>
+    payload[field] === undefined ||
+    payload[field] === null ||
+    typeof payload[field] === "string";
+  const optionalNullableNumber = (field: string): boolean =>
+    payload[field] === undefined ||
+    payload[field] === null ||
+    (typeof payload[field] === "number" && Number.isFinite(payload[field]));
+
+  return (
+    optionalString("url") &&
+    optionalNullableNumber("statusCode") &&
+    optionalNullableString("error") &&
+    optionalNullableNumber("durationSeconds") &&
+    optionalString("incidentId")
+  );
 }
 
 const EVENT_TITLE: Record<NotifyEvent, (name: string) => string> = {

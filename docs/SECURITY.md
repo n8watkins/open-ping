@@ -56,6 +56,7 @@ The protections in this section apply when a valid `MASTER_KEY` is configured.
 - A Web Push endpoint also has a SHA-256 digest for indexed lookup without exposing the endpoint.
 - An in-app generated VAPID private key is encrypted in the settings table when `MASTER_KEY` is configured.
 - Notification outbox payload bodies are encrypted before they are written to D1.
+- The dispatcher rejects unreadable ciphertext, invalid JSON, and structurally invalid notification payloads before calling an external provider.
 
 Email channel addresses and other non-secret notification-channel fields are not encrypted unless listed above.
 Normal monitor and channel API responses redact modeled secret fields, even though authenticated checks and delivery workers can decrypt them internally.
@@ -118,6 +119,7 @@ Until dual-key rotation support is implemented, preserve these recovery prerequi
 
 Protected storage classes currently include monitor configuration, notification-channel capabilities, notification outbox payloads, Web Push subscription secrets, and generated VAPID private keys.
 Production rotation remains blocked until the operator supplies the backed-up current key and approves a maintenance window with a verified D1 backup.
+Track those prerequisites in [Deferred operator inputs](./DEFERRED_INPUTS.md).
 
 ## Backups and restores
 

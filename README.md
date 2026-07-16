@@ -90,6 +90,7 @@ secret, custom domains, and a verify-it's-working checklist.
 - [Custom domain](./docs/CUSTOM_DOMAIN.md) - put OpenPing on your own hostname
 - [Free tier](./docs/FREE_TIER.md) - how usage maps to Cloudflare's free plan
 - [Troubleshooting](./docs/TROUBLESHOOTING.md) - common issues and fixes
+- [Deferred operator inputs](./docs/DEFERRED_INPUTS.md) - production checks and migrations waiting on an operator decision or device
 - [Contributing](./CONTRIBUTING.md) - dev setup and PR guidelines
 
 ## License

@@ -66,6 +66,7 @@ The principal implementation commits are:
 - `cbf8db4` merges the validated notification dispatcher PR into `main`.
 - `62ca537` covers successful provider delivery and due polled-monitor scheduling against workerd and D1.
 - `4da7174` encrypts generic webhook capabilities and notification outbox payloads, upgrades legacy plaintext records, and fails closed on unreadable payload ciphertext.
+- `1e41ddb` rejects structurally invalid notification payloads before any external provider call.
 
 The documentation pass adds an explicit security and storage inventory, corrects installation and recovery instructions, documents heartbeat behavior, and labels historical review material as historical.
 
@@ -94,7 +95,7 @@ The final verification completed successfully on 2026-07-15:
 - `npm run build` passed.
 - `npm audit` reported zero vulnerabilities.
 - `git diff --check` passed.
-- All relative link targets in the 17 repository Markdown documents were present.
+- All relative link targets in the 18 repository Markdown documents were present.
 - `.dev.vars` and the generated `dist/open_ping/.dev.vars` copy have owner-only local file permissions.
 - The build lifecycle now reapplies owner-only permissions automatically through `postbuild`.
 - The authenticated monitor workspace was verified in a real browser at 1920 by 900 and 390 by 844 viewports with no console errors or error overlay.
@@ -113,9 +114,10 @@ The final verification completed successfully on 2026-07-15:
 - A signed generic webhook is verified through authenticated channel creation, encrypted capability storage, encrypted outbox storage, provider dispatch, and durable success bookkeeping.
 - Legacy plaintext webhook capabilities and outbox payloads are verified to upgrade to ciphertext when read or claimed.
 - Corrupt or wrong-key outbox ciphertext is verified to fail closed without making an outbound request or blocking the rest of the dispatcher.
+- Valid JSON with an invalid notification shape is verified to fail closed without making an outbound request.
 - A real production Resend test was accepted by the configured email channel and recorded a fresh successful delivery with no failure or provider error.
 - The local and deployed monitor workspaces were browser-verified at 1920 by 900 and 390 by 844 with no runtime errors and no horizontal overflow.
-- `no-mistakes` completed review, testing, documentation, lint, push, PR, and CI with outcome `passed`; PR #3 is merged and GitGuardian passed.
+- The latest completed `no-mistakes` review, testing, documentation, lint, push, PR, and CI run finished with outcome `passed`, and GitGuardian passed.
 
 Use the same gate after further changes:
 
@@ -144,13 +146,7 @@ Commit future work on a feature branch, then run `no-mistakes axi run --intent "
 ## Inputs or authorization needed
 
 There is no current blocker for additional local implementation or automated testing.
-
-- Push, deploy, and production smoke-test authorization was granted in the current session.
-- Live Web Push verification requires a real browser or installed mobile PWA whose notification permission the user can approve.
-- Live Discord verification requires a configured production Discord channel.
-- The configured production Resend channel has passed a real test delivery, but a down-and-recovery sequence needs a user-approved target monitor.
-- Creating real production monitors requires the service targets, schedules, notification assignments, and public-page choices from the user.
-- A production `MASTER_KEY` rotation requires the backed-up current key, a maintenance window, a verified D1 backup, and explicit approval before any re-encryption operation.
+See [Deferred operator inputs](./DEFERRED_INPUTS.md) for the authoritative checklist of production work awaiting operator decisions, credentials, destinations, or devices.
 
 ## Important decisions and constraints
 
@@ -159,7 +155,7 @@ There is no current blocker for additional local implementation or automated tes
 - Raw heartbeat tokens are one-time credentials and cannot be recovered from D1 after creation, rotation, or import.
 - Older monitor records are sealed when updated, older notification capabilities are encrypted when read, older outbox payloads are encrypted when claimed, older push subscriptions are encrypted when registered again, and older heartbeat tokens are hashed after successful use or rotation.
 - Backup exports exclude credentials but still contain operationally sensitive URLs, names, schedules, settings, and incident history.
-- `BUILD_PLAN.md` and `docs/CODE_REVIEW.md` are historical records, not authoritative descriptions of current branch or deployment state.
+- `BUILD_PLAN.md` and `CODE_REVIEW.md` are historical records, not authoritative descriptions of current branch or deployment state.
 - Do not commit a real Cloudflare D1 database identifier, `.dev.vars`, `.op-token`, or any production credential.
 - Use explicit Tailwind class maps instead of interpolated class names so Tailwind v4 can extract them.
 - Preserve the top-level API 404 handling because Hono sub-application `notFound` handlers do not run after route merging.
@@ -191,7 +187,7 @@ Use `npm run db:migrate:local` for local D1 migrations and `npm run db:migrate` 
 - `migrations/0009_heartbeat_token_hash.sql` adds hashed heartbeat-token storage.
 - `docs/SECURITY.md` is the authoritative secret and storage inventory.
 - `docs/INSTALL.md`, `docs/UPGRADE.md`, `docs/BACKUP.md`, and `docs/TROUBLESHOOTING.md` are the primary operator guides.
-- `BUILD_PLAN.md` and `docs/CODE_REVIEW.md` are historical snapshots.
+- `BUILD_PLAN.md` and `CODE_REVIEW.md` are historical snapshots.
 
 ## Suggested kickoff prompt
 
