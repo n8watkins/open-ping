@@ -15,7 +15,7 @@ Authentication supports GitHub OAuth, email magic links, and a separate bearer t
 
 The source branch is `main` in `https://github.com/n8watkins/open-ping.git`.
 The reviewed application changes through `abb370b` are pushed and deployed.
-The D1 integration-test commit `aa2cb16` and this handoff are intended to be pushed after verification, but do not change the deployed Worker bundle.
+The integration-test and documentation changes through merge commit `cbf8db4` are pushed and merged into `origin/main`; they do not change the deployed Worker bundle.
 The production custom domain is `https://openping.n8builds.dev`.
 
 ## Work completed in the current pass
@@ -63,6 +63,9 @@ The principal implementation commits are:
 - `aa2cb16` adds workerd integration tests that apply the real D1 migrations and exercise an authenticated heartbeat-monitor lifecycle.
 - `c18b7b1` verifies backup restore credentials and related-record remapping against D1.
 - `0b5f847` verifies missed-heartbeat scheduler transactions, incident deduplication, rollups, and run diagnostics against D1.
+- `a83e08d` adds removed-channel notification outbox integration coverage.
+- `4764547` exercises that coverage through the authenticated channel lifecycle after `no-mistakes` review.
+- `cbf8db4` merges the validated notification dispatcher PR into `main`.
 
 The documentation pass adds an explicit security and storage inventory, corrects installation and recovery instructions, documents heartbeat behavior, and labels historical review material as historical.
 
@@ -107,6 +110,7 @@ The final verification completed successfully on 2026-07-15:
 - The same integration suite verifies replacement heartbeat credentials, maintenance-window remapping, incident remapping, restored incident privacy, and cleanup during backup import.
 - Two consecutive scheduler runs against an overdue heartbeat were verified to keep one open incident and one transition sample while accruing downtime and recording run diagnostics on both cycles.
 - Notification outbox idempotency and terminal handling for removed channels are verified against D1 without making an outbound request.
+- `no-mistakes` completed review, testing, documentation, lint, push, PR, and CI with outcome `passed`; PR #1 is merged and GitGuardian passed.
 
 Use the same gate after further changes:
 
@@ -118,6 +122,8 @@ npm audit
 git diff --check
 git status --short --branch
 ```
+
+Commit future work on a feature branch, then run `no-mistakes axi run --intent "..."` before merging it into `main`.
 
 ## Known gaps and recommended next work
 
