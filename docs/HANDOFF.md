@@ -14,8 +14,6 @@ The Worker runs a scheduled monitoring cycle every 12 minutes and supports HTTP,
 Authentication supports GitHub OAuth, email magic links, and a separate bearer token for the administrative CLI.
 
 The source branch is `main` in `https://github.com/n8watkins/open-ping.git`.
-The reviewed application changes through `abb370b` are pushed and deployed.
-The integration-test and documentation changes through merge commit `cbf8db4` are pushed and merged into `origin/main`; they do not change the deployed Worker bundle.
 The production custom domain is `https://openping.n8builds.dev`.
 
 ## Work completed in the current pass
@@ -66,6 +64,8 @@ The principal implementation commits are:
 - `a83e08d` adds removed-channel notification outbox integration coverage.
 - `4764547` exercises that coverage through the authenticated channel lifecycle after `no-mistakes` review.
 - `cbf8db4` merges the validated notification dispatcher PR into `main`.
+- `62ca537` covers successful provider delivery and due polled-monitor scheduling against workerd and D1.
+- `4da7174` encrypts generic webhook capabilities and notification outbox payloads, upgrades legacy plaintext records, and fails closed on unreadable payload ciphertext.
 
 The documentation pass adds an explicit security and storage inventory, corrects installation and recovery instructions, documents heartbeat behavior, and labels historical review material as historical.
 
@@ -75,8 +75,7 @@ Migrations `0008_push_subscription_secrets.sql` and `0009_heartbeat_token_hash.s
 The remote migration list was verified with no pending migrations.
 The remote schema was verified to contain `push_subscriptions.endpoint_hash` and `monitors.heartbeat_token_hash`.
 
-The reviewed application was deployed to the Cloudflare Worker `open-ping` on 2026-07-15 from commit `abb370b`.
-The deployed Worker version is `db37e70c-8584-4b1f-b717-13c9edffc56c`.
+The reviewed application was deployed to the Cloudflare Worker `open-ping` on 2026-07-15.
 The public custom domain and the workers.dev URL both returned HTTP `200` after deployment.
 Production setup is complete, the setup wizard is locked, and the installation timezone is `America/Los_Angeles`.
 The configured GitHub OAuth start flow redirects back to `https://openping.n8builds.dev/auth/github/callback`.
@@ -84,14 +83,14 @@ No temporary production monitor remains from verification.
 No repository file contains the production D1 resource identifier.
 
 The current encryption and storage model is documented in [SECURITY.md](./SECURITY.md).
-Keep the active `MASTER_KEY` backed up outside D1 because changing it without re-encrypting existing ciphertext makes that data unreadable.
+Keep the active `MASTER_KEY` backed up outside D1 because Cloudflare cannot reveal it and changing it without re-encrypting existing ciphertext makes that data unreadable.
 
 ## Verification state
 
 The final verification completed successfully on 2026-07-15:
 
 - `npm run typecheck` passed.
-- `npm test` passed with 457 Node tests across 40 files and four workerd/D1 integration tests in a separate file.
+- `npm test` passed with 457 Node tests across 40 files and six workerd/D1 integration tests in a separate file.
 - `npm run build` passed.
 - `npm audit` reported zero vulnerabilities.
 - `git diff --check` passed.
@@ -110,6 +109,12 @@ The final verification completed successfully on 2026-07-15:
 - The same integration suite verifies replacement heartbeat credentials, maintenance-window remapping, incident remapping, restored incident privacy, and cleanup during backup import.
 - Two consecutive scheduler runs against an overdue heartbeat were verified to keep one open incident and one transition sample while accruing downtime and recording run diagnostics on both cycles.
 - Notification outbox idempotency and terminal handling for removed channels are verified against D1 without making an outbound request.
+- A due HTTP monitor is verified through the real scheduler, check runner, sample persistence, state update, and run diagnostics against workerd and D1.
+- A signed generic webhook is verified through authenticated channel creation, encrypted capability storage, encrypted outbox storage, provider dispatch, and durable success bookkeeping.
+- Legacy plaintext webhook capabilities and outbox payloads are verified to upgrade to ciphertext when read or claimed.
+- Corrupt or wrong-key outbox ciphertext is verified to fail closed without making an outbound request or blocking the rest of the dispatcher.
+- A real production Resend test was accepted by the configured email channel and recorded a fresh successful delivery with no failure or provider error.
+- The local monitor workspace was browser-verified at 1920 by 900 and 390 by 844 with no runtime errors and no horizontal overflow.
 - `no-mistakes` completed review, testing, documentation, lint, push, PR, and CI with outcome `passed`; PR #1 is merged and GitGuardian passed.
 
 Use the same gate after further changes:
@@ -127,17 +132,14 @@ Commit future work on a feature branch, then run `no-mistakes axi run --intent "
 
 ## Known gaps and recommended next work
 
-1. Expand D1-backed integration coverage.
-   Monitor, heartbeat, backup import, missed-heartbeat scheduler transactions, and removed-channel dispatch are covered, but polled-check scheduling and successful provider delivery should also run against workerd and D1.
+1. Implement dual-key `MASTER_KEY` rotation.
+   The storage inventory and safety requirements are documented, but an online rotation still needs dual-key reads, an idempotent re-encryption pass over every protected storage class, and a proof that the previous key is no longer required.
 
-2. Close the remaining secret-management gaps.
-   Define a safe `MASTER_KEY` rotation and re-encryption workflow, decide whether generic webhook capability URLs and notification outbox payloads require additional sealing, and document any accepted plaintext operational metadata.
-
-3. Complete live delivery verification.
+2. Complete live delivery verification.
    Exercise a real browser push subscription, a real push delivery and deep link, a Resend down-and-recovery sequence, a Discord delivery, and at least one real production monitor incident.
 
-4. Perform a pixel-level browser pass after deployment.
-   Compare the deployed desktop and narrow layouts with the supplied UptimeRobot references, with particular attention to table density, side-panel width, sidebar visibility, control alignment, and empty or loading states.
+3. Add configured-provider integration fixtures.
+   The successful webhook path is fully automated and a real Resend test has passed, but Discord and Web Push still need configured test destinations before their live flows can be exercised.
 
 ## Inputs or authorization needed
 
@@ -145,16 +147,17 @@ There is no current blocker for additional local implementation or automated tes
 
 - Push, deploy, and production smoke-test authorization was granted in the current session.
 - Live Web Push verification requires a real browser or installed mobile PWA whose notification permission the user can approve.
-- Live Resend and Discord verification requires valid production service configuration plus approval to send test notifications to the configured recipients.
+- Live Discord verification requires a configured production Discord channel.
+- The configured production Resend channel has passed a real test delivery, but a down-and-recovery sequence needs a user-approved target monitor.
 - Creating real production monitors requires the service targets, schedules, notification assignments, and public-page choices from the user.
-- A production `MASTER_KEY` rotation requires a maintenance window, a verified backup of the current key and D1 database, and explicit approval before any re-encryption operation.
+- A production `MASTER_KEY` rotation requires the backed-up current key, a maintenance window, a verified D1 backup, and explicit approval before any re-encryption operation.
 
 ## Important decisions and constraints
 
 - `MASTER_KEY` and `SETUP_TOKEN` are mandatory Worker secrets for a new installation.
 - Administrator identities and `APP_URL` may be preconfigured or saved by the setup wizard.
 - Raw heartbeat tokens are one-time credentials and cannot be recovered from D1 after creation, rotation, or import.
-- Older monitor records are sealed when updated, older push subscriptions are encrypted when registered again, and older heartbeat tokens are hashed after successful use or rotation.
+- Older monitor records are sealed when updated, older notification capabilities are encrypted when read, older outbox payloads are encrypted when claimed, older push subscriptions are encrypted when registered again, and older heartbeat tokens are hashed after successful use or rotation.
 - Backup exports exclude credentials but still contain operationally sensitive URLs, names, schedules, settings, and incident history.
 - `BUILD_PLAN.md` and `docs/CODE_REVIEW.md` are historical records, not authoritative descriptions of current branch or deployment state.
 - Do not commit a real Cloudflare D1 database identifier, `.dev.vars`, `.op-token`, or any production credential.
