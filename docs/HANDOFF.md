@@ -146,14 +146,7 @@ Commit future work on a feature branch, then run `no-mistakes axi run --intent "
 ## Inputs or authorization needed
 
 There is no current blocker for additional local implementation or automated testing.
-The durable operator checklist is [Deferred operator inputs](./DEFERRED_INPUTS.md).
-
-- Push, deploy, and production smoke-test authorization was granted in the current session.
-- Live Web Push verification requires a real browser or installed mobile PWA whose notification permission the user can approve.
-- Live Discord verification requires a configured production Discord channel.
-- The configured production Resend channel has passed a real test delivery, but a down-and-recovery sequence needs a user-approved target monitor.
-- Creating real production monitors requires the service targets, schedules, notification assignments, and public-page choices from the user.
-- A production `MASTER_KEY` rotation requires the backed-up current key, a maintenance window, a verified D1 backup, and explicit approval before any re-encryption operation.
+See [Deferred operator inputs](./DEFERRED_INPUTS.md) for the authoritative checklist of production work awaiting operator decisions, credentials, destinations, or devices.
 
 ## Important decisions and constraints
 
