@@ -23,9 +23,10 @@ import { getSetting } from "../db/settings";
  * CSRF on mutations. This module is config-only — sending lives in the dispatcher
  * module, and POST /:id/test is added later by the dispatcher integration.
  *
- * Secret config fields (Discord url, webhook secret) are blanked in every
- * response via `redactChannel`; the editor resubmits the blanked value and the
- * data layer merges the stored secret back in (see db/channels.ts).
+ * Secret config fields (Discord and generic webhook URLs, plus the generic
+ * webhook secret) are blanked in every response via `redactChannel`; the editor
+ * resubmits the blanked value and the data layer merges the stored secret back
+ * in (see db/channels.ts).
  */
 export const channels = new Hono<AppEnv>();
 
@@ -97,8 +98,9 @@ const channelCreateSchema = z.discriminatedUnion("type", [
 
 // Update: `type` is not in the body (it comes from the stored record) and secret
 // config fields arrive blanked ("") to be merged back by the data layer — so the
-// Discord webhook URL (a secret) may legitimately be empty here. The config is
-// validated against the channel's actual type in the handler (updateConfigSchemas).
+// Discord and generic webhook URLs may legitimately be empty here. The config
+// is validated against the channel's actual type in the handler
+// (updateConfigSchemas).
 const channelUpdateSchema = z.object({
   name: nameField,
   enabled: z.boolean().optional(),
@@ -112,7 +114,7 @@ const secretUrl = z.union([z.literal(""), httpsUrl]);
 /** Per-type config validators for UPDATE (secret fields may be blank). */
 const updateConfigSchemas: Record<string, z.ZodTypeAny> = {
   discord: z.object({ url: secretUrl }).passthrough(),
-  webhook: z.object({ url: httpsUrl, secret: optionalSecret }).passthrough(),
+  webhook: z.object({ url: secretUrl, secret: optionalSecret }).passthrough(),
   email: z.object({ to: emailAddr, from: emailAddr.optional() }).passthrough(),
 };
 

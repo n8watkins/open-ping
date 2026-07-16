@@ -10,13 +10,13 @@ import { isCiphertext } from "../lib/secret-config";
  * epoch milliseconds. Sending logic lives elsewhere (the dispatcher module);
  * this layer only persists configuration and last-result bookkeeping.
  *
- * Secret config fields are capability secrets (a Discord webhook URL, the
- * generic-webhook HMAC secret) and are encrypted at rest. Encryption is
- * BEST-EFFORT, mirroring monitors: when `env.MASTER_KEY` is unset the config is
- * stored as plaintext, and `getChannel`/`listChannels` DECRYPT so the dispatcher
- * always receives the real secret. Routes redact these fields in API responses
- * (see `redactChannelConfig`) and carry stored secrets forward on update (see
- * `mergeChannelSecrets`).
+ * Secret config fields are capability secrets (Discord and generic webhook
+ * URLs, plus the generic-webhook HMAC secret) and are encrypted at rest.
+ * Encryption is BEST-EFFORT, mirroring monitors: when `env.MASTER_KEY` is unset
+ * the config is stored as plaintext, and `getChannel`/`listChannels` DECRYPT so
+ * the dispatcher always receives the real secret. Routes redact these fields in
+ * API responses (see `redactChannelConfig`) and carry stored secrets forward on
+ * update (see `mergeChannelSecrets`).
  */
 
 const CIPHERTEXT_PREFIX = "v1:";
@@ -24,7 +24,9 @@ const CIPHERTEXT_PREFIX = "v1:";
 /** Capability-secret config field names per channel type. */
 const CHANNEL_SECRET_FIELDS: Record<string, readonly string[]> = {
   discord: ["url"],
-  webhook: ["secret"],
+  // A generic webhook destination is a capability URL just like Discord's:
+  // possession is often enough to submit messages to the receiver.
+  webhook: ["url", "secret"],
 };
 
 /** Secret config field names for a channel type ([] for types with no secrets). */
@@ -183,8 +185,20 @@ function rowToChannel(row: ChannelRow): ChannelRecord {
 async function decryptRecord(
   env: Env,
   rec: ChannelRecord,
+  storedConfig: string,
 ): Promise<ChannelRecord> {
-  rec.config = await decryptChannelConfig(env, rec.type, rec.config);
+  // SQL migrations cannot encrypt legacy plaintext capability values because
+  // they do not have access to MASTER_KEY. Upgrade them on the next read so an
+  // existing webhook does not remain plaintext indefinitely after deployment.
+  const protectedConfig = await encryptChannelConfig(env, rec.type, rec.config);
+  if (JSON.stringify(protectedConfig) !== JSON.stringify(rec.config)) {
+    await env.DB.prepare(
+      "UPDATE notification_channels SET config = ?, updated_at = ? WHERE id = ? AND config = ?",
+    )
+      .bind(JSON.stringify(protectedConfig), Date.now(), rec.id, storedConfig)
+      .run();
+  }
+  rec.config = await decryptChannelConfig(env, rec.type, protectedConfig);
   return rec;
 }
 
@@ -193,7 +207,9 @@ export async function listChannels(env: Env): Promise<ChannelRecord[]> {
     "SELECT * FROM notification_channels ORDER BY created_at",
   ).all<ChannelRow>();
   return Promise.all(
-    (res.results ?? []).map((r) => decryptRecord(env, rowToChannel(r))),
+    (res.results ?? []).map((r) =>
+      decryptRecord(env, rowToChannel(r), r.config),
+    ),
   );
 }
 
@@ -206,7 +222,7 @@ export async function getChannel(
   )
     .bind(id)
     .first<ChannelRow>();
-  return row ? decryptRecord(env, rowToChannel(row)) : null;
+  return row ? decryptRecord(env, rowToChannel(row), row.config) : null;
 }
 
 export async function createChannel(

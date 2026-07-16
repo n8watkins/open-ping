@@ -421,4 +421,310 @@ describe("authenticated monitor lifecycle", () => {
       }
     }
   });
+
+  it("delivers a signed webhook and records durable success", async () => {
+    const eventKey = "integration:successful-webhook";
+    const corruptEventKey = "integration:corrupt-webhook";
+    const webhookUrl = "https://notifications.example.com/openping-success";
+    const webhookSecret = "integration-signing-secret";
+    let channelId: string | undefined;
+    const providerFetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 204 }),
+    );
+
+    try {
+      const createdResponse = await apiRequest("/api/channels", {
+        method: "POST",
+        body: JSON.stringify({
+          type: "webhook",
+          name: "Successful webhook integration",
+          config: { url: webhookUrl, secret: webhookSecret },
+        }),
+      });
+      expect(createdResponse.status).toBe(201);
+      const createdBody = await createdResponse.json<{
+        channel: { id: string; config: { url: string; secret: string } };
+      }>();
+      channelId = createdBody.channel.id;
+      expect(createdBody.channel.config).toEqual({ url: "", secret: "" });
+
+      let storedChannel = await env.DB.prepare(
+        "SELECT config FROM notification_channels WHERE id = ?",
+      )
+        .bind(channelId)
+        .first<{ config: string }>();
+      expect(storedChannel?.config).not.toContain(webhookUrl);
+      expect(storedChannel?.config).not.toContain(webhookSecret);
+
+      // Simulate a pre-hardening plaintext row. A normal authenticated read
+      // must redact both capabilities and lazily replace them with ciphertext.
+      await env.DB.prepare(
+        "UPDATE notification_channels SET config = ? WHERE id = ?",
+      )
+        .bind(JSON.stringify({ url: webhookUrl, secret: webhookSecret }), channelId)
+        .run();
+      const upgradedResponse = await apiRequest(`/api/channels/${channelId}`);
+      expect(upgradedResponse.status).toBe(200);
+      const upgradedBody = await upgradedResponse.json<{
+        channel: { config: { url: string; secret: string } };
+      }>();
+      expect(upgradedBody.channel.config).toEqual({ url: "", secret: "" });
+      storedChannel = await env.DB.prepare(
+        "SELECT config FROM notification_channels WHERE id = ?",
+      )
+        .bind(channelId)
+        .first<{ config: string }>();
+      expect(storedChannel?.config).not.toContain(webhookUrl);
+      expect(storedChannel?.config).not.toContain(webhookSecret);
+
+      // Match the browser's redacted edit flow: both capability fields are
+      // blank in the form, and an unchanged optional secret is omitted from
+      // the submitted config. The stored URL and secret must survive.
+      const editedResponse = await apiRequest(`/api/channels/${channelId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: "Edited successful webhook integration",
+          config: { url: "" },
+        }),
+      });
+      expect(editedResponse.status).toBe(200);
+      const editedBody = await editedResponse.json<{
+        channel: { name: string; config: { url: string; secret: string } };
+      }>();
+      expect(editedBody.channel).toMatchObject({
+        name: "Edited successful webhook integration",
+        config: { url: "", secret: "" },
+      });
+      storedChannel = await env.DB.prepare(
+        "SELECT config FROM notification_channels WHERE id = ?",
+      )
+        .bind(channelId)
+        .first<{ config: string }>();
+      expect(storedChannel?.config).toMatch(/"url":"v1:/);
+      expect(storedChannel?.config).toMatch(/"secret":"v1:/);
+      expect(storedChannel?.config).not.toContain(webhookUrl);
+      expect(storedChannel?.config).not.toContain(webhookSecret);
+
+      const deliveryPayload = {
+        event: "test",
+        monitorId: "test",
+        monitorName: "Successful webhook",
+        state: "up",
+        title: "Integration notification",
+        body: "The provider accepted this mocked delivery.",
+        detectedAt: Date.now(),
+      };
+      await enqueue(env, [
+        {
+          eventKey,
+          channelId,
+          channelType: "webhook",
+          eventType: "test",
+          payload: deliveryPayload,
+        },
+      ]);
+
+      const storedDelivery = await env.DB.prepare(
+        "SELECT payload FROM notification_outbox WHERE event_key = ?",
+      )
+        .bind(eventKey)
+        .first<{ payload: string }>();
+      expect(storedDelivery?.payload).toMatch(/^v1:/);
+      expect(storedDelivery?.payload).not.toContain("Integration notification");
+
+      // Existing queues can contain plaintext JSON from an older deployment.
+      // The dispatcher must continue draining those rows during the upgrade.
+      await env.DB.prepare(
+        "UPDATE notification_outbox SET payload = ? WHERE event_key = ?",
+      )
+        .bind(JSON.stringify(deliveryPayload), eventKey)
+        .run();
+
+      const result = await processOutbox(env, Date.now());
+      expect(result).toEqual({ processed: 1, sent: 1, failed: 0 });
+      expect(providerFetch).toHaveBeenCalledOnce();
+
+      const [requestUrl, requestInit] = providerFetch.mock.calls[0]!;
+      expect(requestUrl).toBe(webhookUrl);
+      expect(requestInit?.method).toBe("POST");
+      const requestHeaders = new Headers(requestInit?.headers);
+      expect(requestHeaders.get("content-type")).toBe("application/json");
+      expect(requestHeaders.get("x-openping-timestamp")).toMatch(/^\d+$/);
+      expect(requestHeaders.get("x-openping-signature")).toMatch(/^sha256=[a-f0-9]{64}$/);
+      expect(String(requestInit?.body)).toContain("Integration notification");
+
+      const delivery = await env.DB.prepare(
+        "SELECT status, attempts, last_error, payload FROM notification_outbox WHERE event_key = ?",
+      )
+        .bind(eventKey)
+        .first<{
+          status: string;
+          attempts: number;
+          last_error: string | null;
+          payload: string;
+        }>();
+      expect(delivery).toMatchObject({ status: "sent", attempts: 0, last_error: null });
+      expect(delivery?.payload).toMatch(/^v1:/);
+      expect(delivery?.payload).not.toContain("Integration notification");
+
+      const channelResult = await env.DB.prepare(
+        "SELECT last_success_at, last_failure_at, last_error FROM notification_channels WHERE id = ?",
+      )
+        .bind(channelId)
+        .first<{
+          last_success_at: number | null;
+          last_failure_at: number | null;
+          last_error: string | null;
+        }>();
+      expect(channelResult?.last_success_at).toEqual(expect.any(Number));
+      expect(channelResult?.last_failure_at).toBeNull();
+      expect(channelResult?.last_error).toBeNull();
+
+      await enqueue(env, [
+        {
+          eventKey: corruptEventKey,
+          channelId,
+          channelType: "webhook",
+          eventType: "test",
+          payload: deliveryPayload,
+        },
+      ]);
+      await env.DB.prepare(
+        "UPDATE notification_outbox SET payload = ? WHERE event_key = ?",
+      )
+        .bind("v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA==", corruptEventKey)
+        .run();
+
+      providerFetch.mockClear();
+      const corruptResult = await processOutbox(env, Date.now());
+      expect(corruptResult).toEqual({ processed: 1, sent: 0, failed: 1 });
+      expect(providerFetch).not.toHaveBeenCalled();
+      const corruptDelivery = await env.DB.prepare(
+        "SELECT status, attempts, last_error FROM notification_outbox WHERE event_key = ?",
+      )
+        .bind(corruptEventKey)
+        .first<{ status: string; attempts: number; last_error: string | null }>();
+      expect(corruptDelivery).toEqual({
+        status: "failed",
+        attempts: 1,
+        last_error: "payload_decryption_failed",
+      });
+    } finally {
+      providerFetch.mockRestore();
+      await env.DB.prepare(
+        "DELETE FROM notification_outbox WHERE event_key IN (?, ?)",
+      )
+        .bind(eventKey, corruptEventKey)
+        .run();
+      if (channelId) {
+        await apiRequest(`/api/channels/${channelId}`, { method: "DELETE" });
+      }
+    }
+  });
+
+  it("runs a due HTTP monitor through the scheduler success path", async () => {
+    const targetUrl = "https://health.example.com/openping";
+    let monitorId: string | undefined;
+    const providerFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url !== targetUrl) {
+        throw new Error(`unexpected outbound request: ${url}`);
+      }
+      return new Response('{"status":"healthy"}', {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    try {
+      const createdResponse = await apiRequest("/api/monitors", {
+        method: "POST",
+        body: JSON.stringify({
+          type: "http",
+          name: "Scheduler HTTP integration",
+          config: { url: targetUrl },
+          assertions: [
+            { kind: "json_path_equals", path: "status", value: "healthy" },
+          ],
+        }),
+      });
+      expect(createdResponse.status).toBe(201);
+      const createdBody = await createdResponse.json<{ monitor: { id: string } }>();
+      monitorId = createdBody.monitor.id;
+
+      const controller: ScheduledController = {
+        cron: "*/12 * * * *",
+        scheduledTime: Date.now(),
+        noRetry() {},
+      };
+      await runScheduled(controller, env);
+      expect(providerFetch).toHaveBeenCalledOnce();
+
+      const state = await env.DB.prepare(
+        `SELECT state, last_status_code, last_error, consecutive_successes,
+                last_success_at, next_check_at
+         FROM monitor_state WHERE monitor_id = ?`,
+      )
+        .bind(monitorId)
+        .first<{
+          state: string;
+          last_status_code: number | null;
+          last_error: string | null;
+          consecutive_successes: number;
+          last_success_at: number | null;
+          next_check_at: number | null;
+        }>();
+      expect(state).toMatchObject({
+        state: "up",
+        last_status_code: 200,
+        last_error: null,
+        consecutive_successes: 1,
+      });
+      expect(state?.last_success_at).toEqual(expect.any(Number));
+      expect(state?.next_check_at).toEqual(expect.any(Number));
+
+      const sample = await env.DB.prepare(
+        `SELECT ok, state, status_code, attempts, warmup, error
+         FROM samples WHERE monitor_id = ?`,
+      )
+        .bind(monitorId)
+        .first<{
+          ok: number;
+          state: string;
+          status_code: number | null;
+          attempts: number;
+          warmup: number;
+          error: string | null;
+        }>();
+      expect(sample).toEqual({
+        ok: 1,
+        state: "up",
+        status_code: 200,
+        attempts: 1,
+        warmup: 1,
+        error: null,
+      });
+
+      const run = await env.DB.prepare(
+        `SELECT ok, monitors_checked, monitors_skipped, check_failures
+         FROM scheduler_runs ORDER BY started_at DESC LIMIT 1`,
+      ).first<{
+        ok: number;
+        monitors_checked: number;
+        monitors_skipped: number;
+        check_failures: number;
+      }>();
+      expect(run).toEqual({
+        ok: 1,
+        monitors_checked: 1,
+        monitors_skipped: 0,
+        check_failures: 0,
+      });
+    } finally {
+      providerFetch.mockRestore();
+      if (monitorId) {
+        await apiRequest(`/api/monitors/${monitorId}`, { method: "DELETE" });
+      }
+    }
+  });
 });
