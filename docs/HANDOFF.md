@@ -90,7 +90,7 @@ Keep the active `MASTER_KEY` backed up outside D1 because Cloudflare cannot reve
 The final verification completed successfully on 2026-07-15:
 
 - `npm run typecheck` passed.
-- `npm test` passed with 457 Node tests across 40 files and six workerd/D1 integration tests in a separate file.
+- `npm test` passed with 458 Node tests across 41 files and six workerd/D1 integration tests in a separate file.
 - `npm run build` passed.
 - `npm audit` reported zero vulnerabilities.
 - `git diff --check` passed.
@@ -114,8 +114,8 @@ The final verification completed successfully on 2026-07-15:
 - Legacy plaintext webhook capabilities and outbox payloads are verified to upgrade to ciphertext when read or claimed.
 - Corrupt or wrong-key outbox ciphertext is verified to fail closed without making an outbound request or blocking the rest of the dispatcher.
 - A real production Resend test was accepted by the configured email channel and recorded a fresh successful delivery with no failure or provider error.
-- The local monitor workspace was browser-verified at 1920 by 900 and 390 by 844 with no runtime errors and no horizontal overflow.
-- `no-mistakes` completed review, testing, documentation, lint, push, PR, and CI with outcome `passed`; PR #1 is merged and GitGuardian passed.
+- The local and deployed monitor workspaces were browser-verified at 1920 by 900 and 390 by 844 with no runtime errors and no horizontal overflow.
+- `no-mistakes` completed review, testing, documentation, lint, push, PR, and CI with outcome `passed`; PR #3 is merged and GitGuardian passed.
 
 Use the same gate after further changes:
 
