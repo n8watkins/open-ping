@@ -33,6 +33,7 @@ The commands have these effects:
 
 Migrations `0008_push_subscription_secrets.sql` and `0009_heartbeat_token_hash.sql` add lookup hashes that allow capability credentials to be protected without breaking existing installations.
 The SQL migrations cannot encrypt or hash an unknown plaintext credential by themselves, so existing rows upgrade lazily.
+See [Security and secret storage](./SECURITY.md#legacy-record-upgrades) for the authoritative inventory of protected storage and every lazy-upgrade trigger, including notification-channel capabilities and outbox payloads.
 
 - New and updated monitor configurations are sealed as one AES-GCM document when `MASTER_KEY` is configured.
 - A legacy monitor configuration remains readable and is sealed the next time that monitor is edited and saved.

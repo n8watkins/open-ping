@@ -108,9 +108,9 @@ Verify that `MASTER_KEY` is configured before performing those actions.
 
 A safe online `MASTER_KEY` rotation needs a dual-key read window, an idempotent re-encryption pass over every protected storage location, and a verification pass that proves no ciphertext still depends on the previous key.
 OpenPing deliberately does not offer a command that swaps the key first or performs an unverifiable partial rewrite.
-Until dual-key rotation support is implemented, use this recovery-safe procedure:
+Until dual-key rotation support is implemented, preserve these recovery prerequisites:
 
-1. Confirm that the current `MASTER_KEY` backup can decrypt a fresh D1 export in an isolated environment.
+1. Retain the current `MASTER_KEY` in a secret manager that is independent of Cloudflare and D1.
 2. Take and retain a second D1 backup immediately before maintenance.
 3. Keep the deployed `MASTER_KEY` unchanged while auditing or preparing migration tooling.
 4. Do not remove the old key backup until every encrypted storage class has been re-encrypted and independently verified.

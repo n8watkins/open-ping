@@ -10,13 +10,13 @@ import { isCiphertext } from "../lib/secret-config";
  * epoch milliseconds. Sending logic lives elsewhere (the dispatcher module);
  * this layer only persists configuration and last-result bookkeeping.
  *
- * Secret config fields are capability secrets (a Discord webhook URL, the
- * generic-webhook HMAC secret) and are encrypted at rest. Encryption is
- * BEST-EFFORT, mirroring monitors: when `env.MASTER_KEY` is unset the config is
- * stored as plaintext, and `getChannel`/`listChannels` DECRYPT so the dispatcher
- * always receives the real secret. Routes redact these fields in API responses
- * (see `redactChannelConfig`) and carry stored secrets forward on update (see
- * `mergeChannelSecrets`).
+ * Secret config fields are capability secrets (Discord and generic webhook
+ * URLs, plus the generic-webhook HMAC secret) and are encrypted at rest.
+ * Encryption is BEST-EFFORT, mirroring monitors: when `env.MASTER_KEY` is unset
+ * the config is stored as plaintext, and `getChannel`/`listChannels` DECRYPT so
+ * the dispatcher always receives the real secret. Routes redact these fields in
+ * API responses (see `redactChannelConfig`) and carry stored secrets forward on
+ * update (see `mergeChannelSecrets`).
  */
 
 const CIPHERTEXT_PREFIX = "v1:";

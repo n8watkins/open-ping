@@ -109,8 +109,8 @@ npx wrangler d1 export open-ping --remote --output openping-d1-backup.sql
 A full dump includes sessions, samples, summaries, encrypted values, and compatibility rows that may still be plaintext after an older upgrade.
 Treat the SQL file as highly sensitive even when `MASTER_KEY` is configured.
 
-Monitor configuration and Web Push capability credentials written by current versions are encrypted with `MASTER_KEY`.
-The original `MASTER_KEY` is required to decrypt those values after a restore, so back it up separately in a secret manager.
+The authoritative list of values protected by `MASTER_KEY` is maintained in [Security and secret storage](./SECURITY.md#d1-storage-inventory).
+The original `MASTER_KEY` is required to decrypt protected values after a restore, so back it up separately in a secret manager.
 Cloudflare Worker secrets such as `MASTER_KEY`, `SETUP_TOKEN`, OAuth credentials, `RESEND_API_KEY`, and `API_TOKEN` live outside D1 and are never included in either backup format.
 
 Heartbeat ingestion tokens are stored as SHA-256 hashes.
