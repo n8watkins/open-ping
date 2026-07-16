@@ -477,6 +477,34 @@ describe("authenticated monitor lifecycle", () => {
       expect(storedChannel?.config).not.toContain(webhookUrl);
       expect(storedChannel?.config).not.toContain(webhookSecret);
 
+      // Match the browser's redacted edit flow: both capability fields are
+      // blank in the form, and an unchanged optional secret is omitted from
+      // the submitted config. The stored URL and secret must survive.
+      const editedResponse = await apiRequest(`/api/channels/${channelId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: "Edited successful webhook integration",
+          config: { url: "" },
+        }),
+      });
+      expect(editedResponse.status).toBe(200);
+      const editedBody = await editedResponse.json<{
+        channel: { name: string; config: { url: string; secret: string } };
+      }>();
+      expect(editedBody.channel).toMatchObject({
+        name: "Edited successful webhook integration",
+        config: { url: "", secret: "" },
+      });
+      storedChannel = await env.DB.prepare(
+        "SELECT config FROM notification_channels WHERE id = ?",
+      )
+        .bind(channelId)
+        .first<{ config: string }>();
+      expect(storedChannel?.config).toMatch(/"url":"v1:/);
+      expect(storedChannel?.config).toMatch(/"secret":"v1:/);
+      expect(storedChannel?.config).not.toContain(webhookUrl);
+      expect(storedChannel?.config).not.toContain(webhookSecret);
+
       const deliveryPayload = {
         event: "test",
         monitorId: "test",
