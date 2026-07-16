@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import "../../src/worker/index";
 import { enqueue } from "../../src/worker/db/outbox";
@@ -313,53 +313,112 @@ describe("authenticated monitor lifecycle", () => {
 
   it("parks idempotent deliveries whose channel was removed", async () => {
     const eventKey = "integration:missing-channel";
-    const entry = {
-      eventKey,
-      channelId: "channel_removed",
-      channelType: "webhook",
-      eventType: "test",
-      payload: {
-        event: "test",
-        monitorId: "test",
-        monitorName: "Removed channel",
-        state: "up",
-        title: "Integration notification",
-        body: "This delivery must be parked without an outbound request.",
-        detectedAt: Date.now(),
-      },
-    };
-    await enqueue(env, [entry]);
-    await enqueue(env, [entry]);
+    let channelId: string | undefined;
+    const providerFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("unexpected provider request"));
 
-    const before = await env.DB.prepare(
-      "SELECT COUNT(*) AS count FROM notification_outbox WHERE event_key = ?",
-    )
-      .bind(eventKey)
-      .first<{ count: number }>();
-    expect(before?.count).toBe(1);
-
-    const result = await processOutbox(env, Date.now());
-    expect(result).toEqual({ processed: 1, sent: 0, failed: 1 });
-
-    const parked = await env.DB.prepare(
-      `SELECT status, attempts, last_error, next_attempt_at
-       FROM notification_outbox WHERE event_key = ?`,
-    )
-      .bind(eventKey)
-      .first<{
-        status: string;
-        attempts: number;
-        last_error: string | null;
-        next_attempt_at: number | null;
+    try {
+      const createdResponse = await apiRequest("/api/channels", {
+        method: "POST",
+        body: JSON.stringify({
+          type: "webhook",
+          name: "Removed channel integration",
+          config: { url: "https://notifications.example.com/openping" },
+        }),
+      });
+      const createdBody = await createdResponse.json<{
+        channel: { id: string; type: string };
       }>();
-    expect(parked).toMatchObject({
-      status: "dead",
-      attempts: 5,
-      last_error: "channel_unavailable",
-    });
-    expect(parked?.next_attempt_at).toEqual(expect.any(Number));
+      channelId = createdBody.channel.id;
+      expect(createdResponse.status).toBe(201);
+      expect(channelId).toMatch(/^ch_/);
+      expect(createdBody.channel.type).toBe("webhook");
 
-    const secondPass = await processOutbox(env, Date.now() + 24 * 60 * 60 * 1000);
-    expect(secondPass).toEqual({ processed: 0, sent: 0, failed: 0 });
+      const entry = {
+        eventKey,
+        channelId,
+        channelType: "webhook",
+        eventType: "test",
+        payload: {
+          event: "test",
+          monitorId: "test",
+          monitorName: "Removed channel",
+          state: "up",
+          title: "Integration notification",
+          body: "This delivery must be parked without an outbound request.",
+          detectedAt: Date.now(),
+        },
+      };
+      await enqueue(env, [entry]);
+      await enqueue(env, [entry]);
+
+      const before = await env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM notification_outbox WHERE event_key = ?",
+      )
+        .bind(eventKey)
+        .first<{ count: number }>();
+      expect(before?.count).toBe(1);
+
+      const deleted = await apiRequest(`/api/channels/${channelId}`, {
+        method: "DELETE",
+      });
+      expect(deleted.status).toBe(200);
+      expect(await deleted.json()).toEqual({ ok: true });
+      const removed = await apiRequest(`/api/channels/${channelId}`);
+      expect(removed.status).toBe(404);
+
+      const queuedAfterDelete = await env.DB.prepare(
+        `SELECT channel_id, status, attempts, last_error
+         FROM notification_outbox WHERE event_key = ?`,
+      )
+        .bind(eventKey)
+        .first<{
+          channel_id: string | null;
+          status: string;
+          attempts: number;
+          last_error: string | null;
+        }>();
+      expect(queuedAfterDelete).toEqual({
+        channel_id: channelId,
+        status: "pending",
+        attempts: 0,
+        last_error: null,
+      });
+
+      const result = await processOutbox(env, Date.now());
+      expect(result).toEqual({ processed: 1, sent: 0, failed: 1 });
+      expect(providerFetch).not.toHaveBeenCalled();
+
+      const parked = await env.DB.prepare(
+        `SELECT status, attempts, last_error, next_attempt_at
+         FROM notification_outbox WHERE event_key = ?`,
+      )
+        .bind(eventKey)
+        .first<{
+          status: string;
+          attempts: number;
+          last_error: string | null;
+          next_attempt_at: number | null;
+        }>();
+      expect(parked).toMatchObject({
+        status: "dead",
+        attempts: 5,
+        last_error: "channel_unavailable",
+      });
+      expect(parked?.next_attempt_at).toEqual(expect.any(Number));
+
+      const secondPass = await processOutbox(env, Date.now() + 24 * 60 * 60 * 1000);
+      expect(secondPass).toEqual({ processed: 0, sent: 0, failed: 0 });
+      expect(providerFetch).not.toHaveBeenCalled();
+    } finally {
+      providerFetch.mockRestore();
+      await env.DB.prepare("DELETE FROM notification_outbox WHERE event_key = ?")
+        .bind(eventKey)
+        .run();
+      if (channelId) {
+        await apiRequest(`/api/channels/${channelId}`, { method: "DELETE" });
+      }
+    }
   });
 });
