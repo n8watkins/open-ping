@@ -85,6 +85,21 @@ export async function processOutbox(
 
   for (const entry of due) {
     try {
+      // Never send ciphertext or malformed legacy data to an external provider.
+      // Keep the row in the normal bounded retry flow so operators can see the
+      // failure without one corrupt row blocking every other due delivery.
+      if (entry.payloadError) {
+        await markFailed(
+          env,
+          entry.id,
+          entry.attempts + 1,
+          entry.payloadError,
+          MAX_ATTEMPTS,
+        );
+        failed++;
+        continue;
+      }
+
       // Web Push entries target a device subscription, not a channel.
       if (entry.channelType === "push") {
         const r = await deliverPush(env, entry.id, entry.target, entry.attempts, entry.payload as NotificationPayload);

@@ -424,6 +424,7 @@ describe("authenticated monitor lifecycle", () => {
 
   it("delivers a signed webhook and records durable success", async () => {
     const eventKey = "integration:successful-webhook";
+    const corruptEventKey = "integration:corrupt-webhook";
     const webhookUrl = "https://notifications.example.com/openping-success";
     const webhookSecret = "integration-signing-secret";
     let channelId: string | undefined;
@@ -445,33 +446,71 @@ describe("authenticated monitor lifecycle", () => {
         channel: { id: string; config: { url: string; secret: string } };
       }>();
       channelId = createdBody.channel.id;
-      expect(createdBody.channel.config).toEqual({ url: webhookUrl, secret: "" });
+      expect(createdBody.channel.config).toEqual({ url: "", secret: "" });
 
-      const storedChannel = await env.DB.prepare(
+      let storedChannel = await env.DB.prepare(
         "SELECT config FROM notification_channels WHERE id = ?",
       )
         .bind(channelId)
         .first<{ config: string }>();
-      expect(storedChannel?.config).toContain(webhookUrl);
+      expect(storedChannel?.config).not.toContain(webhookUrl);
       expect(storedChannel?.config).not.toContain(webhookSecret);
 
+      // Simulate a pre-hardening plaintext row. A normal authenticated read
+      // must redact both capabilities and lazily replace them with ciphertext.
+      await env.DB.prepare(
+        "UPDATE notification_channels SET config = ? WHERE id = ?",
+      )
+        .bind(JSON.stringify({ url: webhookUrl, secret: webhookSecret }), channelId)
+        .run();
+      const upgradedResponse = await apiRequest(`/api/channels/${channelId}`);
+      expect(upgradedResponse.status).toBe(200);
+      const upgradedBody = await upgradedResponse.json<{
+        channel: { config: { url: string; secret: string } };
+      }>();
+      expect(upgradedBody.channel.config).toEqual({ url: "", secret: "" });
+      storedChannel = await env.DB.prepare(
+        "SELECT config FROM notification_channels WHERE id = ?",
+      )
+        .bind(channelId)
+        .first<{ config: string }>();
+      expect(storedChannel?.config).not.toContain(webhookUrl);
+      expect(storedChannel?.config).not.toContain(webhookSecret);
+
+      const deliveryPayload = {
+        event: "test",
+        monitorId: "test",
+        monitorName: "Successful webhook",
+        state: "up",
+        title: "Integration notification",
+        body: "The provider accepted this mocked delivery.",
+        detectedAt: Date.now(),
+      };
       await enqueue(env, [
         {
           eventKey,
           channelId,
           channelType: "webhook",
           eventType: "test",
-          payload: {
-            event: "test",
-            monitorId: "test",
-            monitorName: "Successful webhook",
-            state: "up",
-            title: "Integration notification",
-            body: "The provider accepted this mocked delivery.",
-            detectedAt: Date.now(),
-          },
+          payload: deliveryPayload,
         },
       ]);
+
+      const storedDelivery = await env.DB.prepare(
+        "SELECT payload FROM notification_outbox WHERE event_key = ?",
+      )
+        .bind(eventKey)
+        .first<{ payload: string }>();
+      expect(storedDelivery?.payload).toMatch(/^v1:/);
+      expect(storedDelivery?.payload).not.toContain("Integration notification");
+
+      // Existing queues can contain plaintext JSON from an older deployment.
+      // The dispatcher must continue draining those rows during the upgrade.
+      await env.DB.prepare(
+        "UPDATE notification_outbox SET payload = ? WHERE event_key = ?",
+      )
+        .bind(JSON.stringify(deliveryPayload), eventKey)
+        .run();
 
       const result = await processOutbox(env, Date.now());
       expect(result).toEqual({ processed: 1, sent: 1, failed: 0 });
@@ -487,11 +526,18 @@ describe("authenticated monitor lifecycle", () => {
       expect(String(requestInit?.body)).toContain("Integration notification");
 
       const delivery = await env.DB.prepare(
-        "SELECT status, attempts, last_error FROM notification_outbox WHERE event_key = ?",
+        "SELECT status, attempts, last_error, payload FROM notification_outbox WHERE event_key = ?",
       )
         .bind(eventKey)
-        .first<{ status: string; attempts: number; last_error: string | null }>();
-      expect(delivery).toEqual({ status: "sent", attempts: 0, last_error: null });
+        .first<{
+          status: string;
+          attempts: number;
+          last_error: string | null;
+          payload: string;
+        }>();
+      expect(delivery).toMatchObject({ status: "sent", attempts: 0, last_error: null });
+      expect(delivery?.payload).toMatch(/^v1:/);
+      expect(delivery?.payload).not.toContain("Integration notification");
 
       const channelResult = await env.DB.prepare(
         "SELECT last_success_at, last_failure_at, last_error FROM notification_channels WHERE id = ?",
@@ -505,10 +551,42 @@ describe("authenticated monitor lifecycle", () => {
       expect(channelResult?.last_success_at).toEqual(expect.any(Number));
       expect(channelResult?.last_failure_at).toBeNull();
       expect(channelResult?.last_error).toBeNull();
+
+      await enqueue(env, [
+        {
+          eventKey: corruptEventKey,
+          channelId,
+          channelType: "webhook",
+          eventType: "test",
+          payload: deliveryPayload,
+        },
+      ]);
+      await env.DB.prepare(
+        "UPDATE notification_outbox SET payload = ? WHERE event_key = ?",
+      )
+        .bind("v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA==", corruptEventKey)
+        .run();
+
+      providerFetch.mockClear();
+      const corruptResult = await processOutbox(env, Date.now());
+      expect(corruptResult).toEqual({ processed: 1, sent: 0, failed: 1 });
+      expect(providerFetch).not.toHaveBeenCalled();
+      const corruptDelivery = await env.DB.prepare(
+        "SELECT status, attempts, last_error FROM notification_outbox WHERE event_key = ?",
+      )
+        .bind(corruptEventKey)
+        .first<{ status: string; attempts: number; last_error: string | null }>();
+      expect(corruptDelivery).toEqual({
+        status: "failed",
+        attempts: 1,
+        last_error: "payload_decryption_failed",
+      });
     } finally {
       providerFetch.mockRestore();
-      await env.DB.prepare("DELETE FROM notification_outbox WHERE event_key = ?")
-        .bind(eventKey)
+      await env.DB.prepare(
+        "DELETE FROM notification_outbox WHERE event_key IN (?, ?)",
+      )
+        .bind(eventKey, corruptEventKey)
         .run();
       if (channelId) {
         await apiRequest(`/api/channels/${channelId}`, { method: "DELETE" });

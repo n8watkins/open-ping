@@ -112,7 +112,7 @@ const secretUrl = z.union([z.literal(""), httpsUrl]);
 /** Per-type config validators for UPDATE (secret fields may be blank). */
 const updateConfigSchemas: Record<string, z.ZodTypeAny> = {
   discord: z.object({ url: secretUrl }).passthrough(),
-  webhook: z.object({ url: httpsUrl, secret: optionalSecret }).passthrough(),
+  webhook: z.object({ url: secretUrl, secret: optionalSecret }).passthrough(),
   email: z.object({ to: emailAddr, from: emailAddr.optional() }).passthrough(),
 };
 

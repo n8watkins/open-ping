@@ -1,5 +1,7 @@
 import type { Env } from "../types";
 import { newId } from "../lib/ids";
+import { decryptValue, encryptValue } from "../lib/crypto";
+import { isCiphertext } from "../lib/secret-config";
 
 /**
  * Notification outbox (PRD §12). Every notification we intend to deliver is
@@ -10,8 +12,8 @@ import { newId } from "../lib/ids";
  *
  * Idempotency is enforced by the UNIQUE `event_key`: re-enqueuing the same key
  * (e.g. a scheduler that re-runs after a crash) is a no-op via
- * `ON CONFLICT DO NOTHING`. `payload` is stored as a JSON string and parsed back
- * defensively on read. All timestamps are epoch milliseconds.
+ * `ON CONFLICT DO NOTHING`. `payload` is encrypted when MASTER_KEY is configured,
+ * while legacy plaintext JSON remains readable. All timestamps are epoch milliseconds.
  */
 
 /** Base retry delay (30s) and ceiling (1h) for exponential backoff. */
@@ -30,6 +32,7 @@ export interface OutboxEntry {
   target: string | null;
   eventType: string;
   payload: unknown;
+  payloadError: string | null;
   status: string;
   attempts: number;
   nextAttemptAt: number | null;
@@ -56,17 +59,42 @@ interface OutboxRow {
   updated_at: number;
 }
 
-/** Guarded JSON parse: fall back to the raw string if the payload is malformed. */
-function parsePayload(raw: string): unknown {
+interface ParsedPayload {
+  value: unknown;
+  error: string | null;
+}
+
+/** Decrypt protected payloads, accepting legacy plaintext JSON rows. */
+async function parsePayload(env: Env, raw: string): Promise<ParsedPayload> {
+  let serialized = raw;
+  if (isCiphertext(raw)) {
+    try {
+      serialized = await decryptValue(env, raw);
+    } catch {
+      return { value: null, error: "payload_decryption_failed" };
+    }
+  }
   try {
-    return JSON.parse(raw);
+    return { value: JSON.parse(serialized), error: null };
   } catch {
-    return raw;
+    return { value: null, error: "payload_invalid_json" };
   }
 }
 
 /** Map a raw row to a typed entry, parsing the JSON payload. */
-function rowToEntry(row: OutboxRow): OutboxEntry {
+async function rowToEntry(env: Env, row: OutboxRow): Promise<OutboxEntry> {
+  // Upgrade a legacy plaintext payload as soon as the dispatcher claims it.
+  // The current delivery still parses the original JSON below, while retained
+  // sent/dead history is no longer left exposed in D1.
+  if (env.MASTER_KEY && !isCiphertext(row.payload)) {
+    const protectedPayload = await encryptValue(env, row.payload);
+    await env.DB.prepare(
+      "UPDATE notification_outbox SET payload = ?, updated_at = ? WHERE id = ? AND payload = ?",
+    )
+      .bind(protectedPayload, Date.now(), row.id, row.payload)
+      .run();
+  }
+  const parsedPayload = await parsePayload(env, row.payload);
   return {
     id: row.id,
     eventKey: row.event_key,
@@ -75,7 +103,8 @@ function rowToEntry(row: OutboxRow): OutboxEntry {
     channelType: row.channel_type,
     target: row.target ?? null,
     eventType: row.event_type,
-    payload: parsePayload(row.payload),
+    payload: parsedPayload.value,
+    payloadError: parsedPayload.error,
     status: row.status,
     attempts: row.attempts,
     nextAttemptAt: row.next_attempt_at ?? null,
@@ -105,7 +134,18 @@ export async function enqueue(
 ): Promise<void> {
   if (entries.length === 0) return;
   const now = Date.now();
-  const statements = entries.map((e) =>
+  const protectedEntries = await Promise.all(
+    entries.map(async (entry) => {
+      const serialized = JSON.stringify(entry.payload) ?? "null";
+      return {
+        entry,
+        payload: env.MASTER_KEY
+          ? await encryptValue(env, serialized)
+          : serialized,
+      };
+    }),
+  );
+  const statements = protectedEntries.map(({ entry: e, payload }) =>
     env.DB.prepare(
       `INSERT INTO notification_outbox (
          id, event_key, monitor_id, channel_id, channel_type, target, event_type,
@@ -121,7 +161,7 @@ export async function enqueue(
       e.channelType,
       e.target ?? null,
       e.eventType,
-      JSON.stringify(e.payload),
+      payload,
       now,
       now,
       now,
@@ -149,7 +189,7 @@ export async function claimDue(
   )
     .bind(now, limit)
     .all<OutboxRow>();
-  return (results ?? []).map(rowToEntry);
+  return Promise.all((results ?? []).map((row) => rowToEntry(env, row)));
 }
 
 /** Mark a record as successfully delivered. */

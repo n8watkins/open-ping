@@ -325,7 +325,8 @@ function ChannelRow({
 }) {
   const healthy = channelHealthy(channel);
   const target =
-    cfgStr(channel.config, "url") || cfgStr(channel.config, "to") || "";
+    cfgStr(channel.config, "to") ||
+    (channel.type === "email" ? "" : "Destination stored securely");
 
   return (
     <div className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -560,9 +561,13 @@ function ChannelForm({
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://discord.com/api/webhooks/..."
+            placeholder={
+              isEdit
+                ? "Leave blank to keep the current URL"
+                : "https://discord.com/api/webhooks/..."
+            }
             type="url"
-            required
+            required={!isEdit}
             className="input"
           />
         </Field>
@@ -574,9 +579,13 @@ function ChannelForm({
             <input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://example.com/hooks/openping"
+              placeholder={
+                isEdit
+                  ? "Leave blank to keep the current URL"
+                  : "https://example.com/hooks/openping"
+              }
               type="url"
-              required
+              required={!isEdit}
               className="input"
             />
           </Field>

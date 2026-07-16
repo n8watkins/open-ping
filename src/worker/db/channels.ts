@@ -24,7 +24,9 @@ const CIPHERTEXT_PREFIX = "v1:";
 /** Capability-secret config field names per channel type. */
 const CHANNEL_SECRET_FIELDS: Record<string, readonly string[]> = {
   discord: ["url"],
-  webhook: ["secret"],
+  // A generic webhook destination is a capability URL just like Discord's:
+  // possession is often enough to submit messages to the receiver.
+  webhook: ["url", "secret"],
 };
 
 /** Secret config field names for a channel type ([] for types with no secrets). */
@@ -184,7 +186,18 @@ async function decryptRecord(
   env: Env,
   rec: ChannelRecord,
 ): Promise<ChannelRecord> {
-  rec.config = await decryptChannelConfig(env, rec.type, rec.config);
+  // SQL migrations cannot encrypt legacy plaintext capability values because
+  // they do not have access to MASTER_KEY. Upgrade them on the next read so an
+  // existing webhook does not remain plaintext indefinitely after deployment.
+  const protectedConfig = await encryptChannelConfig(env, rec.type, rec.config);
+  if (JSON.stringify(protectedConfig) !== JSON.stringify(rec.config)) {
+    await env.DB.prepare(
+      "UPDATE notification_channels SET config = ?, updated_at = ? WHERE id = ?",
+    )
+      .bind(JSON.stringify(protectedConfig), Date.now(), rec.id)
+      .run();
+  }
+  rec.config = await decryptChannelConfig(env, rec.type, protectedConfig);
   return rec;
 }
 
