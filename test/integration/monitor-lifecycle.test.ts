@@ -3,6 +3,8 @@ import { applyD1Migrations } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import "../../src/worker/index";
+import { enqueue } from "../../src/worker/db/outbox";
+import { processOutbox } from "../../src/worker/notifications/dispatcher";
 import { runScheduled } from "../../src/worker/scheduler";
 
 const API_ORIGIN = "https://openping.test";
@@ -307,5 +309,57 @@ describe("authenticated monitor lifecycle", () => {
 
     const deleted = await apiRequest(`/api/monitors/${monitorId}`, { method: "DELETE" });
     expect(deleted.status).toBe(200);
+  });
+
+  it("parks idempotent deliveries whose channel was removed", async () => {
+    const eventKey = "integration:missing-channel";
+    const entry = {
+      eventKey,
+      channelId: "channel_removed",
+      channelType: "webhook",
+      eventType: "test",
+      payload: {
+        event: "test",
+        monitorId: "test",
+        monitorName: "Removed channel",
+        state: "up",
+        title: "Integration notification",
+        body: "This delivery must be parked without an outbound request.",
+        detectedAt: Date.now(),
+      },
+    };
+    await enqueue(env, [entry]);
+    await enqueue(env, [entry]);
+
+    const before = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM notification_outbox WHERE event_key = ?",
+    )
+      .bind(eventKey)
+      .first<{ count: number }>();
+    expect(before?.count).toBe(1);
+
+    const result = await processOutbox(env, Date.now());
+    expect(result).toEqual({ processed: 1, sent: 0, failed: 1 });
+
+    const parked = await env.DB.prepare(
+      `SELECT status, attempts, last_error, next_attempt_at
+       FROM notification_outbox WHERE event_key = ?`,
+    )
+      .bind(eventKey)
+      .first<{
+        status: string;
+        attempts: number;
+        last_error: string | null;
+        next_attempt_at: number | null;
+      }>();
+    expect(parked).toMatchObject({
+      status: "dead",
+      attempts: 5,
+      last_error: "channel_unavailable",
+    });
+    expect(parked?.next_attempt_at).toEqual(expect.any(Number));
+
+    const secondPass = await processOutbox(env, Date.now() + 24 * 60 * 60 * 1000);
+    expect(secondPass).toEqual({ processed: 0, sent: 0, failed: 0 });
   });
 });

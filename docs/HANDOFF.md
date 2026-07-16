@@ -88,7 +88,7 @@ Keep the active `MASTER_KEY` backed up outside D1 because changing it without re
 The final verification completed successfully on 2026-07-15:
 
 - `npm run typecheck` passed.
-- `npm test` passed with 457 Node tests across 40 files and three workerd/D1 integration tests in a separate file.
+- `npm test` passed with 457 Node tests across 40 files and four workerd/D1 integration tests in a separate file.
 - `npm run build` passed.
 - `npm audit` reported zero vulnerabilities.
 - `git diff --check` passed.
@@ -106,6 +106,7 @@ The final verification completed successfully on 2026-07-15:
 - The local workerd integration suite now repeats the authenticated heartbeat lifecycle against D1 with all nine migrations applied and verifies ciphertext storage, one-way token storage, redaction, state and sample writes, and cascade deletion.
 - The same integration suite verifies replacement heartbeat credentials, maintenance-window remapping, incident remapping, restored incident privacy, and cleanup during backup import.
 - Two consecutive scheduler runs against an overdue heartbeat were verified to keep one open incident and one transition sample while accruing downtime and recording run diagnostics on both cycles.
+- Notification outbox idempotency and terminal handling for removed channels are verified against D1 without making an outbound request.
 
 Use the same gate after further changes:
 
@@ -121,7 +122,7 @@ git status --short --branch
 ## Known gaps and recommended next work
 
 1. Expand D1-backed integration coverage.
-   Monitor, heartbeat, backup import, and missed-heartbeat scheduler transactions are covered, but polled-check scheduling and notification dispatcher behavior should also run against workerd and D1.
+   Monitor, heartbeat, backup import, missed-heartbeat scheduler transactions, and removed-channel dispatch are covered, but polled-check scheduling and successful provider delivery should also run against workerd and D1.
 
 2. Close the remaining secret-management gaps.
    Define a safe `MASTER_KEY` rotation and re-encryption workflow, decide whether generic webhook capability URLs and notification outbox payloads require additional sealing, and document any accepted plaintext operational metadata.
