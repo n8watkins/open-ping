@@ -425,6 +425,7 @@ describe("authenticated monitor lifecycle", () => {
   it("delivers a signed webhook and records durable success", async () => {
     const eventKey = "integration:successful-webhook";
     const corruptEventKey = "integration:corrupt-webhook";
+    const malformedEventKey = "integration:malformed-webhook";
     const webhookUrl = "https://notifications.example.com/openping-success";
     const webhookSecret = "integration-signing-secret";
     let channelId: string | undefined;
@@ -609,12 +610,42 @@ describe("authenticated monitor lifecycle", () => {
         attempts: 1,
         last_error: "payload_decryption_failed",
       });
+
+      await enqueue(env, [
+        {
+          eventKey: malformedEventKey,
+          channelId,
+          channelType: "webhook",
+          eventType: "test",
+          payload: deliveryPayload,
+        },
+      ]);
+      await env.DB.prepare(
+        "UPDATE notification_outbox SET payload = ? WHERE event_key = ?",
+      )
+        .bind(JSON.stringify({ unexpected: true }), malformedEventKey)
+        .run();
+
+      providerFetch.mockClear();
+      const malformedResult = await processOutbox(env, Date.now());
+      expect(malformedResult).toEqual({ processed: 1, sent: 0, failed: 1 });
+      expect(providerFetch).not.toHaveBeenCalled();
+      const malformedDelivery = await env.DB.prepare(
+        "SELECT status, attempts, last_error FROM notification_outbox WHERE event_key = ?",
+      )
+        .bind(malformedEventKey)
+        .first<{ status: string; attempts: number; last_error: string | null }>();
+      expect(malformedDelivery).toEqual({
+        status: "failed",
+        attempts: 1,
+        last_error: "payload_invalid_shape",
+      });
     } finally {
       providerFetch.mockRestore();
       await env.DB.prepare(
-        "DELETE FROM notification_outbox WHERE event_key IN (?, ?)",
+        "DELETE FROM notification_outbox WHERE event_key IN (?, ?, ?)",
       )
-        .bind(eventKey, corruptEventKey)
+        .bind(eventKey, corruptEventKey, malformedEventKey)
         .run();
       if (channelId) {
         await apiRequest(`/api/channels/${channelId}`, { method: "DELETE" });
