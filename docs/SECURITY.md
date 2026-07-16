@@ -118,6 +118,7 @@ Until dual-key rotation support is implemented, preserve these recovery prerequi
 
 Protected storage classes currently include monitor configuration, notification-channel capabilities, notification outbox payloads, Web Push subscription secrets, and generated VAPID private keys.
 Production rotation remains blocked until the operator supplies the backed-up current key and approves a maintenance window with a verified D1 backup.
+Track those prerequisites in [Deferred operator inputs](./DEFERRED_INPUTS.md#master_key-rotation).
 
 ## Backups and restores
 
