@@ -185,6 +185,7 @@ function rowToChannel(row: ChannelRow): ChannelRecord {
 async function decryptRecord(
   env: Env,
   rec: ChannelRecord,
+  storedConfig: string,
 ): Promise<ChannelRecord> {
   // SQL migrations cannot encrypt legacy plaintext capability values because
   // they do not have access to MASTER_KEY. Upgrade them on the next read so an
@@ -192,9 +193,9 @@ async function decryptRecord(
   const protectedConfig = await encryptChannelConfig(env, rec.type, rec.config);
   if (JSON.stringify(protectedConfig) !== JSON.stringify(rec.config)) {
     await env.DB.prepare(
-      "UPDATE notification_channels SET config = ?, updated_at = ? WHERE id = ?",
+      "UPDATE notification_channels SET config = ?, updated_at = ? WHERE id = ? AND config = ?",
     )
-      .bind(JSON.stringify(protectedConfig), Date.now(), rec.id)
+      .bind(JSON.stringify(protectedConfig), Date.now(), rec.id, storedConfig)
       .run();
   }
   rec.config = await decryptChannelConfig(env, rec.type, protectedConfig);
@@ -206,7 +207,9 @@ export async function listChannels(env: Env): Promise<ChannelRecord[]> {
     "SELECT * FROM notification_channels ORDER BY created_at",
   ).all<ChannelRow>();
   return Promise.all(
-    (res.results ?? []).map((r) => decryptRecord(env, rowToChannel(r))),
+    (res.results ?? []).map((r) =>
+      decryptRecord(env, rowToChannel(r), r.config),
+    ),
   );
 }
 
@@ -219,7 +222,7 @@ export async function getChannel(
   )
     .bind(id)
     .first<ChannelRow>();
-  return row ? decryptRecord(env, rowToChannel(row)) : null;
+  return row ? decryptRecord(env, rowToChannel(row), row.config) : null;
 }
 
 export async function createChannel(
