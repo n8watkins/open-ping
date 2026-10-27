@@ -143,7 +143,7 @@ function footer(): string {
   return (
     `<tr><td style="background:${BRAND.footerBg};border-top:1px solid ${BRAND.cardBorder};padding:20px 28px;">` +
     `<p style="margin:0;font-family:${FONT};font-size:13px;color:${BRAND.ink};font-weight:600;">` +
-    `OpenPing <span style="color:${BRAND.inkMuted};font-weight:400;">— self-hosted uptime monitoring</span></p>` +
+    `OpenPing <span style="color:${BRAND.inkMuted};font-weight:400;">· self-hosted uptime monitoring</span></p>` +
     `<p style="margin:6px 0 0;font-family:${FONT};font-size:12px;color:${BRAND.inkMuted};line-height:1.5;">` +
     `This is an automated message from your OpenPing instance.</p>` +
     `</td></tr>`
@@ -204,6 +204,7 @@ export function renderEmailText(opts: EmailTextOptions): string {
   if (opts.button) {
     parts.push("", `${opts.button.label}: ${opts.button.url}`);
   }
-  parts.push("", "—", "OpenPing — self-hosted uptime monitoring");
+  // "-- " is the standard plain-text signature separator.
+  parts.push("", "-- ", "OpenPing, self-hosted uptime monitoring");
   return parts.join("\n");
 }

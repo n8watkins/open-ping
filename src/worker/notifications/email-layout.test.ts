@@ -75,7 +75,8 @@ describe("renderEmailText", () => {
     expect(text).toContain("Sign in");
     expect(text).toContain("line one");
     expect(text).toContain("Sign in: https://x/y");
-    expect(text).toContain("OpenPing — self-hosted uptime monitoring");
+    expect(text).toContain("OpenPing, self-hosted uptime monitoring");
+    expect(text).not.toContain("\u2014");
   });
 });
 

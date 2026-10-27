@@ -92,7 +92,7 @@ const FONT =
 /**
  * Render the weekly summary email. Pure: given the aggregated stats and a label
  * for the period it covers, returns subject + HTML + plain-text bodies. The
- * subject leads with the headline uptime, e.g. "OpenPing weekly summary —
+ * subject leads with the headline uptime, e.g. "OpenPing weekly summary:
  * 99.9% uptime". An optional `appUrl` adds an "Open OpenPing" CTA.
  */
 export function buildWeeklyEmail(
@@ -101,7 +101,7 @@ export function buildWeeklyEmail(
   appUrl?: string,
 ): { subject: string; html: string; text: string } {
   const uptime = formatPct(stats.overallUptimePct);
-  const subject = `OpenPing weekly summary — ${uptime}% uptime`;
+  const subject = `OpenPing weekly summary: ${uptime}% uptime`;
 
   const rows: Array<[label: string, value: string]> = [
     ["Overall uptime", `${uptime}%`],
@@ -111,7 +111,7 @@ export function buildWeeklyEmail(
     ["Total downtime", formatDuration(stats.totalDowntimeSeconds)],
     [
       "Avg response",
-      stats.avgResponseMs != null ? `${stats.avgResponseMs} ms` : "—",
+      stats.avgResponseMs != null ? `${stats.avgResponseMs} ms` : "-",
     ],
     ["Retry recoveries", String(stats.retryRecoveries)],
   ];
