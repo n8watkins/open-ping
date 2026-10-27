@@ -49,6 +49,9 @@ app.use("*", async (c, next) => {
   );
 });
 
+const CF_ANALYTICS_SCRIPT = "https://static.cloudflareinsights.com";
+const CF_ANALYTICS_REPORT = "https://cloudflareinsights.com";
+
 // Security headers on every response (admin SPA, public status page, JSON API).
 // frame-ancestors/X-Frame-Options block clickjacking of the authenticated admin
 // panel; nosniff + a tailored CSP are defense-in-depth for an app that renders
@@ -70,11 +73,17 @@ app.use(
       // HTML during local development. Permit that development-only script so
       // direct SPA routes can boot; production builds contain no inline script
       // and retain the strict self-only policy.
-      scriptSrc: isViteDev ? ["'self'", "'unsafe-inline'"] : ["'self'"],
+      // Cloudflare Web Analytics, when it's turned on for the zone: Cloudflare
+      // injects its beacon (a versioned path under this host), which reports to
+      // this origin (automatic injection) or to cloudflareinsights.com (manual
+      // embed). developers.cloudflare.com/web-analytics/faq/
+      scriptSrc: isViteDev
+        ? ["'self'", "'unsafe-inline'", CF_ANALYTICS_SCRIPT]
+        : ["'self'", CF_ANALYTICS_SCRIPT],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "https:"],
       fontSrc: ["'self'", "data:"],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", CF_ANALYTICS_REPORT],
       workerSrc: ["'self'"],
     },
   }),
