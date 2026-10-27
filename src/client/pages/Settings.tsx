@@ -292,7 +292,7 @@ function GeneralSection({
 
             <Field
               label="Installation URL"
-              hint="Public base URL — used for links in notifications and OAuth redirects."
+              hint="Public base URL, used for links in notifications and OAuth redirects."
             >
               <input
                 value={appUrl}
@@ -512,7 +512,7 @@ function DiagnosticsSection({
                 value={
                   diag.lastSuccessfulRun
                     ? formatRelativeTime(diag.lastSuccessfulRun.startedAt)
-                    : "—"
+                    : "-"
                 }
               />
               <KeyVal
@@ -565,7 +565,7 @@ function DiagnosticsSection({
                       {diag.recentRuns.map((run) => (
                         <tr key={run.id} className="text-ink-muted">
                           <td className="px-3 py-2 font-mono text-xs text-ink-faint">
-                            {run.cron ?? "—"}
+                            {run.cron ?? "-"}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
                             {formatRelativeTime(run.startedAt)}
@@ -655,7 +655,7 @@ function AboutSection({ version }: { version: string | null }) {
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-ink-muted">
           <span>
             <span className="text-ink-faint">OpenPing version</span>{" "}
-            <span className="font-mono text-ink">{version ?? "—"}</span>
+            <span className="font-mono text-ink">{version ?? "-"}</span>
           </span>
           <span className="text-ink-faint">
             Self-hosted uptime monitoring on Cloudflare Workers.

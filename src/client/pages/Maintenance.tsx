@@ -316,7 +316,7 @@ function WindowRow({
           {scopeText}
         </div>
         <div className="mt-0.5 text-xs text-ink-faint">
-          {formatDateTime(w.startsAt)} — {formatDateTime(w.endsAt)}
+          {formatDateTime(w.startsAt)} to {formatDateTime(w.endsAt)}
         </div>
         {w.publicMessage && (
           <p className="mt-1 max-w-prose text-xs text-ink-muted">
@@ -596,7 +596,7 @@ function MaintenanceForm({
 
       <Field
         label="Private notes (optional)"
-        hint="Internal only — never shown publicly."
+        hint="Internal only, never shown publicly."
       >
         <textarea
           value={privateNotes}

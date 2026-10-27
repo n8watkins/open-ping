@@ -290,7 +290,7 @@ export default function StatusPageEditor() {
           {isEdit ? "Edit status page" : "New status page"}
         </h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Configure a public status page — its branding and which monitors it
+          Configure a public status page: its branding and which monitors it
           shows.
         </p>
       </div>

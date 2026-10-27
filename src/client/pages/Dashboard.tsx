@@ -89,7 +89,7 @@ export default function Dashboard() {
                 </div>
                 <div className="mt-4 flex items-center justify-between text-xs text-ink-muted">
                   <span>24h uptime {formatPct(m.uptime24h)}</span>
-                  <span>{m.lastDurationMs != null ? formatMs(m.lastDurationMs) : "—"}</span>
+                  <span>{m.lastDurationMs != null ? formatMs(m.lastDurationMs) : "-"}</span>
                 </div>
                 <div className="mt-1 text-xs text-ink-faint">
                   {m.lastCheckedAt ? `Checked ${formatRelativeTime(m.lastCheckedAt)}` : "Not checked yet"}
