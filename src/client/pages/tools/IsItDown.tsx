@@ -183,7 +183,7 @@ export default function IsItDown() {
                 {outcome.up ? "Reachable" : "Not reachable"}
               </ResultRow>
               <ResultRow label="HTTP status code">
-                {outcome.status ?? "—"}
+                {outcome.status ?? "-"}
               </ResultRow>
               <ResultRow label="Response time">
                 {Math.round(outcome.durationMs)} ms
