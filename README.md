@@ -1,8 +1,10 @@
 # OpenPing
 
-Open-source, self-hosted **uptime monitoring and public status pages** that run
-entirely inside your own Cloudflare account - no central service, no operational
-database to manage, no monitoring subscription.
+Open-source **uptime monitoring and public status pages** that run entirely
+inside your own Cloudflare account - no central service, no operational database
+to manage, no monitoring subscription.
+Prefer not to run it yourself? OpenPing Hosted ($24 a year) is coming; join the
+waitlist on [openping.n8builds.dev](https://openping.n8builds.dev/#pricing).
 
 Its defining feature is **schedule-aware monitoring**: applications are checked
 (and optionally kept awake) only during the hours that matter. Outside those
@@ -79,6 +81,7 @@ secret, custom domains, and a verify-it's-working checklist.
 ## Documentation
 
 - [Install](./docs/INSTALL.md) - from clone to a deployed install (plus a local-dev quickstart)
+- [Hosted plan](./docs/HOSTED_PLAN.md) - the staged plan for OpenPing Hosted and its waitlist
 - [Monitor types](./docs/MONITOR_TYPES.md) - every check type, its config, and what the runtime can't do
 - [Status pages](./docs/STATUS_PAGES.md) - categories and multiple per-category public status pages
 - [Status widget & badge](./docs/WIDGET.md) - embed the live status widget or an SVG badge on another site

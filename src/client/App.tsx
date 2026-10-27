@@ -14,6 +14,7 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 // The marketing landing page is public; lazy-load it so it doesn't weigh down
 // the other public entry points (/login, /status).
 const Landing = lazy(() => import("./pages/Landing"));
+const Install = lazy(() => import("./pages/Install"));
 // The embeddable status widget (/embed) is a standalone public surface meant to
 // be iframed cross-origin; lazy-load so it ships its own tiny bundle.
 const Embed = lazy(() => import("./pages/Embed"));
@@ -69,6 +70,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/setup" element={<Setup />} />
+          <Route path="/install" element={<Install />} />
           <Route path="/status" element={<PublicStatus />} />
           <Route path="/status/:slug" element={<PublicStatus />} />
           <Route path="/embed" element={<Embed />} />

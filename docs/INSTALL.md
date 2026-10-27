@@ -50,6 +50,9 @@ cd open-ping
 npm install
 ```
 
+> **On npm 12?** Run `npm install --allow-git=root` instead: the release tooling
+> (a development dependency) is installed from GitHub, which npm 12 asks you to allow.
+
 ---
 
 ## 3. Create your D1 database
@@ -81,8 +84,8 @@ placeholder value that ships in the repo:
 ]
 ```
 
-> **About that placeholder.** The `database_id` in `wrangler.jsonc` is a
-> deliberate **sentinel** - a non-zero UUID that is *not* a real database in your
+> **About that placeholder.** The `database_id` in `wrangler.jsonc` ships as
+> `REPLACE_WITH_YOUR_D1_DATABASE_ID`, which is *not* a real database in your
 > account. It's intentional: if you forget this step, the deploy fails loudly
 > ("database not found") instead of silently doing the wrong thing. The
 > `database_id` only matters for **remote** commands (`--remote` / `deploy`);

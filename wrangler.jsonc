@@ -18,7 +18,10 @@
     // Your Cloudflare Workers plan: "free" or "paid". It sets how much one cron
     // run may spend (src/worker/lib/budget.ts, docs/FREE_TIER.md): on Free a run
     // checks about 7 monitors and defers the rest to the next tick.
-    "WORKERS_PLAN": "free"
+    "WORKERS_PLAN": "free",
+    // Leave "false". Only the canonical install (openping.n8builds.dev) sets it
+    // to "true" to collect the OpenPing Hosted waitlist (docs/HOSTED_PLAN.md).
+    "WAITLIST_ENABLED": "false"
   },
   "d1_databases": [
     {

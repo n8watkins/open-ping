@@ -16,6 +16,7 @@ import { maintenance } from "./maintenance";
 import { publicStatus } from "./public";
 import { data } from "./data";
 import { isItDown } from "./is-it-down";
+import { waitlist } from "./waitlist";
 
 export const api = new Hono<AppEnv>();
 
@@ -39,6 +40,10 @@ api.route("/public", publicStatus);
 
 // Public, UNAUTHENTICATED "is it down?" checker (SSRF-guarded + rate-limited).
 api.route("/tools/is-it-down", isItDown);
+
+// The OpenPing Hosted waitlist: public sign-up, admin list and CSV export.
+// Only accepts entries where WAITLIST_ENABLED is "true" (the canonical install).
+api.route("/waitlist", waitlist);
 
 /** Liveness/readiness probe. Reports whether core wiring is present. */
 api.get("/health", (c) => {

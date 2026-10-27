@@ -80,7 +80,7 @@ export default function ToolsIndex() {
         <div className="mx-auto flex max-w-5xl flex-col items-start justify-between gap-4 px-4 py-10 sm:flex-row sm:items-center sm:px-6">
           <Logo compact />
           <p className="text-xs text-ink-faint">
-            MIT licensed · Self-hosted on your own Cloudflare account.
+            MIT licensed · Runs in your own Cloudflare account.
           </p>
         </div>
       </footer>

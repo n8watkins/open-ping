@@ -16,7 +16,7 @@ describe("renderEmailLayout", () => {
     expect(html).toContain("Open<span");
     expect(html).toContain("Ping</span>");
     // Footer tagline.
-    expect(html).toContain("self-hosted uptime monitoring");
+    expect(html).toContain("uptime monitoring in your own Cloudflare account");
     // Email-client-safe: no <style> blocks and no external stylesheets.
     expect(html).not.toContain("<style");
     expect(html).not.toContain("<link");
@@ -75,7 +75,7 @@ describe("renderEmailText", () => {
     expect(text).toContain("Sign in");
     expect(text).toContain("line one");
     expect(text).toContain("Sign in: https://x/y");
-    expect(text).toContain("OpenPing, self-hosted uptime monitoring");
+    expect(text).toContain("OpenPing, uptime monitoring in your own Cloudflare account");
     expect(text).not.toContain("\u2014");
   });
 });

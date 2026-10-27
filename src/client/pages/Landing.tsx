@@ -34,6 +34,7 @@ import { PhoneMockup } from "../components/landing/PhoneMockup";
 import { ComparisonTable } from "../components/landing/ComparisonTable";
 import { FaqAccordion, type FaqItem } from "../components/landing/FaqAccordion";
 import { SignInModal } from "../components/landing/SignInModal";
+import { WaitlistForm } from "../components/landing/WaitlistForm";
 import { useCountUp, useReveal } from "../components/landing/useReveal";
 
 const GITHUB_URL = "https://github.com/n8watkins/open-ping";
@@ -247,7 +248,7 @@ function SectionHeading({
           {eyebrow}
         </div>
       )}
-      <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
+      <h2 className="text-balance text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
         {title}
       </h2>
       {subtitle && (
@@ -308,6 +309,7 @@ export default function Landing() {
         <Alerts />
         <FreeTools />
         <Comparison />
+        <Pricing />
         <FreePlan />
         <QuickStart />
         <FaqSection />
@@ -329,6 +331,7 @@ const NAV_LINKS = [
   { href: "#how-it-works", label: "How it works" },
   { href: "#features", label: "Features" },
   { href: "#status-pages", label: "Status pages" },
+  { href: "#pricing", label: "Pricing" },
   { href: "#faq", label: "FAQ" },
 ];
 
@@ -537,7 +540,7 @@ function Hero() {
             className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1 text-xs font-medium text-ink-muted transition-colors hover:border-ink-faint/40 hover:text-ink"
           >
             <span className="op-live-dot size-1.5 rounded-full bg-up" />
-            Open source, self-hosted on Cloudflare
+            Open source, runs in your own Cloudflare account
           </a>
 
           <h1 className="mt-6 text-balance text-4xl font-semibold leading-[1.05] tracking-tight text-ink sm:text-6xl">
@@ -1132,6 +1135,90 @@ const PLAN_FACTS: { value: string; label: string; body: string }[] = [
   },
 ];
 
+/* ------------------------------------------------------------------ *
+ * Pricing: free in your own account, or Hosted (coming soon, waitlist)
+ * ------------------------------------------------------------------ */
+
+const OWN_ACCOUNT_POINTS = [
+  "Every feature, MIT licensed",
+  "No monitor cap of its own (Cloudflare's free plan limits apply)",
+  "Your data stays in your Cloudflare account",
+  "About 20 minutes to set up, step by step",
+];
+
+const HOSTED_POINTS = [
+  "Nothing to set up: sign in and add your sites",
+  "20 monitors, checked every 12 minutes",
+  "2 status pages and every alert channel",
+  "A failure confirmed from a second region before it alerts",
+  "Optional 1-minute checks for $12 a year more",
+];
+
+function Pricing() {
+  return (
+    <Section id="pricing" className="py-14 sm:py-20">
+      <Reveal>
+        <SectionHeading
+          eyebrow="Pricing"
+          title="Run it yourself for free, or let me run it"
+          subtitle="The software is the same either way. One path is free in your own Cloudflare account; the other is a hosted plan for people who'd rather not touch Cloudflare."
+        />
+      </Reveal>
+      <Reveal delay={100} className="mx-auto mt-10 grid max-w-5xl items-stretch gap-4 md:grid-cols-2">
+        <div className="op-lift flex flex-col rounded-card border border-line bg-surface p-6 sm:p-7">
+          <p className="text-sm font-semibold text-accent">In your own Cloudflare account</p>
+          <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">Free</p>
+          <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
+            {OWN_ACCOUNT_POINTS.map((p) => (
+              <li key={p} className="flex gap-2.5">
+                <Check className="mt-0.5 size-4 shrink-0 text-up" />
+                {p}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-auto pt-6">
+            <Link
+              to="/install"
+              className="op-lift inline-flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-5 py-3 text-sm font-semibold text-ink hover:bg-surface"
+            >
+              Set it up, step by step
+              <ArrowRight className="size-4" />
+            </Link>
+          </div>
+        </div>
+
+        <div className="op-lift relative flex flex-col rounded-card border border-accent/50 bg-surface p-6 sm:p-7">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 -z-10 rounded-card"
+            style={{ background: "radial-gradient(80% 60% at 50% 0%, rgba(109,139,255,0.16), transparent 70%)" }}
+          />
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-accent">OpenPing Hosted</p>
+            <span className="rounded-full border border-accent/40 bg-accent/10 px-2.5 py-0.5 text-xs font-semibold text-accent">
+              Coming soon
+            </span>
+          </div>
+          <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">
+            $24<span className="text-lg font-medium text-ink-muted"> a year</span>
+          </p>
+          <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
+            {HOSTED_POINTS.map((p) => (
+              <li key={p} className="flex gap-2.5">
+                <Check className="mt-0.5 size-4 shrink-0 text-accent" />
+                {p}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-auto pt-6">
+            <WaitlistForm />
+          </div>
+        </div>
+      </Reveal>
+    </Section>
+  );
+}
+
 function FreePlan() {
   return (
     <Section id="free-plan" className="py-14 sm:py-20">
@@ -1175,7 +1262,14 @@ function QuickStart() {
         <SectionHeading
           eyebrow="Quick start"
           title="From clone to monitoring in minutes"
-          subtitle="No account on someone else's platform. Deploy once, and it's yours."
+          subtitle={
+            <>
+              No account on someone else's platform. Deploy once, and it's yours.{" "}
+              <Link to="/install" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
+                The full step-by-step guide
+              </Link>
+            </>
+          }
         />
       </Reveal>
       <Reveal delay={100} className="mt-10 grid gap-3 md:grid-cols-3">
@@ -1202,6 +1296,14 @@ function QuickStart() {
             <span className="text-ink-faint">$ </span>npm install
             {"\n"}
             <span className="text-ink-faint">$ </span>npm run db:create
+            {"  "}
+            <span className="text-up"># then paste its id into wrangler.jsonc</span>
+            {"\n"}
+            <span className="text-ink-faint">$ </span>npx wrangler secret put MASTER_KEY
+            {"  "}
+            <span className="text-up"># and SETUP_TOKEN</span>
+            {"\n"}
+            <span className="text-ink-faint">$ </span>npm run db:migrate
             {"\n"}
             <span className="text-ink-faint">$ </span>npm run deploy
             {"  "}
@@ -1222,7 +1324,7 @@ function QuickStart() {
 const FAQS: FaqItem[] = [
   {
     q: "Is OpenPing really free?",
-    a: "The software is free and MIT licensed. It runs on Cloudflare Workers, D1 and a scheduled check run, which for typical personal and small-team use fits inside Cloudflare's free plan. Very large installs may outgrow it.",
+    a: "The software is free and MIT licensed, and it runs in your own Cloudflare account, which for typical personal and small-team use fits inside Cloudflare's free plan. If you'd rather not run it yourself, OpenPing Hosted ($24 a year) is coming; join the waitlist in Pricing.",
   },
   {
     q: "Where does my data live?",
@@ -1236,12 +1338,12 @@ const FAQS: FaqItem[] = [
     q: "How do I deploy it?",
     a: (
       <>
-        Clone the repository, run <code className="rounded bg-surface-2 px-1.5 py-0.5 text-xs">npm install</code>, create the
-        D1 database and run <code className="rounded bg-surface-2 px-1.5 py-0.5 text-xs">npm run deploy</code>. The full guide is in the{" "}
-        <a href={DEPLOY_URL} target="_blank" rel="noreferrer" className="text-accent underline">
-          README
-        </a>
-        .
+        Clone the repository, create the D1 database, set two secrets, apply the migrations and run{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 text-xs">npm run deploy</code>. The{" "}
+        <Link to="/install" className="text-accent underline">
+          step-by-step guide
+        </Link>{" "}
+        walks through each one.
       </>
     ),
   },
@@ -1332,8 +1434,8 @@ function Footer({ onSignIn }: { onSignIn: () => void }) {
           <div>
             <Logo />
             <p className="mt-3 max-w-xs text-sm text-ink-muted">
-              Self-hosted uptime monitoring and status pages that run entirely in
-              your own Cloudflare account.
+              Uptime monitoring and status pages that run entirely in your own
+              Cloudflare account.
             </p>
           </div>
 
@@ -1399,7 +1501,7 @@ function Footer({ onSignIn }: { onSignIn: () => void }) {
         </div>
 
         <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-line pt-6 text-xs text-ink-faint sm:flex-row sm:items-center">
-          <p>MIT licensed · Self-hosted on your own Cloudflare account.</p>
+          <p>MIT licensed · Runs in your own Cloudflare account.</p>
           <p>© {new Date().getFullYear()} OpenPing</p>
         </div>
       </div>

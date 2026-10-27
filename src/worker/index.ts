@@ -83,7 +83,9 @@ app.use(
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "https:"],
       fontSrc: ["'self'", "data:"],
-      connectSrc: ["'self'", CF_ANALYTICS_REPORT],
+      // The landing page's Hosted waitlist form posts to the canonical install
+      // (src/client/components/landing/WaitlistForm.tsx).
+      connectSrc: ["'self'", CF_ANALYTICS_REPORT, "https://openping.n8builds.dev"],
       workerSrc: ["'self'"],
     },
   }),
@@ -110,6 +112,7 @@ const payloadTooLarge = (c: Context) =>
   c.json({ error: "payload_too_large" }, 413);
 app.use("/api/auth/magic/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/api/tools/is-it-down", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
+app.use("/api/waitlist", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/hb/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/api/*", bodyLimit({ maxSize: API_BODY_LIMIT, onError: payloadTooLarge }));
 

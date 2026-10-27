@@ -139,6 +139,9 @@ export default function Settings() {
     useFetch<UsageResponse>("/api/diagnostics/usage");
   const { data: diagData, loading: diagLoading, error: diagError } =
     useFetch<DiagnosticsResponse>("/api/diagnostics");
+  // Only the canonical install collects the Hosted waitlist; elsewhere this
+  // answers 404 and the section stays hidden.
+  const { data: waitlistData } = useFetch<WaitlistResponse>("/api/waitlist");
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -189,6 +192,7 @@ export default function Settings() {
             loading={diagLoading && !diagData}
             error={diagError}
           />
+          {waitlistData && <WaitlistSection waitlist={waitlistData} />}
           <AboutSection version={diagData?.version ?? null} />
         </div>
       </div>
@@ -408,6 +412,50 @@ function RetentionSection({
 // ---------------------------------------------------------------------------
 // Usage estimates
 // ---------------------------------------------------------------------------
+
+interface WaitlistResponse {
+  count: number;
+  entries: { email: string; created_at: number }[];
+}
+
+/** The OpenPing Hosted waitlist (canonical install only): the count, the latest sign-ups and a CSV. */
+function WaitlistSection({ waitlist }: { waitlist: WaitlistResponse }) {
+  return (
+    <section id="waitlist" className="scroll-mt-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Hosted waitlist</CardTitle>
+          <a
+            href="/api/waitlist/export.csv"
+            className="rounded-lg border border-line bg-surface-2 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-surface"
+          >
+            Download CSV
+          </a>
+        </CardHeader>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Card className="bg-surface-2/40 p-4">
+            <Stat label="People waiting" value={waitlist.count.toLocaleString()} />
+          </Card>
+          <Card className="bg-surface-2/40 p-4">
+            <Stat label="Goal before building Hosted" value="20 in 8 weeks" />
+          </Card>
+        </div>
+        {waitlist.entries.length > 0 ? (
+          <ul className="mt-4 divide-y divide-line text-sm">
+            {waitlist.entries.slice(0, 10).map((e) => (
+              <li key={e.email} className="flex items-center justify-between gap-3 py-2">
+                <span className="truncate text-ink">{e.email}</span>
+                <span className="shrink-0 text-xs text-ink-faint">{formatRelativeTime(e.created_at)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-4 text-sm text-ink-muted">No one yet. The landing page's pricing section collects sign-ups.</p>
+        )}
+      </Card>
+    </section>
+  );
+}
 
 function UsageSection({
   usage,
@@ -658,7 +706,7 @@ function AboutSection({ version }: { version: string | null }) {
             <span className="font-mono text-ink">{version ?? "-"}</span>
           </span>
           <span className="text-ink-faint">
-            Self-hosted uptime monitoring on Cloudflare Workers.
+            Uptime monitoring that runs in your own Cloudflare account.
           </span>
         </div>
       </Card>
