@@ -54,8 +54,8 @@ describe("formatMs", () => {
   });
 
   it("renders an em dash for nullish input", () => {
-    expect(formatMs(null)).toBe("—");
-    expect(formatMs(undefined)).toBe("—");
+    expect(formatMs(null)).toBe("-");
+    expect(formatMs(undefined)).toBe("-");
   });
 });
 

@@ -77,10 +77,14 @@ export async function deliverToChannel(
 export async function processOutbox(
   env: Env,
   now: number = Date.now(),
+  /** At most this many deliveries this time (the cron run's budget); the rest wait. */
+  limit: number = BATCH,
 ): Promise<{ processed: number; sent: number; failed: number }> {
+  const take = Math.min(BATCH, Math.max(0, Math.floor(limit)));
+  if (take === 0) return { processed: 0, sent: 0, failed: 0 };
   let due;
   try {
-    due = await claimDue(env, now, BATCH);
+    due = await claimDue(env, now, take);
   } catch (e) {
     console.error("[dispatcher] claimDue failed", e);
     return { processed: 0, sent: 0, failed: 0 };

@@ -62,7 +62,7 @@ const SECONDARY_BTN =
 
 function durationLabel(inc: { status: string; durationSeconds: number | null }): string {
   if (inc.status === "open") return "ongoing";
-  return inc.durationSeconds != null ? formatDuration(inc.durationSeconds) : "—";
+  return inc.durationSeconds != null ? formatDuration(inc.durationSeconds) : "-";
 }
 
 function incidentTitle(inc: { title: string | null; monitorName?: string }): string {
@@ -330,7 +330,7 @@ export default function Incidents() {
                       <div className="min-w-0">
                         <div className="truncate font-medium">{incidentTitle(inc)}</div>
                         <div className="truncate text-xs text-ink-faint">
-                          {inc.monitorName ?? "—"}
+                          {inc.monitorName ?? "-"}
                         </div>
                       </div>
                     </div>
@@ -438,10 +438,10 @@ function DetailPanel(p: DetailPanelProps) {
         <Meta label="Started" value={formatDateTime(inc.startedAt)} />
         <Meta
           label="Resolved"
-          value={inc.resolvedAt != null ? formatDateTime(inc.resolvedAt) : "—"}
+          value={inc.resolvedAt != null ? formatDateTime(inc.resolvedAt) : "-"}
         />
         <Meta label="Duration" value={durationLabel(inc)} />
-        <Meta label="HTTP status" value={inc.httpStatus != null ? String(inc.httpStatus) : "—"} />
+        <Meta label="HTTP status" value={inc.httpStatus != null ? String(inc.httpStatus) : "-"} />
       </dl>
 
       {(inc.error || inc.rootCause) && (
@@ -495,7 +495,7 @@ function DetailPanel(p: DetailPanelProps) {
             rows={3}
             value={p.privateNotes}
             onChange={(e) => p.setPrivateNotes(e.target.value)}
-            placeholder="Internal notes — never shown publicly."
+            placeholder="Internal notes, never shown publicly."
           />
         </label>
 

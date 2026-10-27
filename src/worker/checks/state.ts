@@ -12,7 +12,7 @@ import {
   countRecentIncidents,
 } from "../db/incidents";
 import { updateStatusInterval } from "../db/intervals";
-import { recordCheckSample } from "../history/rollups";
+import { checkSampleStatement, recordCheckSample, type CheckSampleTotals } from "../history/rollups";
 import { enqueueIncidentEvent } from "../notifications/enqueue";
 import type { NotifyEvent } from "../../shared/notifications";
 
@@ -30,7 +30,11 @@ const FLAP_THRESHOLD = 3;
 // the monitor stuck at ~100% uptime.
 const HEARTBEAT_DOWN_SLICE_SECONDS = 12 * 60;
 
-interface StateRow {
+/** The monitor_state columns the check path reads; the scheduler preloads them. */
+export const STATE_COLUMNS = `state, state_since, last_success_at, last_beat_at, last_error,
+            consecutive_failures, consecutive_successes, active_incident_id, is_flapping`;
+
+export interface StateRow {
   state: MonitorState;
   state_since: number | null;
   last_success_at: number | null;
@@ -43,32 +47,30 @@ interface StateRow {
 }
 
 async function readState(env: Env, monitorId: string): Promise<StateRow | null> {
-  return env.DB.prepare(
-    `SELECT state, state_since, last_success_at, last_beat_at, last_error,
-            consecutive_failures, consecutive_successes, active_incident_id, is_flapping
-     FROM monitor_state WHERE monitor_id = ?`,
-  )
+  return env.DB.prepare(`SELECT ${STATE_COLUMNS} FROM monitor_state WHERE monitor_id = ?`)
     .bind(monitorId)
     .first<StateRow>();
 }
 
-async function insertSample(
-  env: Env,
-  monitorId: string,
-  s: {
-    at: number;
-    ok: boolean;
-    state: MonitorState;
-    durationMs?: number | null;
-    statusCode?: number | null;
-    error?: string | null;
-    attempts?: number | null;
-    warmup?: boolean;
-    retryRecovered?: boolean;
-    meta?: unknown;
-  },
-): Promise<void> {
-  await env.DB.prepare(
+interface SampleInput {
+  at: number;
+  ok: boolean;
+  state: MonitorState;
+  durationMs?: number | null;
+  statusCode?: number | null;
+  error?: string | null;
+  attempts?: number | null;
+  warmup?: boolean;
+  retryRecovered?: boolean;
+  meta?: unknown;
+}
+
+async function insertSample(env: Env, monitorId: string, s: SampleInput): Promise<void> {
+  await sampleStatement(env, monitorId, s).run();
+}
+
+function sampleStatement(env: Env, monitorId: string, s: SampleInput): D1PreparedStatement {
+  return env.DB.prepare(
     `INSERT INTO samples
        (id, monitor_id, at, ok, state, duration_ms, status_code, error, attempts, warmup, retry_recovered, meta)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -86,8 +88,7 @@ async function insertSample(
       s.warmup ? 1 : 0,
       s.retryRecovered ? 1 : 0,
       s.meta != null ? JSON.stringify(s.meta) : null,
-    )
-    .run();
+    );
 }
 
 /**
@@ -158,9 +159,11 @@ export async function applyCheckResult(
   env: Env,
   monitor: MonitorRecord,
   outcome: CheckOutcome,
+  /** The monitor's state row when the caller already has it (the scheduler preloads them). */
+  known?: StateRow | null,
 ): Promise<{ prevState: MonitorState; stateChanged: boolean }> {
   const now = outcome.at;
-  const cur = await readState(env, monitor.id);
+  const cur = known !== undefined ? known : await readState(env, monitor.id);
   const prevState: MonitorState = cur?.state ?? "unknown";
   const stateChanged = prevState !== outcome.state;
   const stateSince = stateChanged ? now : (cur?.state_since ?? now);
@@ -171,20 +174,24 @@ export async function applyCheckResult(
 
   // A failed warm-up cycle does NOT open an incident — it is the one grace cycle
   // a cold start gets. Preserve any existing incident pointer untouched.
+  // A passing check on a monitor with no open incident has nothing to resolve,
+  // so it skips the incident lookup (the common case, and one query saved).
   const incident =
     outcome.state === "warming_up"
       ? {
           activeIncidentId: cur?.active_incident_id ?? null,
           isFlapping: cur?.is_flapping === 1,
         }
-      : await applyIncidentTransition(env, monitor, {
+      : outcome.ok && cur && !cur.active_incident_id
+        ? { activeIncidentId: null, isFlapping: false }
+        : await applyIncidentTransition(env, monitor, {
           ok: outcome.ok,
           at: now,
           error: outcome.error,
           httpStatus: outcome.statusCode,
         });
 
-  await env.DB.prepare(
+  const stateUpdate = env.DB.prepare(
     `UPDATE monitor_state SET
        state = ?, state_since = ?, last_checked_at = ?, last_success_at = ?,
        last_duration_ms = ?, last_status_code = ?, last_error = ?,
@@ -208,8 +215,7 @@ export async function applyCheckResult(
       incident.isFlapping ? 1 : 0,
       now,
       monitor.id,
-    )
-    .run();
+    );
 
   // Merge executor-supplied meta (resolved DNS records, domain expiry, …) with
   // any assertion failures so both are persisted on the sample.
@@ -221,7 +227,7 @@ export async function applyCheckResult(
     sampleMeta.assertionFailures = outcome.assertionFailures;
   }
 
-  await insertSample(env, monitor.id, {
+  const sample: SampleInput = {
     at: now,
     ok: outcome.ok,
     state: outcome.state,
@@ -232,7 +238,39 @@ export async function applyCheckResult(
     warmup: outcome.warmup,
     retryRecovered: outcome.retryRecovered,
     meta: Object.keys(sampleMeta).length ? sampleMeta : undefined,
-  });
+  };
+  // Warm-up cycles are excluded from uptime accounting (like scheduled-off):
+  // they neither count as a successful check nor as downtime.
+  const rollup: CheckSampleTotals | null =
+    outcome.state === "warming_up"
+      ? null
+      : {
+          at: now,
+          ok: outcome.ok,
+          durationMs: outcome.durationMs,
+          retryRecovered: outcome.retryRecovered,
+          monitoredSeconds: monitor.intervalSeconds,
+          // `suspended` is a down-family outage (DOWNTIME_STATES), so it accrues a
+          // full interval of downtime exactly like `down`.
+          downSeconds: DOWNTIME_STATES.has(outcome.state) ? monitor.intervalSeconds : 0,
+        };
+
+  // State, sample and hourly rollup in one batch: one D1 query instead of three
+  // (the Free plan allows 50 per cron run; lib/budget.ts). A batch is one
+  // transaction, so if it fails nothing was written: write them one by one as
+  // before, so the state and sample still land even if the rollup can't.
+  try {
+    await env.DB.batch([
+      stateUpdate,
+      sampleStatement(env, monitor.id, sample),
+      ...(rollup ? [checkSampleStatement(env, monitor.id, rollup)] : []),
+    ]);
+  } catch (e) {
+    console.error(`[state] batched write failed for ${monitor.id}; writing one by one`, e);
+    await stateUpdate.run();
+    await insertSample(env, monitor.id, sample);
+    if (rollup) await safe("rollup", () => recordCheckSample(env, monitor.id, rollup));
+  }
 
   await safe("interval", () =>
     updateStatusInterval(env, monitor.id, outcome.state, now, {
@@ -240,22 +278,6 @@ export async function applyCheckResult(
       ok: outcome.ok,
     }),
   );
-  // Warm-up cycles are excluded from uptime accounting (like scheduled-off):
-  // they neither count as a successful check nor as downtime.
-  if (outcome.state !== "warming_up") {
-    await safe("rollup", () =>
-      recordCheckSample(env, monitor.id, {
-        at: now,
-        ok: outcome.ok,
-        durationMs: outcome.durationMs,
-        retryRecovered: outcome.retryRecovered,
-        monitoredSeconds: monitor.intervalSeconds,
-        // `suspended` is a down-family outage (DOWNTIME_STATES), so it accrues a
-        // full interval of downtime exactly like `down`.
-        downSeconds: DOWNTIME_STATES.has(outcome.state) ? monitor.intervalSeconds : 0,
-      }),
-    );
-  }
 
   return { prevState, stateChanged };
 }

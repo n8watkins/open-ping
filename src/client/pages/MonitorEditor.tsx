@@ -996,7 +996,7 @@ export default function MonitorEditor() {
                   min={1}
                   value={form.degradedResponseMs}
                   onChange={(e) => set("degradedResponseMs", e.target.value)}
-                  placeholder="—"
+                  placeholder="-"
                   className="input"
                 />
               </Field>
@@ -1009,7 +1009,7 @@ export default function MonitorEditor() {
                   min={1}
                   value={form.failResponseMs}
                   onChange={(e) => set("failResponseMs", e.target.value)}
-                  placeholder="—"
+                  placeholder="-"
                   className="input"
                 />
               </Field>
