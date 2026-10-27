@@ -1,0 +1,15 @@
+# release-kit: a new kit release arrives as update PRs (the dev dependency and the workflow pins).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    allow:
+      - dependency-name: release-kit
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    allow:
+      - dependency-name: n8watkins/release-kit*
