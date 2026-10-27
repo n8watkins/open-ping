@@ -8,6 +8,8 @@ import {
   setMaintenanceState,
   markHeartbeatMissed,
   warmHeartbeat,
+  STATE_COLUMNS,
+  type StateRow as CheckStateRow,
 } from "./checks/state";
 import { activeWindowsAt } from "./db/maintenance";
 import { rollupAndCompact } from "./history/rollups";
@@ -20,27 +22,26 @@ import {
   recordRunFinish,
 } from "./lib/lease";
 import { cleanupExpiredSessions, cleanupExpiredAuthTokens } from "./lib/sessions";
+import { countingD1, planBudget, RunBudget, type UsageCounter } from "./lib/budget";
 
 const LEASE_NAME = "scheduler";
 const LEASE_TTL_MS = 5 * 60 * 1000; // shorter than the 12-min cadence
 const CONCURRENCY = 6;
-// Upper bound on polled checks (http/dns/tcp/domain) run in a single cron tick.
-// At CONCURRENCY=6 an unbounded backlog could blow the Worker subrequest/CPU
-// budget and run past the 12-min cadence / 5-min lease (→ overlapping crons
-// double-counting). Excess due monitors (oldest next_check_at first) are
-// deferred to the next tick.
-const MAX_CHECKS_PER_RUN = 200;
+// How many polled checks (http/dns/tcp/domain) one tick runs is set by the
+// plan's per-invocation budget (lib/budget.ts): on the Free plan a run may make
+// only 50 D1 queries and 50 outbound fetches, so it checks a handful of
+// monitors and defers the rest (oldest next_check_at first) to the next tick.
+// The plan's maxChecks also bounds a Paid run, so a backlog can't overrun the
+// 12-min cadence / 5-min lease.
 // Half the 12-min cadence: a monitor whose next check lands within this window
 // is run now rather than slipping to the following tick (which would otherwise
 // double its effective interval whenever a run takes a moment to reach it).
 const DUE_SLACK_MS = 6 * 60 * 1000;
 
-interface StateRow {
+/** The preloaded row: what the scheduler needs, plus what a check reads (STATE_COLUMNS). */
+interface SchedulerStateRow extends CheckStateRow {
   monitor_id: string;
-  state: string;
   next_check_at: number | null;
-  last_success_at: number | null;
-  last_beat_at: number | null;
 }
 
 /** Run async work over items with a bounded concurrency limit. */
@@ -67,7 +68,11 @@ async function mapLimit<T>(
  * the incident lifecycle, flushes queued notifications, runs history rollups +
  * retention/cleanup, and records run diagnostics.
  */
-export async function runScheduled(controller: ScheduledController, env: Env): Promise<void> {
+export async function runScheduled(controller: ScheduledController, baseEnv: Env): Promise<void> {
+  // Every D1 query this run makes is counted against the plan's budget.
+  const usage: UsageCounter = { d1: 0 };
+  const env: Env = { ...baseEnv, DB: countingD1(baseEnv.DB, usage) };
+  const budget = new RunBudget(planBudget(baseEnv), usage);
   const lease = await acquireLease(env, LEASE_NAME, LEASE_TTL_MS);
   if (!lease) {
     console.log("[scheduler] another run holds the lease; skipping");
@@ -87,10 +92,11 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
     const monitors = await listMonitors(env);
     const now = Date.now();
 
+    // Loaded once, with everything a check reads, so checks don't re-read it.
     const stateRes = await env.DB.prepare(
-      "SELECT monitor_id, state, next_check_at, last_success_at, last_beat_at FROM monitor_state",
-    ).all<StateRow>();
-    const states = new Map<string, StateRow>(
+      `SELECT monitor_id, next_check_at, ${STATE_COLUMNS} FROM monitor_state`,
+    ).all<SchedulerStateRow>();
+    const states = new Map<string, SchedulerStateRow>(
       (stateRes.results ?? []).map((s) => [s.monitor_id, s]),
     );
 
@@ -109,6 +115,12 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
         continue;
       }
       if (globalMaintenance || maintenanceMonitorIds.has(m.id)) {
+        // Already in maintenance: nothing to write until the window ends (its
+        // past next_check_at then makes it due at once).
+        if (states.get(m.id)?.state === "maintenance") {
+          skipped++;
+          continue;
+        }
         // Wrapped so one monitor's DB error can't abort the whole cycle and
         // starve every monitor after it.
         try {
@@ -121,6 +133,14 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
         continue;
       }
       if (!isActiveAt(m.schedule, new Date(now))) {
+        // Already off with its next window recorded: nothing changes until then,
+        // so spend no queries on it (off-hours monitors would otherwise cost
+        // every run several D1 queries each).
+        const off = states.get(m.id);
+        if (off?.state === "scheduled_off" && (off.next_check_at ?? 0) > now) {
+          skipped++;
+          continue;
+        }
         try {
           await setScheduledOff(env, m, now);
           skipped++;
@@ -191,17 +211,13 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
       (a, b) =>
         (states.get(a.id)?.next_check_at ?? 0) - (states.get(b.id)?.next_check_at ?? 0),
     );
-    let toCheck = duePolled;
-    if (duePolled.length > MAX_CHECKS_PER_RUN) {
-      const deferred = duePolled.length - MAX_CHECKS_PER_RUN;
-      toCheck = duePolled.slice(0, MAX_CHECKS_PER_RUN);
-      skipped += deferred;
-      console.log(
-        `[scheduler] ${duePolled.length} polled checks due; running ${MAX_CHECKS_PER_RUN}, deferring ${deferred} to the next tick`,
-      );
-    }
-
-    await mapLimit(toCheck, CONCURRENCY, async (m) => {
+    let deferred = 0;
+    await mapLimit(duePolled, CONCURRENCY, async (m) => {
+      // Out of budget for this run: leave it due for the next tick.
+      if (!(await budget.startCheck())) {
+        deferred++;
+        return;
+      }
       const st = states.get(m.id);
       // Warm-up applies on a cold start (never checked) or the first check after
       // the monitor comes back on schedule or out of maintenance. A monitor
@@ -215,19 +231,27 @@ export async function runScheduled(controller: ScheduledController, env: Env): P
         st.state === "maintenance";
       try {
         const outcome = await runMonitorCheck(m, { warmup, now: Date.now() });
-        await applyCheckResult(env, m, outcome);
+        await applyCheckResult(env, m, outcome, st ?? null);
         checked++;
         if (!outcome.ok) failures++;
       } catch (e) {
         failures++;
         console.error(`[scheduler] check ${m.id} failed`, e);
+      } finally {
+        budget.endCheck();
       }
     });
+    if (deferred > 0) {
+      skipped += deferred;
+      console.log(
+        `[scheduler] ${duePolled.length} polled checks due; ran ${duePolled.length - deferred} within the ${budget.limits.plan} plan's budget, deferring ${deferred} to the next tick`,
+      );
+    }
 
     // Flush queued notifications (independent; never fails the run).
     let notificationFailures = 0;
     try {
-      const r = await processOutbox(env, Date.now());
+      const r = await processOutbox(env, Date.now(), budget.notificationAllowance(25));
       notificationFailures = r.failed;
     } catch (e) {
       console.error("[scheduler] notification dispatch failed", e);

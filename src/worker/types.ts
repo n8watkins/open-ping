@@ -36,6 +36,12 @@ export interface Env {
    */
   API_TOKEN?: string;
 
+  /**
+   * The Cloudflare Workers plan this install runs on: "free" (the default) or
+   * "paid". Sets how much one cron run may spend (lib/budget.ts); a wrangler.jsonc var.
+   */
+  WORKERS_PLAN?: string;
+
   /** Web Push VAPID keypair (set during PWA setup). */
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;

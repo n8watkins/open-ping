@@ -54,7 +54,7 @@ describe("buildWeeklyEmail (pure)", () => {
       { ...baseStats, avgResponseMs: null },
       "period",
     );
-    expect(text).toContain("Avg response: —");
+    expect(text).toContain("Avg response: -");
   });
 });
 

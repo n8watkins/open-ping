@@ -14,6 +14,12 @@
   "triggers": {
     "crons": ["*/12 * * * *"]
   },
+  "vars": {
+    // Your Cloudflare Workers plan: "free" or "paid". It sets how much one cron
+    // run may spend (src/worker/lib/budget.ts, docs/FREE_TIER.md): on Free a run
+    // checks about 7 monitors and defers the rest to the next tick.
+    "WORKERS_PLAN": "free"
+  },
   "d1_databases": [
     {
       "binding": "DB",

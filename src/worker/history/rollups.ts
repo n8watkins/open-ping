@@ -63,12 +63,6 @@ export function bucketStart(period: "hour" | "day" | "month", at: number): numbe
   }
 }
 
-/** Start of the month after the one containing `monthStart` (handles year wrap). */
-function nextMonthStart(monthStart: number): number {
-  const d = new Date(monthStart);
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
-}
-
 /**
  * Sum a set of summary rows into one total. Min/max ignore NULL inputs and stay
  * NULL when no row carries a latency. PURE — used by both rollup passes.
@@ -125,24 +119,27 @@ export function okLatencyMs(ok: boolean, durationMs?: number | null): number {
  * responding check (COALESCE the existing, possibly NULL value); sum_latency_ms
  * counts only OK checks so the weekly average divides over a consistent set.
  */
-export async function recordCheckSample(
-  env: Env,
-  monitorId: string,
-  s: {
-    at: number;
-    ok: boolean;
-    durationMs?: number | null;
-    retryRecovered?: boolean;
-    monitoredSeconds: number;
-    downSeconds: number;
-  },
-): Promise<void> {
+export async function recordCheckSample(env: Env, monitorId: string, s: CheckSampleTotals): Promise<void> {
+  await checkSampleStatement(env, monitorId, s).run();
+}
+
+export interface CheckSampleTotals {
+  at: number;
+  ok: boolean;
+  durationMs?: number | null;
+  retryRecovered?: boolean;
+  monitoredSeconds: number;
+  downSeconds: number;
+}
+
+/** The hour-bucket upsert for one check, as a statement, so a caller can batch it. */
+export function checkSampleStatement(env: Env, monitorId: string, s: CheckSampleTotals): D1PreparedStatement {
   const bucket = bucketStart("hour", s.at);
   const id = `${monitorId}:hour:${bucket}`;
   const hasLatency = typeof s.durationMs === "number" && Number.isFinite(s.durationMs);
   const latency = hasLatency ? (s.durationMs as number) : null;
 
-  await env.DB.prepare(
+  return env.DB.prepare(
     `INSERT INTO summaries
        (id, monitor_id, period, bucket_start, checks, ok_checks, fail_checks,
         retry_recoveries, sum_latency_ms, min_latency_ms, max_latency_ms,
@@ -177,8 +174,7 @@ export async function recordCheckSample(
       latency, // max_latency_ms: any responding check
       s.monitoredSeconds,
       s.downSeconds,
-    )
-    .run();
+    );
 }
 
 /** SELECT-able subset of `summaries` used when re-aggregating a derived bucket. */
@@ -186,54 +182,17 @@ const TOTALS_COLUMNS =
   "checks, ok_checks, fail_checks, retry_recoveries, sum_latency_ms, " +
   "min_latency_ms, max_latency_ms, monitored_seconds, down_seconds";
 
-/** Upsert a derived (day/month) bucket with absolute recomputed totals — idempotent. */
-async function writeSummary(
-  env: Env,
-  monitorId: string,
-  period: "day" | "month",
-  bucket: number,
-  totals: SummaryTotals,
-): Promise<void> {
-  const id = `${monitorId}:${period}:${bucket}`;
-  await env.DB.prepare(
-    `INSERT INTO summaries
-       (id, monitor_id, period, bucket_start, checks, ok_checks, fail_checks,
-        retry_recoveries, sum_latency_ms, min_latency_ms, max_latency_ms,
-        monitored_seconds, down_seconds)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(monitor_id, period, bucket_start) DO UPDATE SET
-       checks = excluded.checks,
-       ok_checks = excluded.ok_checks,
-       fail_checks = excluded.fail_checks,
-       retry_recoveries = excluded.retry_recoveries,
-       sum_latency_ms = excluded.sum_latency_ms,
-       min_latency_ms = excluded.min_latency_ms,
-       max_latency_ms = excluded.max_latency_ms,
-       monitored_seconds = excluded.monitored_seconds,
-       down_seconds = excluded.down_seconds`,
-  )
-    .bind(
-      id,
-      monitorId,
-      period,
-      bucket,
-      totals.checks,
-      totals.ok_checks,
-      totals.fail_checks,
-      totals.retry_recoveries,
-      totals.sum_latency_ms,
-      totals.min_latency_ms,
-      totals.max_latency_ms,
-      totals.monitored_seconds,
-      totals.down_seconds,
-    )
-    .run();
-}
+/** The same totals as aggregateSummaries, in SQL (MIN/MAX skip NULLs, as there). */
+const SUM_TOTALS =
+  "SUM(checks), SUM(ok_checks), SUM(fail_checks), SUM(retry_recoveries), SUM(sum_latency_ms), " +
+  "MIN(min_latency_ms), MAX(max_latency_ms), SUM(monitored_seconds), SUM(down_seconds)";
 
-interface DistinctBucket {
-  monitor_id: string;
-  bucket_start: number;
-}
+/** Overwrite a derived bucket with its recomputed totals (idempotent). */
+const UPSERT_TOTALS = `ON CONFLICT(monitor_id, period, bucket_start) DO UPDATE SET
+  checks = excluded.checks, ok_checks = excluded.ok_checks, fail_checks = excluded.fail_checks,
+  retry_recoveries = excluded.retry_recoveries, sum_latency_ms = excluded.sum_latency_ms,
+  min_latency_ms = excluded.min_latency_ms, max_latency_ms = excluded.max_latency_ms,
+  monitored_seconds = excluded.monitored_seconds, down_seconds = excluded.down_seconds`;
 
 /**
  * Periodic compaction pass. Idempotent and resilient: a failure recomputing one
@@ -252,120 +211,67 @@ export async function rollupAndCompact(env: Env, now: number): Promise<void> {
   const hourlyMs = retention.hourlyDays * DAY_MS;
   const dailyMs = retention.dailyDays * DAY_MS;
 
+  // Each pass is one set-based statement for every monitor at once, so a run
+  // spends the same few D1 queries however many monitors there are (the Free
+  // plan allows 50 per invocation; see lib/budget.ts).
+
   // (1) HOUR → DAY -----------------------------------------------------------
   // Recompute only days whose hour rows are ALL still retained (dayStart within
   // the hourly horizon). Older days are sealed at their last full value so the
-  // hour prune below can't shrink them.
+  // hour prune below can't shrink them. Days are UTC, as bucketStart("day").
   try {
-    const hourBuckets = await env.DB.prepare(
-      `SELECT DISTINCT monitor_id, bucket_start FROM summaries
-       WHERE period = 'hour' AND bucket_start >= ?`,
+    await env.DB.prepare(
+      `INSERT INTO summaries (id, monitor_id, period, bucket_start, ${TOTALS_COLUMNS})
+       SELECT monitor_id || ':day:' || day_start, monitor_id, 'day', day_start, ${SUM_TOTALS}
+         FROM (SELECT *, bucket_start - (bucket_start % ${DAY_MS}) AS day_start
+                 FROM summaries WHERE period = 'hour' AND bucket_start >= ?1)
+        WHERE day_start >= ?1
+        GROUP BY monitor_id, day_start
+       ${UPSERT_TOTALS}`,
     )
       .bind(now - hourlyMs)
-      .all<DistinctBucket>();
-
-    const days = new Map<string, { monitorId: string; dayStart: number }>();
-    for (const r of hourBuckets.results ?? []) {
-      const dayStart = bucketStart("day", r.bucket_start);
-      if (dayStart < now - hourlyMs) continue; // sealed — some hours already pruned
-      days.set(`${r.monitor_id}:${dayStart}`, { monitorId: r.monitor_id, dayStart });
-    }
-
-    for (const { monitorId, dayStart } of days.values()) {
-      try {
-        const rows = await env.DB.prepare(
-          `SELECT ${TOTALS_COLUMNS} FROM summaries
-           WHERE monitor_id = ? AND period = 'hour'
-             AND bucket_start >= ? AND bucket_start < ?`,
-        )
-          .bind(monitorId, dayStart, dayStart + DAY_MS)
-          .all<SummaryTotals>();
-        await writeSummary(env, monitorId, "day", dayStart, aggregateSummaries(rows.results ?? []));
-      } catch (e) {
-        console.error(`[rollups] day recompute failed monitor=${monitorId} day=${dayStart}`, e);
-      }
-    }
+      .run();
   } catch (e) {
     console.error("[rollups] hour→day pass failed", e);
   }
 
   // (2) DAY → MONTH ----------------------------------------------------------
   // Recompute only months whose day rows are ALL still retained; older months
-  // are sealed at their last full value.
+  // are sealed at their last full value. Months are UTC calendar months.
   try {
-    const dayBuckets = await env.DB.prepare(
-      `SELECT DISTINCT monitor_id, bucket_start FROM summaries
-       WHERE period = 'day' AND bucket_start >= ?`,
+    await env.DB.prepare(
+      `INSERT INTO summaries (id, monitor_id, period, bucket_start, ${TOTALS_COLUMNS})
+       SELECT monitor_id || ':month:' || month_start, monitor_id, 'month', month_start, ${SUM_TOTALS}
+         FROM (SELECT *,
+                      CAST(strftime('%s', bucket_start / 1000, 'unixepoch', 'start of month') AS INTEGER) * 1000
+                        AS month_start
+                 FROM summaries WHERE period = 'day' AND bucket_start >= ?1)
+        WHERE month_start >= ?1
+        GROUP BY monitor_id, month_start
+       ${UPSERT_TOTALS}`,
     )
       .bind(now - dailyMs)
-      .all<DistinctBucket>();
-
-    const months = new Map<string, { monitorId: string; monthStart: number }>();
-    for (const r of dayBuckets.results ?? []) {
-      const monthStart = bucketStart("month", r.bucket_start);
-      if (monthStart < now - dailyMs) continue; // sealed — some days already pruned
-      months.set(`${r.monitor_id}:${monthStart}`, { monitorId: r.monitor_id, monthStart });
-    }
-
-    for (const { monitorId, monthStart } of months.values()) {
-      try {
-        const rows = await env.DB.prepare(
-          `SELECT ${TOTALS_COLUMNS} FROM summaries
-           WHERE monitor_id = ? AND period = 'day'
-             AND bucket_start >= ? AND bucket_start < ?`,
-        )
-          .bind(monitorId, monthStart, nextMonthStart(monthStart))
-          .all<SummaryTotals>();
-        await writeSummary(env, monitorId, "month", monthStart, aggregateSummaries(rows.results ?? []));
-      } catch (e) {
-        console.error(`[rollups] month recompute failed monitor=${monitorId} month=${monthStart}`, e);
-      }
-    }
+      .run();
   } catch (e) {
     console.error("[rollups] day→month pass failed", e);
   }
 
   // (3) Prune ----------------------------------------------------------------
+  // One batch (a single D1 query): expired samples, hour and day summaries,
+  // closed status intervals past the daily horizon (the longest window any view
+  // reads; open intervals are always kept), and scheduler-run diagnostics past
+  // it (~120 rows/day; only recent runs are read).
   try {
-    await env.DB.prepare("DELETE FROM samples WHERE at < ?")
-      .bind(now - sampleMs)
-      .run();
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM samples WHERE at < ?").bind(now - sampleMs),
+      env.DB.prepare("DELETE FROM summaries WHERE period = 'hour' AND bucket_start < ?").bind(now - hourlyMs),
+      env.DB.prepare("DELETE FROM summaries WHERE period = 'day' AND bucket_start < ?").bind(now - dailyMs),
+      env.DB.prepare("DELETE FROM status_intervals WHERE ended_at IS NOT NULL AND ended_at < ?").bind(
+        now - dailyMs,
+      ),
+      env.DB.prepare("DELETE FROM scheduler_runs WHERE started_at < ?").bind(now - dailyMs),
+    ]);
   } catch (e) {
-    console.error("[rollups] sample prune failed", e);
-  }
-  try {
-    await env.DB.prepare("DELETE FROM summaries WHERE period = 'hour' AND bucket_start < ?")
-      .bind(now - hourlyMs)
-      .run();
-  } catch (e) {
-    console.error("[rollups] hour prune failed", e);
-  }
-  try {
-    await env.DB.prepare("DELETE FROM summaries WHERE period = 'day' AND bucket_start < ?")
-      .bind(now - dailyMs)
-      .run();
-  } catch (e) {
-    console.error("[rollups] day prune failed", e);
-  }
-  // Prune closed status intervals past the daily horizon (the longest window any
-  // view reads). Open intervals are always kept. Fixes unbounded table growth.
-  try {
-    await env.DB.prepare(
-      "DELETE FROM status_intervals WHERE ended_at IS NOT NULL AND ended_at < ?",
-    )
-      .bind(now - dailyMs)
-      .run();
-  } catch (e) {
-    console.error("[rollups] interval prune failed", e);
-  }
-  // Prune old scheduler-run diagnostics (~120 rows/day, inserted every cron).
-  // Only the most recent runs are ever read (diagnostics/overview use LIMIT), so
-  // a daily horizon is ample. Index-backed by idx_scheduler_runs_started.
-  try {
-    await env.DB.prepare("DELETE FROM scheduler_runs WHERE started_at < ?")
-      .bind(now - dailyMs)
-      .run();
-  } catch (e) {
-    console.error("[rollups] scheduler_runs prune failed", e);
+    console.error("[rollups] prune failed", e);
   }
 }
