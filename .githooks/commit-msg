@@ -1,0 +1,8 @@
+#!/bin/sh
+# release-kit: reject commit messages that aren't Conventional Commits.
+kit="$(git rev-parse --show-toplevel)/node_modules/.bin/release-kit"
+if [ ! -x "$kit" ]; then
+  echo "release-kit: not installed yet (npm install), so the commit message isn't checked here" >&2
+  exit 0
+fi
+exec "$kit" commit-msg "$1"

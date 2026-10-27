@@ -1,0 +1,19 @@
+# release-kit (reusable): published by pushing a vX.Y.Z tag (npm run release -- --push),
+# or by running this workflow on a tag. The steps live in the release-kit repo,
+# pinned below; apply.mjs updates the pin.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    permissions:
+      contents: write # only the kit's publish job uses it
+    uses: n8watkins/release-kit/.github/workflows/release.yml@v2.0.0
