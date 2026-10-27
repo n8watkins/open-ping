@@ -65,7 +65,8 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
     const directive = (name: string) =>
       csp.split(";").map((d) => d.trim()).find((d) => d.startsWith(`${name} `)) ?? "";
     expect(directive("script-src")).toContain("https://static.cloudflareinsights.com");
-    expect(directive("connect-src")).toBe("connect-src 'self' https://cloudflareinsights.com");
+    // Cloudflare's analytics reporter, and the canonical install for the Hosted waitlist form.
+    expect(directive("connect-src")).toBe("connect-src 'self' https://cloudflareinsights.com https://openping.n8builds.dev");
     // No wildcard hosts crept in.
     expect(directive("script-src")).not.toContain("*");
   });

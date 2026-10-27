@@ -242,7 +242,7 @@ export function SignInModal({
         </div>
 
         <p className="mt-6 text-center text-xs text-ink-faint">
-          Self-hosted on your own Cloudflare account.
+          Runs in your own Cloudflare account.
         </p>
       </div>
     </div>,

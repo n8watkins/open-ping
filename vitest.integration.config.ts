@@ -15,6 +15,8 @@ export default defineConfig({
           API_TOKEN: "integration-api-token",
           APP_URL: "https://openping.test",
           MASTER_KEY: TEST_MASTER_KEY,
+          // The integration install plays the canonical one, so the waitlist is on.
+          WAITLIST_ENABLED: "true",
           TEST_MIGRATIONS: await readD1Migrations("./migrations"),
         },
       },

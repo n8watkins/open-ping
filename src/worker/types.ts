@@ -42,6 +42,12 @@ export interface Env {
    */
   WORKERS_PLAN?: string;
 
+  /**
+   * "true" only on the canonical install (openping.n8builds.dev), which collects
+   * the OpenPing Hosted waitlist; every other install answers 404. A wrangler.jsonc var.
+   */
+  WAITLIST_ENABLED?: string;
+
   /** Web Push VAPID keypair (set during PWA setup). */
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;

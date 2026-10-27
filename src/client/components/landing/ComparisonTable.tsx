@@ -30,7 +30,7 @@ const ROWS: Row[] = [
   },
   {
     feature: "Price",
-    op: { kind: "text", text: "$0, self-hosted on Cloudflare's free plan" },
+    op: { kind: "text", text: "$0 in your own account, on Cloudflare's free plan" },
     saas: { kind: "text", text: "Monthly subscription, per tier" },
   },
   {
@@ -65,7 +65,7 @@ const ROWS: Row[] = [
     saas: { kind: "no", note: "Stored on their servers" },
   },
   {
-    feature: "No vendor lock-in (MIT, self-hosted)",
+    feature: "No vendor lock-in (MIT, runs in your account)",
     op: { kind: "yes" },
     saas: { kind: "no" },
   },
@@ -116,7 +116,7 @@ export function ComparisonTable() {
                 </span>
                 OpenPing
                 <span className="hidden text-xs font-normal text-ink-muted sm:inline">
-                  (self-hosted)
+                  (your own account)
                 </span>
               </span>
             </th>
