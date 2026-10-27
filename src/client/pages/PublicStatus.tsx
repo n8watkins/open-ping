@@ -214,7 +214,7 @@ export default function PublicStatus() {
   const notFound = error === "not_found";
 
   useEffect(() => {
-    if (data?.page.name) document.title = `${data.page.name} — Status`;
+    if (data?.page.name) document.title = `${data.page.name} | Status`;
   }, [data?.page.name]);
 
   // Apply the configured theme: light/dark explicitly, or follow the visitor's
@@ -421,7 +421,7 @@ export default function PublicStatus() {
                       {inc.monitorName && (
                         <span className="text-ink-faint">{inc.monitorName}</span>
                       )}
-                      {inc.monitorName && inc.message && " — "}
+                      {inc.monitorName && inc.message && ": "}
                       {inc.message}
                     </p>
                   )}

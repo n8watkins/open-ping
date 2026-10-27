@@ -476,13 +476,13 @@ export default function MonitorDetail() {
                     {targetUrl}
                   </span>
                 ) : (
-                  <span className="mt-1 block text-sm text-ink-faint">—</span>
+                  <span className="mt-1 block text-sm text-ink-faint">-</span>
                 )
               ) : monitor.type === "dns" ? (
                 <>
                   <div className="mt-1 flex items-center gap-2">
                     <span className="truncate font-mono text-sm text-ink">
-                      {dnsHostname ?? "—"}
+                      {dnsHostname ?? "-"}
                     </span>
                     {dnsRecordType && (
                       <span className="shrink-0 rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-ink-faint">
@@ -498,13 +498,13 @@ export default function MonitorDetail() {
                 </>
               ) : monitor.type === "tcp" ? (
                 <span className="mt-1 block truncate font-mono text-sm text-ink">
-                  {tcpHost ?? "—"}
+                  {tcpHost ?? "-"}
                   {tcpPort != null ? `:${tcpPort}` : ""}
                 </span>
               ) : (
                 <>
                   <span className="mt-1 block truncate font-mono text-sm text-ink">
-                    {domainName ?? "—"}
+                    {domainName ?? "-"}
                   </span>
                   {latestMeta.expiresAt && (
                     <div className="mt-1 text-xs text-ink-faint">
@@ -579,7 +579,7 @@ export default function MonitorDetail() {
           </CardHeader>
           <div className="divide-y divide-line">
             <InfoRow label="Time in state">
-              {state?.state_since != null ? formatRelativeTime(state.state_since) : "—"}
+              {state?.state_since != null ? formatRelativeTime(state.state_since) : "-"}
             </InfoRow>
             <InfoRow label="Last check">
               {state?.last_checked_at != null ? (
@@ -596,7 +596,7 @@ export default function MonitorDetail() {
                   {formatRelativeTime(state.next_check_at)}
                 </span>
               ) : (
-                "—"
+                "-"
               )}
             </InfoRow>
             <InfoRow label="Last success">
@@ -605,11 +605,11 @@ export default function MonitorDetail() {
                   {formatRelativeTime(state.last_success_at)}
                 </span>
               ) : (
-                "—"
+                "-"
               )}
             </InfoRow>
             <InfoRow label="Last status">
-              {state?.last_status_code != null ? state.last_status_code : "—"}
+              {state?.last_status_code != null ? state.last_status_code : "-"}
             </InfoRow>
             <InfoRow label="Last latency">{formatMs(state?.last_duration_ms ?? null)}</InfoRow>
             {state?.last_error ? (
@@ -640,7 +640,7 @@ export default function MonitorDetail() {
               value={
                 incidentMetrics.longestSeconds != null
                   ? formatDuration(incidentMetrics.longestSeconds)
-                  : "—"
+                  : "-"
               }
             />
             <Stat
@@ -648,7 +648,7 @@ export default function MonitorDetail() {
               value={
                 incidentMetrics.mtbfSeconds != null
                   ? formatDuration(incidentMetrics.mtbfSeconds)
-                  : "—"
+                  : "-"
               }
             />
             <Stat
@@ -656,7 +656,7 @@ export default function MonitorDetail() {
               value={
                 incidentMetrics.mttrSeconds != null
                   ? formatDuration(incidentMetrics.mttrSeconds)
-                  : "—"
+                  : "-"
               }
             />
           </div>

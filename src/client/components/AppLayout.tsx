@@ -193,7 +193,7 @@ export function AppLayout() {
         {!online && (
           <div className="flex items-center justify-center gap-2 border-b border-degraded/40 bg-degraded/10 px-4 py-1.5 text-xs text-degraded">
             <WifiOff className="size-3.5" />
-            You're offline — data may be stale.
+            You're offline, so data may be stale.
           </div>
         )}
 
