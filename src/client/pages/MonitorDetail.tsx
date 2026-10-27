@@ -363,7 +363,7 @@ export default function MonitorDetail() {
       <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="truncate text-xl font-semibold tracking-tight">{monitor.name}</h1>
+            <h1 className="truncate text-2xl font-semibold tracking-tight">{monitor.name}</h1>
             <StatusPill state={currentState} />
             {state?.is_flapping ? (
               <span className="inline-flex items-center gap-1 rounded-full border border-degraded/40 bg-degraded/10 px-2 py-0.5 text-xs font-medium text-degraded">
@@ -376,7 +376,7 @@ export default function MonitorDetail() {
           </p>
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {monitor.type !== "heartbeat" && (
             <button onClick={onTest} disabled={pending !== null} className={btn}>
               {pending === "test" ? (

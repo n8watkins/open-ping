@@ -36,6 +36,17 @@ const STATUS_PILL = {
   suspended: { dot: "bg-suspended", text: "text-suspended", label: "Suspended" },
 } as const;
 
+/** The sidebar's one-line summary: what's wrong, or that all is well. */
+function statusSummary(counts: OverviewResponse["counts"] | undefined): string {
+  if (!counts) return "Checking";
+  const parts: string[] = [];
+  if (counts.down) parts.push(`${counts.down} down`);
+  if (counts.suspended) parts.push(`${counts.suspended} suspended`);
+  if (counts.degraded) parts.push(`${counts.degraded} degraded`);
+  if (parts.length === 0 && counts.openIncidents) parts.push(`${counts.openIncidents} open incident${counts.openIncidents === 1 ? "" : "s"}`);
+  return parts.length ? parts.join(", ") : "All systems operational";
+}
+
 /** Derive the overall header status from real overview counts. */
 function deriveStatus(counts: OverviewResponse["counts"] | undefined) {
   if (!counts) return STATUS_PILL.operational;
@@ -48,8 +59,8 @@ function deriveStatus(counts: OverviewResponse["counts"] | undefined) {
 }
 
 const NAV: NavItem[] = [
-  { to: "/monitors", label: "Monitoring", icon: Activity },
   { to: "/", label: "Overview", icon: LayoutDashboard },
+  { to: "/monitors", label: "Monitors", icon: Activity },
   { to: "/incidents", label: "Incidents", icon: AlertTriangle },
   { to: "/status-page", label: "Status pages", icon: Globe },
   { to: "/maintenance", label: "Maintenance", icon: Wrench },
@@ -129,9 +140,9 @@ export function AppLayout() {
         </nav>
         <div className="border-t border-line px-2 pt-4">
           <div className="mb-3 flex items-center justify-between gap-2">
-            <span className={cn("inline-flex items-center gap-1.5 text-xs", pill.text)}>
-              <span className={cn("size-1.5 rounded-full", pill.dot)} />
-              {pill.label}
+            <span className={cn("inline-flex min-w-0 items-center gap-1.5 text-xs", pill.text)}>
+              <span className={cn("size-1.5 shrink-0 rounded-full", pill.dot)} />
+              <span className="truncate">{statusSummary(overview?.counts)}</span>
             </span>
             <span className="text-[10px] text-ink-faint">v0.1.0</span>
           </div>

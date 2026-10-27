@@ -179,9 +179,9 @@ export default function Maintenance() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-6xl">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Maintenance</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Maintenance<span className="text-accent">.</span></h1>
         <p className="mt-1 text-sm text-ink-muted">
           Schedule maintenance windows to suppress alerts and show planned
           downtime on your status page.

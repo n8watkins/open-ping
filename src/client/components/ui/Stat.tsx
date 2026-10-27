@@ -14,7 +14,7 @@ export function Stat({
   return (
     <div>
       <div className="text-xs font-medium text-ink-muted">{label}</div>
-      <div className={cn("mt-2 text-2xl font-semibold text-ink", valueClass)}>
+      <div className={cn("mt-2 whitespace-nowrap text-xl font-semibold tabular-nums text-ink sm:text-2xl", valueClass)}>
         {value}
       </div>
     </div>

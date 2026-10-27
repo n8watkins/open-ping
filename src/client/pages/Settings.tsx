@@ -141,9 +141,9 @@ export default function Settings() {
     useFetch<DiagnosticsResponse>("/api/diagnostics");
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-6xl">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Settings<span className="text-accent">.</span></h1>
         <p className="mt-1 text-sm text-ink-muted">
           Installation configuration, usage estimates, and diagnostics.
         </p>

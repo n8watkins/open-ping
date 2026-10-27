@@ -190,9 +190,9 @@ export default function Monitors() {
 
   if (error && !data) {
     return (
-      <div className="mx-auto max-w-[1320px]">
+      <div className="mx-auto max-w-6xl">
         <h1 className="text-2xl font-semibold tracking-tight">
-          Monitors<span className="text-up">.</span>
+          Monitors<span className="text-accent">.</span>
         </h1>
         <p className="mt-6 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
           Could not load monitors: {error}
@@ -204,10 +204,10 @@ export default function Monitors() {
   if (!data) return null;
 
   return (
-    <div className="mx-auto max-w-[1320px]">
+    <div className="mx-auto max-w-6xl">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">
-          Monitors<span className="text-up">.</span>
+          Monitors<span className="text-accent">.</span>
         </h1>
         <NewMonitorControl />
       </div>
@@ -379,7 +379,7 @@ export default function Monitors() {
           >
             <Card className="p-5">
               <h2 className="text-sm font-semibold">
-                Current status<span className="text-up">.</span>
+                Current status<span className="text-accent">.</span>
               </h2>
               <div className="my-5 flex justify-center">
                 <span className="grid size-10 place-items-center rounded-full bg-surface-2 text-ink-muted">
@@ -404,7 +404,7 @@ export default function Monitors() {
 
             <Card className="p-5">
               <h2 className="text-sm font-semibold">
-                Last 24 hours<span className="text-up">.</span>
+                Last 24 hours<span className="text-accent">.</span>
               </h2>
               <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-5">
                 <SummaryMetric
