@@ -30,7 +30,7 @@ const ROWS: Row[] = [
   },
   {
     feature: "Price",
-    op: { kind: "text", text: "$0 — self-hosted on Cloudflare free tier" },
+    op: { kind: "text", text: "$0, self-hosted on Cloudflare's free plan" },
     saas: { kind: "text", text: "Monthly subscription, per tier" },
   },
   {
@@ -45,29 +45,9 @@ const ROWS: Row[] = [
     saas: { kind: "text", text: "Varies, often higher tiers" },
   },
   {
-    feature: "Heartbeat / cron monitoring",
-    op: { kind: "yes" },
-    saas: { kind: "text", text: "Often a paid add-on" },
-  },
-  {
-    feature: "Response-time alerts",
-    op: { kind: "yes" },
-    saas: { kind: "text", text: "Plan-dependent" },
-  },
-  {
-    feature: "Check frequency",
-    op: { kind: "text", text: "You control the cron schedule" },
-    saas: { kind: "text", text: "Faster intervals cost more" },
-  },
-  {
     feature: "Status pages + embeddable widget",
     op: { kind: "yes" },
     saas: { kind: "text", text: "Often limited / paid" },
-  },
-  {
-    feature: "Maintenance windows",
-    op: { kind: "yes" },
-    saas: { kind: "text", text: "Higher tiers" },
   },
   {
     feature: "Incident history + MTBF / MTTR",

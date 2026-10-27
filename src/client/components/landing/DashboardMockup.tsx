@@ -7,7 +7,7 @@ import type { MonitorState } from "../../../shared/states";
 /*
  * Original, illustrative OpenPing dashboard mockup built entirely from the app's
  * own design tokens and UI primitives (StatusPill / UptimeBar / Sparkline). It
- * contains no real data and copies no third-party screenshot — it exists purely
+ * contains no real data and copies no third-party screenshot: it exists purely
  * to show what the product looks like. Deterministic sample arrays keep it from
  * shifting between renders.
  */
@@ -36,8 +36,8 @@ interface Row {
   segments: { state: MonitorState; title?: string }[];
 }
 
-// The hero shows exactly three monitors — enough to convey the product without
-// overwhelming the fold — and deliberately keeps one in "Scheduled off" to
+// The hero shows exactly three monitors: enough to convey the product without
+// overwhelming the fold: and deliberately keeps one in "Scheduled off" to
 // showcase OpenPing's schedule-aware differentiator.
 const ROWS: Row[] = [
   {
@@ -65,7 +65,7 @@ const ROWS: Row[] = [
     name: "staging.acme.dev",
     type: "HTTP · business hours",
     state: "scheduled_off",
-    uptime: "—",
+    uptime: "not counted",
     latency: "off-hours",
     spark: SPARK_C,
     segments: strip("up", [

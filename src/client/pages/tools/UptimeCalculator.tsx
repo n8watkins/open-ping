@@ -35,7 +35,7 @@ export default function UptimeCalculator() {
     <ToolLayout
       icon={Percent}
       title="Uptime calculator"
-      intro="Translate an uptime SLA into the downtime it actually permits — or work backwards from a downtime budget to the percentage it represents."
+      intro="Translate an uptime SLA into the downtime it actually permits, or work backwards from a downtime budget to the percentage it represents."
     >
       <div
         className="mb-6 flex w-full rounded-lg border border-line bg-surface p-1 sm:inline-flex sm:w-auto"
@@ -288,8 +288,8 @@ function Explainer() {
         Allowed downtime is simply{" "}
         <span className="font-mono text-ink">(100 − uptime%) × period</span>. Following
         the common SLA convention, a month is treated as 30 days and a year as 365
-        days. So 99.9% — "three nines" — works out to about 43 minutes per month,
-        while 99.999% — "five nines" — is just over 5 minutes per year.
+        days. So 99.9% ("three nines") works out to about 43 minutes per month,
+        while 99.999% ("five nines") is just over 5 minutes per year.
       </p>
     </div>
   );

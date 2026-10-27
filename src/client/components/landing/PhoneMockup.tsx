@@ -6,7 +6,7 @@ import type { MonitorState } from "../../../shared/states";
 /**
  * Original CSS phone-device frame (rounded bezel, notch, status bar) showing a
  * push notification + a compact status view. Built entirely from OpenPing tokens
- * and UI primitives — no third-party device art or screenshots. The incoming
+ * and UI primitives: no third-party device art or screenshots. The incoming
  * push slides in via a scoped keyframe that is disabled under reduced motion.
  */
 

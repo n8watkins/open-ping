@@ -9,7 +9,7 @@ const GITHUB_URL = "https://github.com/n8watkins/open-ping";
 /** Public index of OpenPing's free, client-side utility tools (/tools). */
 export default function ToolsIndex() {
   useEffect(() => {
-    document.title = "Free tools — OpenPing";
+    document.title = "Free tools | OpenPing";
   }, []);
 
   return (

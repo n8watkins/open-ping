@@ -4,7 +4,7 @@ import type { MonitorState } from "../../../shared/states";
 
 /*
  * Illustrative public-status-page mockup, built from OpenPing's own tokens.
- * Not a real status page and not a copied screenshot — a faithful preview of
+ * Not a real status page and not a copied screenshot: a faithful preview of
  * the bundled status page so visitors see what they get.
  */
 
@@ -27,7 +27,7 @@ export function StatusMockup() {
       <div className="border-b border-line bg-surface-2/60 px-5 py-4">
         <div className="flex items-center justify-between">
           <span className="text-sm font-semibold tracking-tight text-ink">
-            Acme — Status
+            Acme Status
           </span>
           <span className="text-[11px] text-ink-faint">status.acme.dev</span>
         </div>

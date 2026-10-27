@@ -89,7 +89,7 @@ export default function IsItDown() {
         const code = data && "error" in data ? data.error : undefined;
         setError(
           code === "blocked_url"
-            ? "That URL can't be checked — it points to a private, loopback, or internal address."
+            ? "That URL can't be checked: it points to a private, loopback or internal address."
             : "Enter a valid http(s) URL, e.g. https://example.com.",
         );
         return;
@@ -200,8 +200,8 @@ export default function IsItDown() {
         <h2 className="mb-1.5 text-sm font-semibold text-ink">How this works</h2>
         <p>
           The check runs from OpenPing's servers, not your browser, so it reflects
-          whether the site is reachable from the public internet — a result
-          independent of your own network or DNS cache. A site can be up for us
+          whether the site is reachable from the public internet, independent
+          of your own network or DNS cache. A site can be up for us
           but down for you (or the reverse). We report only whether it responded,
           its status code, and the response time; we never return the page
           contents. If a site is only up here, the problem is likely local to
