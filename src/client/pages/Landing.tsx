@@ -9,7 +9,7 @@ import {
   Check,
   Cloud,
   Code2,
-  Coffee,
+  Database,
   Github,
   Globe,
   HeartPulse,
@@ -82,11 +82,31 @@ function LandingStyles() {
       @keyframes op-live { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
       .op-live-dot { animation: op-live 2s ease-in-out infinite; }
 
+      /* A scrollbar in OpenPing's colours. */
+      html { scrollbar-color: rgba(109,139,255,.45) var(--color-canvas); }
+      ::-webkit-scrollbar { width: 10px; }
+      ::-webkit-scrollbar-track { background: var(--color-canvas); }
+      ::-webkit-scrollbar-thumb { border: 2px solid var(--color-canvas); border-radius: 999px; background: linear-gradient(#6d8bff, #2fbf6e); }
+
+      /* How it works: each step lights in turn while its section is on screen,
+         with a dot running along the arrow to the next one. */
+      @keyframes op-flow-glow {
+        0%, 100% { border-color: var(--color-line); box-shadow: none; }
+        6%, 20% { border-color: rgba(109,139,255,.6); box-shadow: 0 0 26px rgba(109,139,255,.18); }
+        28% { border-color: var(--color-line); box-shadow: none; }
+      }
+      @keyframes op-flow-x { 0% { left: 0; opacity: 0 } 15%, 85% { opacity: 1 } 100% { left: calc(100% - 6px); opacity: 0 } }
+      @keyframes op-flow-y { 0% { top: 0; opacity: 0 } 15%, 85% { opacity: 1 } 100% { top: calc(100% - 6px); opacity: 0 } }
+      .op-flow-node { animation: op-flow-glow 6s ease-in-out infinite; }
+      .op-flow-dot { animation: op-flow-y 6s linear infinite; opacity: 0; }
+      @media (min-width: 768px) { .op-flow-dot { animation-name: op-flow-x; } }
+      .op-reveal:not(.op-in) .op-flow-node, .op-reveal:not(.op-in) .op-flow-dot { animation-play-state: paused; }
+
       @media (prefers-reduced-motion: reduce) {
         .op-reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
         .op-lift { transition: none !important; }
         .op-lift:hover { transform: none !important; }
-        .op-blob-a, .op-blob-b, .op-live-dot { animation: none !important; }
+        .op-blob-a, .op-blob-b, .op-live-dot, .op-flow-node, .op-flow-dot { animation: none !important; }
       }
     `}</style>
   );
@@ -95,6 +115,56 @@ function LandingStyles() {
 /* ------------------------------------------------------------------ *
  * Small presentational helpers (local to the landing page).
  * ------------------------------------------------------------------ */
+
+/** Ko-fi's cup with a heart, in Ko-fi's red (the page's own background around it). */
+function KofiCup({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={`text-[#ff5e5b] ${className}`}>
+      <path d="M4 6h13a4 4 0 0 1 0 8h-1.1A6 6 0 0 1 10 18H8a6 6 0 0 1-6-6V7a1 1 0 0 1 1-1Zm13 2v4a2 2 0 0 0 0-4Z" />
+      <path fill="#fff" d="M9.2 9.1c.8-.8 2.1-.8 2.9 0 .8.8.8 2.1 0 2.9L9.2 15l-2.9-3c-.8-.8-.8-2.1 0-2.9.8-.8 2.1-.8 2.9 0Z" transform="translate(.3 -.3)" />
+    </svg>
+  );
+}
+
+/** The n8builds mark beside OpenPing's logo, as on Scribe's site: the N8 icon and the name, linking home. */
+function N8buildsMark() {
+  return (
+    <a
+      href={N8BUILDS_URL}
+      target="_blank"
+      rel="noreferrer"
+      className="group inline-flex items-center gap-2 whitespace-nowrap text-sm font-semibold leading-none text-ink-muted transition-colors hover:text-ink"
+    >
+      <img src="/n8builds-icon.png" alt="" width={22} height={22} className="rounded-md ring-1 ring-white/10 transition group-hover:ring-white/25" />
+      n8builds
+    </a>
+  );
+}
+
+/** The repo on GitHub: the star count first (read at build time), then the GitHub mark and name. */
+function StarButton() {
+  const stars = __OP_STARS__;
+  return (
+    <a
+      href={GITHUB_URL}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={stars == null ? "OpenPing on GitHub" : `OpenPing on GitHub, ${stars} ${stars === 1 ? "star" : "stars"}`}
+      className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-line bg-surface text-sm font-semibold text-ink transition-colors hover:border-accent/50"
+    >
+      {stars != null && (
+        <span className="flex h-full items-center gap-1 border-r border-line px-2.5 tabular-nums text-ink-muted">
+          <Star className="size-3.5 fill-[#e3b341] text-[#e3b341]" aria-hidden />
+          {stars.toLocaleString()}
+        </span>
+      )}
+      <span className="flex items-center gap-1.5 px-2.5">
+        <Github className="size-4" aria-hidden />
+        GitHub
+      </span>
+    </a>
+  );
+}
 
 /** Scroll-reveal wrapper: fades/slides its children in as they enter view. */
 function Reveal({
@@ -227,6 +297,7 @@ export default function Landing() {
       <main>
         <Hero />
         <TrustStrip />
+        <HowItWorks />
         <ScheduleAware />
         <Features />
         <StatusPages />
@@ -250,11 +321,9 @@ export default function Landing() {
  * ------------------------------------------------------------------ */
 
 const NAV_LINKS = [
-  { href: "#schedule-aware", label: "Schedule-aware" },
+  { href: "#how-it-works", label: "How it works" },
   { href: "#features", label: "Features" },
   { href: "#status-pages", label: "Status pages" },
-  { href: "#free-tools", label: "Free tools" },
-  { href: "#comparison", label: "Compare" },
   { href: "#faq", label: "FAQ" },
 ];
 
@@ -278,15 +347,21 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
       }`}
     >
       <div
-        className={`mx-auto flex max-w-6xl items-center justify-between px-4 transition-all duration-300 sm:px-6 ${
+        className={`mx-auto flex max-w-6xl items-center justify-between gap-6 px-4 transition-all duration-300 sm:px-6 ${
           scrolled ? "h-14" : "h-16 sm:h-20"
         }`}
       >
-        <Link to="/" aria-label="OpenPing home">
-          <Logo />
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link to="/" aria-label="OpenPing home">
+            <Logo />
+          </Link>
+          <span aria-hidden="true" className="hidden h-5 w-px bg-line lg:block" />
+          <span className="hidden lg:flex">
+            <N8buildsMark />
+          </span>
+        </div>
 
-        <nav className="hidden items-center gap-7 text-sm text-ink-muted lg:flex">
+        <nav className="hidden items-center gap-6 whitespace-nowrap text-sm text-ink-muted xl:flex">
           {NAV_LINKS.map((l) => (
             <a key={l.href} href={l.href} className="transition-colors hover:text-ink">
               {l.label}
@@ -294,22 +369,25 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
           ))}
         </nav>
 
-        <div className="hidden items-center gap-1.5 md:flex">
+        <div className="hidden items-center gap-2 whitespace-nowrap md:flex">
           {KOFI_ENABLED && (
             <a
               href={KOFI_URL}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:text-ink"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-semibold text-ink transition-colors hover:border-[#ff5e5b]/60"
             >
-              <Coffee className="size-4" />
-              Support
+              <KofiCup className="size-[1.125rem]" />
+              Ko-fi
             </a>
           )}
+          <StarButton />
+          {/* Sign-in is for the install's own admin: in the bar only when there's
+              room, and always in the footer and the phone menu. */}
           <button
             type="button"
             onClick={onSignIn}
-            className="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:text-ink"
+            className="hidden rounded-lg px-2.5 py-2 text-sm font-medium text-ink-muted transition-colors hover:text-ink 2xl:inline-flex"
           >
             Sign in
           </button>
@@ -372,10 +450,20 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
                 onClick={() => setMenuOpen(false)}
                 className="inline-flex items-center gap-2 rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
               >
-                <Coffee className="size-4" />
-                Support OpenPing
+                <KofiCup className="size-[1.125rem]" />
+                Support on Ko-fi
               </a>
             )}
+            <a
+              href={N8BUILDS_URL}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setMenuOpen(false)}
+              className="inline-flex items-center gap-2 rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <img src="/n8builds-icon.png" alt="" width={18} height={18} className="rounded" />
+              More from n8builds.dev
+            </a>
             <a
               href={GITHUB_URL}
               target="_blank"
@@ -539,7 +627,96 @@ function TrustStrip() {
 }
 
 /* ------------------------------------------------------------------ *
- * 4. Schedule-aware (the differentiator), right after the hero
+ * 4. How it works: the whole loop, drawn inside the visitor's own Cloudflare
+ * account (wrangler.jsonc: the 12-minute cron; scheduler.ts: due checks,
+ * capped at 200 a run; db: D1; routes/public.ts: status pages;
+ * notifications/: alerts).
+ * ------------------------------------------------------------------ */
+
+const FLOW: { icon: LucideIcon; title: string; body: string }[] = [
+  { icon: CalendarClock, title: "Every 12 minutes", body: "A Cron Trigger wakes your Worker." },
+  { icon: Server, title: "Your Worker", body: "Checks whatever is due: HTTP, TCP, DNS, domains and heartbeats." },
+  { icon: Database, title: "Your D1 database", body: "Keeps every result, incident and the rolled-up history." },
+];
+
+function FlowArrow({ delay }: { delay: string }) {
+  return (
+    <span aria-hidden="true" className="relative flex items-center justify-center py-1 text-ink-faint md:px-1 md:py-0">
+      <span className="absolute inset-x-1/2 top-0 h-full w-0 md:inset-x-0 md:top-1/2 md:h-0 md:w-full">
+        <span
+          className="op-flow-dot absolute left-[-3px] size-1.5 rounded-full bg-accent shadow-[0_0_10px_#6d8bff] md:top-[-3px] md:left-auto"
+          style={{ animationDelay: delay }}
+        />
+      </span>
+      <ArrowRight className="size-4 rotate-90 md:rotate-0" />
+    </span>
+  );
+}
+
+function HowItWorks() {
+  return (
+    <Section id="how-it-works" className="py-14 sm:py-20">
+      <Reveal>
+        <SectionHeading
+          eyebrow="How it works"
+          title={
+            <>
+              It all runs in <span className="text-accent">your</span> Cloudflare account
+            </>
+          }
+          subtitle="There is no OpenPing server in the middle. Your Worker does the checking and your database keeps the history."
+        />
+      </Reveal>
+      <Reveal delay={100} className="mx-auto mt-12 max-w-5xl">
+        <div className="relative rounded-3xl border-2 border-dashed border-accent/35 bg-accent-soft/10 px-4 pt-10 pb-5 sm:px-7">
+          <p className="absolute -top-3.5 left-6 flex items-center gap-2 rounded-full border border-accent/40 bg-canvas px-3 py-1 text-sm font-semibold text-accent">
+            <Cloud className="size-4" aria-hidden />
+            Your Cloudflare account
+          </p>
+          <ol className="flex flex-col md:flex-row md:items-stretch">
+            {FLOW.map((step, i) => (
+              <li key={step.title} className="contents">
+                {i > 0 && <FlowArrow delay={`${i * 1.6 - 0.6}s`} />}
+                <div
+                  className="op-flow-node flex flex-1 items-start gap-3 rounded-xl border border-line bg-surface p-4"
+                  style={{ animationDelay: `${i * 1.6}s` }}
+                >
+                  <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
+                    <step.icon className="size-5" aria-hidden />
+                  </span>
+                  <span>
+                    <span className="block font-semibold text-ink">{step.title}</span>
+                    <span className="mt-0.5 block text-sm leading-relaxed text-ink-muted">{step.body}</span>
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ol>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="flex items-center gap-3 rounded-xl border border-line bg-surface/70 px-4 py-3">
+              <Globe className="size-5 shrink-0 text-up" aria-hidden />
+              <p className="text-sm text-ink-muted">
+                <span className="font-semibold text-ink">Status pages</span>, served by the same Worker
+              </p>
+            </div>
+            <div className="flex items-center gap-3 rounded-xl border border-line bg-surface/70 px-4 py-3">
+              <Bell className="size-5 shrink-0 text-degraded" aria-hidden />
+              <p className="text-sm text-ink-muted">
+                <span className="font-semibold text-ink">Alerts</span> by email, Discord, webhook or phone push
+              </p>
+            </div>
+          </div>
+        </div>
+        <p className="mt-5 text-center text-sm text-ink-muted">
+          The only things that leave your account are the checks themselves and the alerts you set up.
+        </p>
+      </Reveal>
+    </Section>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 5. Schedule-aware (the differentiator)
  * ------------------------------------------------------------------ */
 
 const SCHEDULE_POINTS = [
@@ -547,6 +724,48 @@ const SCHEDULE_POINTS = [
   "Outside those hours a monitor reads \"Scheduled off\" and stays out of the uptime math.",
   "Keep a free-tier app awake while it matters, then let it sleep.",
 ];
+
+/** A Monday at a glance: checks only between 09:00 and 18:00, the rest Scheduled off. */
+function DayTimeline() {
+  const hours = Array.from({ length: 24 }, (_, h) => h);
+  return (
+    <div className="mt-5" aria-label="Monday: checked from 09:00 to 18:00, scheduled off the rest of the day" role="img">
+      <div className="mb-2 flex items-center justify-between text-xs text-ink-faint">
+        <span className="font-semibold text-ink-muted">Monday</span>
+        <span>5 checks an hour while it's on</span>
+      </div>
+      <div className="flex h-8 gap-[2px] overflow-hidden rounded-lg">
+        {hours.map((h) => {
+          const on = h >= 9 && h < 18;
+          return (
+            <span
+              key={h}
+              className={`relative flex-1 ${
+                on
+                  ? "bg-up/25"
+                  : "bg-[repeating-linear-gradient(135deg,rgba(148,163,184,.12)_0_4px,transparent_4px_8px)]"
+              }`}
+            >
+              {on && (
+                <span className="absolute inset-x-0 top-1/2 flex -translate-y-1/2 justify-around px-[1px]">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <span key={i} className="h-3 w-[2px] rounded-full bg-up" />
+                  ))}
+                </span>
+              )}
+            </span>
+          );
+        })}
+      </div>
+      <div className="mt-1.5 flex justify-between font-mono text-[0.65rem] text-ink-faint">
+        <span>00:00</span>
+        <span className="text-up">09:00</span>
+        <span className="text-up">18:00</span>
+        <span>24:00</span>
+      </div>
+    </div>
+  );
+}
 
 function ScheduleAware() {
   return (
@@ -597,6 +816,7 @@ function ScheduleAware() {
                 </div>
               ))}
             </div>
+            <DayTimeline />
             <p className="mt-4 rounded-lg border border-scheduled/30 bg-scheduled/10 px-4 py-3 text-xs leading-relaxed text-ink-muted">
               Off-hours checks are skipped and don't count against uptime, so the
               number reflects the hours that matter.
@@ -895,6 +1115,8 @@ function QuickStart() {
  * 11. FAQ
  * ------------------------------------------------------------------ */
 
+// Ordered by what people ask before deploying. What it checks, schedules and
+// alerts each have their own section above, so they aren't repeated here.
 const FAQS: FaqItem[] = [
   {
     q: "Is OpenPing really free?",
@@ -902,27 +1124,11 @@ const FAQS: FaqItem[] = [
   },
   {
     q: "Where does my data live?",
-    a: "In your own Cloudflare account. Monitor settings, check results, incidents and history are stored in your D1 database. There is no OpenPing cloud, and nothing is sent anywhere else.",
+    a: "In your own Cloudflare account. Monitor settings, check results, incidents and history are stored in your D1 database. There is no OpenPing cloud. The only things that leave your account are the checks themselves and the alerts you set up (through Resend, Discord, a webhook or your phone).",
   },
   {
-    q: "What does schedule-aware mean?",
-    a: "You give each monitor its operating hours. Outside them it shows \"Scheduled off\" and stays out of the uptime math, so a staging app that sleeps at night doesn't page you, and a free-tier app can be kept awake only while it matters.",
-  },
-  {
-    q: "What can it monitor?",
-    a: "HTTP and API endpoints (methods, headers, body, auth, expected status, latency budgets, keyword and JSON assertions), heartbeat and cron jobs, DNS records, TCP ports and domain expiry.",
-  },
-  {
-    q: "How do alerts work?",
-    a: "Incidents open on failure and close on recovery, with flapping protection. Alerts go out by email (through Resend), Discord, signed webhooks and phone push notifications.",
-  },
-  {
-    q: "Who can sign in?",
-    a: "OpenPing has a single administrator. You sign in with GitHub or an email magic link, and only the identity you configure gets in.",
-  },
-  {
-    q: "Can I automate it?",
-    a: "Yes. A bundled admin CLI and API tokens let you create monitors, manage settings and script your whole setup.",
+    q: "How often does it check?",
+    a: "The scheduler runs every 12 minutes and checks each monitor that's due, most overdue first. That keeps a small install well inside the free plan; the schedule is one line in wrangler.jsonc if your plan allows more runs.",
   },
   {
     q: "How do I deploy it?",
@@ -936,6 +1142,14 @@ const FAQS: FaqItem[] = [
         .
       </>
     ),
+  },
+  {
+    q: "Who can sign in?",
+    a: "OpenPing has a single administrator. You sign in with GitHub or an email magic link, and only the identity you configure gets in.",
+  },
+  {
+    q: "Can I automate it?",
+    a: "Yes. A bundled admin CLI and API tokens let you create monitors, manage settings and script your whole setup.",
   },
 ];
 
@@ -1054,9 +1268,9 @@ function Footer({ onSignIn }: { onSignIn: () => void }) {
               href={KOFI_URL}
               target="_blank"
               rel="noreferrer"
-              className="op-lift inline-flex items-center gap-2 rounded-lg border border-accent/40 bg-accent-soft/40 px-4 py-2.5 text-sm font-semibold text-ink hover:bg-accent-soft/60"
+              className="op-lift inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink hover:border-[#ff5e5b]/60"
             >
-              <Coffee className="size-4 text-accent" />
+              <KofiCup className="size-[1.125rem]" />
               Support on Ko-fi
             </a>
           )}
@@ -1075,6 +1289,7 @@ function Footer({ onSignIn }: { onSignIn: () => void }) {
             rel="noreferrer"
             className="op-lift inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink hover:bg-surface-2"
           >
+            <img src="/n8builds-icon.png" alt="" width={18} height={18} className="rounded" />
             More projects
             <span className="text-ink-muted">n8builds.dev</span>
             <ArrowUpRight className="size-4 text-ink-faint" />
