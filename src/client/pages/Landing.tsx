@@ -14,7 +14,6 @@ import {
   Globe,
   HeartPulse,
   Hourglass,
-  Infinity as InfinityIcon,
   Menu,
   MessageSquare,
   Network,
@@ -26,14 +25,11 @@ import {
   Star,
   Terminal,
   Webhook,
-  Wrench,
   X,
   type LucideIcon,
 } from "lucide-react";
 import { Logo } from "../components/Logo";
-import { LiveStatusPanel } from "../components/landing/LiveStatusPanel";
 import { TOOLS } from "./tools/ToolLayout";
-import { StatusMockup } from "../components/landing/StatusMockup";
 import { PhoneMockup } from "../components/landing/PhoneMockup";
 import { ComparisonTable } from "../components/landing/ComparisonTable";
 import { FaqAccordion, type FaqItem } from "../components/landing/FaqAccordion";
@@ -66,6 +62,14 @@ function LandingStyles() {
         will-change: opacity, transform;
       }
       .op-reveal.op-in { opacity: 1; transform: none; }
+
+      /* The hero's product shot: tilted back, it settles flat as it comes in. */
+      .op-reveal.op-tilt {
+        transform: perspective(1400px) rotateX(14deg) translateY(36px) scale(.96);
+        transform-origin: 50% 0;
+        transition: opacity 1s cubic-bezier(.16,1,.3,1), transform 1.2s cubic-bezier(.16,1,.3,1);
+      }
+      .op-reveal.op-tilt.op-in { transform: none; }
 
       .op-lift { transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; }
       .op-lift:hover {
@@ -304,6 +308,7 @@ export default function Landing() {
         <Alerts />
         <FreeTools />
         <Comparison />
+        <FreePlan />
         <QuickStart />
         <FaqSection />
         <BottomCta />
@@ -375,19 +380,17 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
               href={KOFI_URL}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-semibold text-ink transition-colors hover:border-[#ff5e5b]/60"
+              className="hidden h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-semibold text-ink transition-colors hover:border-[#ff5e5b]/60 lg:inline-flex"
             >
               <KofiCup className="size-[1.125rem]" />
               Ko-fi
             </a>
           )}
           <StarButton />
-          {/* Sign-in is for the install's own admin: in the bar only when there's
-              room, and always in the footer and the phone menu. */}
           <button
             type="button"
             onClick={onSignIn}
-            className="hidden rounded-lg px-2.5 py-2 text-sm font-medium text-ink-muted transition-colors hover:text-ink 2xl:inline-flex"
+            className="rounded-lg px-2.5 py-2 text-sm font-medium text-ink-muted transition-colors hover:text-ink"
           >
             Sign in
           </button>
@@ -398,10 +401,19 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
             className="inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
           >
             <Github className="size-4" />
-            <span className="hidden sm:inline">Deploy your own</span>
-            <span className="sm:hidden">Deploy</span>
+            <span className="hidden 2xl:inline">Deploy your own</span>
+            <span className="2xl:hidden">Deploy</span>
           </a>
         </div>
+
+        {/* Phones: sign-in stays one tap away, beside the menu. */}
+        <button
+          type="button"
+          onClick={onSignIn}
+          className="ml-auto rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-surface-2 md:hidden"
+        >
+          Sign in
+        </button>
 
         <button
           type="button"
@@ -486,27 +498,23 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
  * ------------------------------------------------------------------ */
 
 const HERO_POINTS = [
-  "HTTP, heartbeat, DNS, TCP and domain-expiry checks",
-  "Public status pages with incidents and maintenance",
-  "Alerts by email, Discord, webhook or phone push",
+  "Free and MIT licensed",
+  "HTTP, TCP, DNS, domains and heartbeats",
+  "Status pages and alerts",
+  "Off-hours aware",
 ];
 
 function Hero() {
   return (
     <div className="relative overflow-hidden">
-      {/* Mesh / gradient flourish (inline styles only, no index.css edits). */}
+      {/* Glow and a faint grid behind the headline. */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10"
         style={{
           background:
-            "radial-gradient(60% 50% at 50% -5%, rgba(109,139,255,0.22), transparent 70%), radial-gradient(40% 40% at 85% 10%, rgba(47,191,110,0.10), transparent 70%)",
+            "radial-gradient(55% 45% at 50% -5%, rgba(109,139,255,0.26), transparent 70%), radial-gradient(35% 35% at 85% 20%, rgba(47,191,110,0.10), transparent 70%)",
         }}
-      />
-      <div
-        aria-hidden
-        className="op-blob-a pointer-events-none absolute -left-24 -top-24 -z-10 size-72 rounded-full opacity-50 blur-3xl"
-        style={{ background: "radial-gradient(circle, rgba(109,139,255,0.28), transparent 70%)" }}
       />
       <div
         aria-hidden
@@ -515,82 +523,97 @@ function Hero() {
           backgroundImage:
             "linear-gradient(to right, rgba(31,44,68,0.6) 1px, transparent 1px), linear-gradient(to bottom, rgba(31,44,68,0.6) 1px, transparent 1px)",
           backgroundSize: "44px 44px",
-          maskImage: "radial-gradient(70% 60% at 50% 0%, black, transparent 75%)",
-          WebkitMaskImage: "radial-gradient(70% 60% at 50% 0%, black, transparent 75%)",
+          maskImage: "radial-gradient(60% 50% at 50% 0%, black, transparent 75%)",
+          WebkitMaskImage: "radial-gradient(60% 50% at 50% 0%, black, transparent 75%)",
         }}
       />
 
-      <Section className="pt-10 pb-12 sm:pt-16 sm:pb-16">
-        <div className="grid items-center gap-10 lg:grid-cols-[1.05fr_1fr] lg:gap-14">
-          <Reveal>
-            <a
-              href={GITHUB_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1 text-xs font-medium text-ink-muted transition-colors hover:border-ink-faint/40 hover:text-ink"
+      <Section className="pt-12 pb-6 sm:pt-20">
+        <Reveal className="mx-auto max-w-3xl text-center">
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1 text-xs font-medium text-ink-muted transition-colors hover:border-ink-faint/40 hover:text-ink"
+          >
+            <span className="op-live-dot size-1.5 rounded-full bg-up" />
+            Open source, self-hosted on Cloudflare
+          </a>
+
+          <h1 className="mt-6 text-balance text-4xl font-semibold leading-[1.05] tracking-tight text-ink sm:text-6xl">
+            Uptime monitoring in <span className="text-accent">your own</span> Cloudflare account
+          </h1>
+
+          <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-ink-muted">
+            Checks, status pages and alerts that run on your Worker and keep their history in your D1
+            database. Apps that sleep by design are only checked during their hours.
+          </p>
+
+          <ul className="mt-7 flex flex-wrap justify-center gap-x-5 gap-y-2">
+            {HERO_POINTS.map((b) => (
+              <li key={b} className="flex items-center gap-2 text-sm text-ink-muted">
+                <Check className="size-4 shrink-0 text-up" />
+                {b}
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+            <PrimaryCTA href={DEPLOY_URL}>
+              <Github className="size-4" />
+              Deploy your own
+              <ArrowRight className="size-4" />
+            </PrimaryCTA>
+            <Link
+              to="/status"
+              className="op-lift inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink hover:bg-surface-2"
             >
-              <span className="size-1.5 rounded-full bg-up" />
-              Open source · MIT · Runs on Cloudflare's free plan
-            </a>
+              <Globe className="size-4" />
+              View live status
+            </Link>
+          </div>
+          <p className="mt-4 text-sm text-ink-muted">
+            Or{" "}
+            <Link to="/tools" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
+              try the free tools
+            </Link>
+            , no sign-up needed.
+          </p>
+        </Reveal>
+      </Section>
 
-            <h1 className="mt-5 text-balance text-4xl font-semibold leading-[1.08] tracking-tight text-ink sm:text-5xl xl:text-[3.5rem]">
-              Uptime monitoring in{" "}
-              <span className="text-accent">your own Cloudflare account</span>
-            </h1>
-
-            <p className="mt-5 max-w-xl text-pretty text-lg leading-relaxed text-ink-muted">
-              No subscription, and nobody else holding your data. Apps that
-              sleep by design are watched only during their hours, so a quiet
-              night never counts as an outage.
-            </p>
-
-            <ul className="mt-6 space-y-2.5">
-              {HERO_POINTS.map((b) => (
-                <li key={b} className="flex items-start gap-3 text-sm text-ink-muted">
-                  <Check className="mt-0.5 size-4 shrink-0 text-up" />
-                  <span>{b}</span>
-                </li>
-              ))}
-            </ul>
-
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <PrimaryCTA href={DEPLOY_URL}>
-                <Github className="size-4" />
-                Deploy your own
-                <ArrowRight className="size-4" />
-              </PrimaryCTA>
-              <Link
-                to="/status"
-                className="op-lift inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink hover:bg-surface-2"
-              >
-                <Globe className="size-4" />
-                View live status
-              </Link>
-            </div>
-            <p className="mt-4 flex items-center gap-2 text-sm text-ink-muted">
-              <Wrench className="size-4 shrink-0 text-ink-faint" />
-              <span>
-                Or{" "}
-                <Link to="/tools" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
-                  try the free tools
-                </Link>
-                , no sign-up needed.
+      {/* The real app, in a browser window that tilts flat as it comes into view. */}
+      <Section className="pb-14 sm:pb-20">
+        <Reveal delay={150} className="op-tilt relative mx-auto max-w-5xl">
+          <div
+            aria-hidden
+            className="absolute -inset-x-10 -top-10 bottom-10 -z-10 rounded-[3rem] opacity-70 blur-3xl"
+            style={{ background: "radial-gradient(50% 50% at 50% 40%, rgba(109,139,255,0.25), transparent 70%)" }}
+          />
+          <figure className="overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl shadow-black/50">
+            <div aria-hidden className="flex items-center gap-3 border-b border-line bg-surface-2/60 px-4 py-2.5">
+              <span className="flex gap-1.5">
+                <span className="size-2.5 rounded-full bg-[#ff5f57]" />
+                <span className="size-2.5 rounded-full bg-[#febc2e]" />
+                <span className="size-2.5 rounded-full bg-[#28c840]" />
               </span>
-            </p>
-          </Reveal>
-
-          <Reveal delay={150} className="relative">
-            <div
-              aria-hidden
-              className="absolute -inset-4 -z-10 rounded-[2rem] opacity-60 blur-2xl"
-              style={{
-                background:
-                  "radial-gradient(50% 50% at 50% 50%, rgba(109,139,255,0.18), transparent 70%)",
-              }}
+              <span className="mx-auto max-w-[60%] truncate rounded-md bg-canvas/60 px-3 py-1 font-mono text-[11px] text-ink-faint">
+                openping.your-account.workers.dev
+              </span>
+              <span className="w-[42px]" />
+            </div>
+            <img
+              src="/landing/app-overview.webp"
+              alt="The OpenPing overview: one monitor down, one degraded, and every monitor with its recent checks"
+              width={1360}
+              height={860}
+              className="block h-auto w-full"
+              loading="eager"
+              decoding="async"
             />
-            <LiveStatusPanel />
-          </Reveal>
-        </div>
+            <figcaption className="sr-only">The signed-in OpenPing overview, with demo data.</figcaption>
+          </figure>
+        </Reveal>
       </Section>
     </div>
   );
@@ -904,7 +927,26 @@ function StatusPages() {
             className="absolute -inset-4 -z-10 rounded-[2rem] opacity-50 blur-2xl"
             style={{ background: "radial-gradient(50% 50% at 50% 50%, rgba(47,191,110,0.16), transparent 70%)" }}
           />
-          <StatusMockup />
+          <figure className="overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl shadow-black/40">
+            <div aria-hidden className="flex items-center gap-3 border-b border-line bg-surface-2/60 px-4 py-2.5">
+              <span className="flex gap-1.5">
+                <span className="size-2.5 rounded-full bg-[#ff5f57]" />
+                <span className="size-2.5 rounded-full bg-[#febc2e]" />
+                <span className="size-2.5 rounded-full bg-[#28c840]" />
+              </span>
+              <span className="truncate font-mono text-[11px] text-ink-faint">status.your-domain.com</span>
+            </div>
+            <img
+              src="/landing/status-page.webp"
+              alt="An OpenPing status page: a partial outage banner, the open incident, and 90-day uptime bars for each service"
+              width={800}
+              height={620}
+              className="block h-auto w-full"
+              loading="lazy"
+              decoding="async"
+            />
+            <figcaption className="sr-only">A public OpenPing status page, with demo data.</figcaption>
+          </figure>
         </Reveal>
         <Reveal delay={120} className="order-1 lg:order-2">
           <SectionHeading
@@ -1016,7 +1058,7 @@ function FreeTools() {
  * ------------------------------------------------------------------ */
 
 const COMPARISON_STATS: { value: ReactNode; label: string; aria?: string }[] = [
-  { value: <InfinityIcon className="mx-auto size-7" aria-hidden />, label: "Monitors", aria: "Unlimited monitors" },
+  { value: "12 min", label: "Between checks" },
   { value: "$0", label: "Per month" },
   { value: <StatNumber value={90} suffix="-day" />, label: "Uptime history" },
   { value: <StatNumber value={4} />, label: "Alert channels" },
@@ -1049,8 +1091,8 @@ function Comparison() {
       </Reveal>
 
       <p className="mt-4 text-center text-xs text-ink-faint">
-        One Worker, one D1 database and a check run every 12 minutes: a typical
-        personal or small-team setup stays inside Cloudflare's free plan.
+        OpenPing sets no monitor cap; Cloudflare's per-run limits do. On the free
+        plan about 7 monitors fit at once, checked every 12 minutes (see below).
       </p>
     </Section>
   );
@@ -1065,6 +1107,66 @@ const STEPS: { n: string; title: string; body: string }[] = [
   { n: "2", title: "Sign in and add monitors", body: "Sign in with GitHub or an email link, then add checks and their schedules." },
   { n: "3", title: "Publish and get alerted", body: "Turn on a status page and connect email, Discord, webhooks or your phone." },
 ];
+
+/* ------------------------------------------------------------------ *
+ * What the Cloudflare Free plan covers (docs/FREE_TIER.md, lib/budget.ts):
+ * each cron run may make 50 D1 queries and 50 fetches, which fits about 7
+ * passing checks; the rest wait for the next run.
+ * ------------------------------------------------------------------ */
+
+const PLAN_FACTS: { value: string; label: string; body: string }[] = [
+  {
+    value: "Every 12 min",
+    label: "How often",
+    body: "A Cron Trigger runs the checks that are due, most overdue first.",
+  },
+  {
+    value: "About 7",
+    label: "Monitors on at once, Free plan",
+    body: "Cloudflare allows 50 database queries per run on Free. Anything that doesn't fit waits one run.",
+  },
+  {
+    value: "Up to 200",
+    label: "Per run on Workers Paid",
+    body: "Set WORKERS_PLAN to \"paid\" in wrangler.jsonc and redeploy.",
+  },
+];
+
+function FreePlan() {
+  return (
+    <Section id="free-plan" className="py-14 sm:py-20">
+      <Reveal>
+        <SectionHeading
+          eyebrow="Honest limits"
+          title="What Cloudflare's free plan covers"
+          subtitle="OpenPing has no monitor cap of its own. What fits is set by Cloudflare's per-run limits, so here are the real numbers."
+        />
+      </Reveal>
+      <Reveal delay={100} className="mx-auto mt-10 grid max-w-5xl gap-4 md:grid-cols-3">
+        {PLAN_FACTS.map((f) => (
+          <div key={f.label} className="op-lift rounded-card border border-line bg-surface p-6">
+            <p className="text-3xl font-semibold tracking-tight text-ink">{f.value}</p>
+            <p className="mt-1 text-sm font-semibold text-accent">{f.label}</p>
+            <p className="mt-3 text-sm leading-relaxed text-ink-muted">{f.body}</p>
+          </div>
+        ))}
+      </Reveal>
+      <Reveal delay={150}>
+        <p className="mx-auto mt-6 max-w-3xl text-center text-sm text-ink-muted">
+          Monitors outside their hours cost nothing, so business-hours apps stretch the free plan further.{" "}
+          <a
+            href={`${GITHUB_URL}/blob/main/docs/FREE_TIER.md`}
+            target="_blank"
+            rel="noreferrer"
+            className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent"
+          >
+            The full numbers and sources
+          </a>
+        </p>
+      </Reveal>
+    </Section>
+  );
+}
 
 function QuickStart() {
   return (

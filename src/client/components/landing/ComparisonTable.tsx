@@ -25,7 +25,7 @@ interface Row {
 const ROWS: Row[] = [
   {
     feature: "Number of monitors",
-    op: { kind: "text", text: "Unlimited" },
+    op: { kind: "text", text: "No monitor cap" },
     saas: { kind: "text", text: "Tiered caps (50 / 100 / 200…)" },
   },
   {
