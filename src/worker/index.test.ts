@@ -59,6 +59,17 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
     );
   });
 
+  it("lets Cloudflare Web Analytics load and report, and nothing else", async () => {
+    const res = await worker.fetch!(new Request("https://example.com/"), makeEnv(), ctx);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    const directive = (name: string) =>
+      csp.split(";").map((d) => d.trim()).find((d) => d.startsWith(`${name} `)) ?? "";
+    expect(directive("script-src")).toContain("https://static.cloudflareinsights.com");
+    expect(directive("connect-src")).toBe("connect-src 'self' https://cloudflareinsights.com");
+    // No wildcard hosts crept in.
+    expect(directive("script-src")).not.toContain("*");
+  });
+
   it("widens framing for the /embed widget ONLY (drops XFO, relaxes frame-ancestors)", async () => {
     const res = await worker.fetch!(
       new Request("https://example.com/embed"),
