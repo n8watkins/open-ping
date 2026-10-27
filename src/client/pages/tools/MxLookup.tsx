@@ -83,7 +83,7 @@ export default function MxLookup() {
             {servers.length === 0 ? (
               <Notice tone="info">
                 No MX records found for this domain
-                {result.status !== 0 ? ` — resolver returned ${result.statusText}.` : "."}{" "}
+                {result.status !== 0 ? `: the resolver returned ${result.statusText}.` : "."}{" "}
                 Mail for it may be handled directly by its A/AAAA record, or it may not
                 accept email.
               </Notice>

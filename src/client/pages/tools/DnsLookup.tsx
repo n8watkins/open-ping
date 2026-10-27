@@ -101,7 +101,7 @@ export default function DnsLookup() {
             {result.answers.length === 0 ? (
               <Notice tone="info">
                 No {queried.type} records found
-                {result.status !== 0 ? ` — resolver returned ${result.statusText}.` : "."}
+                {result.status !== 0 ? `: the resolver returned ${result.statusText}.` : "."}
               </Notice>
             ) : (
               <div className="overflow-x-auto rounded-lg border border-line">
@@ -139,7 +139,7 @@ export default function DnsLookup() {
         <p>
           Queries are sent over DNS-over-HTTPS to{" "}
           <code className="rounded bg-surface-2 px-1 py-0.5 text-xs">dns.google</code>, so they're
-          encrypted in transit and resolved fresh — bypassing any cached records on your local
+          encrypted in transit and resolved fresh, bypassing any cached records on your local
           machine. Results reflect what a public resolver currently sees, which may differ from
           a recently changed zone that hasn't fully propagated.
         </p>

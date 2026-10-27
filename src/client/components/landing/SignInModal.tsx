@@ -141,7 +141,7 @@ export function SignInModal({
         }
       `}</style>
 
-      {/* Backdrop: click to dismiss. Hidden from AT — keyboard users dismiss via
+      {/* Backdrop: click to dismiss. Hidden from AT: keyboard users dismiss via
           Escape or the labelled close button, so AT isn't shown two controls. */}
       <div
         aria-hidden="true"

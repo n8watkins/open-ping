@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
-  Activity,
   ArrowRight,
   ArrowUpRight,
   Bell,
@@ -10,19 +9,11 @@ import {
   Check,
   Cloud,
   Code2,
-  Coffee,
   Database,
-  ExternalLink,
-  Gauge,
-  GitFork,
   Github,
   Globe,
   HeartPulse,
   Hourglass,
-  Infinity as InfinityIcon,
-  KeyRound,
-  LineChart,
-  LogIn,
   Menu,
   MessageSquare,
   Network,
@@ -35,12 +26,10 @@ import {
   Terminal,
   Webhook,
   X,
-  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { Logo } from "../components/Logo";
-import { DashboardMockup } from "../components/landing/DashboardMockup";
-import { StatusMockup } from "../components/landing/StatusMockup";
+import { TOOLS } from "./tools/ToolLayout";
 import { PhoneMockup } from "../components/landing/PhoneMockup";
 import { ComparisonTable } from "../components/landing/ComparisonTable";
 import { FaqAccordion, type FaqItem } from "../components/landing/FaqAccordion";
@@ -49,6 +38,7 @@ import { useCountUp, useReveal } from "../components/landing/useReveal";
 
 const GITHUB_URL = "https://github.com/n8watkins/open-ping";
 const GITHUB_ISSUES_URL = "https://github.com/n8watkins/open-ping/issues";
+const DEPLOY_URL = `${GITHUB_URL}#deploy-your-own`;
 const N8BUILDS_URL = "https://n8builds.dev";
 const KOFI_URL = "https://ko-fi.com/n8watkins";
 const KOFI_ENABLED = !KOFI_URL.includes("REPLACE_ME");
@@ -73,6 +63,14 @@ function LandingStyles() {
       }
       .op-reveal.op-in { opacity: 1; transform: none; }
 
+      /* The hero's product shot: tilted back, it settles flat as it comes in. */
+      .op-reveal.op-tilt {
+        transform: perspective(1400px) rotateX(14deg) translateY(36px) scale(.96);
+        transform-origin: 50% 0;
+        transition: opacity 1s cubic-bezier(.16,1,.3,1), transform 1.2s cubic-bezier(.16,1,.3,1);
+      }
+      .op-reveal.op-tilt.op-in { transform: none; }
+
       .op-lift { transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; }
       .op-lift:hover {
         transform: translateY(-4px);
@@ -85,11 +83,34 @@ function LandingStyles() {
       .op-blob-a { animation: op-float-a 16s ease-in-out infinite; }
       .op-blob-b { animation: op-float-b 21s ease-in-out infinite; }
 
+      @keyframes op-live { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+      .op-live-dot { animation: op-live 2s ease-in-out infinite; }
+
+      /* A scrollbar in OpenPing's colours. */
+      html { scrollbar-color: rgba(109,139,255,.45) var(--color-canvas); }
+      ::-webkit-scrollbar { width: 10px; }
+      ::-webkit-scrollbar-track { background: var(--color-canvas); }
+      ::-webkit-scrollbar-thumb { border: 2px solid var(--color-canvas); border-radius: 999px; background: linear-gradient(#6d8bff, #2fbf6e); }
+
+      /* How it works: each step lights in turn while its section is on screen,
+         with a dot running along the arrow to the next one. */
+      @keyframes op-flow-glow {
+        0%, 100% { border-color: var(--color-line); box-shadow: none; }
+        6%, 20% { border-color: rgba(109,139,255,.6); box-shadow: 0 0 26px rgba(109,139,255,.18); }
+        28% { border-color: var(--color-line); box-shadow: none; }
+      }
+      @keyframes op-flow-x { 0% { left: 0; opacity: 0 } 15%, 85% { opacity: 1 } 100% { left: calc(100% - 6px); opacity: 0 } }
+      @keyframes op-flow-y { 0% { top: 0; opacity: 0 } 15%, 85% { opacity: 1 } 100% { top: calc(100% - 6px); opacity: 0 } }
+      .op-flow-node { animation: op-flow-glow 6s ease-in-out infinite; }
+      .op-flow-dot { animation: op-flow-y 6s linear infinite; opacity: 0; }
+      @media (min-width: 768px) { .op-flow-dot { animation-name: op-flow-x; } }
+      .op-reveal:not(.op-in) .op-flow-node, .op-reveal:not(.op-in) .op-flow-dot { animation-play-state: paused; }
+
       @media (prefers-reduced-motion: reduce) {
         .op-reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
         .op-lift { transition: none !important; }
         .op-lift:hover { transform: none !important; }
-        .op-blob-a, .op-blob-b { animation: none !important; }
+        .op-blob-a, .op-blob-b, .op-live-dot, .op-flow-node, .op-flow-dot { animation: none !important; }
       }
     `}</style>
   );
@@ -98,6 +119,56 @@ function LandingStyles() {
 /* ------------------------------------------------------------------ *
  * Small presentational helpers (local to the landing page).
  * ------------------------------------------------------------------ */
+
+/** Ko-fi's cup with a heart, in Ko-fi's red (the page's own background around it). */
+function KofiCup({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={`text-[#ff5e5b] ${className}`}>
+      <path d="M4 6h13a4 4 0 0 1 0 8h-1.1A6 6 0 0 1 10 18H8a6 6 0 0 1-6-6V7a1 1 0 0 1 1-1Zm13 2v4a2 2 0 0 0 0-4Z" />
+      <path fill="#fff" d="M9.2 9.1c.8-.8 2.1-.8 2.9 0 .8.8.8 2.1 0 2.9L9.2 15l-2.9-3c-.8-.8-.8-2.1 0-2.9.8-.8 2.1-.8 2.9 0Z" transform="translate(.3 -.3)" />
+    </svg>
+  );
+}
+
+/** The n8builds mark beside OpenPing's logo, as on Scribe's site: the N8 icon and the name, linking home. */
+function N8buildsMark() {
+  return (
+    <a
+      href={N8BUILDS_URL}
+      target="_blank"
+      rel="noreferrer"
+      className="group inline-flex items-center gap-2 whitespace-nowrap text-sm font-semibold leading-none text-ink-muted transition-colors hover:text-ink"
+    >
+      <img src="/n8builds-icon.png" alt="" width={22} height={22} className="rounded-md ring-1 ring-white/10 transition group-hover:ring-white/25" />
+      n8builds
+    </a>
+  );
+}
+
+/** The repo on GitHub: the star count first (read at build time), then the GitHub mark and name. */
+function StarButton() {
+  const stars = __OP_STARS__;
+  return (
+    <a
+      href={GITHUB_URL}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={stars == null ? "OpenPing on GitHub" : `OpenPing on GitHub, ${stars} ${stars === 1 ? "star" : "stars"}`}
+      className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-line bg-surface text-sm font-semibold text-ink transition-colors hover:border-accent/50"
+    >
+      {stars != null && (
+        <span className="flex h-full items-center gap-1 border-r border-line px-2.5 tabular-nums text-ink-muted">
+          <Star className="size-3.5 fill-[#e3b341] text-[#e3b341]" aria-hidden />
+          {stars.toLocaleString()}
+        </span>
+      )}
+      <span className="flex items-center gap-1.5 px-2.5">
+        <Github className="size-4" aria-hidden />
+        GitHub
+      </span>
+    </a>
+  );
+}
 
 /** Scroll-reveal wrapper: fades/slides its children in as they enter view. */
 function Reveal({
@@ -188,36 +259,6 @@ function SectionHeading({
   );
 }
 
-function FeatureCard({
-  icon: Icon,
-  title,
-  children,
-  accent = false,
-}: {
-  icon: LucideIcon;
-  title: string;
-  children: ReactNode;
-  accent?: boolean;
-}) {
-  return (
-    <div
-      className={`op-lift group rounded-card border bg-surface p-5 ${
-        accent ? "border-accent/40 bg-accent-soft/30" : "border-line"
-      }`}
-    >
-      <span
-        className={`grid size-10 place-items-center rounded-lg ${
-          accent ? "bg-accent text-canvas" : "bg-accent-soft text-accent"
-        }`}
-      >
-        <Icon className="size-5" />
-      </span>
-      <h3 className="mt-4 text-base font-semibold text-ink">{title}</h3>
-      <p className="mt-2 text-sm leading-relaxed text-ink-muted">{children}</p>
-    </div>
-  );
-}
-
 function PrimaryCTA({
   href,
   children,
@@ -249,7 +290,7 @@ export default function Landing() {
   const closeSignIn = useCallback(() => setSignInOpen(false), []);
 
   useEffect(() => {
-    document.title = "OpenPing — Self-hosted uptime monitoring on your Cloudflare account";
+    document.title = "OpenPing: uptime monitoring in your own Cloudflare account";
   }, []);
 
   return (
@@ -258,20 +299,18 @@ export default function Landing() {
       <Nav onSignIn={openSignIn} />
 
       <main>
-        <Hero onSignIn={openSignIn} />
+        <Hero />
         <TrustStrip />
-        <MonitoringTypes />
-        <Comparison />
-        <FreeTierBand />
-        <OpenSourceProof />
+        <HowItWorks />
         <ScheduleAware />
+        <Features />
         <StatusPages />
+        <Alerts />
+        <FreeTools />
+        <Comparison />
+        <FreePlan />
         <QuickStart />
-        <AdvancedFeatures />
-        <Integrations />
-        <MobileMonitoring />
         <FaqSection />
-        <Contribute />
         <BottomCta />
       </main>
 
@@ -283,15 +322,13 @@ export default function Landing() {
 }
 
 /* ------------------------------------------------------------------ *
- * 1. Nav — transparent at the top, solid + shrunk on scroll, hamburger on mobile
+ * 1. Nav: transparent at the top, solid + shrunk on scroll, hamburger on mobile
  * ------------------------------------------------------------------ */
 
 const NAV_LINKS = [
+  { href: "#how-it-works", label: "How it works" },
   { href: "#features", label: "Features" },
-  { href: "#schedule-aware", label: "Schedule-aware" },
-  { href: "#comparison", label: "Compare" },
   { href: "#status-pages", label: "Status pages" },
-  { href: "/tools", label: "Free tools" },
   { href: "#faq", label: "FAQ" },
 ];
 
@@ -315,15 +352,21 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
       }`}
     >
       <div
-        className={`mx-auto flex max-w-6xl items-center justify-between px-4 transition-all duration-300 sm:px-6 ${
+        className={`mx-auto flex max-w-6xl items-center justify-between gap-6 px-4 transition-all duration-300 sm:px-6 ${
           scrolled ? "h-14" : "h-16 sm:h-20"
         }`}
       >
-        <Link to="/" aria-label="OpenPing home">
-          <Logo />
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link to="/" aria-label="OpenPing home">
+            <Logo />
+          </Link>
+          <span aria-hidden="true" className="hidden h-5 w-px bg-line lg:block" />
+          <span className="hidden lg:flex">
+            <N8buildsMark />
+          </span>
+        </div>
 
-        <nav className="hidden items-center gap-7 text-sm text-ink-muted lg:flex">
+        <nav className="hidden items-center gap-6 whitespace-nowrap text-sm text-ink-muted xl:flex">
           {NAV_LINKS.map((l) => (
             <a key={l.href} href={l.href} className="transition-colors hover:text-ink">
               {l.label}
@@ -331,22 +374,23 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
           ))}
         </nav>
 
-        <div className="hidden items-center gap-1.5 md:flex">
+        <div className="hidden items-center gap-2 whitespace-nowrap md:flex">
           {KOFI_ENABLED && (
             <a
               href={KOFI_URL}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:text-ink"
+              className="hidden h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-semibold text-ink transition-colors hover:border-[#ff5e5b]/60 lg:inline-flex"
             >
-              <Coffee className="size-4" />
-              Support
+              <KofiCup className="size-[1.125rem]" />
+              Ko-fi
             </a>
           )}
+          <StarButton />
           <button
             type="button"
             onClick={onSignIn}
-            className="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:text-ink"
+            className="rounded-lg px-2.5 py-2 text-sm font-medium text-ink-muted transition-colors hover:text-ink"
           >
             Sign in
           </button>
@@ -357,10 +401,19 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
             className="inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
           >
             <Github className="size-4" />
-            <span className="hidden sm:inline">Deploy your own</span>
-            <span className="sm:hidden">Deploy</span>
+            <span className="hidden 2xl:inline">Deploy your own</span>
+            <span className="2xl:hidden">Deploy</span>
           </a>
         </div>
+
+        {/* Phones: sign-in stays one tap away, beside the menu. */}
+        <button
+          type="button"
+          onClick={onSignIn}
+          className="ml-auto rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-surface-2 md:hidden"
+        >
+          Sign in
+        </button>
 
         <button
           type="button"
@@ -409,10 +462,20 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
                 onClick={() => setMenuOpen(false)}
                 className="inline-flex items-center gap-2 rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
               >
-                <Coffee className="size-4" />
-                Support OpenPing
+                <KofiCup className="size-[1.125rem]" />
+                Support on Ko-fi
               </a>
             )}
+            <a
+              href={N8BUILDS_URL}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setMenuOpen(false)}
+              className="inline-flex items-center gap-2 rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <img src="/n8builds-icon.png" alt="" width={18} height={18} className="rounded" />
+              More from n8builds.dev
+            </a>
             <a
               href={GITHUB_URL}
               target="_blank"
@@ -431,37 +494,27 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
 }
 
 /* ------------------------------------------------------------------ *
- * 2. Hero
+ * 2. Hero: the promise, the differentiator in one line, and a live product shot
  * ------------------------------------------------------------------ */
 
-const HERO_BULLETS = [
-  "Schedule-aware checks — only watch apps when they actually matter",
-  "HTTP/API & heartbeat monitoring with keyword + JSON assertions",
-  "Incidents, status pages, and alerts to Email, Discord & Web Push",
+const HERO_POINTS = [
+  "Free and MIT licensed",
+  "HTTP, TCP, DNS, domains and heartbeats",
+  "Status pages and alerts",
+  "Off-hours aware",
 ];
 
-function Hero({ onSignIn }: { onSignIn: () => void }) {
+function Hero() {
   return (
     <div className="relative overflow-hidden">
-      {/* Mesh / gradient flourish (inline styles only — no index.css edits). */}
+      {/* Glow and a faint grid behind the headline. */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10"
         style={{
           background:
-            "radial-gradient(60% 50% at 50% -5%, rgba(109,139,255,0.22), transparent 70%), radial-gradient(40% 40% at 85% 10%, rgba(47,191,110,0.10), transparent 70%)",
+            "radial-gradient(55% 45% at 50% -5%, rgba(109,139,255,0.26), transparent 70%), radial-gradient(35% 35% at 85% 20%, rgba(47,191,110,0.10), transparent 70%)",
         }}
-      />
-      {/* Slowly drifting accent blobs (disabled under reduced motion). */}
-      <div
-        aria-hidden
-        className="op-blob-a pointer-events-none absolute -left-24 -top-24 -z-10 size-72 rounded-full opacity-50 blur-3xl"
-        style={{ background: "radial-gradient(circle, rgba(109,139,255,0.28), transparent 70%)" }}
-      />
-      <div
-        aria-hidden
-        className="op-blob-b pointer-events-none absolute -right-16 top-10 -z-10 size-72 rounded-full opacity-40 blur-3xl"
-        style={{ background: "radial-gradient(circle, rgba(47,191,110,0.18), transparent 70%)" }}
       />
       <div
         aria-hidden
@@ -470,108 +523,119 @@ function Hero({ onSignIn }: { onSignIn: () => void }) {
           backgroundImage:
             "linear-gradient(to right, rgba(31,44,68,0.6) 1px, transparent 1px), linear-gradient(to bottom, rgba(31,44,68,0.6) 1px, transparent 1px)",
           backgroundSize: "44px 44px",
-          maskImage: "radial-gradient(70% 60% at 50% 0%, black, transparent 75%)",
-          WebkitMaskImage: "radial-gradient(70% 60% at 50% 0%, black, transparent 75%)",
+          maskImage: "radial-gradient(60% 50% at 50% 0%, black, transparent 75%)",
+          WebkitMaskImage: "radial-gradient(60% 50% at 50% 0%, black, transparent 75%)",
         }}
       />
 
-      <Section className="pt-12 pb-12 sm:pt-20 sm:pb-16">
-        <div className="grid items-center gap-12 lg:grid-cols-2">
-          <Reveal>
-            <a
-              href={GITHUB_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1 text-xs font-medium text-ink-muted transition-colors hover:border-ink-faint/40 hover:text-ink"
+      <Section className="pt-12 pb-6 sm:pt-20">
+        <Reveal className="mx-auto max-w-3xl text-center">
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1 text-xs font-medium text-ink-muted transition-colors hover:border-ink-faint/40 hover:text-ink"
+          >
+            <span className="op-live-dot size-1.5 rounded-full bg-up" />
+            Open source, self-hosted on Cloudflare
+          </a>
+
+          <h1 className="mt-6 text-balance text-4xl font-semibold leading-[1.05] tracking-tight text-ink sm:text-6xl">
+            Uptime monitoring in <span className="text-accent">your own</span> Cloudflare account
+          </h1>
+
+          <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-ink-muted">
+            Checks, status pages and alerts that run on your Worker and keep their history in your D1
+            database. Apps that sleep by design are only checked during their hours.
+          </p>
+
+          <ul className="mt-7 flex flex-wrap justify-center gap-x-5 gap-y-2">
+            {HERO_POINTS.map((b) => (
+              <li key={b} className="flex items-center gap-2 text-sm text-ink-muted">
+                <Check className="size-4 shrink-0 text-up" />
+                {b}
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+            <PrimaryCTA href={DEPLOY_URL}>
+              <Github className="size-4" />
+              Deploy your own
+              <ArrowRight className="size-4" />
+            </PrimaryCTA>
+            <Link
+              to="/status"
+              className="op-lift inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink hover:bg-surface-2"
             >
-              <span className="size-1.5 rounded-full bg-up" />
-              Open source · MIT licensed · Runs on your Cloudflare account
-            </a>
+              <Globe className="size-4" />
+              View live status
+            </Link>
+          </div>
+          <p className="mt-4 text-sm text-ink-muted">
+            Or{" "}
+            <Link to="/tools" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
+              try the free tools
+            </Link>
+            , no sign-up needed.
+          </p>
+        </Reveal>
+      </Section>
 
-            <h1 className="mt-5 text-4xl font-semibold leading-[1.08] tracking-tight text-ink sm:text-5xl lg:text-6xl">
-              Uptime monitoring that runs{" "}
-              <span className="text-accent">entirely in your own cloud</span>
-            </h1>
-
-            <p className="mt-5 max-w-xl text-lg leading-relaxed text-ink-muted">
-              OpenPing is a self-hosted uptime monitor and public status page that
-              deploys to <span className="text-ink">your</span> Cloudflare account —
-              no SaaS, no subscription, no third party holding your data. Fits
-              comfortably inside Cloudflare's free tier.
-            </p>
-
-            <ul className="mt-7 space-y-3">
-              {HERO_BULLETS.map((b) => (
-                <li key={b} className="flex items-start gap-3 text-sm text-ink-muted">
-                  <Check className="mt-0.5 size-4 shrink-0 text-up" />
-                  <span>{b}</span>
-                </li>
-              ))}
-            </ul>
-
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <PrimaryCTA href={GITHUB_URL}>
-                <Github className="size-4" />
-                Deploy your own
-                <ArrowRight className="size-4" />
-              </PrimaryCTA>
-              <button
-                type="button"
-                onClick={onSignIn}
-                className="op-lift inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink hover:bg-surface-2"
-              >
-                <LogIn className="size-4" />
-                Sign in
-              </button>
-              <Link
-                to="/status"
-                className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold text-ink-muted transition-colors hover:text-ink"
-              >
-                <Globe className="size-4" />
-                View live status
-              </Link>
+      {/* The real app, in a browser window that tilts flat as it comes into view. */}
+      <Section className="pb-14 sm:pb-20">
+        <Reveal delay={150} className="op-tilt relative mx-auto max-w-5xl">
+          <div
+            aria-hidden
+            className="absolute -inset-x-10 -top-10 bottom-10 -z-10 rounded-[3rem] opacity-70 blur-3xl"
+            style={{ background: "radial-gradient(50% 50% at 50% 40%, rgba(109,139,255,0.25), transparent 70%)" }}
+          />
+          <figure className="overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl shadow-black/50">
+            <div aria-hidden className="flex items-center gap-3 border-b border-line bg-surface-2/60 px-4 py-2.5">
+              <span className="flex gap-1.5">
+                <span className="size-2.5 rounded-full bg-[#ff5f57]" />
+                <span className="size-2.5 rounded-full bg-[#febc2e]" />
+                <span className="size-2.5 rounded-full bg-[#28c840]" />
+              </span>
+              <span className="mx-auto max-w-[60%] truncate rounded-md bg-canvas/60 px-3 py-1 font-mono text-[11px] text-ink-faint">
+                openping.your-account.workers.dev
+              </span>
+              <span className="w-[42px]" />
             </div>
-
-            <p className="mt-4 text-xs text-ink-faint">
-              Worker + D1 + a cron trigger. Deploy with Wrangler in a few minutes.
-            </p>
-          </Reveal>
-
-          <Reveal delay={150} className="relative">
-            <div
-              aria-hidden
-              className="absolute -inset-4 -z-10 rounded-[2rem] opacity-60 blur-2xl"
-              style={{
-                background:
-                  "radial-gradient(50% 50% at 50% 50%, rgba(109,139,255,0.18), transparent 70%)",
-              }}
+            <img
+              src="/landing/app-overview.webp"
+              alt="The OpenPing overview: one monitor down, one degraded, and every monitor with its recent checks"
+              width={1360}
+              height={860}
+              className="block h-auto w-full"
+              loading="eager"
+              decoding="async"
             />
-            <DashboardMockup />
-          </Reveal>
-        </div>
+            <figcaption className="sr-only">The signed-in OpenPing overview, with demo data.</figcaption>
+          </figure>
+        </Reveal>
       </Section>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 3. Trust strip (honest — no fabricated metrics)
+ * 3. Trust strip (honest: no fabricated metrics)
  * ------------------------------------------------------------------ */
 
 const TRUST_ITEMS: { icon: LucideIcon; label: string }[] = [
-  { icon: ShieldCheck, label: "100% your data" },
-  { icon: Cloud, label: "Cloudflare free tier" },
-  { icon: Code2, label: "MIT licensed" },
+  { icon: ShieldCheck, label: "Your data stays in your account" },
+  { icon: Cloud, label: "Fits Cloudflare's free plan" },
   { icon: Server, label: "No central service" },
-  { icon: Github, label: "Open source" },
+  { icon: Code2, label: "MIT licensed" },
 ];
 
 function TrustStrip() {
   return (
-    <Section className="pb-12">
+    <Section className="pb-10">
       <Reveal>
-        <div className="rounded-card border border-line bg-surface/50 px-6 py-5">
-          <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-4 text-sm text-ink-muted">
+        <div className="rounded-card border border-line bg-surface/50 px-6 py-4">
+          <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm text-ink-muted">
             {TRUST_ITEMS.map(({ icon: Icon, label }) => (
               <span key={label} className="inline-flex items-center gap-2">
                 <Icon className="size-4 text-accent" />
@@ -586,325 +650,162 @@ function TrustStrip() {
 }
 
 /* ------------------------------------------------------------------ *
- * 4. Monitoring types grid (9 cards)
+ * 4. How it works: the whole loop, drawn inside the visitor's own Cloudflare
+ * account (wrangler.jsonc: the 12-minute cron; scheduler.ts: due checks,
+ * capped at 200 a run; db: D1; routes/public.ts: status pages;
+ * notifications/: alerts).
  * ------------------------------------------------------------------ */
 
-function MonitoringTypes() {
-  return (
-    <Section id="features" className="py-16 sm:py-20">
-      <Reveal>
-        <SectionHeading
-          eyebrow="Monitoring"
-          title="Watch everything that matters"
-          subtitle="From public endpoints to background cron jobs, OpenPing checks the things your users depend on — and tells you the moment they break."
-        />
-      </Reveal>
-
-      <Reveal delay={120} className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <FeatureCard icon={CalendarClock} title="Schedule-aware checks" accent>
-          The OpenPing signature. Check (and optionally keep awake) apps only
-          during the operating hours that matter. Outside them they read
-          "Scheduled off" and never count against uptime.
-        </FeatureCard>
-        <FeatureCard icon={Globe} title="HTTP & API monitoring">
-          Custom methods, headers, request body, and auth. Assert on expected
-          status codes, response-time thresholds, keywords, and JSON values.
-        </FeatureCard>
-        <FeatureCard icon={HeartPulse} title="Heartbeat / cron">
-          Give any scheduled job a heartbeat URL to ping. If the expected ping
-          doesn't arrive in time, OpenPing opens an incident.
-        </FeatureCard>
-        <FeatureCard icon={Network} title="DNS record monitoring">
-          Resolve A, AAAA, CNAME, MX, or TXT records and alert on failures.
-          Optionally assert that the resolved value equals or contains what you
-          expect.
-        </FeatureCard>
-        <FeatureCard icon={Plug} title="TCP port monitoring">
-          Open a TCP connection to any host and port to confirm a service is
-          accepting connections — databases, brokers, and other non-HTTP
-          services.
-        </FeatureCard>
-        <FeatureCard icon={Hourglass} title="Domain-expiry monitoring">
-          Track a domain's registration expiry via RDAP and get a heads-up as the
-          renewal date approaches, so a domain never lapses by surprise.
-        </FeatureCard>
-        <FeatureCard icon={Gauge} title="Response-time thresholds">
-          Flag a monitor as degraded before it goes fully down by setting
-          warning and critical latency budgets.
-        </FeatureCard>
-        <FeatureCard icon={PauseCircle} title='Distinct "Suspended" status'>
-          OpenPing detects when a host has suspended an app (e.g. Render's
-          free tier) and shows it distinctly from a hard outage.
-        </FeatureCard>
-        <FeatureCard icon={Activity} title="Keyword & JSON assertions">
-          A 200 isn't always healthy. Require a body to contain a phrase, or a
-          JSON field to equal a value, before a check passes.
-        </FeatureCard>
-      </Reveal>
-    </Section>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * 5. Comparison — OpenPing vs hosted uptime SaaS
- * ------------------------------------------------------------------ */
-
-const COMPARISON_STATS: { value: ReactNode; label: string; aria?: string }[] = [
-  {
-    value: <InfinityIcon className="mx-auto size-7" aria-hidden />,
-    label: "Monitors",
-    aria: "Unlimited monitors",
-  },
-  { value: "$0", label: "Per month" },
-  { value: <StatNumber value={90} suffix="-day" />, label: "Uptime history" },
-  { value: <StatNumber value={4} />, label: "Alert channels" },
+const FLOW: { icon: LucideIcon; title: string; body: string }[] = [
+  { icon: CalendarClock, title: "Every 12 minutes", body: "A Cron Trigger wakes your Worker." },
+  { icon: Server, title: "Your Worker", body: "Checks whatever is due: HTTP, TCP, DNS, domains and heartbeats." },
+  { icon: Database, title: "Your D1 database", body: "Keeps every result, incident and the rolled-up history." },
 ];
 
-function Comparison() {
+function FlowArrow({ delay }: { delay: string }) {
   return (
-    <Section id="comparison" className="py-16 sm:py-20">
-      <Reveal>
-        <SectionHeading
-          eyebrow="OpenPing vs hosted SaaS"
-          title="Essentially unlimited monitoring"
-          subtitle="Hosted uptime tools cap your monitors, charge more for faster checks, and keep your data on their servers. OpenPing runs on your own Cloudflare account — so the limits, the bill, and the data are yours."
+    <span aria-hidden="true" className="relative flex items-center justify-center py-1 text-ink-faint md:px-1 md:py-0">
+      <span className="absolute inset-x-1/2 top-0 h-full w-0 md:inset-x-0 md:top-1/2 md:h-0 md:w-full">
+        <span
+          className="op-flow-dot absolute left-[-3px] size-1.5 rounded-full bg-accent shadow-[0_0_10px_#6d8bff] md:top-[-3px] md:left-auto"
+          style={{ animationDelay: delay }}
         />
-      </Reveal>
-
-      <Reveal delay={100} className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {COMPARISON_STATS.map((s, i) => (
-          <div
-            key={i}
-            className="rounded-card border border-line bg-surface px-4 py-5 text-center"
-          >
-            <div
-              className="text-2xl font-semibold text-accent sm:text-3xl"
-              aria-label={s.aria}
-            >
-              {s.value}
-            </div>
-            <div className="mt-1 text-xs font-medium uppercase tracking-wide text-ink-faint">
-              {s.label}
-            </div>
-          </div>
-        ))}
-      </Reveal>
-
-      <Reveal delay={160} className="mt-8">
-        <ComparisonTable />
-      </Reveal>
-
-      <p className="mt-4 text-center text-xs text-ink-faint">
-        Comparison reflects common hosted-uptime plan tiers; OpenPing claims only
-        features it actually ships.
-      </p>
-    </Section>
+      </span>
+      <ArrowRight className="size-4 rotate-90 md:rotate-0" />
+    </span>
   );
 }
 
-/* ------------------------------------------------------------------ *
- * 6. Free-tier / scale band
- * ------------------------------------------------------------------ */
-
-function FreeTierBand() {
+function HowItWorks() {
   return (
-    <Section className="py-4">
+    <Section id="how-it-works" className="py-14 sm:py-20">
       <Reveal>
-        <div className="relative overflow-hidden rounded-card border border-accent/30 bg-accent-soft/40 px-6 py-12 sm:px-12">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 -z-10 opacity-60"
-            style={{
-              background:
-                "radial-gradient(50% 120% at 100% 0%, rgba(109,139,255,0.20), transparent 70%)",
-            }}
-          />
-          <div className="grid items-center gap-8 lg:grid-cols-[1.4fr_1fr]">
-            <div>
-              <h2 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
-                Built to run for free
-              </h2>
-              <p className="mt-3 max-w-xl text-base leading-relaxed text-ink-muted">
-                OpenPing is a single Cloudflare Worker backed by D1 and a cron
-                trigger that runs every 12 minutes. For typical personal and
-                small-team setups, that fits inside Cloudflare's free tier — so
-                your monitoring bill stays at $0.
-              </p>
-              <div className="mt-6 flex flex-wrap gap-3">
-                <PrimaryCTA href={GITHUB_URL}>
-                  <Github className="size-4" />
-                  Deploy your own
-                </PrimaryCTA>
-                <a
-                  href={GITHUB_URL}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="op-lift inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink hover:bg-surface-2"
-                >
-                  Read the docs
-                  <ExternalLink className="size-4" />
-                </a>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { k: "Worker", v: "1 endpoint" },
-                { k: "Database", v: "D1 (SQLite)" },
-                { k: "Schedule", v: "cron / 12 min" },
-                { k: "Monthly cost", v: "$0" },
-              ].map((s) => (
+        <SectionHeading
+          eyebrow="How it works"
+          title={
+            <>
+              It all runs in <span className="text-accent">your</span> Cloudflare account
+            </>
+          }
+          subtitle="There is no OpenPing server in the middle. Your Worker does the checking and your database keeps the history."
+        />
+      </Reveal>
+      <Reveal delay={100} className="mx-auto mt-12 max-w-5xl">
+        <div className="relative rounded-3xl border-2 border-dashed border-accent/35 bg-accent-soft/10 px-4 pt-10 pb-5 sm:px-7">
+          <p className="absolute -top-3.5 left-6 flex items-center gap-2 rounded-full border border-accent/40 bg-canvas px-3 py-1 text-sm font-semibold text-accent">
+            <Cloud className="size-4" aria-hidden />
+            Your Cloudflare account
+          </p>
+          <ol className="flex flex-col md:flex-row md:items-stretch">
+            {FLOW.map((step, i) => (
+              <li key={step.title} className="contents">
+                {i > 0 && <FlowArrow delay={`${i * 1.6 - 0.6}s`} />}
                 <div
-                  key={s.k}
-                  className="rounded-card border border-line bg-surface/70 p-4"
+                  className="op-flow-node flex flex-1 items-start gap-3 rounded-xl border border-line bg-surface p-4"
+                  style={{ animationDelay: `${i * 1.6}s` }}
                 >
-                  <div className="text-xs font-medium uppercase tracking-wide text-ink-faint">
-                    {s.k}
-                  </div>
-                  <div className="mt-1 text-lg font-semibold text-ink">{s.v}</div>
+                  <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
+                    <step.icon className="size-5" aria-hidden />
+                  </span>
+                  <span>
+                    <span className="block font-semibold text-ink">{step.title}</span>
+                    <span className="mt-0.5 block text-sm leading-relaxed text-ink-muted">{step.body}</span>
+                  </span>
                 </div>
-              ))}
+              </li>
+            ))}
+          </ol>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="flex items-center gap-3 rounded-xl border border-line bg-surface/70 px-4 py-3">
+              <Globe className="size-5 shrink-0 text-up" aria-hidden />
+              <p className="text-sm text-ink-muted">
+                <span className="font-semibold text-ink">Status pages</span>, served by the same Worker
+              </p>
+            </div>
+            <div className="flex items-center gap-3 rounded-xl border border-line bg-surface/70 px-4 py-3">
+              <Bell className="size-5 shrink-0 text-degraded" aria-hidden />
+              <p className="text-sm text-ink-muted">
+                <span className="font-semibold text-ink">Alerts</span> by email, Discord, webhook or phone push
+              </p>
             </div>
           </div>
         </div>
-      </Reveal>
-    </Section>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * 7. Open-source proof
- * ------------------------------------------------------------------ */
-
-const PROOF_POINTS: { icon: LucideIcon; title: string; body: string }[] = [
-  {
-    icon: Server,
-    title: "No central service",
-    body: "There's no OpenPing cloud. Your install talks to nobody but the endpoints you ask it to check. Nothing phones home.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Your data, your account",
-    body: "Checks, incidents, and history live in your own D1 database inside your Cloudflare account — not a vendor's multi-tenant store.",
-  },
-  {
-    icon: Code2,
-    title: "Auditable & MIT licensed",
-    body: "Every line is open for you to read, fork, and change. Use it commercially, modify it freely — no strings attached.",
-  },
-];
-
-function OpenSourceProof() {
-  return (
-    <Section className="py-16 sm:py-20">
-      <Reveal>
-        <SectionHeading
-          eyebrow="Why self-host"
-          title="Honest monitoring, owned by you"
-          subtitle="No fake star counts here. The pitch is simpler: you run the code, you hold the data, and you can verify every claim on this page in the repo."
-        />
-      </Reveal>
-
-      <Reveal delay={120} className="mt-12 grid gap-4 md:grid-cols-3">
-        {PROOF_POINTS.map(({ icon: Icon, title, body }) => (
-          <div
-            key={title}
-            className="op-lift rounded-card border border-line bg-surface p-6"
-          >
-            <span className="grid size-10 place-items-center rounded-lg bg-accent-soft text-accent">
-              <Icon className="size-5" />
-            </span>
-            <h3 className="mt-4 text-base font-semibold text-ink">{title}</h3>
-            <p className="mt-2 text-sm leading-relaxed text-ink-muted">{body}</p>
-          </div>
-        ))}
-      </Reveal>
-
-      <Reveal delay={180} className="mt-6 flex flex-col items-center justify-between gap-4 rounded-card border border-line bg-surface/60 px-6 py-5 sm:flex-row">
-        <p className="text-sm text-ink-muted">
-          Read the source, open an issue, or send a pull request.
+        <p className="mt-5 text-center text-sm text-ink-muted">
+          The only things that leave your account are the checks themselves and the alerts you set up.
         </p>
-        <a
-          href={GITHUB_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="op-lift inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink hover:bg-surface-2"
-        >
-          <Github className="size-4" />
-          View on GitHub
-          <ExternalLink className="size-3.5 text-ink-faint" />
-        </a>
       </Reveal>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 8. Schedule-aware deep-dive (the differentiator)
+ * 5. Schedule-aware (the differentiator)
  * ------------------------------------------------------------------ */
 
 const SCHEDULE_POINTS = [
-  "Define operating hours per monitor — always-on, business hours, or a custom schedule.",
-  "Outside those hours a monitor reads \"Scheduled off\" and is excluded from uptime math.",
-  "Optionally keep free-tier apps warm during hours that matter, then let them sleep.",
-  "No more 3am pages for a staging box that's supposed to be asleep.",
+  "Always on, business hours, or your own weekly schedule, per monitor.",
+  "Outside those hours a monitor reads \"Scheduled off\" and stays out of the uptime math.",
+  "Keep a free-tier app awake while it matters, then let it sleep.",
 ];
+
+/** A Monday at a glance: checks only between 09:00 and 18:00, the rest Scheduled off. */
+function DayTimeline() {
+  const hours = Array.from({ length: 24 }, (_, h) => h);
+  return (
+    <div className="mt-5" aria-label="Monday: checked from 09:00 to 18:00, scheduled off the rest of the day" role="img">
+      <div className="mb-2 flex items-center justify-between text-xs text-ink-faint">
+        <span className="font-semibold text-ink-muted">Monday</span>
+        <span>5 checks an hour while it's on</span>
+      </div>
+      <div className="flex h-8 gap-[2px] overflow-hidden rounded-lg">
+        {hours.map((h) => {
+          const on = h >= 9 && h < 18;
+          return (
+            <span
+              key={h}
+              className={`relative flex-1 ${
+                on
+                  ? "bg-up/25"
+                  : "bg-[repeating-linear-gradient(135deg,rgba(148,163,184,.12)_0_4px,transparent_4px_8px)]"
+              }`}
+            >
+              {on && (
+                <span className="absolute inset-x-0 top-1/2 flex -translate-y-1/2 justify-around px-[1px]">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <span key={i} className="h-3 w-[2px] rounded-full bg-up" />
+                  ))}
+                </span>
+              )}
+            </span>
+          );
+        })}
+      </div>
+      <div className="mt-1.5 flex justify-between font-mono text-[0.65rem] text-ink-faint">
+        <span>00:00</span>
+        <span className="text-up">09:00</span>
+        <span className="text-up">18:00</span>
+        <span>24:00</span>
+      </div>
+    </div>
+  );
+}
 
 function ScheduleAware() {
   return (
-    <Section id="schedule-aware" className="py-16 sm:py-20">
-      <div className="grid items-center gap-12 lg:grid-cols-2">
-        <Reveal className="order-2 lg:order-1">
-          <div className="rounded-card border border-line bg-surface p-6">
-            <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-ink">
-              <CalendarClock className="size-4 text-accent" />
-              staging.acme.dev · schedule
-            </div>
-            <div className="space-y-2">
-              {[
-                { d: "Mon–Fri", h: "09:00 – 18:00", on: true },
-                { d: "Saturday", h: "Scheduled off", on: false },
-                { d: "Sunday", h: "Scheduled off", on: false },
-              ].map((r) => (
-                <div
-                  key={r.d}
-                  className="flex items-center justify-between rounded-lg border border-line bg-surface-2/40 px-4 py-3 text-sm"
-                >
-                  <span className="font-medium text-ink">{r.d}</span>
-                  <span
-                    className={`inline-flex items-center gap-2 ${
-                      r.on ? "text-up" : "text-scheduled"
-                    }`}
-                  >
-                    <span
-                      className={`size-1.5 rounded-full ${
-                        r.on ? "bg-up" : "bg-scheduled"
-                      }`}
-                    />
-                    {r.h}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <p className="mt-4 rounded-lg border border-scheduled/30 bg-scheduled/10 px-4 py-3 text-xs text-ink-muted">
-              Off-hours checks are skipped and don't count against uptime — your
-              numbers reflect the hours that actually matter.
-            </p>
-          </div>
-        </Reveal>
-
-        <Reveal delay={120} className="order-1 lg:order-2">
+    <Section id="schedule-aware" className="py-14 sm:py-20">
+      <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-14">
+        <Reveal>
           <SectionHeading
             align="left"
-            eyebrow="The differentiator"
+            eyebrow="Schedule-aware"
             title={
               <>
-                Monitor on <span className="text-accent">your</span> schedule,
-                not the clock's
+                Monitor on <span className="text-accent">your</span> schedule, not the clock's
               </>
             }
-            subtitle="Most monitors assume everything runs 24/7. Real apps don't. OpenPing checks each service only during the hours you choose — the feature you won't find in the usual uptime tools."
+            subtitle="Free hosting sleeps by design, so a plain monitor reports an outage every night or keeps the app awake around the clock. OpenPing checks each service only during the hours you choose."
           />
-          <ul className="mt-7 space-y-3">
+          <ul className="mt-6 space-y-3">
             {SCHEDULE_POINTS.map((p) => (
               <li key={p} className="flex items-start gap-3 text-sm text-ink-muted">
                 <Check className="mt-0.5 size-4 shrink-0 text-up" />
@@ -913,61 +814,157 @@ function ScheduleAware() {
             ))}
           </ul>
         </Reveal>
+
+        <Reveal delay={120}>
+          <div className="rounded-card border border-line bg-surface p-5 sm:p-6">
+            <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-ink">
+              <CalendarClock className="size-4 text-accent" />
+              demo-app.onrender.com · schedule
+            </div>
+            <div className="space-y-2">
+              {[
+                { d: "Mon to Fri", h: "09:00 to 18:00", on: true },
+                { d: "Saturday", h: "Scheduled off", on: false },
+                { d: "Sunday", h: "Scheduled off", on: false },
+              ].map((r) => (
+                <div
+                  key={r.d}
+                  className="flex items-center justify-between rounded-lg border border-line bg-surface-2/40 px-4 py-3 text-sm"
+                >
+                  <span className="font-medium text-ink">{r.d}</span>
+                  <span className={`inline-flex items-center gap-2 ${r.on ? "text-up" : "text-scheduled"}`}>
+                    <span className={`size-1.5 rounded-full ${r.on ? "bg-up" : "bg-scheduled"}`} />
+                    {r.h}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <DayTimeline />
+            <p className="mt-4 rounded-lg border border-scheduled/30 bg-scheduled/10 px-4 py-3 text-xs leading-relaxed text-ink-muted">
+              Off-hours checks are skipped and don't count against uptime, so the
+              number reflects the hours that matter.
+            </p>
+          </div>
+        </Reveal>
       </div>
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * 9. Status pages section (live demo CTA)
+ * 5. Features: what it checks, then what it does with the results
+ * ------------------------------------------------------------------ */
+
+const CHECKS: { icon: LucideIcon; title: string; body: string }[] = [
+  { icon: Globe, title: "HTTP and API", body: "Methods, headers, body and auth; expected status, latency budgets, keyword and JSON assertions." },
+  { icon: HeartPulse, title: "Heartbeat and cron", body: "Give a job a URL to ping. A missed ping opens an incident." },
+  { icon: Network, title: "DNS records", body: "A, AAAA, CNAME, MX or TXT, and what they should resolve to." },
+  { icon: Plug, title: "TCP ports", body: "Databases, brokers and anything else that isn't HTTP." },
+  { icon: Hourglass, title: "Domain expiry", body: "A heads-up before a registration lapses, read from RDAP." },
+  { icon: PauseCircle, title: "Suspended apps", body: "A host that suspended an app shows as Suspended, apart from a crash." },
+];
+
+const INTERNALS = [
+  "Incidents open and close on their own, with flapping protection",
+  "MTBF and MTTR per monitor",
+  "History rolls up so storage never grows unbounded",
+  "Monitor secrets encrypted with AES-GCM",
+  "Single admin: GitHub or email magic-link sign-in",
+  "Admin CLI and API tokens",
+];
+
+function Features() {
+  return (
+    <Section id="features" className="py-14 sm:py-20">
+      <Reveal>
+        <SectionHeading
+          eyebrow="Monitoring"
+          title="Checks for everything your users depend on"
+          subtitle="From public endpoints to background jobs, OpenPing tells you the moment one breaks."
+        />
+      </Reveal>
+
+      <Reveal delay={100} className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {CHECKS.map(({ icon: Icon, title, body }) => (
+          <div key={title} className="op-lift flex gap-4 rounded-card border border-line bg-surface p-5">
+            <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
+              <Icon className="size-5" />
+            </span>
+            <div className="min-w-0">
+              <h3 className="text-base font-semibold text-ink">{title}</h3>
+              <p className="mt-1 text-sm leading-relaxed text-ink-muted">{body}</p>
+            </div>
+          </div>
+        ))}
+      </Reveal>
+
+      <Reveal delay={160} className="mt-4 rounded-card border border-line bg-surface/60 px-5 py-5 sm:px-6">
+        <p className="text-xs font-semibold uppercase tracking-widest text-ink-faint">Under the hood</p>
+        <ul className="mt-3 grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+          {INTERNALS.map((p) => (
+            <li key={p} className="flex items-start gap-2.5 text-sm text-ink-muted">
+              <Check className="mt-0.5 size-4 shrink-0 text-up" />
+              <span>{p}</span>
+            </li>
+          ))}
+        </ul>
+      </Reveal>
+    </Section>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 6. Status pages (live demo CTA)
  * ------------------------------------------------------------------ */
 
 function StatusPages() {
   return (
-    <Section id="status-pages" className="py-16 sm:py-20">
-      <div className="grid items-center gap-12 lg:grid-cols-2">
-        <Reveal>
+    <Section id="status-pages" className="py-14 sm:py-20">
+      <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-14">
+        <Reveal className="order-2 lg:order-1 relative">
+          <div
+            aria-hidden
+            className="absolute -inset-4 -z-10 rounded-[2rem] opacity-50 blur-2xl"
+            style={{ background: "radial-gradient(50% 50% at 50% 50%, rgba(47,191,110,0.16), transparent 70%)" }}
+          />
+          <figure className="overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl shadow-black/40">
+            <div aria-hidden className="flex items-center gap-3 border-b border-line bg-surface-2/60 px-4 py-2.5">
+              <span className="flex gap-1.5">
+                <span className="size-2.5 rounded-full bg-[#ff5f57]" />
+                <span className="size-2.5 rounded-full bg-[#febc2e]" />
+                <span className="size-2.5 rounded-full bg-[#28c840]" />
+              </span>
+              <span className="truncate font-mono text-[11px] text-ink-faint">status.your-domain.com</span>
+            </div>
+            <img
+              src="/landing/status-page.webp"
+              alt="An OpenPing status page: a partial outage banner, the open incident, and 90-day uptime bars for each service"
+              width={800}
+              height={620}
+              className="block h-auto w-full"
+              loading="lazy"
+              decoding="async"
+            />
+            <figcaption className="sr-only">A public OpenPing status page, with demo data.</figcaption>
+          </figure>
+        </Reveal>
+        <Reveal delay={120} className="order-1 lg:order-2">
           <SectionHeading
             align="left"
-            eyebrow="Public status pages"
-            title="A status page your users will actually trust"
-            subtitle="Publish a polished, configurable status page with uptime bars, incident history, and scheduled-maintenance notices. Light or dark theme, your accent color, your logo."
+            eyebrow="Status pages"
+            title="A status page your users will trust"
+            subtitle="90-day uptime bars, incident history and maintenance notices, in your colors and with your logo. Embed it as a widget or an SVG badge."
           />
-          <ul className="mt-7 space-y-3">
-            {[
-              "Group services, show or hide per-monitor uptime.",
-              "90-day uptime bars and recent incident timeline.",
-              "Custom accent, logo, footer, and theme.",
-              "Served from your Worker — no extra hosting.",
-            ].map((p) => (
-              <li key={p} className="flex items-start gap-3 text-sm text-ink-muted">
-                <Check className="mt-0.5 size-4 shrink-0 text-up" />
-                <span>{p}</span>
-              </li>
-            ))}
-          </ul>
-          <div className="mt-8">
+          <div className="mt-7 flex flex-wrap gap-3">
             <Link
               to="/status"
               className="op-lift inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover"
             >
               <Globe className="size-4" />
-              View the live demo status page
+              See a live status page
               <ArrowRight className="size-4" />
             </Link>
           </div>
-        </Reveal>
-
-        <Reveal delay={120} className="relative">
-          <div
-            aria-hidden
-            className="absolute -inset-4 -z-10 rounded-[2rem] opacity-50 blur-2xl"
-            style={{
-              background:
-                "radial-gradient(50% 50% at 50% 50%, rgba(47,191,110,0.16), transparent 70%)",
-            }}
-          />
-          <StatusMockup />
         </Reveal>
       </div>
     </Section>
@@ -975,53 +972,225 @@ function StatusPages() {
 }
 
 /* ------------------------------------------------------------------ *
- * 10. Quick start ("start in seconds")
+ * 7. Alerts, on any channel and on your phone
  * ------------------------------------------------------------------ */
 
-const STEPS: { n: string; title: string; body: string }[] = [
-  {
-    n: "1",
-    title: "Clone & deploy",
-    body: "Clone the repo and run Wrangler. It provisions a Worker, a D1 database, and a cron trigger in your own Cloudflare account.",
-  },
-  {
-    n: "2",
-    title: "Sign in & add monitors",
-    body: "Sign in with GitHub OAuth or an email magic link, then add HTTP or heartbeat monitors with the checks and schedules you need.",
-  },
-  {
-    n: "3",
-    title: "Publish & get alerted",
-    body: "Flip on your public status page and connect Email, Discord, webhooks, or mobile Web Push. You're monitoring in minutes.",
-  },
+const CHANNELS: { icon: LucideIcon; title: string; body: string }[] = [
+  { icon: Bell, title: "Email", body: "Delivered through Resend" },
+  { icon: MessageSquare, title: "Discord", body: "Straight to your channel" },
+  { icon: Webhook, title: "Signed webhooks", body: "To your own endpoints" },
+  { icon: Smartphone, title: "Phone push", body: "An installable Android app" },
 ];
 
-function QuickStart() {
+function Alerts() {
   return (
-    <Section className="py-16 sm:py-20">
+    <Section id="alerts" className="py-14 sm:py-20">
+      <div className="grid items-center gap-10 lg:grid-cols-[1.2fr_1fr] lg:gap-14">
+        <Reveal>
+          <SectionHeading
+            align="left"
+            eyebrow="Alerts"
+            title="Know the moment something breaks"
+            subtitle="Route alerts to one channel or all of them. Install the dashboard on your phone for push notifications, no app store needed."
+          />
+          <ul className="mt-7 grid gap-3 sm:grid-cols-2">
+            {CHANNELS.map(({ icon: Icon, title, body }) => (
+              <li key={title} className="flex items-center gap-3 rounded-card border border-line bg-surface p-4">
+                <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
+                  <Icon className="size-5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-ink">{title}</span>
+                  <span className="block text-xs text-ink-muted">{body}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Reveal>
+        <Reveal delay={120} className="flex justify-center">
+          <PhoneMockup />
+        </Reveal>
+      </div>
+    </Section>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 8. Free tools anyone can use, no sign-up
+ * ------------------------------------------------------------------ */
+
+function FreeTools() {
+  return (
+    <Section id="free-tools" className="py-14 sm:py-20">
       <Reveal>
         <SectionHeading
-          eyebrow="Quick setup"
-          title="From clone to monitoring in minutes"
-          subtitle="No account to create on someone else's platform. Deploy once, and it's yours."
+          eyebrow="Free tools"
+          title="Handy without an account"
+          subtitle="Small utilities from the same toolbox, free for anyone to use."
         />
       </Reveal>
-      <Reveal delay={120} className="mt-12 grid gap-4 md:grid-cols-3">
-        {STEPS.map((s, i) => (
-          <div key={s.n} className="op-lift relative rounded-card border border-line bg-surface p-6">
-            <div className="flex size-9 items-center justify-center rounded-full bg-accent text-sm font-bold text-canvas">
-              {s.n}
+      <Reveal delay={100} className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {TOOLS.map(({ slug, title, tagline, icon: Icon }) => (
+          <Link
+            key={slug}
+            to={`/tools/${slug}`}
+            className="op-lift group flex items-start gap-4 rounded-card border border-line bg-surface p-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
+              <Icon className="size-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="flex items-center gap-1.5 text-base font-semibold text-ink">
+                {title}
+                <ArrowUpRight className="size-4 text-ink-faint transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+              </span>
+              <span className="mt-1 block text-sm leading-relaxed text-ink-muted">{tagline}</span>
+            </span>
+          </Link>
+        ))}
+      </Reveal>
+    </Section>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 9. Comparison: OpenPing vs hosted uptime SaaS, and what it costs to run
+ * ------------------------------------------------------------------ */
+
+const COMPARISON_STATS: { value: ReactNode; label: string; aria?: string }[] = [
+  { value: "12 min", label: "Between checks" },
+  { value: "$0", label: "Per month" },
+  { value: <StatNumber value={90} suffix="-day" />, label: "Uptime history" },
+  { value: <StatNumber value={4} />, label: "Alert channels" },
+];
+
+function Comparison() {
+  return (
+    <Section id="comparison" className="py-14 sm:py-20">
+      <Reveal>
+        <SectionHeading
+          eyebrow="OpenPing vs hosted SaaS"
+          title="No tiers, no seat prices, no vendor"
+          subtitle="Hosted uptime tools cap your monitors, charge more for faster checks and keep your data. With OpenPing the limits, the bill and the data are yours."
+        />
+      </Reveal>
+
+      <Reveal delay={100} className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {COMPARISON_STATS.map((s, i) => (
+          <div key={i} className="rounded-card border border-line bg-surface px-4 py-5 text-center">
+            <div className="text-2xl font-semibold text-accent sm:text-3xl" aria-label={s.aria}>
+              {s.value}
             </div>
-            <h3 className="mt-4 text-base font-semibold text-ink">{s.title}</h3>
-            <p className="mt-2 text-sm leading-relaxed text-ink-muted">{s.body}</p>
-            {i < STEPS.length - 1 && (
-              <ArrowRight className="absolute -right-3 top-1/2 hidden size-5 -translate-y-1/2 text-line md:block" />
-            )}
+            <div className="mt-1 text-xs font-medium uppercase tracking-wide text-ink-faint">{s.label}</div>
           </div>
         ))}
       </Reveal>
 
-      <Reveal delay={160} className="mt-6 overflow-hidden rounded-card border border-line bg-surface">
+      <Reveal delay={140} className="mt-8">
+        <ComparisonTable />
+      </Reveal>
+
+      <p className="mt-4 text-center text-xs text-ink-faint">
+        OpenPing sets no monitor cap; Cloudflare's per-run limits do. On the free
+        plan about 7 monitors fit at once, checked every 12 minutes (see below).
+      </p>
+    </Section>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 10. Quick start
+ * ------------------------------------------------------------------ */
+
+const STEPS: { n: string; title: string; body: string }[] = [
+  { n: "1", title: "Clone and deploy", body: "Wrangler creates the Worker, the D1 database and the schedule in your Cloudflare account." },
+  { n: "2", title: "Sign in and add monitors", body: "Sign in with GitHub or an email link, then add checks and their schedules." },
+  { n: "3", title: "Publish and get alerted", body: "Turn on a status page and connect email, Discord, webhooks or your phone." },
+];
+
+/* ------------------------------------------------------------------ *
+ * What the Cloudflare Free plan covers (docs/FREE_TIER.md, lib/budget.ts):
+ * each cron run may make 50 D1 queries and 50 fetches, which fits about 7
+ * passing checks; the rest wait for the next run.
+ * ------------------------------------------------------------------ */
+
+const PLAN_FACTS: { value: string; label: string; body: string }[] = [
+  {
+    value: "Every 12 min",
+    label: "How often",
+    body: "A Cron Trigger runs the checks that are due, most overdue first.",
+  },
+  {
+    value: "About 7",
+    label: "Monitors on at once, Free plan",
+    body: "Cloudflare allows 50 database queries per run on Free. Anything that doesn't fit waits one run.",
+  },
+  {
+    value: "Up to 200",
+    label: "Per run on Workers Paid",
+    body: "Set WORKERS_PLAN to \"paid\" in wrangler.jsonc and redeploy.",
+  },
+];
+
+function FreePlan() {
+  return (
+    <Section id="free-plan" className="py-14 sm:py-20">
+      <Reveal>
+        <SectionHeading
+          eyebrow="Honest limits"
+          title="What Cloudflare's free plan covers"
+          subtitle="OpenPing has no monitor cap of its own. What fits is set by Cloudflare's per-run limits, so here are the real numbers."
+        />
+      </Reveal>
+      <Reveal delay={100} className="mx-auto mt-10 grid max-w-5xl gap-4 md:grid-cols-3">
+        {PLAN_FACTS.map((f) => (
+          <div key={f.label} className="op-lift rounded-card border border-line bg-surface p-6">
+            <p className="text-3xl font-semibold tracking-tight text-ink">{f.value}</p>
+            <p className="mt-1 text-sm font-semibold text-accent">{f.label}</p>
+            <p className="mt-3 text-sm leading-relaxed text-ink-muted">{f.body}</p>
+          </div>
+        ))}
+      </Reveal>
+      <Reveal delay={150}>
+        <p className="mx-auto mt-6 max-w-3xl text-center text-sm text-ink-muted">
+          Monitors outside their hours cost nothing, so business-hours apps stretch the free plan further.{" "}
+          <a
+            href={`${GITHUB_URL}/blob/main/docs/FREE_TIER.md`}
+            target="_blank"
+            rel="noreferrer"
+            className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent"
+          >
+            The full numbers and sources
+          </a>
+        </p>
+      </Reveal>
+    </Section>
+  );
+}
+
+function QuickStart() {
+  return (
+    <Section id="quick-start" className="py-14 sm:py-20">
+      <Reveal>
+        <SectionHeading
+          eyebrow="Quick start"
+          title="From clone to monitoring in minutes"
+          subtitle="No account on someone else's platform. Deploy once, and it's yours."
+        />
+      </Reveal>
+      <Reveal delay={100} className="mt-10 grid gap-3 md:grid-cols-3">
+        {STEPS.map((s) => (
+          <div key={s.n} className="rounded-card border border-line bg-surface p-5">
+            <div className="flex items-center gap-3">
+              <span className="grid size-8 place-items-center rounded-full bg-accent text-sm font-bold text-canvas">{s.n}</span>
+              <h3 className="text-base font-semibold text-ink">{s.title}</h3>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-ink-muted">{s.body}</p>
+          </div>
+        ))}
+      </Reveal>
+
+      <Reveal delay={140} className="mt-4 overflow-hidden rounded-card border border-line bg-surface">
         <div className="flex items-center gap-2 border-b border-line bg-surface-2/60 px-4 py-2 text-xs text-ink-faint">
           <Terminal className="size-3.5" />
           terminal
@@ -1036,7 +1205,7 @@ function QuickStart() {
             {"\n"}
             <span className="text-ink-faint">$ </span>npm run deploy
             {"  "}
-            <span className="text-up"># → live on your *.workers.dev</span>
+            <span className="text-up"># live on your *.workers.dev</span>
           </code>
         </pre>
       </Reveal>
@@ -1045,202 +1214,54 @@ function QuickStart() {
 }
 
 /* ------------------------------------------------------------------ *
- * 11. Advanced features (6 modules)
+ * 11. FAQ
  * ------------------------------------------------------------------ */
 
-function AdvancedFeatures() {
-  return (
-    <Section className="py-16 sm:py-20">
-      <Reveal>
-        <SectionHeading
-          eyebrow="Under the hood"
-          title="Serious monitoring internals"
-          subtitle="The details that separate a toy from a tool you can rely on."
-        />
-      </Reveal>
-      <Reveal delay={120} className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <FeatureCard icon={ShieldCheck} title="Incidents & recovery">
-          Outages open incidents automatically and close on recovery, with
-          flapping protection so a flaky check doesn't spam you.
-        </FeatureCard>
-        <FeatureCard icon={LineChart} title="MTBF & MTTR">
-          Track mean time between failures and mean time to recovery per monitor
-          to see what's actually reliable.
-        </FeatureCard>
-        <FeatureCard icon={Database} title="Compact history">
-          History rolls up from samples to intervals to hourly, daily, then
-          monthly — so storage never grows unbounded.
-        </FeatureCard>
-        <FeatureCard icon={KeyRound} title="Single-admin auth">
-          GitHub OAuth plus email magic-link sign-in. One configured
-          administrator — no sprawling user table to secure.
-        </FeatureCard>
-        <FeatureCard icon={Terminal} title="Admin CLI & API tokens">
-          Automate everything with the bundled admin CLI and Bearer API tokens —
-          create monitors, push config, script your setup.
-        </FeatureCard>
-        <FeatureCard icon={Zap} title="Edge-native">
-          Runs on Cloudflare Workers and D1, close to the network — fast checks
-          without servers to patch or scale.
-        </FeatureCard>
-      </Reveal>
-    </Section>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * 12. Integrations
- * ------------------------------------------------------------------ */
-
-const CHANNELS: { icon: LucideIcon; title: string; body: string }[] = [
-  {
-    icon: Bell,
-    title: "Email",
-    body: "Transactional alerts delivered through Resend.",
-  },
-  {
-    icon: MessageSquare,
-    title: "Discord",
-    body: "Rich incident messages straight to your channel.",
-  },
-  {
-    icon: Webhook,
-    title: "Signed webhooks",
-    body: "Cryptographically signed POSTs to your own endpoints.",
-  },
-  {
-    icon: Smartphone,
-    title: "Mobile Web Push",
-    body: "Installable Android PWA with push notifications.",
-  },
-];
-
-function Integrations() {
-  return (
-    <Section className="py-16 sm:py-20">
-      <Reveal>
-        <SectionHeading
-          eyebrow="Notifications"
-          title="Get told the instant something breaks"
-          subtitle="Route alerts where your team already is. Configure one channel or all of them."
-        />
-      </Reveal>
-      <Reveal delay={120} className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {CHANNELS.map(({ icon: Icon, title, body }) => (
-          <div
-            key={title}
-            className="op-lift rounded-card border border-line bg-surface p-5 text-center"
-          >
-            <span className="mx-auto grid size-12 place-items-center rounded-xl bg-accent-soft text-accent">
-              <Icon className="size-6" />
-            </span>
-            <h3 className="mt-4 text-base font-semibold text-ink">{title}</h3>
-            <p className="mt-1.5 text-sm leading-relaxed text-ink-muted">{body}</p>
-          </div>
-        ))}
-      </Reveal>
-    </Section>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * 13. Mobile monitoring → phone-device mockup
- * ------------------------------------------------------------------ */
-
-function MobileMonitoring() {
-  return (
-    <Section className="py-16 sm:py-20">
-      <div className="grid items-center gap-12 lg:grid-cols-2">
-        <Reveal>
-          <SectionHeading
-            align="left"
-            eyebrow="On the go"
-            title="Your monitors in your pocket"
-            subtitle="OpenPing installs as a Progressive Web App on Android. Add it to your home screen and receive push notifications the moment a monitor changes state — no app store required."
-          />
-          <ul className="mt-7 space-y-3">
-            {[
-              "Installable PWA — add to home screen, runs full-screen.",
-              "Web Push alerts for downtime, recovery, and incidents.",
-              "Offline-aware UI that flags stale data when you lose signal.",
-              "Same dashboard, sized for a phone.",
-            ].map((p) => (
-              <li key={p} className="flex items-start gap-3 text-sm text-ink-muted">
-                <Smartphone className="mt-0.5 size-4 shrink-0 text-accent" />
-                <span>{p}</span>
-              </li>
-            ))}
-          </ul>
-        </Reveal>
-
-        <Reveal delay={120} className="flex justify-center">
-          <PhoneMockup />
-        </Reveal>
-      </div>
-    </Section>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * 14. FAQ — animated accessible accordion
- * ------------------------------------------------------------------ */
-
+// Ordered by what people ask before deploying. What it checks, schedules and
+// alerts each have their own section above, so they aren't repeated here.
 const FAQS: FaqItem[] = [
   {
     q: "Is OpenPing really free?",
-    a: "The software is free and open source under the MIT license. It runs on Cloudflare Workers, D1, and a cron trigger, which for typical personal and small-team usage fits inside Cloudflare's free tier — so your running cost is $0. Very large installs may eventually exceed free-tier limits.",
+    a: "The software is free and MIT licensed. It runs on Cloudflare Workers, D1 and a scheduled check run, which for typical personal and small-team use fits inside Cloudflare's free plan. Very large installs may outgrow it.",
   },
   {
     q: "Where does my data live?",
-    a: "Entirely in your own Cloudflare account. Monitor configuration, check results, incidents, and history are stored in your D1 database. There is no OpenPing cloud and nothing is sent to us — there is no \"us\" in the data path.",
+    a: "In your own Cloudflare account. Monitor settings, check results, incidents and history are stored in your D1 database. There is no OpenPing cloud. The only things that leave your account are the checks themselves and the alerts you set up (through Resend, Discord, a webhook or your phone).",
   },
   {
-    q: "What makes schedule-aware monitoring different?",
-    a: "Most uptime tools assume every service runs 24/7. OpenPing lets you define operating hours per monitor. Outside those hours the monitor shows \"Scheduled off\" and is excluded from uptime calculations, so you don't get paged for a staging app that's meant to be asleep — and you can optionally keep free-tier apps warm only during the hours that matter.",
-  },
-  {
-    q: "What can it monitor?",
-    a: "HTTP/API endpoints (with custom methods, headers, body, auth, expected status codes, response-time thresholds, and keyword or JSON assertions) and heartbeat / cron jobs that ping a URL on a schedule.",
-  },
-  {
-    q: "How do alerts work?",
-    a: "OpenPing sends notifications via Email (through Resend), Discord, signed webhooks, and installable mobile Web Push. Incidents open automatically on failure and close on recovery, with flapping protection to avoid noisy repeat alerts.",
-  },
-  {
-    q: "How do I sign in?",
-    a: "OpenPing is single-administrator. You authenticate with GitHub OAuth or an email magic link, and only the identity you configure can sign in to the dashboard.",
-  },
-  {
-    q: "Won't the history grow forever?",
-    a: "No. History is automatically compacted from raw samples to intervals, then hourly, daily, and monthly rollups. You keep long-term trends without your database growing without bound.",
-  },
-  {
-    q: "Can I automate it?",
-    a: "Yes. There's a bundled admin CLI and Bearer API-token authentication, so you can create and update monitors, manage configuration, and script your entire setup.",
+    q: "How often does it check?",
+    a: "The scheduler runs every 12 minutes and checks each monitor that's due, most overdue first. That keeps a small install well inside the free plan; the schedule is one line in wrangler.jsonc if your plan allows more runs.",
   },
   {
     q: "How do I deploy it?",
     a: (
       <>
         Clone the repository, run <code className="rounded bg-surface-2 px-1.5 py-0.5 text-xs">npm install</code>, create the
-        D1 database, and run <code className="rounded bg-surface-2 px-1.5 py-0.5 text-xs">npm run deploy</code> with Wrangler.
-        Full instructions are in the{" "}
-        <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="text-accent underline">
-          GitHub repository
+        D1 database and run <code className="rounded bg-surface-2 px-1.5 py-0.5 text-xs">npm run deploy</code>. The full guide is in the{" "}
+        <a href={DEPLOY_URL} target="_blank" rel="noreferrer" className="text-accent underline">
+          README
         </a>
         .
       </>
     ),
   },
+  {
+    q: "Who can sign in?",
+    a: "OpenPing has a single administrator. You sign in with GitHub or an email magic link, and only the identity you configure gets in.",
+  },
+  {
+    q: "Can I automate it?",
+    a: "Yes. A bundled admin CLI and API tokens let you create monitors, manage settings and script your whole setup.",
+  },
 ];
 
 function FaqSection() {
   return (
-    <Section id="faq" className="py-16 sm:py-20">
+    <Section id="faq" className="py-14 sm:py-20">
       <Reveal>
-        <SectionHeading eyebrow="FAQ" title="Frequently asked questions" />
+        <SectionHeading eyebrow="FAQ" title="Questions, answered" />
       </Reveal>
-      <Reveal delay={120} className="mx-auto mt-12 max-w-3xl">
+      <Reveal delay={100} className="mx-auto mt-10 max-w-3xl">
         <FaqAccordion items={FAQS} />
       </Reveal>
     </Section>
@@ -1248,100 +1269,50 @@ function FaqSection() {
 }
 
 /* ------------------------------------------------------------------ *
- * 15. Contribute / GitHub issues
- * ------------------------------------------------------------------ */
-
-function Contribute() {
-  return (
-    <Section className="py-16 sm:py-20">
-      <Reveal>
-        <SectionHeading
-          eyebrow="Open source"
-          title="Built in the open — come build with us"
-          subtitle="OpenPing is MIT licensed and developed in public. Found a rough edge or have an idea? Issues and pull requests are genuinely welcome."
-        />
-      </Reveal>
-
-      <Reveal delay={120} className="mt-12 grid gap-4 md:grid-cols-2">
-        <a
-          href={GITHUB_ISSUES_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="op-lift group rounded-card border border-line bg-surface p-6"
-        >
-          <span className="grid size-11 place-items-center rounded-lg bg-accent-soft text-accent">
-            <Bug className="size-5" />
-          </span>
-          <h3 className="mt-4 flex items-center gap-2 text-base font-semibold text-ink">
-            Found a bug? Open an issue
-            <ArrowUpRight className="size-4 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-          </h3>
-          <p className="mt-2 text-sm leading-relaxed text-ink-muted">
-            Report bugs, unexpected behavior, or request a feature on the GitHub
-            issue tracker. Clear repro steps help us fix things fast.
-          </p>
-        </a>
-
-        <a
-          href={GITHUB_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="op-lift group rounded-card border border-line bg-surface p-6"
-        >
-          <span className="grid size-11 place-items-center rounded-lg bg-accent-soft text-accent">
-            <GitFork className="size-5" />
-          </span>
-          <h3 className="mt-4 flex items-center gap-2 text-base font-semibold text-ink">
-            Contributions welcome
-            <ArrowUpRight className="size-4 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-          </h3>
-          <p className="mt-2 text-sm leading-relaxed text-ink-muted">
-            Fork the repo and send a pull request. The project is MIT licensed and
-            ships a CONTRIBUTING.md to get you set up locally in minutes.
-          </p>
-        </a>
-      </Reveal>
-    </Section>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * 16. Bottom CTA band
+ * 12. Closing CTA, with the open-source invitation folded in
  * ------------------------------------------------------------------ */
 
 function BottomCta() {
   return (
-    <Section className="py-16 sm:py-24">
+    <Section className="py-14 sm:py-24">
       <Reveal>
-        <div className="relative overflow-hidden rounded-card border border-line bg-surface px-6 py-14 text-center sm:px-12">
+        <div className="relative overflow-hidden rounded-card border border-line bg-surface px-6 py-12 text-center sm:px-12 sm:py-14">
           <div
             aria-hidden
             className="pointer-events-none absolute inset-0 -z-10"
-            style={{
-              background:
-                "radial-gradient(60% 100% at 50% 0%, rgba(109,139,255,0.20), transparent 70%)",
-            }}
+            style={{ background: "radial-gradient(60% 100% at 50% 0%, rgba(109,139,255,0.20), transparent 70%)" }}
           />
-          <h2 className="mx-auto max-w-2xl text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
-            Own your uptime monitoring today
+          <h2 className="mx-auto max-w-2xl text-balance text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
+            Own your uptime monitoring
           </h2>
-          <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-ink-muted">
-            Deploy OpenPing to your own Cloudflare account in minutes. Free,
-            open source, and entirely yours.
+          <p className="mx-auto mt-4 max-w-xl text-pretty text-base leading-relaxed text-ink-muted">
+            Free, open source and yours. Found a rough edge or have an idea? Issues
+            and pull requests are welcome.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            <PrimaryCTA href={GITHUB_URL}>
+            <PrimaryCTA href={DEPLOY_URL}>
               <Github className="size-4" />
               Deploy your own
               <ArrowRight className="size-4" />
             </PrimaryCTA>
-            <Link
-              to="/status"
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noreferrer"
               className="op-lift inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink hover:bg-surface-2"
             >
-              <Globe className="size-4" />
-              View live status
-            </Link>
+              <Star className="size-4" />
+              Star on GitHub
+            </a>
+            <a
+              href={GITHUB_ISSUES_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center justify-center gap-2 rounded-lg px-3 py-3 text-sm font-semibold text-ink-muted transition-colors hover:text-ink"
+            >
+              <Bug className="size-4" />
+              Open an issue
+            </a>
           </div>
         </div>
       </Reveal>
@@ -1399,9 +1370,9 @@ function Footer({ onSignIn }: { onSignIn: () => void }) {
               href={KOFI_URL}
               target="_blank"
               rel="noreferrer"
-              className="op-lift inline-flex items-center gap-2 rounded-lg border border-accent/40 bg-accent-soft/40 px-4 py-2.5 text-sm font-semibold text-ink hover:bg-accent-soft/60"
+              className="op-lift inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink hover:border-[#ff5e5b]/60"
             >
-              <Coffee className="size-4 text-accent" />
+              <KofiCup className="size-[1.125rem]" />
               Support on Ko-fi
             </a>
           )}
@@ -1420,6 +1391,7 @@ function Footer({ onSignIn }: { onSignIn: () => void }) {
             rel="noreferrer"
             className="op-lift inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink hover:bg-surface-2"
           >
+            <img src="/n8builds-icon.png" alt="" width={18} height={18} className="rounded" />
             More projects
             <span className="text-ink-muted">n8builds.dev</span>
             <ArrowUpRight className="size-4 text-ink-faint" />

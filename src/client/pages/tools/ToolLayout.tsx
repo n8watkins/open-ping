@@ -35,7 +35,7 @@ export const TOOLS: ToolMeta[] = [
   {
     slug: "uptime-calculator",
     title: "Uptime calculator",
-    tagline: "Turn an SLA percentage into allowed downtime — or the reverse.",
+    tagline: "Turn an SLA percentage into allowed downtime, or the reverse.",
     icon: Percent,
   },
   {
@@ -178,7 +178,7 @@ export function ToolLayout({
   children: ReactNode;
 }) {
   useEffect(() => {
-    document.title = `${title} — OpenPing free tools`;
+    document.title = `${title} | OpenPing free tools`;
   }, [title]);
 
   return (
