@@ -189,7 +189,7 @@ export default function Incidents() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold tracking-tight">Incidents</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Incidents<span className="text-accent">.</span></h1>
           {loading && data && <Loader2 className="size-4 animate-spin text-ink-faint" />}
         </div>
         <div className="flex items-center gap-2">

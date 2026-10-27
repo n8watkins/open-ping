@@ -74,10 +74,10 @@ export default function StatusPageSettings() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-6xl">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Status pages</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Status pages<span className="text-accent">.</span></h1>
           <p className="mt-1 text-sm text-ink-muted">
             Publish one or more public status pages, each with its own branding
             and monitor selection.

@@ -189,9 +189,9 @@ export default function Integrations() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-6xl">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Integrations</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Integrations<span className="text-accent">.</span></h1>
         <p className="mt-1 text-sm text-ink-muted">
           Notification channels and push devices that receive OpenPing alerts.
         </p>
