@@ -19,12 +19,13 @@ import {
   homePage,
   messagePage,
   signInPage,
+  signOutPage,
   startPage,
   type AccountTenantView,
 } from "./account-pages";
 import { clearCeremonyCookie, startCeremony, takeCeremony } from "./auth/ceremonies";
-import { checkEmailCode, consumeEmailLink, createEmailSignIn, signInEmail } from "./auth/email-sign-in";
-import { authorizeUrl, fetchGithubUser, githubConfig, newOAuthState, type GithubUser } from "./auth/github";
+import { checkEmailCode, consumeEmailLink, createEmailSignIn, decoyLoginId, emailOfSignIn, signInEmail } from "./auth/email-sign-in";
+import { authorizeUrl, codeChallenge, fetchGithubUser, githubConfig, newCodeVerifier, newOAuthState, type GithubUser } from "./auth/github";
 import {
   MAX_PASSKEYS,
   addPasskey,
@@ -38,7 +39,7 @@ import {
   verifyPasskeySignIn,
   type PasskeyExpectation,
 } from "./auth/passkeys";
-import { LIMITS, hitAll } from "./auth/rate-limit";
+import { LIMITS, hitInOrder, ipSubject, isOverLimit } from "./auth/rate-limit";
 import { createSession, endSession, readSession, type Session, type SignInMethod } from "./auth/sessions";
 import { PASSKEY_SCRIPT, PASSKEY_SCRIPT_PATH } from "./client-script";
 import type { PlatformEnv } from "./env";
@@ -47,7 +48,8 @@ import { appOrigin, tenantOrigin } from "./hosts";
 import type { Mailer } from "./mail";
 import { requestTenant, runProvisioning } from "./provisioning";
 import type { ProvisioningSetup } from "./provisioning-env";
-import { SLUG_MESSAGES } from "./slugs";
+import { enqueueProvisioning } from "./provisioning-queue";
+import { SLUG_MESSAGES, checkSlugAvailability } from "./slugs";
 import { tenantFromRow, type TenantRecord } from "./tenants";
 
 export interface AccountDeps {
@@ -96,8 +98,9 @@ function passkeyExpectation(c: Ctx): PasskeyExpectation {
   return { origin: url.origin, rpId: url.hostname };
 }
 
+/** The per-IP limit subject: the address, or an IPv6 address's /64. */
 function clientIp(c: Ctx): string {
-  return c.req.header("cf-connecting-ip") ?? "unknown";
+  return ipSubject(c.req.header("cf-connecting-ip"));
 }
 
 const signUpsOpen = (env: PlatformEnv) => env.SIGN_UPS === "open";
@@ -141,17 +144,18 @@ interface TenantRow {
   limit_overrides: string | null;
   trial_ends_at: number | null;
   provision_attempts: number;
+  provision_paused_at: number | null;
 }
 
-async function accountTenant(db: D1Database, accountId: string): Promise<(TenantRecord & { attempts: number }) | null> {
+async function accountTenant(db: D1Database, accountId: string): Promise<(TenantRecord & { attempts: number; paused: boolean }) | null> {
   const row = await db
     .prepare(
-      `SELECT id, account_id, slug, script_name, status, plan, provision_state, version, limit_overrides, trial_ends_at, provision_attempts
+      `SELECT id, account_id, slug, script_name, status, plan, provision_state, version, limit_overrides, trial_ends_at, provision_attempts, provision_paused_at
        FROM tenants WHERE account_id = ? AND provision_state <> 'deleting' ORDER BY created_at LIMIT 1`,
     )
     .bind(accountId)
     .first<TenantRow>();
-  return row ? { ...tenantFromRow(row), attempts: row.provision_attempts } : null;
+  return row ? { ...tenantFromRow(row), attempts: row.provision_attempts, paused: row.provision_paused_at !== null } : null;
 }
 
 export function accountRoutes(deps: AccountDeps): Hono<Env> {
@@ -177,6 +181,8 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
 
   /** Starts a session for `account` and sends the browser on. */
   async function signedIn(c: Ctx, account: Account, method: SignInMethod, next: string | null, extraCookies: string[] = []): Promise<Response> {
+    // Any session this browser already had ends; it never keeps two.
+    await endSession(c.env.PLATFORM_DB, c.req.raw);
     const cookie = await createSession(c.env.PLATFORM_DB, account.id, method, c.get("now"));
     await audit(c.env.PLATFORM_DB, { accountId: account.id, actor: "customer", action: "account.signed_in", detail: { method }, now: c.get("now") });
     return seeOther(c, next ?? "/account", [cookie, ...extraCookies]);
@@ -242,7 +248,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     const email = normalizeEmail(fields.email);
     if (!email) return page("Enter an email address like you@example.com.");
     if (isDisposableEmail(email)) return page("Please use a permanent email address. Throwaway addresses can't hold an account.");
-    const limited = await hitAll(
+    const limited = await hitInOrder(
       c.env.PLATFORM_DB,
       [
         [LIMITS.emailPerAddress, email],
@@ -253,9 +259,13 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     );
     if (limited) return page(tooMany(), 429);
 
+    const existing = await findAccountByEmail(c.env.PLATFORM_DB, email);
+    // Sign-ups closed and no account: the same page as always, but nothing is
+    // sent, so the form says nothing about which addresses have accounts and
+    // mails nobody who can't sign in.
+    if (!existing && !signUpsOpen(c.env)) return checkEmailPage({ email, loginId: decoyLoginId() });
     const started = await createEmailSignIn(c.env.PLATFORM_DB, { email, nextPath: next, now: c.get("now") });
     const link = `${origin(c)}/sign-in/link?token=${encodeURIComponent(started.token)}`;
-    const existing = await findAccountByEmail(c.env.PLATFORM_DB, email);
     const message = signInEmail({ code: started.code, link, newAccount: !existing });
     const sent = await mailer.send({ to: email, ...message });
     if (!sent.ok) {
@@ -268,18 +278,29 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
   app.post("/sign-in/code", async (c) => {
     const fields = await form(c);
     const loginId = fields.login ?? "";
-    const limited = await hitAll(c.env.PLATFORM_DB, [[LIMITS.codePerIp, clientIp(c)]], c.get("now"));
+    const limited = await hitInOrder(c.env.PLATFORM_DB, [[LIMITS.codePerIp, clientIp(c)]], c.get("now"));
     if (limited) return messagePage({ title: "Too many tries", body: tooMany(), status: 429, action: { href: "/sign-in", label: "Back to sign in" } });
+    const email = await emailOfSignIn(c.env.PLATFORM_DB, loginId, c.get("now"));
+    // Too many wrong codes for this address today, across every sign-in: only the link works now.
+    if (email && (await isOverLimit(c.env.PLATFORM_DB, LIMITS.codeFailuresPerAddress, email, c.get("now")))) {
+      return messagePage({
+        title: "Use the link in your email",
+        body: "There have been too many wrong codes for this address today, so codes are off until tomorrow. The link in your latest email still works.",
+        status: 429,
+      });
+    }
     const result = await checkEmailCode(c.env.PLATFORM_DB, loginId, fields.code ?? "", c.get("now"));
     if (result.ok) return emailVerified(c, result.email, safeNext(result.nextPath));
     if (result.reason === "wrong_code") {
-      const row = await c.env.PLATFORM_DB.prepare("SELECT email FROM email_logins WHERE id = ?").bind(loginId).first<{ email: string }>();
-      return checkEmailPage({
-        email: row?.email ?? "your address",
-        loginId,
-        status: 400,
-        error: `That code isn't right. ${result.remaining === 1 ? "1 try left." : `${result.remaining} tries left.`}`,
-      });
+      await hitInOrder(c.env.PLATFORM_DB, [[LIMITS.codeFailuresPerAddress, result.email]], c.get("now"));
+      if (result.remaining > 0) {
+        return checkEmailPage({
+          email: result.email,
+          loginId,
+          status: 400,
+          error: `That code isn't right. ${result.remaining === 1 ? "1 try left." : `${result.remaining} tries left.`}`,
+        });
+      }
     }
     return messagePage({
       title: "This code has expired",
@@ -305,7 +326,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     });
 
   app.post("/sign-in/link", async (c) => {
-    const limited = await hitAll(c.env.PLATFORM_DB, [[LIMITS.linkPerIp, clientIp(c)]], c.get("now"));
+    const limited = await hitInOrder(c.env.PLATFORM_DB, [[LIMITS.linkPerIp, clientIp(c)]], c.get("now"));
     if (limited) return messagePage({ title: "Too many tries", body: tooMany(), status: 429 });
     const result = await consumeEmailLink(c.env.PLATFORM_DB, await formField(c, "token"), c.get("now"));
     if (!result) return linkExpired();
@@ -315,8 +336,8 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
   // --- Passkeys ------------------------------------------------------------
 
   app.post("/sign-in/passkey/options", async (c) => {
-    // Each call stores a ceremony, so anonymous callers are limited too.
-    const limited = await hitAll(c.env.PLATFORM_DB, [[LIMITS.passkeyPerIp, clientIp(c)]], c.get("now"));
+    // Each call stores a ceremony, so anonymous callers are limited too (apart from finishing, so starts can't use that up).
+    const limited = await hitInOrder(c.env.PLATFORM_DB, [[LIMITS.passkeyStartPerIp, clientIp(c)]], c.get("now"));
     if (limited) return c.json({ error: "rate_limited", message: tooMany() }, 429, NO_STORE);
     const body = (await c.req.json().catch(() => ({}))) as { next?: unknown };
     const challenge = newChallenge();
@@ -331,7 +352,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
   });
 
   app.post("/sign-in/passkey", async (c) => {
-    const limited = await hitAll(c.env.PLATFORM_DB, [[LIMITS.passkeyPerIp, clientIp(c)]], c.get("now"));
+    const limited = await hitInOrder(c.env.PLATFORM_DB, [[LIMITS.passkeyPerIp, clientIp(c)]], c.get("now"));
     if (limited) return c.json({ error: "rate_limited", message: tooMany() }, 429, NO_STORE);
     const ceremony = await takeCeremony(c.env.PLATFORM_DB, c.req.raw, "passkey_sign_in", c.get("now"));
     if (!ceremony) return c.json({ error: "expired", message: "That took too long. Please try again." }, 400, NO_STORE);
@@ -350,6 +371,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     }
     const account = await getAccount(c.env.PLATFORM_DB, accountId);
     if (!account || account.disabledAt !== null) return c.json({ error: "disabled", message: "This account is closed." }, 403, NO_STORE);
+    await endSession(c.env.PLATFORM_DB, c.req.raw);
     const session = await createSession(c.env.PLATFORM_DB, account.id, "passkey", c.get("now"));
     await audit(c.env.PLATFORM_DB, { accountId: account.id, actor: "customer", action: "account.signed_in", detail: { method: "passkey" }, now: c.get("now") });
     return withCookies(c.json({ ok: true, redirect: ceremony.nextPath ?? "/account" }, 200, NO_STORE), [session, clearCeremonyCookie()]);
@@ -413,14 +435,16 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     const session = c.get("session");
     const linking = c.req.query("link") === "1" && session !== null;
     const state = newOAuthState();
+    const verifier = newCodeVerifier();
     const cookie = await startCeremony(c.env.PLATFORM_DB, {
       kind: "github",
       challenge: state,
+      verifier,
       accountId: linking ? session!.account.id : null,
       nextPath: linking ? "/account" : nextFromQuery(c),
       now: c.get("now"),
     });
-    return seeOther(c, authorizeUrl(config, { redirectUri: callbackUrl(c), state }), [cookie]);
+    return seeOther(c, authorizeUrl(config, { redirectUri: callbackUrl(c), state, codeChallenge: await codeChallenge(verifier) }), [cookie]);
   });
 
   app.get("/auth/github/callback", async (c) => {
@@ -428,7 +452,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     const failed = (body: string, status = 400) =>
       withCookies(messagePage({ title: "GitHub sign-in didn't work", body, status, action: { href: "/sign-in", label: "Back to sign in" } }), [clearCeremonyCookie()]);
     if (!config) return failed("GitHub sign-in isn't available. Please sign in with email instead.", 404);
-    const limited = await hitAll(c.env.PLATFORM_DB, [[LIMITS.githubPerIp, clientIp(c)]], c.get("now"));
+    const limited = await hitInOrder(c.env.PLATFORM_DB, [[LIMITS.githubPerIp, clientIp(c)]], c.get("now"));
     if (limited) return failed(tooMany(), 429);
     const ceremony = await takeCeremony(c.env.PLATFORM_DB, c.req.raw, "github", c.get("now"));
     const state = c.req.query("state") ?? "";
@@ -439,7 +463,8 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     if (!code) return failed("GitHub didn't sign you in. Please try again, or use email.");
     let user: GithubUser;
     try {
-      user = await fetchGithubUser(config, { code, redirectUri: callbackUrl(c) }, deps.fetch);
+      if (!ceremony.verifier) return failed("That sign-in started somewhere else or took too long. Please try again.");
+      user = await fetchGithubUser(config, { code, redirectUri: callbackUrl(c), codeVerifier: ceremony.verifier }, deps.fetch);
     } catch (error) {
       console.error("[github] sign-in failed", { error: error instanceof Error ? error.message : String(error) });
       return failed("We couldn't reach GitHub. Please try again in a minute.", 502);
@@ -481,6 +506,18 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
             body: "Add and verify a primary email on GitHub, or sign in with email here instead.",
             status: 400,
             action: { href: "/sign-in", label: "Sign in with email" },
+          }),
+          [clearCeremonyCookie()],
+        );
+      }
+      // A new account from GitHub gets the same throwaway-address check as one from the email form.
+      if (isDisposableEmail(user.email) && !(await findAccountByEmail(db, user.email))) {
+        return withCookies(
+          messagePage({
+            title: "Please use a permanent email address",
+            body: "Your GitHub account's primary email is a throwaway address, which can't hold an account. Change it on GitHub, or sign up with email here.",
+            status: 400,
+            action: { href: "/sign-up", label: "Sign up with email" },
           }),
           [clearCeremonyCookie()],
         );
@@ -552,6 +589,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
           plan: tenant.plan,
           provisionState: tenant.provisionState,
           slow: tenant.attempts > 0,
+          paused: tenant.paused,
           trialEndsAt: tenant.trialEndsAt,
         }
       : null;
@@ -579,7 +617,10 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     const db = c.env.PLATFORM_DB;
     if (await accountTenant(db, session.account.id)) return seeOther(c, "/account");
     const slug = (await formField(c, "slug")).slice(0, 100);
-    const limited = await hitAll(
+    // The name first: a typo or a taken name costs nothing against the limits.
+    const availability = await checkSlugAvailability(db, slug, c.get("now"));
+    if (!availability.ok) return startPage({ domain: c.env.HOSTED_DOMAIN, slug, error: SLUG_MESSAGES[availability.reason], status: 400 });
+    const limited = await hitInOrder(
       db,
       [
         [LIMITS.signUpPerIp, clientIp(c)],
@@ -588,12 +629,26 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       c.get("now"),
     );
     if (limited) return startPage({ domain: c.env.HOSTED_DOMAIN, slug, error: tooMany(), status: 429 });
-    const result = await requestTenant(db, { accountId: session.account.id, slug, now: c.get("now") });
-    if (!result.ok) return startPage({ domain: c.env.HOSTED_DOMAIN, slug, error: SLUG_MESSAGES[result.reason], status: 400 });
+    let result: Awaited<ReturnType<typeof requestTenant>>;
+    try {
+      result = await requestTenant(db, { accountId: session.account.id, slug, now: c.get("now") });
+    } catch (error) {
+      // A second submit raced the first: one OpenPing per account (migration 0003), and it already has it.
+      if (String(error).includes("UNIQUE") && String(error).includes("account_id")) return seeOther(c, "/account");
+      throw error;
+    }
+    if (!result.ok) {
+      // Taken by this very account a moment ago (a double tap): that is the customer's own name.
+      if (result.reason === "taken" && (await accountTenant(db, session.account.id))?.slug === result.slug) return seeOther(c, "/account");
+      return startPage({ domain: c.env.HOSTED_DOMAIN, slug, error: SLUG_MESSAGES[result.reason], status: 400 });
+    }
     await audit(db, { accountId: session.account.id, tenantId: result.tenantId, actor: "customer", action: "tenant.requested", detail: { slug: result.slug }, now: c.get("now") });
-    // Provisioning runs after the answer; if it can't start now, the cron sweep picks it up.
+    // Provisioning runs from the queue, where a run gets minutes instead of
+    // waitUntil's 30 seconds; if neither is possible now, the cron picks it up.
     const setup = deps.provisioning(c.env, c.executionCtx as ExecutionContext);
-    if (setup.ok) {
+    if (c.env.PROVISION_QUEUE) {
+      await enqueueProvisioning(c.env.PROVISION_QUEUE, result.tenantId);
+    } else if (setup.ok) {
       c.executionCtx.waitUntil(
         runProvisioning(setup.deps, result.tenantId, { force: true }).catch((error) => console.error("[provision] first run failed", error)),
       );
@@ -629,13 +684,19 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     return res;
   });
 
-  // The tenant's sign-out ends its own session, then sends the browser here (contract, section 7).
-  const signOut = async (c: Ctx) => {
+  // The tenant's sign-out ends its own session, then sends the browser here
+  // (contract, section 7). Signing out is a POST only, so no other site can
+  // sign anyone out with a link or an image; the GET shows the button, and
+  // goes straight to the page when there is no session to end.
+  app.get("/sign-out", (c) =>
+    c.get("session")
+      ? signOutPage()
+      : messagePage({ title: "You're signed out", body: "Sign in again whenever you need your OpenPing.", action: { href: "/sign-in", label: "Sign in" } }),
+  );
+  app.post("/sign-out", async (c) => {
     const cookie = await endSession(c.env.PLATFORM_DB, c.req.raw);
     return withCookies(messagePage({ title: "You're signed out", body: "Sign in again whenever you need your OpenPing.", action: { href: "/sign-in", label: "Sign in" } }), [cookie]);
-  };
-  app.get("/sign-out", signOut);
-  app.post("/sign-out", signOut);
+  });
 
   // Billing (B5) isn't built yet; the tenant already links here.
   for (const path of ["/billing", "/billing/upgrade"]) {

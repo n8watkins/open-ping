@@ -8,6 +8,10 @@
 ALTER TABLE accounts ADD COLUMN webauthn_handle TEXT;
 CREATE UNIQUE INDEX idx_accounts_webauthn_handle ON accounts(webauthn_handle);
 
+-- One OpenPing per account for now: a double-tapped "Create" can't make two.
+-- A tenant being removed doesn't count, so a cancelled one can be replaced.
+CREATE UNIQUE INDEX idx_tenants_one_per_account ON tenants(account_id) WHERE provision_state <> 'deleting';
+
 -- A signed-in browser. The cookie holds the token; only its hash is here.
 CREATE TABLE platform_sessions (
   token_hash   TEXT PRIMARY KEY,              -- SHA-256 hex of the cookie value
@@ -41,6 +45,7 @@ CREATE TABLE auth_ceremonies (
   id         TEXT PRIMARY KEY,                -- SHA-256 hex of the cookie value
   kind       TEXT NOT NULL CHECK (kind IN ('passkey_register', 'passkey_sign_in', 'github')),
   challenge  TEXT NOT NULL,                   -- WebAuthn challenge, or the OAuth state
+  verifier   TEXT,                            -- GitHub: the PKCE code_verifier (RFC 7636)
   account_id TEXT REFERENCES accounts(id) ON DELETE CASCADE, -- set when a signed-in account started it
   next_path  TEXT,
   expires_at INTEGER NOT NULL

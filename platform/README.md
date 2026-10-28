@@ -33,14 +33,15 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 - Caches each tenant's row per isolate for routing: 30 seconds for a ready tenant, 5 seconds for an unknown slug, never for one still being set up.
 - Checks slugs at sign-up (`checkSlugAvailability`): the rules and reserved names in `src/slugs.ts`, existing tenants, and held slugs.
 - Runs customer accounts on `app.<domain>` (B2, `src/account-routes.ts`), designed phone first in OpenPing's tokens:
-  - sign-up and sign-in with an email that carries both a 6-digit code and a link (15 minutes, single use, 5 tries per code; the link opens a confirm button so mail scanners can't spend it), a passkey (OpenPing's own `src/worker/lib/webauthn.ts`, discoverable, relying party `app.<domain>`), or GitHub (matched by user id, joined to an account only by its verified primary email);
-  - sessions in a `__Host-` cookie that never reaches a customer's subdomain, stored as hashes, 30 days;
-  - rate limits per address, per IP and in total, and a short list of throwaway mail domains refused;
+  - sign-up and sign-in with an email that carries both a 6-digit code and a link (15 minutes, single use, 5 tries per code, 10 wrong codes per address per day before only the link works, and a new sign-in cancels the older ones; the link opens a confirm button so mail scanners can't spend it), a passkey (OpenPing's own `src/worker/lib/webauthn.ts`, discoverable, relying party `app.<domain>`), or GitHub (with PKCE, matched by user id, joined to an account only by its verified primary email);
+  - sessions in a `__Host-` cookie that never reaches a customer's subdomain, stored as hashes, 30 days, one per browser;
+  - rate limits per address, then per IP (an IPv6 address's /64), then in total, where a request refused by a narrow limit never counts against the wide one, and a short list of throwaway mail domains refused for email and GitHub sign-ups alike;
   - every post checked to come from `app.<domain>`, no inline script (the passkey helper is served from `/static/passkeys.js`);
   - the account page: the customer's OpenPing and its state, passkeys, GitHub, sign-out;
-  - choosing an address (`/start`) creates the tenant and starts provisioning after the answer;
+  - choosing an address (`/start`) creates the tenant (one per account, enforced by a unique index) and queues its provisioning;
   - `/open?tenant=<slug>` mints the Ed25519 hand-off (`src/handoff.ts`, only the contract's helpers) and redirects to `https://<slug>.<domain>/auth/hosted?t=...`;
-  - `SIGN_UPS` stays `closed` until launch: existing accounts sign in, no new ones are made.
+  - `SIGN_UPS` stays `closed` until launch: existing accounts sign in, no new ones are made, and the email form sends nothing to an address without an account (it shows the same page either way);
+  - signing out is a POST; the tenant's sign-out lands on `GET /sign-out`, which offers one tap to end the platform session too.
 - Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit` is real; `sendEmail` and `reportUsage` are stubs until A5, B2 and B6).
 
 ## Layout

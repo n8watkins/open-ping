@@ -9,7 +9,7 @@ import { PASSKEY_SCRIPT_PATH } from "./client-script";
 import type { Passkey } from "./auth/passkeys";
 import { SLUG_MAX_LENGTH } from "./slugs";
 import type { ProvisionState } from "./tenants";
-import { GITHUB_ICON, Html, PASSKEY_ICON, html, notice, renderPage } from "./ui";
+import { GITHUB_ICON, Html, PASSKEY_ICON, SUPPORT_EMAIL, html, notice, renderPage } from "./ui";
 import type { PlanId, TenantStatus } from "../../src/shared/hosted-contract";
 
 export interface SignInPageInput {
@@ -153,6 +153,8 @@ export interface AccountTenantView {
   plan: PlanId;
   provisionState: ProvisionState;
   slow: boolean;
+  /** Provisioning stopped for the owner to look at. */
+  paused: boolean;
   trialEndsAt: number | null;
 }
 
@@ -171,6 +173,12 @@ function tenantSection(tenant: AccountTenantView | null, now: number): Html {
   if (!tenant) {
     return html`<h2>Your OpenPing</h2><p>You don't have an OpenPing yet.</p>
 <div class="stack"><a class="button primary" href="/start">Create my OpenPing</a></div>`;
+  }
+  if (tenant.provisionState !== "ready" && tenant.paused) {
+    return html`<p class="badge" style="--tone: var(--degraded)">Needs a look</p>
+<h2>Setting up your OpenPing hit a problem</h2>
+<p class="address">${tenant.url.replace(/^https?:\/\//, "")}</p>
+<p>Nothing is lost and the address stays yours. We've been told and will finish it; write to <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a> if you'd like an update.</p>`;
   }
   if (tenant.provisionState !== "ready") {
     return html`<p class="badge" style="--tone: var(--degraded)">Setting up</p>
@@ -206,7 +214,7 @@ export function accountPage(input: {
   flash?: { message: string; tone: "ok" | "error" } | null;
   now: number;
 }): Response {
-  const settingUp = input.tenant !== null && input.tenant.provisionState !== "ready";
+  const settingUp = input.tenant !== null && input.tenant.provisionState !== "ready" && !input.tenant.paused;
   const passkeys = input.passkeys.length
     ? html`<ul class="rows">${input.passkeys.map(
         (p) => html`<li><div class="what"><strong>${p.label ?? "Passkey"}</strong><span>Added ${dateText(p.createdAt)}${
@@ -242,5 +250,16 @@ ${github}
 </section>
 <section><h2>Billing</h2><p>Paid plans open soon: $24 a year, and $12 a year more for 1-minute checks. Your trial keeps running until then.</p></section>
 <section><form method="post" action="/sign-out"><button class="button secondary" type="submit">Sign out</button></form></section>`,
+  });
+}
+
+/** The GET of /sign-out: the tenant's sign-out lands here, and one tap ends the platform session too. */
+export function signOutPage(): Response {
+  return renderPage({
+    title: "Sign out",
+    main: html`<h1>You're signed out of your OpenPing</h1>
+<p class="lead">You're still signed in to your OpenPing Hosted account on this device.</p>
+<form method="post" action="/sign-out"><button class="button primary" type="submit">Sign out of OpenPing Hosted too</button></form>
+<p class="switch"><a href="/account">Stay signed in</a></p>`,
   });
 }

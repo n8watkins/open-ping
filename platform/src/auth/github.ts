@@ -3,7 +3,9 @@
  * https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps
  *
  * The state is random, kept in a ceremony bound to this browser, and checked
- * before the code is exchanged. The account is matched by GitHub user id,
+ * before the code is exchanged; the exchange also proves PKCE (RFC 7636,
+ * S256), so a code stolen on its way back is useless without this
+ * browser's verifier. The account is matched by GitHub user id,
  * and a new GitHub sign-in is joined to an existing account only by an email
  * GitHub says is the user's verified primary address.
  */
@@ -28,13 +30,26 @@ export function githubConfig(env: { GITHUB_CLIENT_ID?: string; GITHUB_CLIENT_SEC
 
 export const newOAuthState = () => randomToken(24);
 
-export function authorizeUrl(config: GithubConfig, input: { redirectUri: string; state: string }): string {
+/** A PKCE code_verifier: 32 random bytes, base64url (43 characters, within RFC 7636's 43 to 128). */
+export const newCodeVerifier = () => randomToken(32);
+
+/** The S256 code_challenge for a verifier: base64url(SHA-256(verifier)). */
+export async function codeChallenge(verifier: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+  let binary = "";
+  for (const b of digest) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function authorizeUrl(config: GithubConfig, input: { redirectUri: string; state: string; codeChallenge: string }): string {
   const url = new URL(AUTHORIZE);
   url.searchParams.set("client_id", config.clientId);
   url.searchParams.set("redirect_uri", input.redirectUri);
   url.searchParams.set("scope", "read:user user:email");
   url.searchParams.set("state", input.state);
   url.searchParams.set("allow_signup", "true");
+  url.searchParams.set("code_challenge", input.codeChallenge);
+  url.searchParams.set("code_challenge_method", "S256");
   return url.toString();
 }
 
@@ -67,13 +82,13 @@ async function getJson<T>(fetcher: typeof fetch, url: string, init: RequestInit)
 /** Exchanges the callback's code and reads who signed in. */
 export async function fetchGithubUser(
   config: GithubConfig,
-  input: { code: string; redirectUri: string },
+  input: { code: string; redirectUri: string; codeVerifier: string },
   fetcher: typeof fetch = (i, init) => fetch(i, init),
 ): Promise<GithubUser> {
   const token = await getJson<{ access_token?: string; error?: string }>(fetcher, TOKEN, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json", "user-agent": UA },
-    body: JSON.stringify({ client_id: config.clientId, client_secret: config.clientSecret, code: input.code, redirect_uri: input.redirectUri }),
+    body: JSON.stringify({ client_id: config.clientId, client_secret: config.clientSecret, code: input.code, redirect_uri: input.redirectUri, code_verifier: input.codeVerifier }),
   });
   if (!token.access_token) throw new GithubError(`token exchange refused: ${token.error ?? "no token"}`);
   const headers = { authorization: `Bearer ${token.access_token}`, accept: "application/vnd.github+json", "user-agent": UA };

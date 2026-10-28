@@ -61,8 +61,14 @@ const BUNDLE: TenantBundle = {
 };
 
 let outbox: Outbox;
-let github: { user: { id: number; login: string }; emails: { email: string; primary: boolean; verified: boolean }[]; calls: string[] };
+let github: {
+  user: { id: number; login: string };
+  emails: { email: string; primary: boolean; verified: boolean }[];
+  calls: string[];
+  verifiers: string[];
+};
 let signUps = "open";
+let provisionQueue: Queue<{ tenantId: string }> | undefined;
 
 const api = new FakeCloudflareApi();
 const dispatcher = new FakeDispatcher();
@@ -86,8 +92,9 @@ const githubFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   github.calls.push(url);
   if (url === "https://github.com/login/oauth/access_token") {
-    const body = JSON.parse(String(init?.body)) as { code: string };
-    return Response.json(body.code === "good" ? { access_token: "gho_test" } : { error: "bad_verification_code" });
+    const body = JSON.parse(String(init?.body)) as { code: string; code_verifier?: string };
+    github.verifiers.push(body.code_verifier ?? "");
+    return Response.json(body.code === "good" && body.code_verifier ? { access_token: "gho_test" } : { error: "bad_verification_code" });
   }
   if (url === "https://api.github.com/user") return Response.json(github.user);
   if (url === "https://api.github.com/user/emails") return Response.json(github.emails);
@@ -109,6 +116,7 @@ function platformEnv(): PlatformEnv {
     HANDOFF_SIGNING_KEY: keys.privateKey,
     GITHUB_CLIENT_ID: "gh-client",
     GITHUB_CLIENT_SECRET: "gh-secret",
+    PROVISION_QUEUE: provisionQueue,
   };
 }
 
@@ -117,7 +125,7 @@ let ipSeq = 0;
 /** One browser: its cookies, its IP, and a same-origin Origin on every post. */
 class Browser {
   cookies = new Map<string, string>();
-  readonly ip = `198.51.100.${++ipSeq}`;
+  constructor(readonly ip = `198.51.100.${++ipSeq}`) {}
 
   async fetch(path: string, init: RequestInit & { form?: Record<string, string>; json?: unknown; origin?: string | null } = {}): Promise<Response> {
     const headers = new Headers(init.headers);
@@ -171,10 +179,12 @@ beforeAll(async () => {
   keys = await generateHandoffKeyPair();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   outbox = new Outbox();
   signUps = "open";
-  github = { user: { id: 4242, login: "octo" }, emails: [{ email: "octo@example.com", primary: true, verified: true }], calls: [] };
+  provisionQueue = undefined;
+  await env.PLATFORM_DB.prepare("DELETE FROM rate_limits").run();
+  github = { user: { id: 4242, login: "octo" }, emails: [{ email: "octo@example.com", primary: true, verified: true }], calls: [], verifiers: [] };
 });
 
 // --- Tests ------------------------------------------------------------------
@@ -341,9 +351,13 @@ describe("the email code", () => {
     await new Browser().signInWithCode(existing);
     signUps = "closed";
     expect((await new Browser().signInWithCode(existing)).status).toBe(303);
-    const stranger = await new Browser().signInWithCode(newEmail());
-    expect(stranger.status).toBe(403);
-    expect(await textOf(stranger)).toContain("Sign-ups aren't open yet");
+    // A stranger sees the usual page, but no email goes out and no account is made.
+    const sentBefore = outbox.sent.length;
+    const stranger = newEmail();
+    const page = await new Browser().fetch("/sign-in/email", { form: { email: stranger } });
+    expect(await page.text()).toContain("Check your email");
+    expect(outbox.sent).toHaveLength(sentBefore);
+    expect(await count("SELECT COUNT(*) AS n FROM accounts WHERE email = ?", stranger)).toBe(0);
   });
 });
 
@@ -428,6 +442,7 @@ describe("passkeys", () => {
 });
 
 describe("GitHub", () => {
+  const challenges: string[] = [];
   async function viaGithub(browser: Browser, path = "/auth/github", code = "good"): Promise<Response> {
     const start = await browser.fetch(path);
     expect(start.status).toBe(303);
@@ -435,12 +450,17 @@ describe("GitHub", () => {
     expect(`${to.origin}${to.pathname}`).toBe("https://github.com/login/oauth/authorize");
     expect(to.searchParams.get("client_id")).toBe("gh-client");
     expect(to.searchParams.get("redirect_uri")).toBe(`${APP}/auth/github/callback`);
+    expect(to.searchParams.get("code_challenge_method")).toBe("S256");
+    challenges.push(to.searchParams.get("code_challenge")!);
     return browser.fetch(`/auth/github/callback?code=${code}&state=${to.searchParams.get("state")}`);
   }
 
   it("signs up with the verified primary email, then signs in by GitHub id", async () => {
     const browser = new Browser();
     const res = await viaGithub(browser);
+    // PKCE: the verifier sent with the code is the one behind the challenge GitHub was given.
+    const { codeChallenge } = await import("../src/auth/github");
+    expect(await codeChallenge(github.verifiers.at(-1)!)).toBe(challenges.at(-1));
     expect(res.headers.get("location")).toBe("/account");
     const account = await env.PLATFORM_DB.prepare("SELECT id FROM accounts WHERE email = 'octo@example.com'").first<{ id: string }>();
     expect(await count("SELECT COUNT(*) AS n FROM account_identities WHERE account_id = ? AND kind = 'github' AND subject = '4242'", account!.id)).toBe(1);
@@ -466,6 +486,14 @@ describe("GitHub", () => {
     expect((await viaGithub(new Browser(), "/auth/github", "bad")).status).toBe(502);
   });
 
+  it("won't make an account for a throwaway GitHub email", async () => {
+    github.user = { id: 77, login: "throwaway" };
+    github.emails = [{ email: "someone@mailinator.com", primary: true, verified: true }];
+    const res = await viaGithub(new Browser());
+    expect(await textOf(res)).toContain("Please use a permanent email address");
+    expect(await count("SELECT COUNT(*) AS n FROM accounts WHERE email = 'someone@mailinator.com'")).toBe(0);
+  });
+
   it("connects to the signed-in account, and won't take one connected elsewhere", async () => {
     const browser = new Browser();
     await browser.signInWithCode(newEmail());
@@ -483,14 +511,17 @@ describe("GitHub", () => {
 
 describe("sessions", () => {
   it("end on sign-out, from the account page or the tenant's redirect", async () => {
-    for (const method of ["POST", "GET"]) {
-      const browser = new Browser();
-      await browser.signInWithCode(newEmail());
-      const out = await browser.fetch("/sign-out", { method });
-      expect(await textOf(out)).toContain("You're signed out");
-      expect(browser.cookies.has("__Host-op_platform")).toBe(false);
-      expect((await browser.fetch("/account")).headers.get("location")).toBe("/sign-in?next=%2Faccount");
-    }
+    const browser = new Browser();
+    await browser.signInWithCode(newEmail());
+    // The tenant's redirect is a GET: it shows the button, and signs nobody out by itself.
+    const page = await browser.fetch("/sign-out");
+    expect(await textOf(page)).toContain("Sign out of OpenPing Hosted too");
+    expect((await browser.fetch("/start")).status).toBe(200);
+    const out = await browser.fetch("/sign-out", { method: "POST" });
+    expect(await textOf(out)).toContain("You're signed out");
+    expect(browser.cookies.has("__Host-op_platform")).toBe(false);
+    expect((await browser.fetch("/account")).headers.get("location")).toBe("/sign-in?next=%2Faccount");
+    expect(await textOf(await browser.fetch("/sign-out"))).toContain("You're signed out");
   });
 
   it("stop working when the owner disables the account", async () => {
@@ -500,6 +531,142 @@ describe("sessions", () => {
     await env.PLATFORM_DB.prepare("UPDATE accounts SET disabled_at = 1 WHERE email = ?").bind(email).run();
     expect((await browser.fetch("/account")).status).toBe(303);
     expect((await new Browser().signInWithCode(email)).status).toBe(403);
+  });
+});
+
+describe("review fixes", () => {
+  const key = (scope: string) => count("SELECT COALESCE(SUM(count), 0) AS n FROM rate_limits WHERE key LIKE ?", `${scope}:%`);
+
+  it("never lets one IP's refused requests use up the global mail budget", async () => {
+    const browser = new Browser();
+    for (let i = 0; i < 25; i++) await browser.fetch("/sign-in/email", { form: { email: newEmail() } });
+    expect(await key("signin-email:ip")).toBe(25);
+    // Only the 20 the IP was allowed count against everyone's budget.
+    expect(await key("signin-email:all")).toBe(20);
+    expect((await new Browser().fetch("/sign-in/email", { form: { email: newEmail() } })).status).toBe(200);
+  });
+
+  it("counts a sign-up against the IP only once the address is acceptable, and the global limit only when the IP may", async () => {
+    const ip = "203.0.113.50";
+    for (let i = 0; i < 8; i++) {
+      const browser = new Browser(ip);
+      await browser.signInWithCode(newEmail());
+      expect((await browser.fetch("/start", { form: { slug: "admin" } })).status).toBe(400);
+    }
+    expect(await key("signup:ip")).toBe(0);
+    for (let i = 0; i < 7; i++) {
+      const browser = new Browser(ip);
+      await browser.signInWithCode(newEmail());
+      await browser.fetch("/start", { form: { slug: `ipco-${i}` } });
+    }
+    expect(await key("signup:ip")).toBe(7);
+    expect(await key("signup:all")).toBe(5);
+    expect(await count("SELECT COUNT(*) AS n FROM tenants WHERE slug LIKE 'ipco-%'")).toBe(5);
+  });
+
+  it("keys IPv6 limits by /64", async () => {
+    const { ipSubject } = await import("../src/auth/rate-limit");
+    expect(ipSubject("2001:db8:1:2:aaaa::1")).toBe("2001:db8:1:2::/64");
+    expect(ipSubject("2001:0db8:0001:0002:ffff:ffff:ffff:ffff")).toBe("2001:db8:1:2::/64");
+    expect(ipSubject("2001:db8::")).toBe("2001:db8:0:0::/64");
+    expect(ipSubject("198.51.100.7")).toBe("198.51.100.7");
+    expect(ipSubject(null)).toBe("unknown");
+    for (let i = 0; i < 20; i++) await new Browser(`2001:db8:5:6::${(i + 1).toString(16)}`).fetch("/sign-in/email", { form: { email: newEmail() } });
+    expect((await new Browser("2001:db8:5:6:ffff::9").fetch("/sign-in/email", { form: { email: newEmail() } })).status).toBe(429);
+    expect((await new Browser("2001:db8:5:7::1").fetch("/sign-in/email", { form: { email: newEmail() } })).status).toBe(200);
+  });
+
+  it("caps wrong codes per address per day across sign-ins, then only the link works", async () => {
+    const email = newEmail();
+    const loginOf = async (b: Browser) => /name="login" value="([^"]+)"/.exec(await (await b.fetch("/sign-in/email", { form: { email } })).text())![1]!;
+    const wrongFor = (code: string) => (code === "000000" ? "111111" : "000000");
+    // Two sign-ins, five wrong codes each.
+    for (let round = 0; round < 2; round++) {
+      const b = new Browser();
+      const login = await loginOf(b);
+      const wrong = wrongFor(outbox.last().code);
+      for (let i = 0; i < 5; i++) await b.fetch("/sign-in/code", { form: { login, code: wrong } });
+    }
+    const b = new Browser();
+    const login = await loginOf(b);
+    const { code, link } = outbox.last();
+    const refused = await b.fetch("/sign-in/code", { form: { login, code } });
+    expect(refused.status).toBe(429);
+    expect(await textOf(refused)).toContain("The link in your latest email still works");
+    const token = /name="token" value="([^"]+)"/.exec(await (await b.fetch(link.slice(APP.length))).text())![1]!;
+    expect((await b.fetch("/sign-in/link", { form: { token } })).status).toBe(303);
+  });
+
+  it("cancels an address's older sign-ins when a new one is asked for", async () => {
+    const email = newEmail();
+    const b = new Browser();
+    const first = /name="login" value="([^"]+)"/.exec(await (await b.fetch("/sign-in/email", { form: { email } })).text())![1]!;
+    const firstCode = outbox.last().code;
+    await b.fetch("/sign-in/email", { form: { email } });
+    expect(await textOf(await b.fetch("/sign-in/code", { form: { login: first, code: firstCode } }))).toContain("This code has expired");
+  });
+
+  it("sends nothing to an unknown address while sign-ups are closed, and looks the same", async () => {
+    signUps = "closed";
+    const res = await new Browser().fetch("/sign-in/email", { form: { email: newEmail() } });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Check your email");
+    expect(outbox.sent).toHaveLength(0);
+  });
+
+  it("treats a double submit of the address as the same OpenPing, and never makes two", async () => {
+    const browser = new Browser();
+    await browser.signInWithCode(newEmail());
+    expect((await browser.fetch("/start", { form: { slug: "doubleco" } })).headers.get("location")).toBe("/account");
+    expect((await browser.fetch("/start", { form: { slug: "doubleco" } })).headers.get("location")).toBe("/account");
+
+    const racer = new Browser();
+    await racer.signInWithCode(newEmail());
+    const results = await Promise.all([
+      racer.fetch("/start", { form: { slug: "raceone" } }),
+      racer.fetch("/start", { form: { slug: "racetwo" } }),
+    ]);
+    for (const r of results) expect(r.headers.get("location")).toBe("/account");
+    const accountId = (await env.PLATFORM_DB.prepare("SELECT account_id AS a FROM tenants WHERE slug IN ('raceone', 'racetwo')").first<{ a: string }>())!.a;
+    expect(await count("SELECT COUNT(*) AS n FROM tenants WHERE account_id = ?", accountId)).toBe(1);
+  });
+
+  it("queues provisioning when the queue is bound", async () => {
+    const sent: unknown[] = [];
+    provisionQueue = { send: async (body: unknown) => void sent.push(body) } as unknown as Queue<{ tenantId: string }>;
+    const browser = new Browser();
+    await browser.signInWithCode(newEmail());
+    await browser.fetch("/start", { form: { slug: "queuedsignup" } });
+    const id = (await env.PLATFORM_DB.prepare("SELECT id, provision_state FROM tenants WHERE slug = 'queuedsignup'").first<{ id: string; provision_state: string }>())!;
+    expect(sent).toEqual([{ tenantId: id.id }]);
+    expect(id.provision_state).toBe("requested");
+  });
+
+  it("shows a paused OpenPing plainly", async () => {
+    const browser = new Browser();
+    const email = newEmail();
+    await browser.signInWithCode(email);
+    await browser.fetch("/start", { form: { slug: "pausedco" } });
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET provision_state = 'db_created', provision_paused_at = 1 WHERE slug = 'pausedco'").run();
+    const res = await browser.fetch("/account");
+    const page = await textOf(res);
+    expect(page).toContain("Setting up your OpenPing hit a problem");
+    expect(page).not.toContain('http-equiv="refresh"');
+  });
+
+  it("ends the browser's earlier session when it signs in again", async () => {
+    const browser = new Browser();
+    const email = newEmail();
+    await browser.signInWithCode(email);
+    await browser.signInWithCode(email);
+    expect(await count("SELECT COUNT(*) AS n FROM platform_sessions s JOIN accounts a ON a.id = s.account_id WHERE a.email = ?", email)).toBe(1);
+  });
+
+  it("limits passkey sign-in starts in their own bucket", async () => {
+    const browser = new Browser();
+    for (let i = 0; i < 60; i++) expect((await browser.fetch("/sign-in/passkey/options", { json: {} })).status).toBe(200);
+    expect((await browser.fetch("/sign-in/passkey/options", { json: {} })).status).toBe(429);
+    expect(await key("signin-passkey:ip")).toBe(0);
   });
 });
 
