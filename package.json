@@ -21,6 +21,7 @@
     "test:unit": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
+    "op": "node scripts/op.mjs",
     "cf-typegen": "wrangler types",
     "db:create": "wrangler d1 create open-ping",
     "db:migrate:local": "wrangler d1 migrations apply open-ping --local",
