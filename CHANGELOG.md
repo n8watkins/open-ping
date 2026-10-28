@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2 - 2026-10-28
+
+### Fixed
+
+- Clear finished alert deliveries after 30 days
+
 ## 0.8.1 - 2026-10-28
 
 ### Fixed
