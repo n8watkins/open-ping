@@ -45,4 +45,11 @@ export interface PlatformEnv {
    * every /admin page answers 404.
    */
   PLATFORM_OWNERS?: string;
+  /**
+   * Var or secret: the credential ids of the owner's own passkeys, separated
+   * by commas or spaces. Only a sign-in with one of these opens the console,
+   * so a passkey someone adds through the owner's inbox gets them nothing.
+   * The console's "Confirm it's you" page lists the owner's passkey ids to copy.
+   */
+  PLATFORM_OWNER_PASSKEYS?: string;
 }

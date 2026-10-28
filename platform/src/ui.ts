@@ -163,6 +163,13 @@ export interface PageOptions {
   style?: string;
   /** False leaves out the "Questions? Write to support" line (the owner's own pages). */
   footer?: boolean;
+  /**
+   * Go on to this address at once, by GET (a meta refresh; the page also
+   * links it). For a form post whose next stop is another origin: the CSP's
+   * form-action 'self' covers every redirect after a post, so a 303 there is
+   * blocked, but a navigation from a page is not a form submission.
+   */
+  redirectTo?: string;
   /** Reload the page after this many seconds (the "setting up" state). */
   refreshSeconds?: number;
   headers?: Record<string, string>;
@@ -188,7 +195,11 @@ export function contentSecurityPolicy(withScripts: boolean): string {
 
 export function renderPage(options: PageOptions): Response {
   const scripts = options.scripts ?? [];
-  const refresh = options.refreshSeconds ? html`<meta http-equiv="refresh" content="${options.refreshSeconds}">` : "";
+  const refresh = options.redirectTo
+    ? html`<meta http-equiv="refresh" content="0;url=${options.redirectTo}">`
+    : options.refreshSeconds
+      ? html`<meta http-equiv="refresh" content="${options.refreshSeconds}">`
+      : "";
   const body = html`<!doctype html>
 <html lang="en">
 <head>

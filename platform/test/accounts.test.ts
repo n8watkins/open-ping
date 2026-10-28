@@ -284,7 +284,12 @@ describe("signing up with email, through to the customer's OpenPing", () => {
     const page = await (await browser.fetch("/sign-in?tenant=returnco")).text();
     expect(page).toContain('name="next" value="/open?tenant=returnco"');
     const res = await browser.signInWithCode(email, "/open?tenant=returnco");
-    expect(res.headers.get("location")).toBe("/open?tenant=returnco");
+    // A page that goes on to /open by GET: after a post, the CSP's form-action
+    // would block /open's redirect to the tenant's origin.
+    expect(res.status).toBe(200);
+    const continued = await res.text();
+    expect(continued).toContain('<meta http-equiv="refresh" content="0;url=/open?tenant=returnco">');
+    expect(continued).toContain('href="/open?tenant=returnco" rel="noreferrer">Continue to returnco</a>');
     expect((await browser.fetch("/open?tenant=returnco")).headers.get("location")).toMatch(/^https:\/\/returnco\.openping\.test\/auth\/hosted\?t=v1\./);
     // Already signed in, the tenant's sign-in link goes straight through.
     expect((await browser.fetch("/sign-in?tenant=returnco")).headers.get("location")).toBe("/open?tenant=returnco");

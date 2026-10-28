@@ -22,7 +22,7 @@ export const WAITLIST_MAX_BYTES = 1_000_000;
 export const WAITLIST_MAX_ENTRIES = 5_000;
 /** Bound parameters per statement are capped at 100 by D1: 2 per row. */
 const ROWS_PER_STATEMENT = 50;
-/** Statements per batch. */
+/** Statements per batch (an even number: they come in pairs). */
 const STATEMENTS_PER_BATCH = 20;
 
 export interface WaitlistEntry {
@@ -40,27 +40,58 @@ export interface ParsedWaitlist {
 
 export type WaitlistParseResult = { ok: true; list: ParsedWaitlist } | { ok: false; message: string };
 
-/** One CSV line into fields: commas, double quotes and "" inside quotes (RFC 4180, the export's csvField). */
-export function csvFields(line: string): string[] {
-  const out: string[] = [];
+export interface CsvRecord {
+  /** The 1-based line the record starts on. */
+  line: number;
+  /** The record as it appeared, quotes and all. */
+  raw: string;
+  fields: string[];
+}
+
+/**
+ * A whole CSV text into records (RFC 4180, as the export's csvField writes
+ * it): commas, double quotes, "" inside quotes, and line breaks inside quotes
+ * kept in the field. An unclosed quote runs to the end of the text.
+ */
+export function csvRecords(text: string): CsvRecord[] {
+  const records: CsvRecord[] = [];
+  let fields: string[] = [];
   let field = "";
   let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]!;
+  let line = 1;
+  let startLine = 1;
+  let start = 0;
+  const end = (i: number) => {
+    fields.push(field);
+    records.push({ line: startLine, raw: text.slice(start, i), fields: fields.map((f) => f.trim()) });
+    fields = [];
+    field = "";
+  };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
     if (quoted) {
-      if (ch === '"' && line[i + 1] === '"') {
+      if (ch === '"' && text[i + 1] === '"') {
         field += '"';
         i++;
       } else if (ch === '"') quoted = false;
-      else field += ch;
+      else {
+        if (ch === "\n" || (ch === "\r" && text[i + 1] !== "\n")) line++;
+        field += ch;
+      }
     } else if (ch === '"') quoted = true;
     else if (ch === ",") {
-      out.push(field);
+      fields.push(field);
       field = "";
+    } else if (ch === "\r" || ch === "\n") {
+      end(i);
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      line++;
+      startLine = line;
+      start = i + 1;
     } else field += ch;
   }
-  out.push(field);
-  return out.map((f) => f.trim());
+  if (start < text.length) end(text.length);
+  return records;
 }
 
 /** An ISO time, or epoch milliseconds as a number or digits; null when it is neither or implausible. */
@@ -118,24 +149,23 @@ function parseJson(text: string): WaitlistParseResult {
 }
 
 function parseCsv(text: string): WaitlistParseResult {
-  const lines = text.split(/\r\n|\n|\r/);
+  const records = csvRecords(text).filter((rec) => rec.raw.trim());
   let emailColumn = 0;
   let joinedColumn: number | null = 1;
-  let start = 0;
-  const header = csvFields(lines[0] ?? "").map((f) => f.toLowerCase());
+  let first = 0;
+  const header = (records[0]?.fields ?? []).map((f) => f.toLowerCase());
   if (header.includes("email")) {
     emailColumn = header.indexOf("email");
     const joined = header.findIndex((f) => f === "joined_at" || f === "created_at" || f === "joined");
     joinedColumn = joined >= 0 ? joined : null;
-    start = 1;
+    first = 1;
   }
-  const items: { where: string; raw: string; email: unknown; joinedAt: unknown }[] = [];
-  for (let i = start; i < lines.length; i++) {
-    const raw = lines[i]!;
-    if (!raw.trim()) continue;
-    const fields = csvFields(raw);
-    items.push({ where: `line ${i + 1}`, raw, email: fields[emailColumn], joinedAt: joinedColumn === null ? null : fields[joinedColumn] });
-  }
+  const items = records.slice(first).map((rec) => ({
+    where: `line ${rec.line}`,
+    raw: rec.raw,
+    email: rec.fields[emailColumn],
+    joinedAt: joinedColumn === null ? null : rec.fields[joinedColumn],
+  }));
   return { ok: true, list: collect(items) };
 }
 
@@ -160,33 +190,63 @@ export function parseWaitlistExport(text: string): WaitlistParseResult {
  * Adds the entries that aren't on the platform's list yet. An address that is
  * already there keeps its row, except that an earlier join time from the
  * file replaces a later or missing one, so importing the same export twice
- * changes nothing. Answers how many were new.
+ * changes nothing. `added` comes from the inserts themselves, so it stays
+ * right even when two imports run at once.
  */
 export async function importWaitlist(db: D1Database, entries: WaitlistEntry[], now: number): Promise<{ added: number; existing: number }> {
   const statements: D1PreparedStatement[] = [];
   for (let i = 0; i < entries.length; i += ROWS_PER_STATEMENT) {
     const chunk = entries.slice(i, i + ROWS_PER_STATEMENT);
     const values = chunk.map(() => `(?, ?, ${Math.trunc(now)})`).join(", ");
+    const binds = chunk.flatMap((e) => [e.email, e.joinedAt]);
+    // In pairs: the insert (whose changes are the new rows), then the earlier join times for the rest.
     statements.push(
+      db.prepare(`INSERT INTO waitlist_entries (email, joined_at, imported_at) VALUES ${values} ON CONFLICT(email) DO NOTHING`).bind(...binds),
       db
         .prepare(
           `INSERT INTO waitlist_entries (email, joined_at, imported_at) VALUES ${values}
            ON CONFLICT(email) DO UPDATE SET joined_at = excluded.joined_at
            WHERE excluded.joined_at IS NOT NULL AND (waitlist_entries.joined_at IS NULL OR excluded.joined_at < waitlist_entries.joined_at)`,
         )
-        .bind(...chunk.flatMap((e) => [e.email, e.joinedAt])),
+        .bind(...binds),
     );
   }
-  const before = await waitlistCount(db);
+  let added = 0;
   for (let i = 0; i < statements.length; i += STATEMENTS_PER_BATCH) {
-    await db.batch(statements.slice(i, i + STATEMENTS_PER_BATCH));
+    const results = await db.batch(statements.slice(i, i + STATEMENTS_PER_BATCH));
+    results.forEach((result, j) => {
+      if ((i + j) % 2 === 0) added += result.meta.changes ?? 0;
+    });
   }
-  const added = (await waitlistCount(db)) - before;
   return { added, existing: entries.length - added };
 }
 
-async function waitlistCount(db: D1Database): Promise<number> {
-  return (await db.prepare("SELECT COUNT(*) AS n FROM waitlist_entries").first<{ n: number }>())?.n ?? 0;
+/**
+ * Reads a request body, refusing it (null) as soon as it passes `maxBytes`,
+ * so an oversized upload is never held in memory whole.
+ */
+export async function readBodyCapped(request: Request, maxBytes: number): Promise<Uint8Array | null> {
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 export interface WaitlistSummary {

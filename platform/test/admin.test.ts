@@ -14,7 +14,7 @@ import { rateLimitKey, windowIndexFor } from "../../src/worker/db/rate-limit";
 import { SoftAuthenticator } from "../../test/support/soft-authenticator";
 import type { AccountDeps } from "../src/account-routes";
 import { ADMIN_REAUTH_MS, ADMIN_SESSION_MAX_AGE_MS, parseOwners } from "../src/admin/owner";
-import { csvFields, parseJoinedAt, parseWaitlistExport } from "../src/admin/waitlist";
+import { WAITLIST_MAX_BYTES, csvRecords, parseJoinedAt, parseWaitlistExport } from "../src/admin/waitlist";
 import { createApp } from "../src/app";
 import { LIMITS } from "../src/auth/rate-limit";
 import { StaticBundleSource, type TenantBundle } from "../src/bundle";
@@ -36,6 +36,7 @@ let keys: { publicKey: string; privateKey: string };
 
 let clock = Date.now();
 let owners = "";
+let pinned = "";
 let signingKey: string | undefined;
 
 class Outbox implements Mailer {
@@ -101,6 +102,7 @@ function platformEnv(): PlatformEnv {
     ...(env as unknown as PlatformEnv),
     SIGN_UPS: "open",
     PLATFORM_OWNERS: owners,
+    PLATFORM_OWNER_PASSKEYS: pinned,
     HANDOFF_SIGNING_KEY: signingKey,
   };
 }
@@ -172,11 +174,19 @@ async function personWithPasskey(): Promise<{ browser: Browser; authenticator: S
   return { browser, authenticator, email, accountId: await accountIdOf(email) };
 }
 
-/** The owner (by account id), signed in with a passkey just now. */
+/** The owner (by account id), signed in just now with their pinned passkey. */
 async function owner() {
   const person = await personWithPasskey();
   owners = person.accountId;
+  pinned = person.authenticator.id;
   return person;
+}
+
+/** The page's own continue link (continuePage): where it goes next, by GET. */
+function continueHref(page: string): string {
+  const meta = /<meta http-equiv="refresh" content="0;url=([^"]+)">/.exec(page)![1]!;
+  expect(page).toContain(`href="${meta}"`);
+  return meta;
 }
 
 let tenantSeq = 0;
@@ -251,6 +261,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   clock = Date.now();
   owners = "";
+  pinned = "";
   signingKey = keys.privateKey;
   clearTenantCache();
   await env.PLATFORM_DB.prepare("DELETE FROM rate_limits").run();
@@ -316,8 +327,9 @@ describe("who can open the admin console", () => {
     expect((await tenantRow(tenant.id))!.status).toBe("active");
   });
 
-  it("lets the owner in by account id or email with a passkey sign-in, and links it from the account page", async () => {
+  it("lets the owner in by account id or email with a pinned passkey sign-in, and links it from the account page", async () => {
     const person = await personWithPasskey();
+    pinned = `someotherpasskeyid0000, ${person.authenticator.id}`;
     for (const value of [person.accountId, `someone@example.com,${person.email.toUpperCase()}`]) {
       owners = value;
       const res = await person.browser.fetch("/admin");
@@ -354,7 +366,7 @@ describe("who can open the admin console", () => {
 
     await browser.signInWithPasskey(authenticator, `/admin/tenants/${tenant.id}`);
     expect((await browser.fetch(`/admin/tenants/${tenant.id}/suspend`, { form: { reason: "abuse report" } })).status).toBe(303);
-    expect((await tenantRow(tenant.id))!.status).toBe("suspended");
+    expect((await tenantRow(tenant.id))!.owner_suspended_at).toBe(clock);
   });
 
   it("refuses the owner's change from another site", async () => {
@@ -426,7 +438,7 @@ describe("the tenant list", () => {
     const { browser } = await owner();
     const page = await text(await browser.fetch("/admin"));
     const counts = await env.PLATFORM_DB.prepare(
-      "SELECT COUNT(*) AS all_count, SUM(provision_paused_at IS NOT NULL) AS paused, SUM(status = 'suspended') AS suspended FROM tenants",
+      "SELECT COUNT(*) AS all_count, SUM(provision_paused_at IS NOT NULL) AS paused, SUM(status = 'suspended' OR owner_suspended_at IS NOT NULL) AS suspended FROM tenants",
     ).first<{ all_count: number; paused: number; suspended: number }>();
     expect(page).toContain(`<strong>${counts!.all_count}</strong><span>All tenants</span>`);
     expect(page).toContain(`<strong>${counts!.paused}</strong><span>Paused, need a look</span>`);
@@ -510,8 +522,8 @@ describe("suspending and resuming", () => {
 
     const res = await browser.fetch(`/admin/tenants/${tenant.id}/suspend`, { form: { reason: "Phishing\npage on\tits status page" } });
     expect(res.headers.get("location")).toBe(`/admin/tenants/${tenant.id}?done=suspended`);
-    const row = await tenantRow(tenant.id);
-    expect(row).toMatchObject({ status: "suspended", status_before_suspend: "past_due", suspended_at: clock, suspended_reason: "Phishing page on its status page" });
+    // Billing's state is untouched: the owner's suspension has columns of its own.
+    expect(await tenantRow(tenant.id)).toMatchObject({ status: "past_due", owner_suspended_at: clock, owner_suspended_reason: "Phishing page on its status page" });
     // forgetTenant: this isolate shows the paused page now, not after its 30-second cache.
     const paused = await visit("suspendco");
     expect(paused.status).toBe(503);
@@ -523,7 +535,7 @@ describe("suspending and resuming", () => {
     expect((await browser.fetch(`/admin/tenants/${tenant.id}/suspend`, { form: { reason: "again" } })).headers.get("location")).toContain("done=already-suspended");
 
     expect((await browser.fetch(`/admin/tenants/${tenant.id}/resume`, { method: "POST" })).headers.get("location")).toBe(`/admin/tenants/${tenant.id}?done=resumed`);
-    expect(await tenantRow(tenant.id)).toMatchObject({ status: "past_due", status_before_suspend: null, suspended_at: null, suspended_reason: null });
+    expect(await tenantRow(tenant.id)).toMatchObject({ status: "past_due", owner_suspended_at: null, owner_suspended_reason: null });
     expect(await (await visit("suspendco")).text()).toBe("the customer's OpenPing");
     expect((await browser.fetch(`/admin/tenants/${tenant.id}/resume`, { method: "POST" })).headers.get("location")).toContain("done=not-suspended");
 
@@ -618,9 +630,13 @@ describe("signing in to a customer's OpenPing as support", () => {
 
     expect((await browser.fetch(`/admin/tenants/${tenant.id}/support`, { form: { reason: "" } })).headers.get("location")).toContain("done=reason-needed");
     const res = await browser.fetch(`/admin/tenants/${tenant.id}/support`, { form: { reason: "Your email about a failing monitor" } });
-    expect(res.status).toBe(303);
+    // A page that goes on by GET: the CSP's form-action would block a 303 to the tenant's origin.
+    expect(res.status).toBe(200);
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
-    const location = new URL(res.headers.get("location")!);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const page = await text(res);
+    expect(page).toContain(">Continue to helpco</a>");
+    const location = new URL(continueHref(page));
     expect(`${location.origin}${location.pathname}`).toBe(`https://helpco.${DOMAIN}/auth/hosted`);
     const verified = await verifyHandoffToken(location.searchParams.get("t")!, await importHandoffPublicKey(keys.publicKey), { tenantId: tenant.id, now: clock });
     expect(verified).toMatchObject({ ok: true, claims: { aud: tenant.id, sub: accountId, email, role: "support" } });
@@ -746,8 +762,17 @@ describe("importing the waitlist", () => {
   });
 
   it("parses the export's CSV and times", () => {
-    expect(csvFields('a@example.com,"2026-10-01T00:00:00Z"')).toEqual(["a@example.com", "2026-10-01T00:00:00Z"]);
-    expect(csvFields('"say ""hi""",x')).toEqual(['say "hi"', "x"]);
+    expect(csvRecords('a@example.com,"2026-10-01T00:00:00Z"').map((r) => r.fields)).toEqual([["a@example.com", "2026-10-01T00:00:00Z"]]);
+    expect(csvRecords('"say ""hi""",x').map((r) => r.fields)).toEqual([['say "hi"', "x"]]);
+    // A quoted line break stays in its field, and later records keep their real line numbers.
+    expect(csvRecords('email\r\n"two\nlines@example.com",x\r\nthree@example.com,y')).toEqual([
+      { line: 1, raw: "email", fields: ["email"] },
+      { line: 2, raw: '"two\nlines@example.com",x', fields: ["two\nlines@example.com", "x"] },
+      { line: 4, raw: "three@example.com,y", fields: ["three@example.com", "y"] },
+    ]);
+    const quotedBreak = parseWaitlistExport('email,joined_at\n"broken\naddress@example.com",2026-10-01\nok@example.com,2026-10-01');
+    expect(quotedBreak.ok && quotedBreak.list.invalid.map((i) => i.where)).toEqual(["line 2"]);
+    expect(quotedBreak.ok && quotedBreak.list.entries.map((e) => e.email)).toEqual(["ok@example.com"]);
     expect(parseJoinedAt("2026-10-01T00:00:00.000Z")).toBe(Date.parse("2026-10-01T00:00:00.000Z"));
     expect(parseJoinedAt(String(Date.parse("2026-10-01T00:00:00Z")))).toBe(Date.parse("2026-10-01T00:00:00Z"));
     expect(parseJoinedAt("1999-01-01")).toBeNull();
@@ -767,16 +792,133 @@ describe("usage reported by a tenant", () => {
     const capability = new TenantCapability(env.PLATFORM_DB, tenant.id, tenant.accountId, () => clock);
     await capability.reportUsage({ monitors: 4, statusPages: 1, channels: 2, at: clock - 1000 });
     await capability.reportUsage({ monitors: 3, statusPages: 1, channels: 2, at: clock - 5000 });
-    // A tenant clock running ahead can't push its counts into the future.
-    await capability.reportUsage({ monitors: 5, statusPages: 2, channels: 2, at: clock + 86_400_000 });
-    expect(await env.PLATFORM_DB.prepare("SELECT monitors, status_pages, channels, counted_at FROM tenant_usage WHERE tenant_id = ?").bind(tenant.id).first()).toEqual({
-      monitors: 5,
-      status_pages: 2,
-      channels: 2,
-      counted_at: clock,
-    });
+    const stored = () => env.PLATFORM_DB.prepare("SELECT monitors, counted_at FROM tenant_usage WHERE tenant_id = ?").bind(tenant.id).first();
+    expect(await stored()).toEqual({ monitors: 4, counted_at: clock - 1000 });
+    // Reports are ordered by the tenant's own time, as sent: one from a clock
+    // running ahead wins over a slightly later real one, as it should when it
+    // really was taken later.
+    await capability.reportUsage({ monitors: 5, statusPages: 2, channels: 2, at: clock + 60_000 });
+    await capability.reportUsage({ monitors: 6, statusPages: 2, channels: 2, at: clock + 30_000 });
+    expect(await stored()).toEqual({ monitors: 5, counted_at: clock + 60_000 });
     for (const bad of [{ monitors: -1 }, { statusPages: 1.5 }, { channels: "3" }, { at: Number.NaN }]) {
       await expect(capability.reportUsage({ monitors: 1, statusPages: 1, channels: 1, at: clock, ...bad } as never)).rejects.toThrow(/usage refused/);
     }
+  });
+});
+
+// --- Review fixes ------------------------------------------------------------------
+
+describe("the owner's inbox alone", () => {
+  it("can't open the console, even with a passkey it registered before anything was pinned", async () => {
+    const tenant = await addTenant();
+    const real = await personWithPasskey();
+    owners = real.accountId;
+    // Someone with the inbox signs in by code and adds their own passkey: allowed, since nothing is pinned yet...
+    const attacker = new Browser();
+    await attacker.signInWithCode(real.email);
+    const theirs = await SoftAuthenticator.create();
+    const options = (await (await attacker.fetch("/account/passkeys/options", { json: {} })).json()) as any;
+    expect((await attacker.fetch("/account/passkeys", { json: { credential: await theirs.register(options, APP) } })).status).toBe(200);
+    // ...and the owner is told by email, as every account is.
+    expect(outbox.sent.at(-1)).toMatchObject({ to: real.email, subject: "A passkey was added to your OpenPing Hosted account" });
+    await attacker.signInWithPasskey(theirs);
+
+    // Not pinned: the console stays closed, and shows the ids so the owner can pin the right one.
+    const page = await attacker.fetch("/admin");
+    expect(page.status).toBe(200);
+    const body = await text(page);
+    expect(body).toContain("None of your passkeys is pinned yet");
+    expect(body).toContain(real.authenticator.id);
+    expect(body).toContain(`${theirs.id}`);
+    expect(body).toContain("(this session)");
+    expect(body).not.toContain('aria-current="page">Tenants</a>');
+    const refused = await attacker.fetch(`/admin/tenants/${tenant.id}/suspend`, { form: { reason: "taking over" } });
+    expect(refused.status).toBe(401);
+    expect((await tenantRow(tenant.id))!.owner_suspended_at).toBeNull();
+
+    // The owner pins their own passkey: the attacker's still opens nothing.
+    pinned = real.authenticator.id;
+    await attacker.signInWithPasskey(theirs);
+    expect(await text(await attacker.fetch("/admin"))).toContain("isn't one of your pinned passkeys");
+    expect((await attacker.fetch(`/admin/tenants/${tenant.id}/suspend`, { form: { reason: "taking over" } })).status).toBe(401);
+    // While the owner's pinned passkey opens it.
+    await real.browser.signInWithPasskey(real.authenticator);
+    expect(await text(await real.browser.fetch("/admin"))).toContain('aria-current="page">Tenants</a>');
+    expect(await auditRows("tenant_id = ? AND actor = 'owner'", tenant.id)).toEqual([]);
+  });
+
+  it("can't add or remove the owner's passkeys once one is pinned", async () => {
+    const { browser, authenticator, email } = await owner();
+    const attacker = new Browser();
+    await attacker.signInWithCode(email);
+    const locked = await attacker.fetch("/account/passkeys/options", { json: {} });
+    expect(locked.status).toBe(403);
+    expect(((await locked.json()) as { error: string }).error).toBe("passkey_locked");
+    const account = await text(await attacker.fetch("/account?done=passkey"));
+    const id = /action="\/account\/passkeys\/([^/]+)\/delete"/.exec(account)![1]!;
+    expect((await attacker.fetch(`/account/passkeys/${id}/delete`, { method: "POST" })).headers.get("location")).toBe("/account?done=passkey-locked");
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM account_identities WHERE id = ?").bind(id).first<{ n: number }>()).toEqual({ n: 1 });
+
+    // The owner, signed in with the pinned passkey within 10 minutes, can.
+    expect((await browser.fetch("/account/passkeys/options", { json: {} })).status).toBe(200);
+    clock += ADMIN_REAUTH_MS + 1;
+    expect((await browser.fetch("/account/passkeys/options", { json: {} })).status).toBe(403);
+    await browser.signInWithPasskey(authenticator);
+    expect((await browser.fetch("/account/passkeys/options", { json: {} })).status).toBe(200);
+  });
+
+  it("leaves other accounts' passkeys as they were", async () => {
+    await owner();
+    const someone = new Browser();
+    await someone.signInWithCode(newEmail());
+    expect((await someone.fetch("/account/passkeys/options", { json: {} })).status).toBe(200);
+  });
+});
+
+describe("the owner's suspension and billing's", () => {
+  it("are separate: billing can't lift the owner's, and the owner's resume leaves billing's", async () => {
+    const { browser } = await owner();
+    const tenant = await addTenant({ slug: "twosuspends", status: "suspended" });
+    // Suspended by billing only: nothing for the owner to resume.
+    expect((await browser.fetch(`/admin/tenants/${tenant.id}/resume`, { method: "POST" })).headers.get("location")).toContain("done=not-suspended");
+    expect(await text(await browser.fetch(`/admin/tenants/${tenant.id}`))).toContain("Suspended by billing");
+    // The owner suspends it too; billing then "pays" (status active): it stays suspended.
+    await browser.fetch(`/admin/tenants/${tenant.id}/suspend`, { form: { reason: "abuse report" } });
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET status = 'active' WHERE id = ?").bind(tenant.id).run();
+    clearTenantCache();
+    expect((await visit("twosuspends")).status).toBe(503);
+    // Lifting the owner's: billing's state (active) decides again.
+    await browser.fetch(`/admin/tenants/${tenant.id}/resume`, { method: "POST" });
+    expect(await tenantRow(tenant.id)).toMatchObject({ status: "active", owner_suspended_at: null });
+    dispatcher.register(tenant.scriptName, () => new Response("back"));
+    expect(await (await visit("twosuspends")).text()).toBe("back");
+  });
+});
+
+describe("the audit log's action filter", () => {
+  it("uses its index", async () => {
+    const { auditFilters, auditLogQuery } = await import("../src/admin/data");
+    const query = auditLogQuery(auditFilters({ action: "tenant." }));
+    const plan = await env.PLATFORM_DB.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).bind(...query.binds).all<{ detail: string }>();
+    expect(plan.results.map((r) => r.detail).join("\n")).toMatch(/USING (COVERING )?INDEX idx_audit_events_action \(action>\? AND action<\?\)/);
+  });
+});
+
+describe("the waitlist import, under pressure", () => {
+  it("refuses a body over the limit while reading it", async () => {
+    const { browser } = await owner();
+    const big = `email\n${"x".repeat(WAITLIST_MAX_BYTES + 100_000)}@example.com\n`;
+    const res = await browser.fetch("/admin/waitlist", { form: { text: big } });
+    expect(res.status).toBe(413);
+    expect(await text(res)).toContain("over 1 MB");
+  });
+
+  it("counts what each of two imports at once really added", async () => {
+    const { importWaitlist } = await import("../src/admin/waitlist");
+    const entries = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => ({ email: `race${from + i}@example.com`, joinedAt: null }));
+    const [a, b] = await Promise.all([importWaitlist(env.PLATFORM_DB, entries(0, 120), clock), importWaitlist(env.PLATFORM_DB, entries(60, 180), clock)]);
+    expect(a.added + b.added).toBe(180);
+    expect(a.added + a.existing).toBe(120);
+    expect(b.added + b.existing).toBe(120);
   });
 });

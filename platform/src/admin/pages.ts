@@ -10,6 +10,7 @@
  */
 
 import { PLAN_IDS, TENANT_STATUSES, type HealthResponse, type PlanId, type TenantStatus } from "../../../src/shared/hosted-contract";
+import type { Passkey } from "../auth/passkeys";
 import { PASSKEY_SCRIPT_PATH } from "../client-script";
 import type { ProvisionState } from "../tenants";
 import { Html, PASSKEY_ICON, html, notice, renderPage } from "../ui";
@@ -134,6 +135,7 @@ a.stat:hover { border-color: var(--ink-faint); }
 .events .detail { grid-column: 1 / -1; color: var(--ink-muted); font-size: 0.8125rem; overflow-wrap: anywhere; }
 @media (max-width: 479px) { .events li { grid-template-columns: minmax(0, 1fr); } .events time { text-align: left; grid-row: 2; } }
 .detail-text { font-size: 0.8125rem; color: var(--ink-muted); overflow-wrap: anywhere; }
+.credential { display: block; margin: 4px 0 0; font-size: 0.75rem; color: var(--ink-muted); overflow-wrap: anywhere; user-select: all; }
 .issues { margin: 8px 0 0; padding: 0 0 0 18px; font-size: 0.8125rem; color: var(--ink-muted); }
 `;
 
@@ -359,13 +361,17 @@ function actions(input: TenantPageInput): Html {
 <button class="button danger" type="submit">Remove ${t.slug}</button></form></div>`);
   }
 
-  if (t.status === "suspended") {
+  if (d.ownerSuspension) {
     cards.push(html`<div class="action"><h3>Resume</h3>
-<p>Puts it back to ${STATUS_LABELS[d.statusBeforeSuspend ?? "trial"].toLowerCase()}. Visitors reach it again within 30 seconds.</p>
+<p>Lifts your suspension. ${
+      t.billingStatus === "suspended"
+        ? "Billing has suspended it too, so it stays offline until billing says otherwise."
+        : `Billing's state is ${STATUS_LABELS[t.billingStatus].toLowerCase()}, so visitors reach it again within 30 seconds.`
+    }</p>
 <form method="post" action="${base}/resume"><button class="button primary" type="submit">Resume ${t.slug}</button></form></div>`);
   } else if (t.provisionState === "ready") {
     cards.push(html`<div class="action danger"><h3>Suspend</h3>
-<p>Stops its checks and takes its status page and dashboard offline; nothing is deleted. Other servers take up to 30 seconds to notice.</p>
+<p>Stops its checks and takes its status page and dashboard offline; nothing is deleted. Other servers take up to 30 seconds to notice. Only you can lift it: billing never does.</p>
 <form method="post" action="${base}/suspend">
 ${reasonField("suspend-reason", "Reason", "Phishing on its status page", "Kept in the audit log.")}
 <button class="button danger" type="submit">Suspend ${t.slug}</button></form></div>`);
@@ -412,7 +418,8 @@ export function tenantPage(input: TenantPageInput): Response {
 <p class="sub">${d.email}${d.accountDisabled ? " (account closed)" : ""}, since ${dateText(d.createdAt)}</p>
 ${input.flash ? notice(input.flash.message, input.flash.tone) : ""}
 ${paused ? html`<p class="notice error" role="status"><strong>Provisioning is paused</strong> at ${SETUP_LABELS[t.provisionState].toLowerCase()} after ${d.provision.attempts} ${d.provision.attempts === 1 ? "try" : "tries"}, since ${timeText(d.provision.pausedAt)}.<br>${d.provision.error ?? "No error was recorded."}</p>` : ""}
-${t.status === "suspended" ? notice(`Suspended ${timeText(d.suspendedAt)}${d.suspendedReason ? `: ${d.suspendedReason}` : ""}.`, "info") : ""}
+${d.ownerSuspension ? notice(`Suspended by you ${timeText(d.ownerSuspension.at)}${d.ownerSuspension.reason ? `: ${d.ownerSuspension.reason}` : ""}.`, "info") : ""}
+${t.billingStatus === "suspended" ? notice(`Suspended by billing${d.billingSuspendedAt ? ` since ${timeText(d.billingSuspendedAt)}` : ""}.`, "info") : ""}
 <div class="panels">
 <div><section><h2>OpenPing</h2><dl class="facts">
 ${fact("Address", t.provisionState === "ready" ? html`<a href="${input.tenantUrl}" rel="noreferrer">${input.tenantUrl.replace(/^https?:\/\//, "")}</a>` : input.tenantUrl.replace(/^https?:\/\//, ""))}
@@ -422,7 +429,7 @@ ${fact("Script", t.scriptName, true)}
 ${fact("Database", d.databaseName, true)}
 ${fact("Database id", d.d1Id ?? "Not made yet", true)}
 ${fact("Plan", PLAN_LABELS[t.plan])}
-${fact("Status", STATUS_LABELS[t.status])}
+${fact("Billing status", STATUS_LABELS[t.billingStatus])}
 ${t.status === "trial" && t.trialEndsAt ? fact("Trial ends", timeText(t.trialEndsAt)) : ""}
 ${fact("Version", t.version ?? "None yet", true)}
 ${fact("Ready since", d.provisionedAt ? timeText(d.provisionedAt) : "Not ready")}
@@ -543,27 +550,55 @@ ${
 // --- The passkey check -------------------------------------------------------------
 
 /**
- * Shown to the owner whose session isn't a recent passkey sign-in: one tap
- * signs in again with the passkey and comes back to `next`.
+ * Shown to the owner whose session isn't a recent sign-in with a pinned
+ * passkey: one tap signs in again and comes back to `next`. While none of
+ * the account's passkeys is pinned (or the one used isn't), it lists them
+ * with their credential ids, so the owner can pin their own in
+ * PLATFORM_OWNER_PASSKEYS: the bootstrap, done once in config.
  */
-export function verifyPage(input: { next: string; hasPasskey: boolean; forChange: boolean; status?: number }): Response {
-  const why = input.forChange
-    ? `Changes need a passkey sign-in from the last ${ADMIN_REAUTH_MS / 60_000} minutes. Nothing was changed; sign in again, then repeat it.`
-    : `The admin console needs a passkey sign-in on this device from the last ${ADMIN_SESSION_MAX_AGE_MS / 3_600_000} hours.`;
+export function verifyPage(input: {
+  next: string;
+  passkeys: Passkey[];
+  pinned: ReadonlySet<string>;
+  /** The credential this session signed in with, if a passkey. */
+  current: string | null;
+  unpinned: boolean;
+  forChange: boolean;
+  status?: number;
+}): Response {
+  const hasPinned = input.passkeys.some((p) => input.pinned.has(p.credentialId));
+  const why = input.unpinned
+    ? hasPinned
+      ? "This session's passkey isn't one of your pinned passkeys. Sign in with a pinned one."
+      : "None of your passkeys is pinned yet, so the admin console stays closed. Pin your own passkey, then sign in with it."
+    : input.forChange
+      ? `Changes need a sign-in with a pinned passkey from the last ${ADMIN_REAUTH_MS / 60_000} minutes. Nothing was changed; sign in again, then repeat it.`
+      : `The admin console needs a sign-in with a pinned passkey on this device from the last ${ADMIN_SESSION_MAX_AGE_MS / 3_600_000} hours.`;
+  const showIds = input.passkeys.length > 0 && (!hasPinned || input.unpinned);
+  const list = showIds
+    ? html`<section><h2>Your passkeys</h2>
+<p>Add the id of a passkey you hold, and only those, to <code>PLATFORM_OWNER_PASSKEYS</code> (a var or secret on the platform Worker). A passkey you don't recognise here was added by someone else: remove it from your account page.</p>
+<ul class="rows">${input.passkeys.map(
+        (p) => html`<li><div class="what"><strong>${p.label ?? "Passkey"}${p.credentialId === input.current ? " (this session)" : ""}${input.pinned.has(p.credentialId) ? " (pinned)" : ""}</strong><span>Added ${timeText(p.createdAt)}${
+          p.lastUsedAt ? `, last used ${timeText(p.lastUsedAt)}` : ""
+        }</span><code class="credential">${p.credentialId}</code></div></li>`,
+      )}</ul></section>`
+    : "";
   const main = html`<h1>Confirm it's you</h1>
 <p class="lead">${why}</p>
 ${
-  input.hasPasskey
-    ? html`<div class="stack"><button class="button primary" type="button" data-passkey="sign-in" data-next="${input.next}" data-error="passkey-error" hidden>${PASSKEY_ICON}Continue with your passkey</button></div>
+  input.passkeys.length
+    ? html`<div class="stack"><button class="button primary" type="button" data-passkey="sign-in" data-next="${input.next}" data-error="passkey-error" hidden>${PASSKEY_ICON}Use your passkey</button></div>
 <p class="notice error" id="passkey-error" role="alert" hidden></p>`
     : html`<p class="notice" role="status">Your account has no passkey yet. Add one on your account page, then come back.</p>
 <div class="stack"><a class="button primary" href="/account">Go to your account</a></div>`
-}`;
+}
+${list}`;
   return renderPage({
     title: "Confirm it's you - Admin",
     main,
     status: input.status ?? 200,
-    scripts: input.hasPasskey ? [PASSKEY_SCRIPT_PATH] : [],
+    scripts: input.passkeys.length ? [PASSKEY_SCRIPT_PATH] : [],
     header: header(null),
     style: ADMIN_STYLE,
     footer: false,

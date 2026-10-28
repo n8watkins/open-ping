@@ -11,7 +11,7 @@
 import { Hono, type Context } from "hono";
 
 import { ADMIN_NEXT_PATTERN } from "./admin/routes";
-import { isOwner } from "./admin/owner";
+import { isOwner, mayChangePasskeys } from "./admin/owner";
 import { supportSignIns } from "./admin/data";
 import { WebAuthnError, type AuthenticationResponseJSON, type RegistrationResponseJSON } from "../../src/worker/lib/webauthn";
 import { accountForVerifiedEmail, audit, findAccountByEmail, getAccount, isDisposableEmail, normalizeEmail, touchIdentity, type Account } from "./accounts";
@@ -19,6 +19,7 @@ import {
   accountPage,
   checkEmailPage,
   confirmLinkPage,
+  continuePage,
   homePage,
   messagePage,
   signInPage,
@@ -27,7 +28,7 @@ import {
   type AccountTenantView,
 } from "./account-pages";
 import { clearCeremonyCookie, startCeremony, takeCeremony } from "./auth/ceremonies";
-import { checkEmailCode, consumeEmailLink, createEmailSignIn, decoyLoginId, emailOfSignIn, signInEmail } from "./auth/email-sign-in";
+import { checkEmailCode, consumeEmailLink, createEmailSignIn, decoyLoginId, emailOfSignIn, passkeyAddedEmail, signInEmail } from "./auth/email-sign-in";
 import { authorizeUrl, codeChallenge, fetchGithubUser, githubConfig, newCodeVerifier, newOAuthState, type GithubUser } from "./auth/github";
 import {
   MAX_PASSKEYS,
@@ -134,6 +135,7 @@ interface TenantRow {
   slug: string;
   script_name: string;
   status: string;
+  owner_suspended_at: number | null;
   plan: string;
   provision_state: string;
   version: string | null;
@@ -146,7 +148,7 @@ interface TenantRow {
 async function accountTenant(db: D1Database, accountId: string): Promise<(TenantRecord & { attempts: number; paused: boolean }) | null> {
   const row = await db
     .prepare(
-      `SELECT id, account_id, slug, script_name, status, plan, provision_state, version, limit_overrides, trial_ends_at, provision_attempts, provision_paused_at
+      `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at, provision_attempts, provision_paused_at
        FROM tenants WHERE account_id = ? AND provision_state <> 'deleting' ORDER BY created_at LIMIT 1`,
     )
     .bind(accountId)
@@ -181,6 +183,16 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     await endSession(c.env.PLATFORM_DB, c.req.raw);
     const cookie = await createSession(c.env.PLATFORM_DB, account.id, method, c.get("now"));
     await audit(c.env.PLATFORM_DB, { accountId: account.id, actor: "customer", action: "account.signed_in", detail: { method }, now: c.get("now") });
+    // On to the customer's OpenPing: /open hands off to another origin, which
+    // the CSP's form-action blocks at the end of a chain of redirects from a
+    // post (the email code and link forms). A page that goes on by GET isn't.
+    const slug = next?.startsWith("/open?tenant=") ? next.slice("/open?tenant=".length) : null;
+    if (slug && c.req.method === "POST") {
+      return withCookies(
+        continuePage({ href: next!, title: "You're signed in", body: "Opening your OpenPing.", label: `Continue to ${slug}` }),
+        [cookie, ...extraCookies],
+      );
+    }
     return seeOther(c, next ?? "/account", [cookie, ...extraCookies]);
   }
 
@@ -353,9 +365,9 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     const ceremony = await takeCeremony(c.env.PLATFORM_DB, c.req.raw, "passkey_sign_in", c.get("now"));
     if (!ceremony) return c.json({ error: "expired", message: "That took too long. Please try again." }, 400, NO_STORE);
     const body = (await c.req.json().catch(() => ({}))) as { credential?: AuthenticationResponseJSON };
-    let accountId: string;
+    let signer: { accountId: string; credentialId: string };
     try {
-      accountId = await verifyPasskeySignIn(c.env.PLATFORM_DB, {
+      signer = await verifyPasskeySignIn(c.env.PLATFORM_DB, {
         credential: body.credential as AuthenticationResponseJSON,
         challenge: ceremony.challenge,
         expect: passkeyExpectation(c),
@@ -365,17 +377,26 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       if (!(error instanceof WebAuthnError) && !(error instanceof TypeError)) throw error;
       return withCookies(c.json({ error: "passkey_refused", message: "That passkey isn't on an OpenPing Hosted account. Try email instead." }, 400, NO_STORE), [clearCeremonyCookie()]);
     }
-    const account = await getAccount(c.env.PLATFORM_DB, accountId);
+    const account = await getAccount(c.env.PLATFORM_DB, signer.accountId);
     if (!account || account.disabledAt !== null) return c.json({ error: "disabled", message: "This account is closed." }, 403, NO_STORE);
     await endSession(c.env.PLATFORM_DB, c.req.raw);
-    const session = await createSession(c.env.PLATFORM_DB, account.id, "passkey", c.get("now"));
+    const session = await createSession(c.env.PLATFORM_DB, account.id, "passkey", c.get("now"), signer.credentialId);
     await audit(c.env.PLATFORM_DB, { accountId: account.id, actor: "customer", action: "account.signed_in", detail: { method: "passkey" }, now: c.get("now") });
     return withCookies(c.json({ ok: true, redirect: ceremony.nextPath ?? "/account" }, 200, NO_STORE), [session, clearCeremonyCookie()]);
   });
 
+  /** The owner's passkeys change only from a recent pinned passkey sign-in (admin/owner.ts, mayChangePasskeys). */
+  const passkeysLocked = (c: Ctx) =>
+    c.json(
+      { error: "passkey_locked", message: "Sign in with one of your pinned passkeys first; passkeys on this account change only within 10 minutes of that." },
+      403,
+      NO_STORE,
+    );
+
   app.post("/account/passkeys/options", async (c) => {
     const session = c.get("session");
     if (!session) return c.json({ error: "signed_out", message: "Please sign in again." }, 401, NO_STORE);
+    if (!(await mayChangePasskeys(c.env.PLATFORM_DB, session, c.env, c.get("now")))) return passkeysLocked(c);
     const existing = await listPasskeys(c.env.PLATFORM_DB, session.account.id);
     if (existing.length >= MAX_PASSKEYS) {
       return c.json({ error: "too_many", message: `An account can have up to ${MAX_PASSKEYS} passkeys. Remove one first.` }, 400, NO_STORE);
@@ -390,18 +411,20 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
   app.post("/account/passkeys", async (c) => {
     const session = c.get("session");
     if (!session) return c.json({ error: "signed_out", message: "Please sign in again." }, 401, NO_STORE);
+    if (!(await mayChangePasskeys(c.env.PLATFORM_DB, session, c.env, c.get("now")))) return passkeysLocked(c);
     const ceremony = await takeCeremony(c.env.PLATFORM_DB, c.req.raw, "passkey_register", c.get("now"));
     if (!ceremony || ceremony.accountId !== session.account.id) {
       return c.json({ error: "expired", message: "That took too long. Please try again." }, 400, NO_STORE);
     }
     const body = (await c.req.json().catch(() => ({}))) as { credential?: RegistrationResponseJSON; name?: unknown };
+    const label = passkeyLabel(body.name ?? c.req.header("sec-ch-ua-platform")?.replace(/"/g, ""));
     try {
       await addPasskey(c.env.PLATFORM_DB, {
         account: session.account,
         credential: body.credential as RegistrationResponseJSON,
         challenge: ceremony.challenge,
         expect: passkeyExpectation(c),
-        label: passkeyLabel(body.name ?? c.req.header("sec-ch-ua-platform")?.replace(/"/g, "")),
+        label,
         now: c.get("now"),
       });
     } catch (error) {
@@ -409,12 +432,19 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       return withCookies(c.json({ error: "passkey_refused", message: "That passkey couldn't be added. Please try again." }, 400, NO_STORE), [clearCeremonyCookie()]);
     }
     await audit(c.env.PLATFORM_DB, { accountId: session.account.id, actor: "customer", action: "passkey.added", now: c.get("now") });
+    // Always told: a passkey added by someone who got into the inbox is the first thing to notice.
+    const mailer = deps.mailer(c.env);
+    if (mailer) {
+      const sent = await mailer.send({ to: session.account.email, ...passkeyAddedEmail({ label, at: c.get("now"), accountUrl: `${origin(c)}/account` }) });
+      if (!sent.ok) console.error("[passkeys] added-passkey email not sent", { error: sent.error });
+    }
     return withCookies(c.json({ ok: true, redirect: "/account?done=passkey" }, 200, NO_STORE), [clearCeremonyCookie()]);
   });
 
   app.post("/account/passkeys/:id/delete", async (c) => {
     const session = c.get("session");
     if (!session) return seeOther(c, "/sign-in");
+    if (!(await mayChangePasskeys(c.env.PLATFORM_DB, session, c.env, c.get("now")))) return seeOther(c, "/account?done=passkey-locked");
     if (await removePasskey(c.env.PLATFORM_DB, session.account.id, c.req.param("id"))) {
       await audit(c.env.PLATFORM_DB, { accountId: session.account.id, actor: "customer", action: "passkey.removed", now: c.get("now") });
     }
@@ -562,6 +592,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
   const FLASH: Record<string, { message: string; tone: "ok" | "error" }> = {
     passkey: { message: "Passkey added. You can sign in with it next time.", tone: "ok" },
     "passkey-removed": { message: "Passkey removed.", tone: "ok" },
+    "passkey-locked": { message: "Passkeys on this account change only within 10 minutes of signing in with a pinned passkey.", tone: "error" },
     github: { message: "GitHub connected.", tone: "ok" },
     "github-removed": { message: "GitHub disconnected.", tone: "ok" },
     "github-taken": { message: "That GitHub account is already connected to another OpenPing Hosted account.", tone: "error" },

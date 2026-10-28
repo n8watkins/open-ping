@@ -43,14 +43,16 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   - `SIGN_UPS` stays `closed` until launch: existing accounts sign in, no new ones are made, and the email form sends nothing to an address without an account (it shows the same page either way);
   - signing out is a POST; the tenant's sign-out lands on `GET /sign-out`, which offers one tap to end the platform session too.
 - Runs the owner's admin console at `app.<domain>/admin` (B6, `src/admin/`):
-  - who gets in: an account named in `PLATFORM_OWNERS` (account ids or emails, never in code), signed in with a passkey in the last 12 hours, and in the last 10 minutes for any change; everyone else, signed in or not, gets the ordinary 404 on every path and method, and the owner without a fresh passkey gets one tap to sign in with it again and come back;
+  - who gets in: an account named in `PLATFORM_OWNERS` (account ids or emails, never in code), signed in with one of the passkeys pinned in `PLATFORM_OWNER_PASSKEYS` (credential ids) in the last 12 hours, and in the last 10 minutes for any change; everyone else, signed in or not, gets the ordinary 404 on every path and method, and the owner without a fresh pinned sign-in gets one tap to sign in again and come back;
+  - why pinned: anyone holding the owner's inbox can sign in by email and register a passkey of their own, so only the passkeys named in config count; once one is pinned, the owner's passkeys can be added or removed only within 10 minutes of a pinned sign-in, and every account is emailed whenever a passkey is added to it;
   - the tenant list: search by address, email, tenant id or account id, filters for status, plan and setup state (paused included), counts of what needs a look, 50 a page;
   - each tenant: slug, script and D1 names, the D1 id, plan, status, version, its live `GET /__platform/health` (with its last run), usage against its limits, provisioning state with the last error, and its history from the audit log;
-  - suspend (with a reason) and resume, which restores the billing state it interrupted (`status_before_suspend`); routing changes at once in the isolate that made the change (`forgetTenant`) and within 30 seconds in the others;
+  - suspend (with a reason) and resume: the owner's suspension has its own columns (`owner_suspended_at`, `owner_suspended_reason`), and a tenant is suspended while either it or billing's `status` says so, so billing (B5) can never lift the owner's and the owner's resume leaves billing's state as it is; routing changes at once in the isolate that made the change (`forgetTenant`) and within 30 seconds in the others;
   - for a paused provisioning: resume it, or remove the tenant after typing its address; both run from the queue, or after the answer when there is none;
   - sign in as support: the contract's hand-off with role `support`, signed as the owner, with a reason the customer sees on their account page ("Support access"), recorded as `support.handoff_issued` before the token leaves;
+  - a post whose next stop is a customer's origin (support sign-in, and an email sign-in that continues to `/open`) answers a page that goes on by GET (a meta refresh and a link), since the CSP's `form-action 'self'` blocks a post's redirect chain to another origin;
   - the audit log, newest first, filtered by tenant, actor and action prefix;
-  - the waitlist: an upload (or paste) of the canonical install's CSV export (Settings > Reports > Download CSV), or the JSON of `/api/waitlist`, into `waitlist_entries`, idempotent, up to 5,000 addresses at a time; the platform never calls the install;
+  - the waitlist: an upload (or paste) of the canonical install's CSV export (Settings > Reports > Download CSV), or the JSON of `/api/waitlist`, into `waitlist_entries`, idempotent, up to 5,000 addresses and 1 MB (enforced while reading) at a time; the platform never calls the install;
   - every change is a POST from this origin, limited to 120 an hour (support sign-ins 20), and audited with actor `owner` or `support`.
 - Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit` and `reportUsage` are real, the latter keeping each tenant's latest counts in `tenant_usage` for the console; `sendEmail` is a stub until A5).
 
@@ -124,6 +126,7 @@ They are needed before staging in wave 3 ([build plan, section 12](../docs/HOSTE
    - `RESEND_API_KEY` and `GITHUB_CLIENT_SECRET`, for sign-in;
    - `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`, in test mode first (O3);
    - `PLATFORM_OWNERS`, if it names the owner by email rather than by account id (otherwise the var in `wrangler.jsonc`).
-   The owner signs in once and adds a passkey on the account page; naming them by email in a `PLATFORM_OWNERS` secret opens the console at once.
+   The owner signs in once and adds a passkey on the account page, then opens `/admin`: the "Confirm it's you" page lists the account's passkeys with their credential ids.
+   They copy the id of the passkey they hold (and check there is none they don't recognise) into `PLATFORM_OWNER_PASSKEYS`, then sign in with that passkey.
    Their account id then appears in the console's audit log (`by: acc_...` on each of their changes), and can replace the email in the public var.
 9. **Support address:** support@n8builds.dev, decided; forward it with Cloudflare Email Routing (O4).

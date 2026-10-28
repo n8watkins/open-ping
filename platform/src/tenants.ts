@@ -24,7 +24,15 @@ export interface TenantRecord {
   accountId: string;
   slug: string;
   scriptName: string;
+  /**
+   * What the tenant is told and routed by: `suspended` while billing or the
+   * owner says so, otherwise billing's state.
+   */
   status: TenantStatus;
+  /** Billing's state alone (tenants.status), which only billing changes. */
+  billingStatus: TenantStatus;
+  /** When the owner suspended it (admin console), or null. */
+  ownerSuspendedAt: number | null;
   plan: PlanId;
   provisionState: ProvisionState;
   version: string | null;
@@ -38,6 +46,7 @@ interface TenantRow {
   slug: string;
   script_name: string;
   status: string;
+  owner_suspended_at: number | null;
   plan: string;
   provision_state: string;
   version: string | null;
@@ -46,7 +55,7 @@ interface TenantRow {
 }
 
 const TENANT_COLUMNS =
-  "id, account_id, slug, script_name, status, plan, provision_state, version, limit_overrides, trial_ends_at";
+  "id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at";
 
 function oneOf<T extends string>(values: readonly T[], value: string, fallback: T): T {
   return (values as readonly string[]).includes(value) ? (value as T) : fallback;
@@ -78,13 +87,16 @@ export function parseLimitOverrides(json: string | null): Partial<PlanLimits> | 
 }
 
 export function tenantFromRow(row: TenantRow): TenantRecord {
+  // The CHECK constraint makes this exact; the fallback is the safe side.
+  const billingStatus = oneOf(TENANT_STATUSES, row.status, "suspended");
   return {
     id: row.id,
     accountId: row.account_id,
     slug: row.slug,
     scriptName: row.script_name,
-    // The CHECK constraints make these exact; the fallbacks are the safe side.
-    status: oneOf(TENANT_STATUSES, row.status, "suspended"),
+    status: row.owner_suspended_at !== null ? "suspended" : billingStatus,
+    billingStatus,
+    ownerSuspendedAt: row.owner_suspended_at,
     plan: oneOf(PLAN_IDS, row.plan, "trial"),
     provisionState: oneOf(PROVISION_STATES, row.provision_state, "requested"),
     version: row.version,

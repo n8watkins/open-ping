@@ -2,12 +2,18 @@
 -- tenant, each tenant's last reported usage, and the Hosted waitlist
 -- imported from the canonical install.
 
--- A suspension remembers the billing state it interrupted, so resuming puts
--- the tenant back exactly where it was (trial, active or past due), and why.
-ALTER TABLE tenants ADD COLUMN status_before_suspend TEXT
-  CHECK (status_before_suspend IN ('trial', 'active', 'past_due'));
--- Short and never secret: what the owner wrote, or the billing job's reason (B5).
-ALTER TABLE tenants ADD COLUMN suspended_reason TEXT;
+-- The owner's suspension (abuse, the terms), kept apart from billing's
+-- `status`: a tenant is suspended while either says so. Billing (B5) never
+-- touches these columns, so a payment can't lift the owner's suspension, and
+-- lifting the owner's leaves billing state exactly as it was.
+ALTER TABLE tenants ADD COLUMN owner_suspended_at INTEGER;
+-- Short and never secret: what the owner wrote.
+ALTER TABLE tenants ADD COLUMN owner_suspended_reason TEXT;
+
+-- The passkey a session signed in with (account_identities.subject, its
+-- credential id), so the admin console can accept only the owner's pinned
+-- passkeys (PLATFORM_OWNER_PASSKEYS) and not one someone added later.
+ALTER TABLE platform_sessions ADD COLUMN passkey_credential TEXT;
 
 -- The counts each customer's OpenPing reports through the platform
 -- capability's reportUsage (contract, section 4): after a create or delete
@@ -18,8 +24,8 @@ CREATE TABLE tenant_usage (
   monitors     INTEGER NOT NULL,
   status_pages INTEGER NOT NULL,
   channels     INTEGER NOT NULL,
-  counted_at   INTEGER NOT NULL,              -- when the tenant took the counts (its clock, never ahead of ours)
-  reported_at  INTEGER NOT NULL               -- when the platform received them
+  counted_at   INTEGER NOT NULL,              -- when the tenant says it took the counts (its clock, as sent; orders the reports)
+  reported_at  INTEGER NOT NULL               -- when the platform received them (what the console shows)
 );
 
 -- The Hosted waitlist (the canonical install's `waitlist` table, OpenPing

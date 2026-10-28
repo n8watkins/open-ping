@@ -17,7 +17,7 @@ import { Hono, type Context } from "hono";
 
 import { PLATFORM_HEALTH_PATH, type HealthResponse, type PlatformCapability } from "../../../src/shared/hosted-contract";
 import { audit } from "../accounts";
-import { messagePage } from "../account-pages";
+import { continuePage, messagePage } from "../account-pages";
 import { listPasskeys } from "../auth/passkeys";
 import { LIMITS, hitInOrder } from "../auth/rate-limit";
 import { readSession, type Session } from "../auth/sessions";
@@ -42,9 +42,9 @@ import {
   tenantFilters,
   tenantHistory,
 } from "./data";
-import { adminAccess } from "./owner";
+import { adminAccess, parsePinnedPasskeys } from "./owner";
 import { auditPage, tenantListPage, tenantPage, verifyPage, waitlistPage, type HealthView } from "./pages";
-import { WAITLIST_MAX_BYTES, importWaitlist, parseWaitlistExport, waitlistSummary } from "./waitlist";
+import { WAITLIST_MAX_BYTES, importWaitlist, parseWaitlistExport, readBodyCapped, waitlistSummary } from "./waitlist";
 
 export interface AdminDeps {
   dispatcher(env: PlatformEnv): TenantDispatcher;
@@ -121,7 +121,7 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
   app.use("*", async (c, next) => {
     const now = clock();
     const db = c.env.PLATFORM_DB;
-    const access = adminAccess(await readSession(db, c.req.raw, now), c.env, now);
+    const access = await adminAccess(db, await readSession(db, c.req.raw, now), c.env, now);
     // Before anything else, so nobody but the owner learns the console exists.
     if (access.kind === "none") return appNotFoundPage(appOrigin(c.env.HOSTED_DOMAIN));
     const change = c.req.method !== "GET" && c.req.method !== "HEAD";
@@ -135,7 +135,10 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
     if (access.kind === "verify" || (change && !access.recent)) {
       return verifyPage({
         next: back,
-        hasPasskey: (await listPasskeys(db, access.session.account.id)).length > 0,
+        passkeys: await listPasskeys(db, access.session.account.id),
+        pinned: parsePinnedPasskeys(c.env.PLATFORM_OWNER_PASSKEYS),
+        current: access.session.passkeyCredential,
+        unpinned: access.kind === "verify" && access.reason === "unpinned",
         forChange: change,
         status: change ? 401 : 200,
       });
@@ -309,9 +312,15 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
         detail: { by: owner.id, email: owner.email, reason },
         now: c.get("now"),
       });
-      const res = seeOther(handoffUrl(requestTenantOrigin(c.req.url, tenant.slug, c.env.HOSTED_DOMAIN), token));
-      res.headers.set("referrer-policy", "no-referrer");
-      return res;
+      // A page that goes on by GET, not a 303: the CSP's form-action 'self'
+      // blocks a post's redirect to the tenant's origin.
+      return continuePage({
+        href: handoffUrl(requestTenantOrigin(c.req.url, tenant.slug, c.env.HOSTED_DOMAIN), token),
+        title: "Signing in as support",
+        body: `Opening ${tenant.slug} as support, for one hour. The customer sees this sign-in and its reason.`,
+        label: `Continue to ${tenant.slug}`,
+        headers: { "referrer-policy": "no-referrer" },
+      });
     }),
   );
 
@@ -330,13 +339,19 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
   app.post("/waitlist", async (c) => {
     const db = c.env.PLATFORM_DB;
     const refuse = async (error: string, status = 400) => waitlistPage({ summary: await waitlistSummary(db), error, status });
-    // The multipart wrapper adds a little; anything far past the file limit is refused unread.
-    const length = Number(c.req.header("content-length") ?? "0");
-    if (length > WAITLIST_MAX_BYTES + 64_000) return refuse(`That file is over ${WAITLIST_MAX_BYTES / 1_000_000} MB. Split it into smaller files and import each.`, 413);
-    const fields = await form(c);
-    const file = fields.file instanceof File && fields.file.size > 0 ? fields.file : null;
-    if (file && file.size > WAITLIST_MAX_BYTES) return refuse(`That file is over ${WAITLIST_MAX_BYTES / 1_000_000} MB. Split it into smaller files and import each.`, 413);
-    const body = file ? await file.text() : text(fields.text);
+    const tooBig = `That file is over ${WAITLIST_MAX_BYTES / 1_000_000} MB. Split it into smaller files and import each.`;
+    // Read with a cap (the multipart wrapper adds a little), whatever Content-Length claims.
+    const raw = await readBodyCapped(c.req.raw, WAITLIST_MAX_BYTES + 64_000);
+    if (!raw) return refuse(tooBig, 413);
+    const parsedForm = await new Request(c.req.url, { method: "POST", headers: { "content-type": c.req.header("content-type") ?? "" }, body: raw })
+      .formData()
+      .catch(() => null);
+    if (!parsedForm) return refuse("That upload couldn't be read. Choose the file again, or paste it.");
+    const fileField = parsedForm.get("file");
+    const file = fileField instanceof File && fileField.size > 0 ? fileField : null;
+    if (file && file.size > WAITLIST_MAX_BYTES) return refuse(tooBig, 413);
+    const pasted = parsedForm.get("text");
+    const body = file ? await file.text() : typeof pasted === "string" ? pasted : "";
     const parsed = parseWaitlistExport(body);
     if (!parsed.ok) return refuse(parsed.message);
     const { added, existing } = await importWaitlist(db, parsed.list.entries, c.get("now"));

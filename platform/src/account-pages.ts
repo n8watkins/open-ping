@@ -127,6 +127,22 @@ ${input.action ? html`<div class="stack"><a class="button primary" href="${input
   });
 }
 
+/**
+ * The answer to a post whose next stop is another origin (a customer's
+ * OpenPing): it goes on by itself, and the link is there in case the browser
+ * doesn't follow the refresh. See PageOptions.redirectTo.
+ */
+export function continuePage(input: { href: string; title: string; body: string; label: string; headers?: Record<string, string> }): Response {
+  return renderPage({
+    title: input.title,
+    redirectTo: input.href,
+    headers: input.headers,
+    main: html`<h1>${input.title}</h1>
+<p class="lead">${input.body}</p>
+<div class="stack"><a class="button primary" href="${input.href}" rel="noreferrer">${input.label}</a></div>`,
+  });
+}
+
 export function startPage(input: { domain: string; slug?: string; error?: string | null; previousFailed?: boolean; status?: number }): Response {
   return renderPage({
     title: "Choose your address",

@@ -44,6 +44,9 @@ export function containsPattern(text: string): string {
   return `%${text.toLowerCase().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
 }
 
+/** The status a tenant is routed by (TenantRecord.status): suspended while billing or the owner says so. */
+const EFFECTIVE_STATUS = "(CASE WHEN t.owner_suspended_at IS NOT NULL THEN 'suspended' ELSE t.status END)";
+
 export interface TenantListRow {
   id: string;
   slug: string;
@@ -74,7 +77,7 @@ export async function listTenants(db: D1Database, filters: TenantFilters): Promi
     binds.push(pattern, pattern, exactId, filters.q);
   }
   if (filters.status) {
-    where.push("t.status = ?");
+    where.push(`${EFFECTIVE_STATUS} = ?`);
     binds.push(filters.status);
   }
   if (filters.plan) {
@@ -105,7 +108,7 @@ export async function listTenants(db: D1Database, filters: TenantFilters): Promi
     db.prepare(`SELECT COUNT(*) AS n ${tenantsAndAccounts}${filter}`).bind(...binds),
     db
       .prepare(
-        `SELECT t.id, t.slug, a.email, t.status, t.plan, t.provision_state, t.provision_paused_at, t.version, t.created_at, u.monitors
+        `SELECT t.id, t.slug, a.email, ${EFFECTIVE_STATUS} AS status, t.plan, t.provision_state, t.provision_paused_at, t.version, t.created_at, u.monitors
          ${tenantsAndAccounts} LEFT JOIN tenant_usage u ON u.tenant_id = t.id${filter}
          ORDER BY t.created_at DESC, t.id LIMIT ? OFFSET ?`,
       )
@@ -145,7 +148,7 @@ export async function tenantCounts(db: D1Database): Promise<TenantCounts> {
       `SELECT COUNT(*) AS all_count,
               COALESCE(SUM(provision_state <> 'ready' AND provision_state <> 'deleting' AND provision_paused_at IS NULL), 0) AS setting_up,
               COALESCE(SUM(provision_paused_at IS NOT NULL), 0) AS paused,
-              COALESCE(SUM(status = 'suspended'), 0) AS suspended
+              COALESCE(SUM(status = 'suspended' OR owner_suspended_at IS NOT NULL), 0) AS suspended
        FROM tenants`,
     )
     .first<{ all_count: number; setting_up: number; paused: number; suspended: number }>();
@@ -162,9 +165,10 @@ export interface TenantDetail {
   createdAt: number;
   updatedAt: number;
   provisionedAt: number | null;
-  suspendedAt: number | null;
-  suspendedReason: string | null;
-  statusBeforeSuspend: TenantStatus | null;
+  /** Billing's suspension (B5), when tenants.status is suspended. */
+  billingSuspendedAt: number | null;
+  /** The owner's suspension from this console, or null. */
+  ownerSuspension: { at: number; reason: string | null } | null;
   provision: {
     attempts: number;
     error: string | null;
@@ -180,8 +184,8 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
   const row = await db
     .prepare(
       `SELECT t.id, t.account_id, t.slug, t.script_name, t.status, t.plan, t.provision_state, t.version, t.limit_overrides,
-              t.trial_ends_at, t.d1_id, t.created_at, t.updated_at, t.provisioned_at, t.suspended_at, t.suspended_reason,
-              t.status_before_suspend, t.provision_attempts, t.provision_error, t.provision_next_at, t.provision_paused_at,
+              t.trial_ends_at, t.d1_id, t.created_at, t.updated_at, t.provisioned_at, t.suspended_at, t.owner_suspended_at,
+              t.owner_suspended_reason, t.provision_attempts, t.provision_error, t.provision_next_at, t.provision_paused_at,
               t.provision_lease_until, a.email, a.disabled_at,
               u.monitors, u.status_pages, u.channels, u.counted_at, u.reported_at
        FROM tenants t JOIN accounts a ON a.id = t.account_id LEFT JOIN tenant_usage u ON u.tenant_id = t.id
@@ -204,8 +208,8 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
       updated_at: number;
       provisioned_at: number | null;
       suspended_at: number | null;
-      suspended_reason: string | null;
-      status_before_suspend: string | null;
+      owner_suspended_at: number | null;
+      owner_suspended_reason: string | null;
       provision_attempts: number;
       provision_error: string | null;
       provision_next_at: number | null;
@@ -231,9 +235,8 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     provisionedAt: row.provisioned_at,
-    suspendedAt: row.suspended_at,
-    suspendedReason: row.suspended_reason,
-    statusBeforeSuspend: pick(TENANT_STATUSES, row.status_before_suspend ?? undefined),
+    billingSuspendedAt: record.billingStatus === "suspended" ? row.suspended_at : null,
+    ownerSuspension: row.owner_suspended_at === null ? null : { at: row.owner_suspended_at, reason: row.owner_suspended_reason },
     provision: {
       attempts: row.provision_attempts,
       error: row.provision_error,
@@ -244,7 +247,14 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
     usage:
       row.monitors === null
         ? null
-        : { monitors: row.monitors, statusPages: row.status_pages!, channels: row.channels!, countedAt: row.counted_at!, reportedAt: row.reported_at! },
+        : {
+            monitors: row.monitors,
+            statusPages: row.status_pages!,
+            channels: row.channels!,
+            // The tenant's own clock orders its reports; what is shown is never later than when it arrived.
+            countedAt: Math.min(row.counted_at!, row.reported_at!),
+            reportedAt: row.reported_at!,
+          },
   };
 }
 
@@ -283,6 +293,11 @@ export function auditFilters(query: Record<string, string | undefined>): AuditFi
     action: (query.action ?? "").trim().toLowerCase().replace(/[^a-z0-9_.]/g, "").slice(0, 64),
     before: Number.isSafeInteger(before) && before > 0 ? before : null,
   };
+}
+
+/** The smallest string greater than every string starting with `prefix` (its last character, plus one). */
+export function prefixUpperBound(prefix: string): string {
+  return prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
 }
 
 function parseDetail(json: string | null): Record<string, unknown> | null {
@@ -324,8 +339,8 @@ function auditFromRow(r: AuditRow): AuditEvent {
   };
 }
 
-/** Newest first, one page; `more` when there is an older page. */
-export async function auditLog(db: D1Database, filters: AuditFilters): Promise<{ events: AuditEvent[]; more: boolean }> {
+/** The audit page's query: newest first, one row more than a page (to know there is another). */
+export function auditLogQuery(filters: AuditFilters): { sql: string; binds: (string | number)[] } {
   const where: string[] = [];
   const binds: (string | number)[] = [];
   if (filters.tenant) {
@@ -338,18 +353,22 @@ export async function auditLog(db: D1Database, filters: AuditFilters): Promise<{
     binds.push(filters.actor);
   }
   if (filters.action) {
-    // A prefix: "tenant." finds every tenant event.
-    where.push("e.action LIKE ? ESCAPE '\\'");
-    binds.push(`${filters.action.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`);
+    // A prefix ("tenant." finds every tenant event), as a range so it can use
+    // idx_audit_events_action; LIKE can't, with SQLite's case-insensitive LIKE.
+    where.push("e.action >= ? AND e.action < ?");
+    binds.push(filters.action, prefixUpperBound(filters.action));
   }
   if (filters.before) {
     where.push("e.id < ?");
     binds.push(filters.before);
   }
-  const rows = await db
-    .prepare(`${AUDIT_SELECT}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY e.id DESC LIMIT ?`)
-    .bind(...binds, AUDIT_PAGE_SIZE + 1)
-    .all<AuditRow>();
+  return { sql: `${AUDIT_SELECT}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY e.id DESC LIMIT ?`, binds: [...binds, AUDIT_PAGE_SIZE + 1] };
+}
+
+/** Newest first, one page; `more` when there is an older page. */
+export async function auditLog(db: D1Database, filters: AuditFilters): Promise<{ events: AuditEvent[]; more: boolean }> {
+  const query = auditLogQuery(filters);
+  const rows = await db.prepare(query.sql).bind(...query.binds).all<AuditRow>();
   const events = rows.results.slice(0, AUDIT_PAGE_SIZE).map(auditFromRow);
   return { events, more: rows.results.length > AUDIT_PAGE_SIZE };
 }
@@ -391,16 +410,17 @@ export function cleanReason(input: unknown): string {
 }
 
 /**
- * Suspends a tenant: billing state `suspended`, the state it had kept for
- * resuming. Routing stops at once in this isolate (forgetTenant) and within
- * TENANT_CACHE_MS (30 seconds) everywhere else. False when it was already
- * suspended or is being removed.
+ * The owner suspends a tenant (abuse, the terms). Only the owner's columns
+ * change, never billing's `status`, so billing can't lift it and lifting it
+ * leaves billing as it was. Routing stops at once in this isolate
+ * (forgetTenant) and within TENANT_CACHE_MS (30 seconds) everywhere else.
+ * False when the owner had already suspended it or it is being removed.
  */
 export async function suspendTenant(db: D1Database, tenant: Pick<TenantRecord, "id" | "slug">, reason: string, now: number): Promise<boolean> {
   const changed = await db
     .prepare(
-      `UPDATE tenants SET status = 'suspended', status_before_suspend = status, suspended_at = ?, suspended_reason = ?, updated_at = ?
-       WHERE id = ? AND status <> 'suspended' AND provision_state <> 'deleting'`,
+      `UPDATE tenants SET owner_suspended_at = ?, owner_suspended_reason = ?, updated_at = ?
+       WHERE id = ? AND owner_suspended_at IS NULL AND provision_state <> 'deleting'`,
     )
     .bind(now, reason, now, tenant.id)
     .run();
@@ -408,16 +428,19 @@ export async function suspendTenant(db: D1Database, tenant: Pick<TenantRecord, "
   return (changed.meta.changes ?? 0) > 0;
 }
 
-/** Puts a suspended tenant back in the state it was suspended from. False when it wasn't suspended. */
+/**
+ * Lifts the owner's suspension; billing's state is whatever billing says.
+ * Answers that state (still `suspended` when billing suspended it too), or
+ * null when the owner hadn't suspended it.
+ */
 export async function resumeTenant(db: D1Database, tenant: Pick<TenantRecord, "id" | "slug">, now: number): Promise<TenantStatus | null> {
   const row = await db
     .prepare(
-      `UPDATE tenants SET status = COALESCE(status_before_suspend, 'trial'), status_before_suspend = NULL,
-         suspended_at = NULL, suspended_reason = NULL, updated_at = ?
-       WHERE id = ? AND status = 'suspended' RETURNING status`,
+      `UPDATE tenants SET owner_suspended_at = NULL, owner_suspended_reason = NULL, updated_at = ?
+       WHERE id = ? AND owner_suspended_at IS NOT NULL RETURNING status`,
     )
     .bind(now, tenant.id)
     .first<{ status: string }>();
   forgetTenant(tenant.slug);
-  return row ? (pick(TENANT_STATUSES, row.status) ?? "trial") : null;
+  return row ? (pick(TENANT_STATUSES, row.status) ?? "suspended") : null;
 }

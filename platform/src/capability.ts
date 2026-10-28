@@ -43,8 +43,10 @@ export class TenantCapability implements PlatformCapability {
     const problem = usageCountsProblem(counts);
     if (problem) throw new Error(`usage refused: ${problem}`);
     const now = this.now();
-    // The tenant's clock can't put its counts in the future.
-    const countedAt = Math.min(counts.at, now);
+    // Reports are ordered by the tenant's own `at`, as sent: clamping it here
+    // would let a late report with a future time pass a newer one. The
+    // console clamps only what it shows (admin/data.ts).
+    const countedAt = counts.at;
     await this.db
       .prepare(
         `INSERT INTO tenant_usage (tenant_id, monitors, status_pages, channels, counted_at, reported_at) VALUES (?, ?, ?, ?, ?, ?)

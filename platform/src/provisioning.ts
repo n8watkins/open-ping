@@ -166,6 +166,7 @@ interface ProvisionRow {
   slug: string;
   script_name: string;
   status: string;
+  owner_suspended_at: number | null;
   plan: string;
   provision_state: string;
   version: string | null;
@@ -191,7 +192,7 @@ interface ProvisionTenant {
 async function loadTenant(db: D1Database, tenantId: string): Promise<ProvisionTenant | null> {
   const row = await db
     .prepare(
-      `SELECT id, account_id, slug, script_name, status, plan, provision_state, version, limit_overrides, trial_ends_at,
+      `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at,
               d1_id, provision_attempts, provision_next_at, provision_paused_at, provisioned_at, created_at
        FROM tenants WHERE id = ?`,
     )
