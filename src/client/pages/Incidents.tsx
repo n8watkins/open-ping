@@ -10,6 +10,7 @@ import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { StatusPill } from "../components/ui/StatusPill";
 import { formatDateTime, formatDuration, formatRelativeTime } from "../lib/format";
+import { IncidentUpdatesEditor, type IncidentUpdateItem } from "../components/IncidentUpdatesEditor";
 
 // The list endpoint returns the documented IncidentSummary plus a couple of
 // internal fields surfaced only on this private dashboard.
@@ -40,6 +41,8 @@ interface IncidentDetail extends IncidentRow {
 interface IncidentDetailResponse {
   incident: IncidentDetail;
   events: IncidentEvent[];
+  /** Status updates, newest first. */
+  updates?: IncidentUpdateItem[];
 }
 
 type StatusFilter = "all" | "open" | "resolved";
@@ -362,7 +365,10 @@ export default function Incidents() {
                 </div>
               ) : detail ? (
                 <DetailPanel
+                  key={detail.incident.id}
                   detail={detail}
+                  csrf={csrf ?? undefined}
+                  onUpdatesChanged={reloadDetail}
                   onClose={() => setSelectedId(null)}
                   privateNotes={privateNotes}
                   setPrivateNotes={setPrivateNotes}
@@ -388,6 +394,8 @@ export default function Incidents() {
 
 interface DetailPanelProps {
   detail: IncidentDetailResponse;
+  csrf: string | undefined;
+  onUpdatesChanged: () => Promise<void>;
   onClose: () => void;
   privateNotes: string;
   setPrivateNotes: (v: string) => void;
@@ -486,6 +494,15 @@ function DetailPanel(p: DetailPanelProps) {
         </div>
       )}
 
+      {/* Public status updates */}
+      <IncidentUpdatesEditor
+        incidentId={inc.id}
+        updates={p.detail.updates ?? []}
+        isPublic={inc.public ?? false}
+        csrf={p.csrf}
+        onChanged={p.onUpdatesChanged}
+      />
+
       {/* Editable annotations */}
       <div className="space-y-4 p-4">
         <label className="block">
@@ -500,13 +517,13 @@ function DetailPanel(p: DetailPanelProps) {
         </label>
 
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-ink-muted">Public message</span>
+          <span className="mb-1.5 block text-xs font-medium text-ink-muted">Public summary</span>
           <textarea
             className="input"
-            rows={3}
+            rows={2}
             value={p.publicMessage}
             onChange={(e) => p.setPublicMessage(e.target.value)}
-            placeholder="Shown on the public status page when enabled."
+            placeholder="One line shown above the status updates on the public page."
           />
         </label>
 

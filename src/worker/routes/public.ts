@@ -11,6 +11,11 @@ import {
   type StatusPageRecord,
 } from "../db/status-pages";
 import type { MonitorState } from "../../shared/states";
+import {
+  updatesForIncidents,
+  type IncidentUpdate,
+  type IncidentUpdateStatus,
+} from "../db/incident-updates";
 
 /**
  * Public status-page API mounted at /api/public (PRD §15). This router is
@@ -85,14 +90,26 @@ interface PublicService {
   bars: PublicBar[];
 }
 
-interface PublicIncident {
+/** One admin-posted status update, as the public sees it. */
+export interface PublicIncidentUpdate {
+  id: string;
+  status: IncidentUpdateStatus;
+  message: string;
+  /** When it was posted (epoch ms). */
+  at: number;
+}
+
+export interface PublicIncident {
   id: string;
   title: string;
+  /** The admin's one-line public summary (incidents.public_message). */
   message: string;
   startedAt: number;
   resolvedAt: number | null;
   durationSeconds: number | null;
   monitorName: string;
+  /** The status updates, newest first (empty when none were posted). */
+  updates: PublicIncidentUpdate[];
 }
 
 interface PublicMaint {
@@ -343,6 +360,7 @@ interface PublicIncidentRow {
 function toPublicIncident(
   row: PublicIncidentRow,
   publicNames: Map<string, string>,
+  updates: readonly IncidentUpdate[] = [],
 ): PublicIncident {
   const named = publicNames.get(row.monitor_id);
   const monitorName = named ?? "A service";
@@ -354,6 +372,8 @@ function toPublicIncident(
     resolvedAt: row.resolved_at,
     durationSeconds: row.duration_seconds,
     monitorName,
+    // Only the posted copy and when: never who posted it or when it was edited.
+    updates: updates.map((u) => ({ id: u.id, status: u.status, message: u.message, at: u.postedAt })),
   };
 }
 
@@ -640,12 +660,18 @@ publicStatus.get("/status", async (c) => {
   );
 
   // --- Public incidents (public=1 AND on this page; safe columns only) ---
+  // Their updates are looked up only by the ids of incidents that passed that
+  // boundary, so an update can never surface for a private incident.
   const incidents = await loadPublicIncidents(env, pageMonitorIds);
+  const updates = await updatesForIncidents(
+    env,
+    [...incidents.active, ...incidents.recent].map((r) => r.id),
+  );
   const activeIncidents = incidents.active.map((r) =>
-    toPublicIncident(r, publicNames),
+    toPublicIncident(r, publicNames, updates.get(r.id)),
   );
   const recentIncidents = incidents.recent.map((r) =>
-    toPublicIncident(r, publicNames),
+    toPublicIncident(r, publicNames, updates.get(r.id)),
   );
 
   return c.json({

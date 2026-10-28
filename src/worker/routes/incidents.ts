@@ -4,6 +4,16 @@ import type { AppEnv } from "../types";
 import type { IncidentRecord } from "../db/incidents";
 import { requireAuth } from "../middleware/auth";
 import { newId } from "../lib/ids";
+import {
+  createIncidentUpdate,
+  createUpdateSchema,
+  deleteIncidentUpdate,
+  editIncidentUpdate,
+  editUpdateSchema,
+  listIncidentUpdates,
+  updatesForIncidents,
+  type IncidentUpdate,
+} from "../db/incident-updates";
 
 /**
  * Incidents read/management API mounted at /api/incidents (PRD §16 Incidents).
@@ -23,6 +33,9 @@ incidents.use("*", requireAuth);
 
 /** An incident plus the joined monitor name (null if the monitor is gone). */
 export type IncidentWithMonitor = IncidentRecord & { monitorName: string | null };
+
+/** A listed incident with its status updates (newest first). */
+export type IncidentWithUpdates = IncidentWithMonitor & { updates: IncidentUpdate[] };
 
 /** Raw `incidents` row (optionally with the joined `monitor_name`). */
 interface IncidentRow {
@@ -246,9 +259,11 @@ incidents.get("/", async (c) => c.json(await listIncidents(c.env, c.req.query())
 export async function listIncidents(
   env: AppEnv["Bindings"],
   query: Record<string, string | undefined>,
-): Promise<{ incidents: IncidentWithMonitor[]; total: number }> {
+): Promise<{ incidents: IncidentWithUpdates[]; total: number }> {
   const limit = resolveLimit(query.limit);
-  const list = await queryIncidents(env, query, limit);
+  const rows = await queryIncidents(env, query, limit);
+  const updates = await updatesForIncidents(env, rows.map((i) => i.id));
+  const list = rows.map((i) => ({ ...i, updates: updates.get(i.id) ?? [] }));
 
   const { where, binds } = buildFilter(query);
   const whereSql = where ? ` WHERE ${where}` : "";
@@ -325,7 +340,50 @@ incidents.get("/:id", async (c) => {
     .bind(id)
     .all<IncidentEventRow>();
 
-  return c.json({ incident: mapRow(row), events: (results ?? []).map(mapEvent) });
+  const updates = await listIncidentUpdates(c.env, id);
+  return c.json({
+    incident: mapRow(row),
+    events: (results ?? []).map(mapEvent),
+    updates,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Status updates (db/incident-updates.ts): the public timeline of an incident.
+// ---------------------------------------------------------------------------
+
+/** Validation failure in the same shape as the other incident routes. */
+function validationError(issues: z.core.$ZodIssue[]) {
+  return { error: "validation", issues };
+}
+
+// POST /:id/updates - post a status update (stamped now).
+incidents.post("/:id/updates", async (c) => {
+  const parsed = createUpdateSchema.safeParse(await c.req.json().catch(() => undefined));
+  if (!parsed.success) return c.json(validationError(parsed.error.issues), 400);
+  const r = await createIncidentUpdate(c.env, c.req.param("id"), parsed.data);
+  if (!r.ok) {
+    return r.error === "not_found"
+      ? c.json({ error: "not_found" }, 404)
+      : c.json({ error: "too_many_updates", message: "This incident already has the most updates allowed." }, 409);
+  }
+  return c.json({ update: r.update }, 201);
+});
+
+// PATCH /:id/updates/:updateId - change an update's status and/or message.
+incidents.patch("/:id/updates/:updateId", async (c) => {
+  const parsed = editUpdateSchema.safeParse(await c.req.json().catch(() => undefined));
+  if (!parsed.success) return c.json(validationError(parsed.error.issues), 400);
+  const update = await editIncidentUpdate(c.env, c.req.param("id"), c.req.param("updateId"), parsed.data);
+  if (!update) return c.json({ error: "not_found" }, 404);
+  return c.json({ update });
+});
+
+// DELETE /:id/updates/:updateId - remove an update from the timeline.
+incidents.delete("/:id/updates/:updateId", async (c) => {
+  const deleted = await deleteIncidentUpdate(c.env, c.req.param("id"), c.req.param("updateId"));
+  if (!deleted) return c.json({ error: "not_found" }, 404);
+  return c.json({ ok: true });
 });
 
 // Cap free-text annotation fields (matches maintenance.ts) so repeated PATCHes

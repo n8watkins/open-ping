@@ -25,8 +25,13 @@ import {
   formatMs,
   formatPct,
   formatRelativeTime,
+  formatShortDateTime,
   formatSince,
 } from "../lib/format";
+import {
+  INCIDENT_UPDATE_LABELS,
+  type IncidentUpdateStatus,
+} from "../../shared/incident-updates";
 
 /* ------------------------------------------------------------------ *
  * Response shape (GET /api/public/status). Defined locally - the
@@ -78,14 +83,24 @@ interface ServiceGroup {
   services: PublicService[];
 }
 
+interface PublicIncidentUpdate {
+  id: string;
+  status: IncidentUpdateStatus;
+  message: string;
+  at: number;
+}
+
 interface PublicIncident {
   id: string;
   title: string;
+  /** The admin's one-line summary. */
   message: string | null;
   startedAt: number;
   resolvedAt: number | null;
   durationSeconds: number | null;
   monitorName: string | null;
+  /** Status updates, newest first. Optional for an older server. */
+  updates?: PublicIncidentUpdate[];
 }
 
 interface MaintenanceWindow {
@@ -432,7 +447,10 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
                     : `Started ${formatRelativeTime(inc.startedAt)}`
                 }
                 message={inc.message}
-              />
+                id={`incident-${inc.id}`}
+              >
+                <IncidentTimeline updates={inc.updates} />
+              </Callout>
             ))}
           </div>
         )}
@@ -469,7 +487,7 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
           ) : (
             <Card className="divide-y divide-line p-0">
               {recentIncidents.map((inc) => (
-                <div key={inc.id} className="px-4 py-3.5">
+                <div key={inc.id} id={`incident-${inc.id}`} className="scroll-mt-6 px-4 py-3.5">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                     <h3 className="text-sm font-medium text-ink">{inc.title}</h3>
                     <span className="text-xs text-ink-faint">
@@ -487,6 +505,7 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
                       {inc.message}
                     </p>
                   )}
+                  <IncidentTimeline updates={inc.updates} />
                 </div>
               ))}
             </Card>
@@ -636,15 +655,19 @@ function Callout({
   title,
   meta,
   message,
+  id,
+  children,
 }: {
   toneClass: string;
   icon: ReactNode;
   title: string;
   meta?: string;
   message?: string | null;
+  id?: string;
+  children?: ReactNode;
 }) {
   return (
-    <div className={cn("rounded-card border p-4", toneClass)}>
+    <div id={id} className={cn("scroll-mt-6 rounded-card border p-4", toneClass)}>
       <div className="flex items-start gap-3">
         <span className="mt-0.5 shrink-0">{icon}</span>
         <div className="min-w-0 flex-1">
@@ -653,9 +676,59 @@ function Callout({
             {meta && <span className="text-xs text-ink-faint">{meta}</span>}
           </div>
           {message && <p className="mt-1 text-sm text-ink-muted">{message}</p>}
+          {children}
         </div>
       </div>
     </div>
+  );
+}
+
+/** Dot and label color per update status (explicit classes for the extractor). */
+const UPDATE_TONE: Record<IncidentUpdateStatus, { dot: string; text: string }> = {
+  investigating: { dot: "bg-down", text: "text-down" },
+  identified: { dot: "bg-warming", text: "text-warming" },
+  monitoring: { dot: "bg-maint", text: "text-maint" },
+  resolved: { dot: "bg-up", text: "text-up" },
+};
+
+/**
+ * An incident's status updates, newest first, each with its status, when it
+ * was posted (relative and absolute) and the admin's message.
+ */
+function IncidentTimeline({ updates }: { updates?: PublicIncidentUpdate[] }) {
+  if (!updates || updates.length === 0) return null;
+  return (
+    <ol aria-label="Updates" className="mt-3 space-y-3 border-l border-line pl-4">
+      {updates.map((u) => {
+        const tone = UPDATE_TONE[u.status] ?? UPDATE_TONE.investigating;
+        return (
+          <li key={u.id} className="relative">
+            <span
+              aria-hidden="true"
+              className={cn(
+                "absolute top-1.5 -left-[21px] size-2 rounded-full ring-2 ring-canvas",
+                tone.dot,
+              )}
+            />
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className={cn("text-xs font-semibold", tone.text)}>
+                {INCIDENT_UPDATE_LABELS[u.status] ?? u.status}
+              </span>
+              <time
+                dateTime={new Date(u.at).toISOString()}
+                title={formatDateTime(u.at)}
+                className="text-xs text-ink-faint"
+              >
+                {formatRelativeTime(u.at)} · {formatShortDateTime(u.at)}
+              </time>
+            </div>
+            <p className="mt-0.5 text-sm break-words whitespace-pre-line text-ink-muted">
+              {u.message}
+            </p>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
