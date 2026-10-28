@@ -108,6 +108,37 @@ describe("groupIncidents", () => {
     expect(none[0]!.cause).toBeNull();
   });
 
+  it("groups the Overview's history rows the same way (newest event first, union downtime)", () => {
+    // Shape of /api/overview/history incidents: no root cause or HTTP status.
+    const row = (id: string, monitor: string, startedAt: number, durationSeconds = 1800, error = "suspended") => ({
+      id,
+      monitorId: monitor,
+      monitorName: monitor.toUpperCase(),
+      status: "resolved" as const,
+      title: null,
+      startedAt,
+      resolvedAt: startedAt + durationSeconds * 1000,
+      durationSeconds,
+      error,
+    });
+    const events = groupIncidents([
+      row("a1", "a", T0),
+      row("b1", "b", T0 + 2 * MIN),
+      row("c1", "c", T0 + MIN, 3600),
+      row("a2", "a", T0 + 600 * MIN, 1800, "timeout"),
+    ]);
+    expect(events.map((e) => e.key)).toEqual(["a2", "a1"]);
+    expect(events[0]).toMatchObject({ cause: "Timeout", downtimeSeconds: 1800 });
+    expect(events[1]!.incidents.map((i) => i.monitorName)).toEqual(["A", "B", "C"]);
+    expect(events[1]).toMatchObject({
+      cause: "Render suspended the app",
+      endedAt: T0 + 61 * MIN,
+      // A from 0 to 30 min, C from 1 to 61 min, B inside them: 61 minutes down.
+      downtimeSeconds: 61 * 60,
+    });
+    expect(eventTitle(events[0]!)).toBe("A is down");
+  });
+
   it("handles an empty list", () => {
     expect(groupIncidents([])).toEqual([]);
   });

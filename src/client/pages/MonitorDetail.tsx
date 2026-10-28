@@ -31,7 +31,7 @@ import { StatusPill } from "../components/ui/StatusPill";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { RangeControl } from "../components/ui/RangeControl";
 import { Skeleton } from "../components/ui/Skeleton";
-import { describeCause } from "../components/ui/incident-groups";
+import { describeCause } from "../components/incidents/grouping";
 import {
   AvailabilityCard,
   ResponseCard,
