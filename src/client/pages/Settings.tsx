@@ -14,6 +14,7 @@ import {
   Fingerprint,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
+import { strandedPasskeys } from "../lib/webauthn";
 import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
@@ -250,6 +251,12 @@ function GeneralSection({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Passkeys are bound to the installation's hostname, so a new hostname
+  // strands them (docs/SECURITY.md); ask before saving one.
+  const { data: passkeyData } = useFetch<{
+    passkeys: { rpId: string }[];
+    otherSignIn: { github: boolean; email: boolean };
+  }>("/api/passkeys");
 
   useEffect(() => {
     if (settings) {
@@ -260,6 +267,18 @@ function GeneralSection({
   }, [settings]);
 
   async function save() {
+    const stranded = strandedPasskeys(appUrl, passkeyData?.passkeys ?? []);
+    if (stranded > 0) {
+      const other = passkeyData?.otherSignIn;
+      const fallback =
+        other?.github || other?.email
+          ? "You can still sign in with GitHub or email there and add new passkeys."
+          : "They are your only way to sign in, so you would need a new SETUP_TOKEN and /recover to get back in.";
+      const plural = stranded === 1 ? "passkey stops" : "passkeys stop";
+      if (!window.confirm(`Your ${stranded} ${plural} working at the new address. ${fallback} Save anyway?`)) {
+        return;
+      }
+    }
     setSaving(true);
     setSaveError(null);
     setSaved(false);
