@@ -249,14 +249,15 @@ With three lanes the build is about 10 working days of agent time plus the 7-day
 
 ## 12. Owner actions and costs
 
-Wave 0, ideally this week; nothing in waves 1 and 2 waits on them except where noted.
+Wave 0; nothing in waves 1 and 2 waits on them except where noted.
+Owner status on 2026-10-28: O4 decided; the domain (O2), Workers Paid and Workers for Platforms (O1) and finishing the Stripe account (O3) come later, before wave 3.
 
 | # | Action | Needed by | Cost |
 | --- | --- | --- | --- |
 | O1 | Turn on Workers Paid and Workers for Platforms in the Cloudflare dashboard | Staging in wave 3 (B3, B4 against real Cloudflare) | $5 + $25 a month |
 | O2 | Pick and buy the Hosted domain (decision D2), add it to Cloudflare | Staging in wave 3 | About $10 to $15 a year |
 | O3 | Create a Stripe account (business details, bank account, tax settings), stay in test mode | B5 in wave 3; live mode for the wave 4 purchase | Stripe's fees per charge |
-| O4 | Choose a support email address | D2 emails, terms | None |
+| O4 | Support email address: **support@n8builds.dev** (decided 2026-10-28; set up forwarding with Cloudflare Email Routing) | D2 emails, terms | None |
 | O5 | Make a Cloudflare API token scoped to Workers, D1 and the namespace, and set it as a platform secret | Staging in wave 3 | None |
 | O6 | Generate `PLATFORM_KEY` and the hand-off signing key with the agent, and save both in the password manager | Staging in wave 3 | None |
 | O7 | Review the terms and privacy drafts | Wave 4 | None, or a lawyer if wanted |
