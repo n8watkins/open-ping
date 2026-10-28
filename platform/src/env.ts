@@ -37,4 +37,12 @@ export interface PlatformEnv {
   /** Var and secret: the platform's GitHub OAuth app (callback https://app.<domain>/auth/github/callback). */
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
+
+  // --- The owner's admin console (B6, src/admin/) ---
+  /**
+   * Var or secret: who the owner is, as platform account ids (`acc_...`) or
+   * emails, separated by commas or spaces. Empty (the default) means nobody:
+   * every /admin page answers 404.
+   */
+  PLATFORM_OWNERS?: string;
 }

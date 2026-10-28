@@ -19,6 +19,8 @@ export interface Session {
   account: Account;
   tokenHash: string;
   method: SignInMethod;
+  /** When this browser signed in (epoch ms): the admin console asks for a recent passkey sign-in. */
+  createdAt: number;
 }
 
 /** Starts a session and answers the Set-Cookie header for it. */
@@ -36,16 +38,16 @@ export async function readSession(db: D1Database, request: Request, now: number)
   if (!token || token.length > 128) return null;
   const tokenHash = await sha256hex(token);
   const row = await db
-    .prepare("SELECT account_id, method, expires_at, last_seen_at FROM platform_sessions WHERE token_hash = ?")
+    .prepare("SELECT account_id, method, created_at, expires_at, last_seen_at FROM platform_sessions WHERE token_hash = ?")
     .bind(tokenHash)
-    .first<{ account_id: string; method: SignInMethod; expires_at: number; last_seen_at: number }>();
+    .first<{ account_id: string; method: SignInMethod; created_at: number; expires_at: number; last_seen_at: number }>();
   if (!row || row.expires_at <= now) return null;
   const account = await getAccount(db, row.account_id);
   if (!account || account.disabledAt !== null) return null;
   if (now - row.last_seen_at > TOUCH_EVERY_MS) {
     await db.prepare("UPDATE platform_sessions SET last_seen_at = ? WHERE token_hash = ?").bind(now, tokenHash).run();
   }
-  return { account, tokenHash, method: row.method };
+  return { account, tokenHash, method: row.method, createdAt: row.created_at };
 }
 
 /** Ends the browser's session (if any) and answers the header that clears its cookie. */

@@ -155,6 +155,14 @@ export interface PageOptions {
   /** Same-origin scripts to load (the passkey helper). Without any, the CSP allows no script. */
   scripts?: string[];
   wide?: boolean;
+  /** The admin console's wider, top-aligned card (./admin/pages.ts). */
+  admin?: boolean;
+  /** Replaces the brand line at the top of the card (the console's header and tabs). */
+  header?: Html;
+  /** CSS added after the shared stylesheet. */
+  style?: string;
+  /** False leaves out the "Questions? Write to support" line (the owner's own pages). */
+  footer?: boolean;
   /** Reload the page after this many seconds (the "setting up" state). */
   refreshSeconds?: number;
   headers?: Record<string, string>;
@@ -189,14 +197,14 @@ export function renderPage(options: PageOptions): Response {
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#0b1220">
 ${refresh}<title>${options.title} - OpenPing Hosted</title>
-<style>${new Html(STYLE)}</style>
+<style>${new Html(STYLE)}${new Html(options.style ?? "")}</style>
 ${scripts.map((src) => html`<script src="${src}" defer></script>`)}
 </head>
 <body>
-<main${options.wide ? new Html(' class="wide"') : ""}>
-<a class="brand" href="${options.homeHref ?? "/"}"><span class="dot" aria-hidden="true"></span>OpenPing Hosted</a>
+<main${options.admin ? new Html(' class="admin"') : options.wide ? new Html(' class="wide"') : ""}>
+${options.header ?? html`<a class="brand" href="${options.homeHref ?? "/"}"><span class="dot" aria-hidden="true"></span>OpenPing Hosted</a>`}
 ${options.main}
-<p class="fine">Questions? Write to <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a>.</p>
+${options.footer === false ? "" : html`<p class="fine">Questions? Write to <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a>.</p>`}
 </main>
 </body>
 </html>

@@ -169,6 +169,11 @@ function dateText(ms: number): string {
   return new Date(ms).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
 }
 
+function dateTimeText(ms: number): string {
+  const d = new Date(ms);
+  return `${dateText(ms)}, ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+}
+
 function tenantSection(tenant: AccountTenantView | null, now: number): Html {
   if (!tenant) {
     return html`<h2>Your OpenPing</h2><p>You don't have an OpenPing yet.</p>
@@ -212,6 +217,10 @@ export function accountPage(input: {
   github: { login: string | null } | null;
   githubOn: boolean;
   flash?: { message: string; tone: "ok" | "error" } | null;
+  /** Each time the OpenPing team signed in to this OpenPing to help, newest first (the admin console's support sign-in). */
+  supportSignIns?: { at: number; reason: string | null }[];
+  /** The platform's owner: link the admin console. */
+  isOwner?: boolean;
   now: number;
 }): Response {
   const settingUp = input.tenant !== null && input.tenant.provisionState !== "ready" && !input.tenant.paused;
@@ -248,7 +257,17 @@ ${passkeys}
 <ul class="rows"><li><div class="what"><strong>Email</strong><span>${input.email}</span></div></li></ul>
 ${github}
 </section>
+${
+  input.supportSignIns?.length
+    ? html`<section><h2>Support access</h2>
+<p>Each time the OpenPing team signed in to your OpenPing to help, and why. A support sign-in lasts at most an hour.</p>
+<ul class="rows">${input.supportSignIns.map(
+        (s) => html`<li><div class="what"><strong>${s.reason ?? "Support sign-in"}</strong><span>${dateTimeText(s.at)}</span></div></li>`,
+      )}</ul></section>`
+    : ""
+}
 <section><h2>Billing</h2><p>Paid plans open soon: $24 a year, and $12 a year more for 1-minute checks. Your trial keeps running until then.</p></section>
+${input.isOwner ? html`<section><h2>Owner</h2><div class="stack"><a class="button secondary" href="/admin">Open the admin console</a></div></section>` : ""}
 <section><form method="post" action="/sign-out"><button class="button secondary" type="submit">Sign out</button></form></section>`,
   });
 }

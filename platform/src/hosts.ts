@@ -43,3 +43,19 @@ export function appOrigin(hostedDomain: string): string {
 export function tenantOrigin(slug: string, hostedDomain: string): string {
   return `https://${slug}.${normalizeHost(hostedDomain)}`;
 }
+
+/**
+ * The platform's origin as the browser sees it: `https://app.<domain>` in
+ * production, the request's own origin in local development (plain http).
+ */
+export function requestAppOrigin(requestUrl: string, hostedDomain: string): string {
+  const url = new URL(requestUrl);
+  return url.protocol === "https:" ? appOrigin(hostedDomain) : url.origin;
+}
+
+/** A tenant's origin as the browser sees it, the same way as requestAppOrigin. */
+export function requestTenantOrigin(requestUrl: string, slug: string, hostedDomain: string): string {
+  const url = new URL(requestUrl);
+  if (url.protocol === "https:") return tenantOrigin(slug, hostedDomain);
+  return `${url.protocol}//${slug}.${url.host.replace(/^app\./, "")}`;
+}

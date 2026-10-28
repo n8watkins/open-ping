@@ -10,6 +10,9 @@
 
 import { Hono, type Context } from "hono";
 
+import { ADMIN_NEXT_PATTERN } from "./admin/routes";
+import { isOwner } from "./admin/owner";
+import { supportSignIns } from "./admin/data";
 import { WebAuthnError, type AuthenticationResponseJSON, type RegistrationResponseJSON } from "../../src/worker/lib/webauthn";
 import { accountForVerifiedEmail, audit, findAccountByEmail, getAccount, isDisposableEmail, normalizeEmail, touchIdentity, type Account } from "./accounts";
 import {
@@ -44,7 +47,7 @@ import { createSession, endSession, readSession, type Session, type SignInMethod
 import { PASSKEY_SCRIPT, PASSKEY_SCRIPT_PATH } from "./client-script";
 import type { PlatformEnv } from "./env";
 import { handoffUrl, mintHandoffToken } from "./handoff";
-import { appOrigin, tenantOrigin } from "./hosts";
+import { requestAppOrigin, requestTenantOrigin } from "./hosts";
 import type { Mailer } from "./mail";
 import { requestTenant, runProvisioning } from "./provisioning";
 import type { ProvisioningSetup } from "./provisioning-env";
@@ -71,7 +74,7 @@ const NO_STORE = { "cache-control": "no-store" } as const;
 const NEXT_PATTERN = /^\/(?:account|start|open\?tenant=[a-z][a-z0-9-]{1,29})$/;
 
 export function safeNext(value: unknown): string | null {
-  return typeof value === "string" && NEXT_PATTERN.test(value) ? value : null;
+  return typeof value === "string" && (NEXT_PATTERN.test(value) || ADMIN_NEXT_PATTERN.test(value)) ? value : null;
 }
 
 /** The sign-in page's `?tenant=<slug>` (from a tenant's signIn URL) becomes a next path. */
@@ -82,16 +85,9 @@ function nextFromQuery(c: Ctx): string | null {
 }
 
 /** This page's origin: https://app.<domain> in production, the request's own in local development. */
-function origin(c: Ctx): string {
-  const url = new URL(c.req.url);
-  return url.protocol === "https:" ? appOrigin(c.env.HOSTED_DOMAIN) : url.origin;
-}
+const origin = (c: Ctx) => requestAppOrigin(c.req.url, c.env.HOSTED_DOMAIN);
 
-function originOfTenant(c: Ctx, slug: string): string {
-  const url = new URL(c.req.url);
-  if (url.protocol === "https:") return tenantOrigin(slug, c.env.HOSTED_DOMAIN);
-  return `${url.protocol}//${slug}.${url.host.replace(/^app\./, "")}`;
-}
+const originOfTenant = (c: Ctx, slug: string) => requestTenantOrigin(c.req.url, slug, c.env.HOSTED_DOMAIN);
 
 function passkeyExpectation(c: Ctx): PasskeyExpectation {
   const url = new URL(origin(c));
@@ -600,6 +596,8 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       github: github ? { login: github.label } : null,
       githubOn: githubConfig(c.env) !== null,
       flash: FLASH[c.req.query("done") ?? ""] ?? null,
+      supportSignIns: tenant ? await supportSignIns(db, tenant.id) : [],
+      isOwner: isOwner(session.account, c.env),
       now: c.get("now"),
     });
   });
