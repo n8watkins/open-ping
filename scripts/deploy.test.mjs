@@ -1,6 +1,15 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { databaseBinding, deploySteps, guardPlainDeploy, listIncludes } from "./deploy.mjs";
+import {
+  databaseBinding,
+  deploySteps,
+  describeChanges,
+  guardPlainDeploy,
+  listIncludes,
+  servingVersion,
+  varChanges,
+  versionVars,
+} from "./deploy.mjs";
 import { parseJsonc } from "./prod-config.mjs";
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
@@ -64,6 +73,52 @@ describe("guardPlainDeploy", () => {
       guardPlainDeploy({ configPath: ".wrangler.prod.jsonc", hasOverrides: true }),
     ).not.toThrow();
     expect(() => guardPlainDeploy({ configPath: "wrangler.jsonc", hasOverrides: false })).not.toThrow();
+  });
+});
+
+describe("the live vars check", () => {
+  const canonical = { HOME_PAGE: "landing", WAITLIST_ENABLED: "true", WORKERS_PLAN: "free" };
+
+  it("catches a template deploy over the canonical install's vars", () => {
+    const changes = varChanges(canonical, template.vars);
+    expect(changes).toEqual([
+      { name: "HOME_PAGE", from: "landing", to: "status" },
+      { name: "WAITLIST_ENABLED", from: "true", to: "false" },
+    ]);
+    expect(describeChanges("open-ping", changes)).toBe(
+      'This deploy would change vars the live Worker "open-ping" runs with:\n' +
+        '  HOME_PAGE: "landing" -> "status"\n' +
+        '  WAITLIST_ENABLED: "true" -> "false"',
+    );
+  });
+
+  it("passes when the vars match, and reports a var the deploy would remove", () => {
+    expect(varChanges(canonical, { ...canonical })).toEqual([]);
+    expect(varChanges({ OLD: "x" }, {})).toEqual([{ name: "OLD", from: "x", to: undefined }]);
+    expect(describeChanges("w", [{ name: "OLD", from: "x", to: undefined }])).toMatch(
+      /OLD: "x" -> \(removed\)/,
+    );
+  });
+
+  it("reads the serving version and its plain-text vars from wrangler's JSON", () => {
+    const status = JSON.stringify({
+      versions: [
+        { version_id: "old", percentage: 10 },
+        { version_id: "new", percentage: 90 },
+      ],
+    });
+    expect(servingVersion(`npm notice\n${status}`)).toBe("new");
+    expect(servingVersion(JSON.stringify({ versions: [] }))).toBeNull();
+    const version = JSON.stringify({
+      resources: {
+        bindings: [
+          { name: "HOME_PAGE", type: "plain_text", text: "landing" },
+          { name: "DB", type: "d1", id: "x" },
+          { name: "MASTER_KEY", type: "secret_text" },
+        ],
+      },
+    });
+    expect(versionVars(version)).toEqual({ HOME_PAGE: "landing" });
   });
 });
 

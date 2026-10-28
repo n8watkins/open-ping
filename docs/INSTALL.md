@@ -224,6 +224,11 @@ Wrangler then writes the new id into your `wrangler.jsonc`; keeping or discardin
 Migrations are additive and tracked by Wrangler, so only unapplied ones run, and Wrangler asks you to confirm before applying them.
 To run them on their own, use `npm run db:migrate`.
 
+Before it builds, the script also compares the vars your live Worker runs with against the ones in `wrangler.jsonc`.
+If a deploy would change one (say `WORKERS_PLAN` from `paid` back to `free`), it lists them and asks before going on; without a terminal it stops, and `OPENPING_ALLOW_VAR_CHANGES=1 npm run deploy` deploys anyway.
+Installs made with the button skip that check, because their repository is the source of truth.
+To run a second OpenPing in the same Cloudflare account, change both `name` and `database_name` in `wrangler.jsonc` first, or the deploy binds the first install's database.
+
 The Cron Trigger that runs the checker **every 12 minutes** (`*/12 * * * *`,
 defined in `wrangler.jsonc`) is enabled automatically on deploy - you don't need
 to configure anything for monitoring to start.
