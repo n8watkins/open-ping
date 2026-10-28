@@ -68,7 +68,7 @@ export interface Env {
   /**
    * Where a failed check is confirmed from before it opens an incident: a
    * comma-separated list of Durable Object location hints, in order of
-   * preference ("weur,enam,apac"), or "off" (checks/region.ts). Unset means
+   * preference ("enam,weur"), or "off" (checks/region.ts). Unset means
    * off. A wrangler.jsonc var.
    */
   CONFIRM_REGIONS?: string;

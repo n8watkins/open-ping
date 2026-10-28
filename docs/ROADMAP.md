@@ -40,8 +40,8 @@ These are the gaps a buyer is likely to notice, most valuable first:
 - [x] **Confirm before alerting** (M, overlaps Hosted stage 2) (#31).
   A failure is re-checked once, 5 seconds later, before it opens an incident, so one bad request doesn't page anyone; "Confirm failures" per monitor, on by default.
   The re-check runs from the same Cloudflare location; a second-location check (a Durable Object with a location hint) stays in Hosted stage 2.
-- [ ] **Second-region confirmation** (M, Hosted stage 2, built, waiting on measurement).
-  The re-check runs from a Durable Object in another region, and the incident says where ("Confirmed from Frankfurt") ([Second-region confirmation](./SECOND_REGION.md)).
+- [ ] **Second-region confirmation** (M, Hosted stage 2, built and measured).
+  The re-check runs from a Durable Object in another region, and the incident says where ("Confirmed from Atlanta") ([Second-region confirmation](./SECOND_REGION.md)).
 - [ ] **SSL certificate expiry monitor** (M, spike and measurement done).
   UptimeRobot, StatusCake and HetrixTools warn before a certificate expires.
   A Worker's `fetch()` doesn't expose the certificate; a TLS 1.2 handshake over a plain TCP socket can read it, except for Cloudflare-proxied and TLS 1.3-only hosts.

@@ -88,7 +88,7 @@ async function latestSampleMeta(id: string) {
 }
 
 /** The install with second-region confirmation on, the run itself "in Ashburn". */
-const regionalEnv = (): Env => ({ ...env, CONFIRM_REGIONS: "weur,enam" });
+const regionalEnv = (): Env => ({ ...env, CONFIRM_REGIONS: "enam,weur" });
 const RUN = { confirmDelayMs: 1, regional: { lookupHere: async () => "IAD" } };
 
 beforeAll(async () => {

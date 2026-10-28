@@ -36,7 +36,7 @@
     // Durable Object regions, in order (docs/SECOND_REGION.md). The run asks one
     // whose data center isn't its own, so one location's network trouble
     // doesn't page you. "off" re-checks where the check ran.
-    "CONFIRM_REGIONS": "weur,enam,apac"
+    "CONFIRM_REGIONS": "enam,weur"
   },
   // The per-region re-checkers behind CONFIRM_REGIONS (src/worker/region-probe.ts).
   // SQLite-backed Durable Objects are on the Workers Free plan.

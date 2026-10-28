@@ -470,7 +470,7 @@ describe("runMonitorCheck re-check from another region", () => {
     expect(o).not.toHaveProperty("confirmedFrom");
   });
 
-  it("a remote re-check that couldn't run falls back to a re-check here", async () => {
+  it("a remote re-check that couldn't run falls back to a re-check here, inside the same reservation", async () => {
     mockedRun
       .mockResolvedValueOnce(result({ ok: false, error: "timeout", fetches: 1 }))
       .mockResolvedValueOnce(result({ ok: false, statusCode: 500, error: "status_out_of_range", fetches: 1 }));
@@ -482,19 +482,8 @@ describe("runMonitorCheck re-check from another region", () => {
     expect(o.statusCode).toBe(500);
     expect(mockedRun).toHaveBeenCalledTimes(2);
     expect(mockedRun.mock.calls[1]?.[1]).toMatchObject({ noStore: true });
-    // Once for the remote re-check, once more for the one here.
-    expect(allowConfirm).toHaveBeenCalledTimes(2);
+    expect(allowConfirm).toHaveBeenCalledOnce();
     expect(o.fetches).toBe(6);
-  });
-
-  it("no room left for the fallback: deferred, charged for the failed hop", async () => {
-    mockedRun.mockResolvedValueOnce(result({ ok: false, error: "timeout", fetches: 1 }));
-    const remoteRecheck = vi.fn().mockResolvedValue({ attempt: null, fetches: 4 });
-    const allowConfirm = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
-    const o = await runMonitorCheck(monitor, { remoteRecheck, allowConfirm, sleep: async () => {}, now: 1 });
-    expect(o.confirmation).toBe("deferred");
-    expect(mockedRun).toHaveBeenCalledOnce();
-    expect(o.fetches).toBe(5);
   });
 
   it("no budget for any re-check: deferred before the hop", async () => {

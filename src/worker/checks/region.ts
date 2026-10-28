@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import type { MonitorRecord } from "../db/monitors";
-import { probeFetchLimit, type ProbeAttempt, type RemoteRecheck } from "./runner";
+import type { ProbeAttempt, RemoteRecheck } from "./runner";
 
 /**
  * Second-region confirmation (docs/SECOND_REGION.md): a failed check's
@@ -15,13 +15,15 @@ import { probeFetchLimit, type ProbeAttempt, type RemoteRecheck } from "./runner
  * off, the Durable Object fails or times out) the re-check runs where the
  * first check did, exactly as before.
  *
- * Cost, per confirmation (lib/budget.ts reserves it before the check starts):
- * one request for the hop to the Durable Object, plus, once per run, one to
- * learn which data center the run is in (the Cloudflare trace endpoint), plus
- * what the probe itself makes. Whether Cloudflare counts the probe's requests
- * against the scheduler's invocation, or only against the Durable Object's
- * own, is not documented; until it's measured (scripts/region-probe/) this
- * module charges them to the run, which is the safe assumption.
+ * Cost to the run, per confirmation (lib/budget.ts holds it before the check
+ * starts): one request for the hop to the Durable Object, plus, once per run,
+ * one to learn which data center the run is in (the Cloudflare trace
+ * endpoint). The probe's own requests are not the run's: measured on Workers
+ * Free on 2026-10-28 (scripts/region-probe/, docs/SECOND_REGION.md), a Durable
+ * Object gets its own 50 subrequests for each call it receives, and the
+ * caller is charged none of them; 60 calls to a Durable Object in one
+ * invocation didn't count against the caller's 50 either. The hop is still
+ * charged here, as the safe side of that.
  */
 
 /** Location hints Cloudflare accepts (developers.cloudflare.com/durable-objects/reference/data-location/). */
@@ -41,20 +43,19 @@ export const LOCATION_HINTS = [
 export type LocationHint = (typeof LOCATION_HINTS)[number];
 
 /**
- * Requests a remote re-check may cost on top of the probe itself: the hop to
- * the Durable Object, the run's one data-center lookup, and the Durable
- * Object's own lookup when it refreshes where it lives.
+ * What a remote re-check may cost the run: the hop to the Durable Object and
+ * the run's one data-center lookup. The scheduler holds this on top of a local
+ * re-check's worst case, so a re-check that can't run remotely can always run
+ * here instead.
  */
-export const REMOTE_RECHECK_OVERHEAD = 3;
+export const REMOTE_RECHECK_OVERHEAD = 2;
 
 /**
- * Charge the Durable Object's own requests (its probe and its data-center
- * lookup) to the scheduler's run. True is the safe assumption while it's
- * unmeasured: a Durable Object is its own invocation with its own limits, so
- * once scripts/region-probe/ shows the run isn't charged for them, this can
- * become false and a remote confirmation costs the run one request.
+ * The subrequests a Durable Object may make for each call it receives on
+ * Workers Free (measured, see above). One re-check makes at most its probe's
+ * worst case plus its own data-center lookup, well inside it (region.test.ts).
  */
-export const REMOTE_FETCHES_CHARGED = true;
+export const DURABLE_OBJECT_SUBREQUESTS = 50;
 
 /** Where Cloudflare says a request is served from: `colo=FRA` in its plain-text trace. */
 export const TRACE_URL = "https://www.cloudflare.com/cdn-cgi/trace";
@@ -133,7 +134,10 @@ export interface RegionRecheckResult {
   attempt: ProbeAttempt;
   /** Its data center, when its lookup worked. */
   colo: string | null;
-  /** Requests it made: the probe's, plus its data-center lookup when it refreshed that. */
+  /**
+   * Requests it made from its own invocation (the probe's, plus its
+   * data-center lookup when it refreshed that); logged, not charged to the run.
+   */
   fetches: number;
 }
 
@@ -204,21 +208,16 @@ export function regionalRechecker(
       console.log(
         `[region] ${monitor.id} re-checked from ${region} (${res.colo ?? "?"}), run in ${hereColo ?? "?"}: ${
           res.attempt.ok ? "passed" : "failed"
-        } in ${Date.now() - started} ms`,
+        } in ${Date.now() - started} ms, ${res.fetches} of its own requests`,
       );
       return {
         attempt: res.attempt,
         ...(elsewhere ? { colo: elsewhere } : {}),
-        fetches: lookupCost + 1 + (REMOTE_FETCHES_CHARGED ? res.fetches : 0),
+        fetches: lookupCost + 1,
       };
     } catch (e) {
       console.error(`[region] ${monitor.id} re-check from ${region} failed; re-checking here`, e);
-      // Charged its worst case: the Durable Object may have made its requests
-      // before the hop failed.
-      return {
-        attempt: null,
-        fetches: lookupCost + 1 + (REMOTE_FETCHES_CHARGED ? probeFetchLimit(monitor) + 1 : 0),
-      };
+      return { attempt: null, fetches: lookupCost + 1 };
     }
   };
 }

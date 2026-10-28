@@ -123,6 +123,14 @@ describe("the live vars check", () => {
 });
 
 describe("the Deploy to Cloudflare button's view of the repository", () => {
+  it("ships second-region confirmation on, from enam then weur, with its Durable Object", () => {
+    // Measured 2026-10-28 (docs/SECOND_REGION.md): enam lands in Atlanta or
+    // Chicago, weur in Lisbon, both away from the US-west cron runs.
+    expect(template.vars.CONFIRM_REGIONS).toBe("enam,weur");
+    expect(template.durable_objects.bindings).toContainEqual({ name: "REGION_PROBE", class_name: "RegionProbe" });
+    expect(template.migrations).toContainEqual({ tag: "v1", new_sqlite_classes: ["RegionProbe"] });
+  });
+
   it("finds the DB binding the migrations use", () => {
     expect(databaseBinding(template)).toMatchObject({ binding: "DB", migrations_dir: "migrations" });
     expect(() => databaseBinding({ d1_databases: [] })).toThrow(/"DB"/);

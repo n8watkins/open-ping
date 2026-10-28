@@ -7,7 +7,7 @@ import {
   parseTraceColo,
   pickRegion,
   regionalRechecker,
-  REMOTE_FETCHES_CHARGED,
+  DURABLE_OBJECT_SUBREQUESTS,
   REMOTE_RECHECK_OVERHEAD,
   resetKnownColos,
   supportsRemoteRecheck,
@@ -98,27 +98,34 @@ describe("regionalRechecker", () => {
     expect(regionalRechecker({ REGION_PROBE: fakeNamespace(async () => ({ attempt: down, colo: null, fetches: 1 })).ns })).toBeNull();
   });
 
-  it("asks a region by its hint, records where it ran and charges the hop, the lookup and its requests", async () => {
+  it("asks a region by its hint, records where it ran and charges only the hop and the lookup", async () => {
     const { ns, asked } = fakeNamespace(async () => ({ attempt: down, colo: "FRA", fetches: 2 }));
     const lookupHere = vi.fn().mockResolvedValue("IAD");
     const recheck = regionalRechecker({ REGION_PROBE: ns, CONFIRM_REGIONS: "weur,enam" }, { lookupHere })!;
 
     const first = await recheck(monitor, { warmup: false });
     expect(asked).toEqual([{ name: "region:weur", hint: "weur" }]);
-    expect(first).toEqual({ attempt: down, colo: "FRA", fetches: 1 + 1 + (REMOTE_FETCHES_CHARGED ? 2 : 0) });
+    // The Durable Object's own 2 requests are its own invocation's, not the run's.
+    expect(first).toEqual({ attempt: down, colo: "FRA", fetches: 1 + 1 });
 
     // The run looks up where it is once; later re-checks share it.
     const second = await recheck(monitor, { warmup: false });
     expect(lookupHere).toHaveBeenCalledOnce();
-    expect(second.fetches).toBe(1 + (REMOTE_FETCHES_CHARGED ? 2 : 0));
+    expect(second.fetches).toBe(1);
   });
 
   it("never charges more than the overhead the scheduler holds", async () => {
     const { ns } = fakeNamespace(async () => ({ attempt: down, colo: "FRA", fetches: 1 + probeFetchLimit(monitor) }));
     const recheck = regionalRechecker({ REGION_PROBE: ns, CONFIRM_REGIONS: "weur" }, { lookupHere: async () => "IAD" })!;
-    expect((await recheck(monitor, { warmup: false })).fetches).toBeLessThanOrEqual(
-      probeFetchLimit(monitor) + REMOTE_RECHECK_OVERHEAD,
-    );
+    expect((await recheck(monitor, { warmup: false })).fetches).toBeLessThanOrEqual(REMOTE_RECHECK_OVERHEAD);
+  });
+
+  it("keeps the Durable Object's re-check inside its own 50 requests per call", () => {
+    // Its probe's worst case (every redirect followed) plus its data-center lookup.
+    const worst = Math.max(...(["http", "dns", "tcp"] as const).map((type) =>
+      probeFetchLimit({ type, config: type === "http" ? { followRedirects: true } : {} } as never),
+    ));
+    expect(worst + 1).toBeLessThanOrEqual(DURABLE_OBJECT_SUBREQUESTS);
   });
 
   it("moves away from a region that turned out to be where the run is", async () => {
@@ -141,7 +148,7 @@ describe("regionalRechecker", () => {
     expect(pickRegion(["weur", "enam"], "IAD")).toBe("weur");
   });
 
-  it("degrades to a re-check here when the Durable Object fails, charged its worst case", async () => {
+  it("degrades to a re-check here when the Durable Object fails, leaving room for it", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const { ns } = fakeNamespace(async () => {
       throw new Error("Durable Object reset");
@@ -149,8 +156,9 @@ describe("regionalRechecker", () => {
     const recheck = regionalRechecker({ REGION_PROBE: ns, CONFIRM_REGIONS: "weur" }, { lookupHere: async () => "IAD" })!;
     const res = await recheck(monitor, { warmup: false });
     expect(res.attempt).toBeNull();
-    expect(res.fetches).toBe(1 + 1 + (REMOTE_FETCHES_CHARGED ? probeFetchLimit(monitor) + 1 : 0));
-    expect(res.fetches).toBeLessThanOrEqual(probeFetchLimit(monitor) + REMOTE_RECHECK_OVERHEAD);
+    expect(res.fetches).toBe(1 + 1);
+    // The hold is a local re-check plus the overhead: the fallback still fits.
+    expect(res.fetches + probeFetchLimit(monitor)).toBeLessThanOrEqual(probeFetchLimit(monitor) + REMOTE_RECHECK_OVERHEAD);
     expect(error).toHaveBeenCalledOnce();
   });
 

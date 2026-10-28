@@ -87,9 +87,11 @@ export interface RunOptions {
   /**
    * Runs the confirmation re-check somewhere else: from another Cloudflare
    * location (checks/region.ts). It resolves with that probe's result, where
-   * it ran and the requests it cost, or `{ attempt: null, fetches }` when it
-   * couldn't run there, in which case the re-check runs here as before, if
-   * `allowConfirm` still finds room for it. Absent means re-check here.
+   * it ran and the requests it cost this run, or `{ attempt: null, fetches }`
+   * when it couldn't run there, in which case the re-check runs here as
+   * before. The caller's `allowConfirm` reservation must cover both (the
+   * scheduler holds a local re-check plus REMOTE_RECHECK_OVERHEAD). Absent
+   * means re-check here.
    */
   remoteRecheck?: (monitor: MonitorRecord, opts: { warmup: boolean }) => Promise<RemoteRecheck>;
   /** Injectable for tests. */
@@ -242,7 +244,7 @@ export async function runMonitorCheck(
     } else {
       await sleep(opts.confirmDelayMs ?? CONFIRM_DELAY_MS);
       // From another location when the caller set that up; here when it
-      // couldn't run there and the run still has room for a local re-check.
+      // couldn't run there (the reservation covers both).
       let second: ProbeAttempt | null = null;
       if (opts.remoteRecheck) {
         const remote = await opts.remoteRecheck(monitor, { warmup });
@@ -250,18 +252,14 @@ export async function runMonitorCheck(
         second = remote.attempt;
         if (second && remote.colo) confirmedFrom = remote.colo;
       }
-      if (!second && opts.remoteRecheck && opts.allowConfirm && !opts.allowConfirm()) {
-        confirmation = "deferred";
-      } else {
-        if (!second) {
-          second = await probe(monitor, { warmup, fresh: true, run: opts });
-          fetches += second.result.fetches ?? limit;
-        }
-        decided = second;
-        attempts = 2;
-        if (decided.ok) succeededAttempt = 2;
-        confirmation = decided.ok ? "cleared" : "confirmed";
+      if (!second) {
+        second = await probe(monitor, { warmup, fresh: true, run: opts });
+        fetches += second.result.fetches ?? limit;
       }
+      decided = second;
+      attempts = 2;
+      if (decided.ok) succeededAttempt = 2;
+      confirmation = decided.ok ? "cleared" : "confirmed";
     }
   }
 

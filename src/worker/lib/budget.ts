@@ -231,8 +231,8 @@ export class RunBudget {
 
     let reserved = probeFetches + hold;
     let held = hold > 0;
-    // What a re-check reserves when it wasn't held (or its hold is used up, as
-    // when a re-check from another region couldn't run and it runs here).
+    // What a re-check reserves when it wasn't held: the re-check's own size
+    // (a re-check from another region holds more than the first probe).
     const later = confirmFetches > 0 ? confirmFetches : probeFetches;
     let ended = false;
     return {

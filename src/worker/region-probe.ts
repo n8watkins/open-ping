@@ -14,6 +14,11 @@ import { lookupColo, type RegionProbeRpc, type RegionRecheckResult } from "./che
  * monitor: the record it gets (credentials included, as the scheduler holds
  * them) lives only for the call, and the response body is dropped before it
  * answers, since its assertions were already evaluated here.
+ *
+ * Its requests are its own: each call it receives gets 50 subrequests on
+ * Workers Free, none charged to the scheduler (measured, docs/SECOND_REGION.md).
+ * One re-check makes at most its probe's worst case plus the lookup, well
+ * inside that (DURABLE_OBJECT_SUBREQUESTS in checks/region.ts).
  */
 export class RegionProbe extends DurableObject<Env> implements RegionProbeRpc {
   async recheck(monitor: MonitorRecord, opts: { warmup: boolean }): Promise<RegionRecheckResult> {
