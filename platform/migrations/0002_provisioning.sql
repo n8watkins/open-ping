@@ -12,6 +12,9 @@ ALTER TABLE tenants ADD COLUMN provision_next_at INTEGER;
 -- A run holds the tenant until this time (epoch ms), so the request that
 -- started provisioning and the retry sweep never work on it at once.
 ALTER TABLE tenants ADD COLUMN provision_lease_until INTEGER;
+-- The Durable Object migration tag the uploaded script is at (null: none),
+-- so an update sends only the bundle's later steps (src/cloudflare/upload.ts).
+ALTER TABLE tenants ADD COLUMN do_migration_tag TEXT;
 -- When the tenant became ready (epoch ms): sign-up to dashboard, measured.
 ALTER TABLE tenants ADD COLUMN provisioned_at INTEGER;
 

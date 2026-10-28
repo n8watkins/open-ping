@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { CloudflareApiError } from "../src/cloudflare/api";
 import { CLOUDFLARE_API_BASE, HttpCloudflareApi } from "../src/cloudflare/http";
-import { assetHash, buildAssetManifest, uploadUserWorker, userWorkerMetadata, type UserWorkerUpload } from "../src/cloudflare/upload";
-import type { TenantBundle } from "../src/bundle";
+import { assetHash, buildAssetManifest, migrationsAfter, uploadUserWorker, userWorkerMetadata, type UserWorkerUpload } from "../src/cloudflare/upload";
+import { workerConfigFromWrangler, type TenantBundle } from "../src/bundle";
 import { FakeCloudflareApi } from "./fake-cloudflare";
 
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
@@ -194,6 +194,8 @@ const BUNDLE: TenantBundle = {
   compatibilityFlags: ["nodejs_compat"],
   assetsConfig: { not_found_handling: "none" },
   vars: { WORKERS_PLAN: "paid", HOSTED_MODE: "0" },
+  durableObjects: [],
+  migrations: [],
 };
 
 function upload(overrides: Partial<UserWorkerUpload> = {}): UserWorkerUpload {
@@ -205,6 +207,7 @@ function upload(overrides: Partial<UserWorkerUpload> = {}): UserWorkerUpload {
     vars: { HOSTED_MODE: "1", TENANT_ID: "abc" },
     secrets: { MASTER_KEY: "secret" },
     tags: ["openping"],
+    previousMigrationTag: null,
     ...overrides,
   };
 }
@@ -257,5 +260,65 @@ describe("uploading a user Worker", () => {
     // A second upload of the same release sends no files.
     await uploadUserWorker(api, upload());
     expect(api.count("uploadAssets")).toBe(2);
+  });
+});
+
+describe("Durable Objects in the bundle", () => {
+  const MIGRATIONS = [
+    { tag: "v1", new_sqlite_classes: ["RegionProbe"] },
+    { tag: "v2", new_sqlite_classes: ["Other"] },
+  ];
+
+  it("sends every step to a new script, and only the later ones to an updated one", () => {
+    expect(migrationsAfter(MIGRATIONS, null)).toEqual({
+      new_tag: "v2",
+      steps: [{ new_sqlite_classes: ["RegionProbe"] }, { new_sqlite_classes: ["Other"] }],
+    });
+    expect(migrationsAfter(MIGRATIONS, "v1")).toEqual({ old_tag: "v1", new_tag: "v2", steps: [{ new_sqlite_classes: ["Other"] }] });
+    expect(migrationsAfter(MIGRATIONS, "v2")).toBeUndefined();
+    expect(migrationsAfter([], null)).toBeUndefined();
+    expect(() => migrationsAfter(MIGRATIONS, "v9")).toThrow(/no migration tag v9/);
+    expect(() => migrationsAfter([MIGRATIONS[0]!, MIGRATIONS[0]!], null)).toThrow(/duplicate/);
+  });
+
+  it("binds the bundle's classes and sends its migrations in the metadata", () => {
+    const bundle = { ...BUNDLE, durableObjects: [{ name: "REGION_PROBE", className: "RegionProbe" }], migrations: [MIGRATIONS[0]!] };
+    const metadata = userWorkerMetadata(upload({ bundle }), "j");
+    expect(metadata.bindings).toContainEqual({ type: "durable_object_namespace", name: "REGION_PROBE", class_name: "RegionProbe" });
+    expect(metadata.migrations).toEqual({ new_tag: "v1", steps: [{ new_sqlite_classes: ["RegionProbe"] }] });
+    expect(userWorkerMetadata(upload(), "j").migrations).toBeUndefined();
+  });
+
+  it("reads the worker config from OpenPing's wrangler config, with or without the probe", () => {
+    const base = {
+      name: "open-ping",
+      main: "src/worker/index.ts",
+      compatibility_date: "2024-12-30",
+      compatibility_flags: ["nodejs_compat"],
+      assets: { binding: "ASSETS", not_found_handling: "none", run_worker_first: ["/*", "!/assets/*"] },
+      triggers: { crons: ["*/12 * * * *"] },
+      vars: { WORKERS_PLAN: "free", HOME_PAGE: "status" },
+      d1_databases: [{ binding: "DB", database_name: "open-ping" }],
+    };
+    expect(workerConfigFromWrangler(base)).toEqual({
+      compatibilityDate: "2024-12-30",
+      compatibilityFlags: ["nodejs_compat"],
+      assetsConfig: { not_found_handling: "none", run_worker_first: ["/*", "!/assets/*"] },
+      vars: { WORKERS_PLAN: "free", HOME_PAGE: "status" },
+      durableObjects: [],
+      migrations: [],
+    });
+    const withProbe = workerConfigFromWrangler({
+      ...base,
+      vars: { ...base.vars, CONFIRM_REGIONS: "wnam,weur" },
+      durable_objects: { bindings: [{ name: "REGION_PROBE", class_name: "RegionProbe" }] },
+      migrations: [{ tag: "v1", new_sqlite_classes: ["RegionProbe"] }],
+    });
+    expect(withProbe.durableObjects).toEqual([{ name: "REGION_PROBE", className: "RegionProbe" }]);
+    expect(withProbe.migrations).toEqual([{ tag: "v1", new_sqlite_classes: ["RegionProbe"] }]);
+    expect(withProbe.vars.CONFIRM_REGIONS).toBe("wnam,weur");
+    expect(() =>
+      workerConfigFromWrangler({ ...base, durable_objects: { bindings: [{ name: "X", class_name: "X", script_name: "other" }] } }),
+    ).toThrow(/another script/);
   });
 });

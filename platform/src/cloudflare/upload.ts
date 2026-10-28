@@ -13,7 +13,17 @@
 
 import { base64urlEncode } from "../../../src/shared/hosted-contract";
 import type { BundleAsset, TenantBundle } from "../bundle";
-import type { AssetManifest, AssetUploadPart, CloudflareApi, UploadedScript, WorkerBinding, WorkerUploadMetadata } from "./api";
+import type { BundleMigration } from "../bundle";
+import type {
+  AssetManifest,
+  AssetUploadPart,
+  CloudflareApi,
+  DurableObjectMigrationStep,
+  UploadedScript,
+  WorkerBinding,
+  WorkerMigrations,
+  WorkerUploadMetadata,
+} from "./api";
 
 /** Cloudflare's limit on one static asset. https://developers.cloudflare.com/workers/platform/limits/#static-assets */
 export const MAX_ASSET_BYTES = 25 * 1024 * 1024;
@@ -100,6 +110,26 @@ export interface UserWorkerUpload {
   /** Secrets (the tenant's MASTER_KEY). Sent as `secret_text` bindings, never logged. */
   secrets: Record<string, string>;
   tags: string[];
+  /**
+   * The Durable Object migration tag the script already has: null for a new
+   * script (provisioning), the recorded tag for an update (the release runner).
+   */
+  previousMigrationTag: string | null;
+}
+
+/**
+ * The migrations to send: the bundle's steps after `previousTag`, or none
+ * when the script is already at the bundle's last tag.
+ */
+export function migrationsAfter(migrations: BundleMigration[], previousTag: string | null): WorkerMigrations | undefined {
+  const tags = migrations.map((m) => m.tag);
+  if (new Set(tags).size !== tags.length) throw new Error("tenant bundle: duplicate migration tags");
+  const from = previousTag === null ? 0 : tags.indexOf(previousTag) + 1;
+  if (previousTag !== null && from === 0) throw new Error(`tenant bundle: has no migration tag ${previousTag}`);
+  const pending = migrations.slice(from);
+  if (pending.length === 0) return undefined;
+  const steps = pending.map(({ tag: _tag, ...step }): DurableObjectMigrationStep => step);
+  return { ...(previousTag === null ? {} : { old_tag: previousTag }), new_tag: pending[pending.length - 1]!.tag, steps };
 }
 
 /** The script upload's metadata, built separately so it is testable without uploading. */
@@ -114,8 +144,10 @@ export function userWorkerMetadata(input: UserWorkerUpload, assetsJwt: string): 
     bindings.push(binding);
   };
   for (const binding of input.bindings) add(binding);
+  for (const durable of input.bundle.durableObjects) add({ type: "durable_object_namespace", name: durable.name, class_name: durable.className });
   for (const [name, text] of Object.entries(vars)) add({ type: "plain_text", name, text });
   for (const [name, text] of Object.entries(input.secrets)) add({ type: "secret_text", name, text });
+  const migrations = migrationsAfter(input.bundle.migrations, input.previousMigrationTag);
   return {
     main_module: input.bundle.mainModule,
     compatibility_date: input.bundle.compatibilityDate,
@@ -123,6 +155,7 @@ export function userWorkerMetadata(input: UserWorkerUpload, assetsJwt: string): 
     bindings,
     tags: input.tags,
     assets: { jwt: assetsJwt, config: input.bundle.assetsConfig },
+    ...(migrations ? { migrations } : {}),
     observability: { enabled: true },
   };
 }

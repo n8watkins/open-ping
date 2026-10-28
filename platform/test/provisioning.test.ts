@@ -42,7 +42,9 @@ const BUNDLE: TenantBundle = {
   compatibilityDate: "2024-12-30",
   compatibilityFlags: ["nodejs_compat"],
   assetsConfig: { not_found_handling: "none", run_worker_first: ["/*", "!/assets/*"] },
-  vars: { WORKERS_PLAN: "paid", WAITLIST_ENABLED: "false", HOME_PAGE: "status" },
+  vars: { WORKERS_PLAN: "paid", WAITLIST_ENABLED: "false", HOME_PAGE: "status", CONFIRM_REGIONS: "wnam,weur" },
+  durableObjects: [{ name: "REGION_PROBE", className: "RegionProbe" }],
+  migrations: [{ tag: "v1", new_sqlite_classes: ["RegionProbe"] }],
 };
 
 const noopPlatform: PlatformCapability = {
@@ -200,6 +202,12 @@ describe("runProvisioning", () => {
     });
     expect(script.metadata.bindings.find((b) => b.name === "MASTER_KEY")?.type).toBe("secret_text");
     expect(script.metadata.bindings.find((b) => b.name === "ASSETS")).toEqual({ type: "assets", name: "ASSETS" });
+    // The bundle's own Durable Object, its migration and its var, straight from its config.
+    expect(script.metadata.bindings).toContainEqual({ type: "durable_object_namespace", name: "REGION_PROBE", class_name: "RegionProbe" });
+    expect(script.metadata.migrations).toEqual({ new_tag: "v1", steps: [{ new_sqlite_classes: ["RegionProbe"] }] });
+    expect(state.env.CONFIRM_REGIONS).toBe("wnam,weur");
+    expect(script.migrationTag).toBe("v1");
+    expect((await env.PLATFORM_DB.prepare("SELECT do_migration_tag FROM tenants WHERE id = ?").bind(id).first())!.do_migration_tag).toBe("v1");
 
     // Its MASTER_KEY is escrowed, and the escrowed copy is the one it got.
     const escrowed = await env.PLATFORM_DB.prepare("SELECT kid, ciphertext FROM escrowed_keys WHERE tenant_id = ?").bind(id).all<{ kid: string; ciphertext: string }>();
@@ -262,6 +270,19 @@ describe("runProvisioning", () => {
     expect(w.api.databases.size).toBe(1); // the database from the first run was kept, not made again
   });
 
+  it("retries an upload whose answer was lost from a clean script, so its migrations apply once", async () => {
+    const w = world();
+    const id = await signUp(w, "lostuploadco");
+    // The first upload lands (migration v1 applied) but its answer never arrives.
+    w.api.failNext("putScript", { status: 0, when: "after" });
+    expect(await runProvisioning(w.deps, id, { force: true })).toMatchObject({ kind: "retry", state: "db_created" });
+    expect(w.api.scriptIn(NAMESPACE, `t-${id}`)?.migrationTag).toBe("v1");
+    w.clock.now += backoffMs(1);
+    // Sending new_tag v1 again to a script already at v1 would be refused; the retry deletes it first.
+    expect(await runProvisioning(w.deps, id)).toEqual({ kind: "ready", tenantId: id });
+    expect(w.api.count("deleteScript")).toBe(1);
+  });
+
   it("recovers a database whose create answer was lost, instead of making a second one", async () => {
     const w = world();
     const id = await signUp(w, "lostco");
@@ -302,7 +323,9 @@ describe("runProvisioning", () => {
 
     expect(await row(id)).toBeNull();
     expect(w.api.databases.size).toBe(0);
-    expect(w.api.count("deleteScript")).toBe(1);
+    expect(w.api.scripts.size).toBe(0);
+    // Each retried upload cleared the way first (5), then the teardown (1).
+    expect(w.api.count("deleteScript")).toBe(PROVISION_MAX_ATTEMPTS);
     const keys = await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM escrowed_keys WHERE tenant_id = ?").bind(id).first<{ n: number }>();
     expect(keys!.n).toBe(0);
     expect(await auditActions(id)).toEqual(["tenant.provision_failed", "tenant.removed"]);

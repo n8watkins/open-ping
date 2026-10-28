@@ -22,7 +22,7 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 - Never forwards a public request to `/__platform/*`, and strips every `x-openping-*` header from public traffic, so nothing a visitor sends can pass for a platform call.
 - Provisions a customer's OpenPing (B3, `src/provisioning.ts`), step by step, each step recorded in `tenants.provision_state`:
   - `requested`: generates the tenant's `MASTER_KEY`, escrows it encrypted with `PLATFORM_KEY` (decision D4), and creates its D1 database `openping-t-<id>`;
-  - `db_created`: uploads the current tenant bundle as `t-<id>`: static assets first, then the script with its database, `ASSETS`, the hosted vars, the `MASTER_KEY` secret and its tags;
+  - `db_created`: uploads the current tenant bundle as `t-<id>`: static assets first, then the script with its database, `ASSETS`, the hosted vars, the `MASTER_KEY` secret and its tags, plus whatever Durable Objects, migrations and vars the release's own wrangler config declares (`workerConfigFromWrangler` in `src/bundle.ts`, for example the second-region probe); a retried upload deletes the half-made script first, so its Durable Object migrations start from a known tag;
   - `uploaded`: has the tenant apply its migrations through one `POST /__platform/scheduled`;
   - `migrated`: waits for `GET /__platform/health` to answer ok, then marks it `ready`, which is when visitors reach it.
 - Retries a failed step with backoff (10 seconds up to 30 minutes) from the every-minute cron, and after 6 failures in a row rolls the tenant back: deletes its script, its database, its key and its row, so the slug is free again.

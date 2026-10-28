@@ -9,7 +9,7 @@
  * in production, a fixed bundle in tests.
  */
 
-import type { AssetsConfig, WorkerModule } from "./cloudflare/api";
+import type { AssetsConfig, DurableObjectMigrationStep, WorkerModule } from "./cloudflare/api";
 
 /** One static asset of the SPA. */
 export interface BundleAsset {
@@ -19,21 +19,79 @@ export interface BundleAsset {
   contentType: string;
 }
 
-export interface TenantBundle {
+/** A Durable Object binding of the bundle, to a class its own main module exports. */
+export interface BundleDurableObject {
+  name: string;
+  className: string;
+}
+
+/** One entry of the bundle's wrangler `migrations`: a tag and its step. */
+export type BundleMigration = { tag: string } & DurableObjectMigrationStep;
+
+/**
+ * The parts of a tenant bundle that come from OpenPing's wrangler.jsonc for
+ * the release, so a new binding or var in OpenPing reaches every tenant by
+ * being in its config, with no platform change (for example the
+ * second-region probe: a Durable Object, its migration, and a var).
+ */
+export interface BundleWorkerConfig {
+  compatibilityDate: string;
+  compatibilityFlags: string[];
+  assetsConfig: AssetsConfig;
+  vars: Record<string, string>;
+  durableObjects: BundleDurableObject[];
+  migrations: BundleMigration[];
+}
+
+export interface TenantBundle extends BundleWorkerConfig {
   /** OpenPing's version (package.json), recorded on the tenant row. */
   version: string;
   mainModule: string;
   modules: WorkerModule[];
   assets: BundleAsset[];
-  compatibilityDate: string;
-  compatibilityFlags: string[];
-  /** How the assets are served, from OpenPing's wrangler.jsonc `assets`. */
-  assetsConfig: AssetsConfig;
-  /**
-   * Plain vars the release sets on every tenant (for example WORKERS_PLAN).
-   * The platform's own vars (HOSTED_ENV) are added on top and always win.
-   */
-  vars: Record<string, string>;
+}
+
+const MIGRATION_STEP_KEYS = ["new_sqlite_classes", "new_classes", "renamed_classes", "deleted_classes", "transferred_classes"] as const;
+
+/**
+ * Reads a bundle's worker config from OpenPing's parsed wrangler config (the
+ * release runner calls this on the release's wrangler.jsonc). Only what a
+ * user Worker in the namespace can carry is taken: no routes, crons or
+ * account-bound bindings, and plain vars as strings. The assets binding and
+ * the database are the platform's (provisioning adds them per tenant).
+ */
+export function workerConfigFromWrangler(config: Record<string, unknown>): BundleWorkerConfig {
+  const str = (v: unknown, what: string) => {
+    if (typeof v !== "string" || !v) throw new Error(`wrangler config: ${what} must be a string`);
+    return v;
+  };
+  const assets = (config.assets ?? {}) as Record<string, unknown>;
+  const assetsConfig: AssetsConfig = {};
+  if (assets.html_handling !== undefined) assetsConfig.html_handling = assets.html_handling as AssetsConfig["html_handling"];
+  if (assets.not_found_handling !== undefined) assetsConfig.not_found_handling = assets.not_found_handling as AssetsConfig["not_found_handling"];
+  if (assets.run_worker_first !== undefined) assetsConfig.run_worker_first = assets.run_worker_first as AssetsConfig["run_worker_first"];
+  const vars: Record<string, string> = {};
+  for (const [name, value] of Object.entries((config.vars ?? {}) as Record<string, unknown>)) {
+    vars[name] = typeof value === "string" ? value : JSON.stringify(value);
+  }
+  const durable = ((config.durable_objects as { bindings?: unknown[] } | undefined)?.bindings ?? []).map((b, i) => {
+    const binding = b as Record<string, unknown>;
+    if (binding.script_name !== undefined) throw new Error(`wrangler config: durable_objects.bindings[${i}] points at another script`);
+    return { name: str(binding.name, `durable_objects.bindings[${i}].name`), className: str(binding.class_name, `durable_objects.bindings[${i}].class_name`) };
+  });
+  const migrations = ((config.migrations ?? []) as Record<string, unknown>[]).map((m, i) => {
+    const out: BundleMigration = { tag: str(m.tag, `migrations[${i}].tag`) };
+    for (const key of MIGRATION_STEP_KEYS) if (m[key] !== undefined) (out as unknown as Record<string, unknown>)[key] = m[key];
+    return out;
+  });
+  return {
+    compatibilityDate: str(config.compatibility_date, "compatibility_date"),
+    compatibilityFlags: Array.isArray(config.compatibility_flags) ? config.compatibility_flags.map(String) : [],
+    assetsConfig,
+    vars,
+    durableObjects: durable,
+    migrations,
+  };
 }
 
 export interface BundleSource {
@@ -64,6 +122,9 @@ export interface BundleManifest {
   compatibilityFlags: string[];
   assetsConfig: AssetsConfig;
   vars: Record<string, string>;
+  /** Absent in a bundle written before Durable Objects: none. */
+  durableObjects?: BundleDurableObject[];
+  migrations?: BundleMigration[];
   modules: { name: string; contentType: string }[];
   assets: { path: string; contentType: string }[];
 }
@@ -133,6 +194,8 @@ export class R2BundleSource implements BundleSource {
       compatibilityFlags: manifest.compatibilityFlags,
       assetsConfig: manifest.assetsConfig,
       vars: manifest.vars ?? {},
+      durableObjects: manifest.durableObjects ?? [],
+      migrations: manifest.migrations ?? [],
     };
   }
 }

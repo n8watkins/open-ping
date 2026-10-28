@@ -35,6 +35,9 @@ export interface FakeScript {
   modules: WorkerModule[];
   /** The asset paths the script's completion token covered. */
   assetPaths: string[];
+  /** Its Durable Object migration tag, and the classes those migrations created. */
+  migrationTag: string | null;
+  durableClasses: string[];
 }
 
 /** How an injected failure behaves. */
@@ -181,7 +184,24 @@ export class FakeCloudflareApi implements CloudflareApi {
         if (!completion || completion.scriptKey !== key) refuse("assets jwt is not a completion token for this script");
         assetPaths = completion!.paths;
       }
-      const script: FakeScript = { namespace, metadata, modules, assetPaths };
+      // Durable Object migrations, as Cloudflare checks them: old_tag must be
+      // the script's current tag, and every bound class must exist after them.
+      const existing = this.scripts.get(key);
+      const currentTag = existing?.migrationTag ?? null;
+      let migrationTag = currentTag;
+      const classes = new Set(existing?.durableClasses ?? []);
+      if (metadata.migrations) {
+        if ((metadata.migrations.old_tag ?? null) !== currentTag) refuse(`migration precondition failed: script is at ${currentTag}`);
+        for (const step of metadata.migrations.steps) {
+          for (const c of step.new_sqlite_classes ?? []) classes.add(c);
+          for (const c of step.deleted_classes ?? []) classes.delete(c);
+        }
+        migrationTag = metadata.migrations.new_tag;
+      }
+      for (const binding of metadata.bindings) {
+        if (binding.type === "durable_object_namespace" && !classes.has(binding.class_name)) refuse(`no Durable Object class ${binding.class_name}`);
+      }
+      const script: FakeScript = { namespace, metadata, modules, assetPaths, migrationTag, durableClasses: [...classes] };
       this.scripts.set(key, script);
       this.onScriptChange?.(scriptName, script);
       return { id: scriptName, etag: this.id("etag-"), hasAssets: assetPaths.length > 0 };

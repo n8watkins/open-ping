@@ -276,6 +276,11 @@ async function stepUpload(deps: ProvisioningDeps, t: ProvisionTenant, now: numbe
   if (!t.d1Id) throw new ProvisionStepError("db_created without a database id");
   const { masterKey } = await ensureMasterKey(deps.db, t.record.id, deps.config.platformKey, now);
   const bundle = await deps.bundles.current();
+  // A retried upload starts from no script: an earlier attempt may have
+  // created it (its answer lost) with Durable Object migrations applied,
+  // and the next upload's migrations must start from a known tag. A tenant
+  // in this state has never served anyone, so nothing is lost.
+  if (t.attempts > 0) await deps.api.deleteScript(deps.config.namespace, t.record.scriptName);
   await uploadUserWorker(deps.api, {
     namespace: deps.config.namespace,
     scriptName: t.record.scriptName,
@@ -288,8 +293,12 @@ async function stepUpload(deps: ProvisioningDeps, t: ProvisionTenant, now: numbe
     },
     secrets: { MASTER_KEY: masterKey },
     tags: tenantTags(t.record.id, bundle.version),
+    previousMigrationTag: null,
   });
-  await advance(deps.db, t.record.id, "db_created", "uploaded", now, { version: bundle.version });
+  await advance(deps.db, t.record.id, "db_created", "uploaded", now, {
+    version: bundle.version,
+    do_migration_tag: bundle.migrations.at(-1)?.tag ?? null,
+  });
 }
 
 /** The script's tags: find every tenant's Worker, one tenant's, or one release's in the namespace. */

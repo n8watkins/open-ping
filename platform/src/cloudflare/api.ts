@@ -52,7 +52,33 @@ export type WorkerBinding =
   | { type: "d1"; name: string; database_id: string }
   | { type: "plain_text"; name: string; text: string }
   | { type: "secret_text"; name: string; text: string }
-  | { type: "assets"; name: string };
+  | { type: "assets"; name: string }
+  /** A Durable Object class the script itself exports (no script_name: this script). */
+  | { type: "durable_object_namespace"; name: string; class_name: string };
+
+/**
+ * One Durable Object class migration step, as in wrangler's `migrations`.
+ * https://developers.cloudflare.com/workers/wrangler/configuration/#migrations
+ */
+export interface DurableObjectMigrationStep {
+  new_sqlite_classes?: string[];
+  new_classes?: string[];
+  renamed_classes?: { from: string; to: string }[];
+  deleted_classes?: string[];
+  transferred_classes?: { from: string; from_script: string; to: string }[];
+}
+
+/**
+ * The `migrations` of a script upload (Script Upload API only): the steps
+ * after `old_tag` (the script's current tag; absent for a new script), ending
+ * at `new_tag`. Cloudflare refuses the upload when `old_tag` isn't the
+ * script's current tag, which is what keeps a migration from running twice.
+ */
+export interface WorkerMigrations {
+  old_tag?: string;
+  new_tag: string;
+  steps: DurableObjectMigrationStep[];
+}
 
 /** `assets.config` of the upload metadata: how the static files are served. */
 export interface AssetsConfig {
@@ -74,6 +100,7 @@ export interface WorkerUploadMetadata {
   /** At most eight per script (Workers for Platforms tags). */
   tags?: string[];
   assets?: { jwt: string; config?: AssetsConfig };
+  migrations?: WorkerMigrations;
   observability?: { enabled: boolean };
 }
 
