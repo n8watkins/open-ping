@@ -7,7 +7,7 @@ import { isAllowedEmail } from "../lib/admin";
 import { createSession } from "../lib/sessions";
 import { getSetting } from "../db/settings";
 import { appOrigin } from "../lib/app-origin";
-import { sendResendEmail } from "../notifications/channels/resend";
+import { sendEmail } from "../notifications/mail";
 import { hitRateLimit } from "../db/rate-limit";
 import {
   escapeHtml,
@@ -163,7 +163,7 @@ magicApi.post("/request", async (c) => {
       const from = (await getSetting(c.env, "email_from")) || DEFAULT_FROM;
       const { html, text } = magicEmailBody(link);
       // Ignore the result: a not-configured / failed send must not leak either.
-      await sendResendEmail(c.env, { from, to: email, subject: SUBJECT, html, text });
+      await sendEmail(c.env, { from, to: email, subject: SUBJECT, html, text, category: "signin" });
     }
   };
 

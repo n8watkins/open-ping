@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { emailConfigured } from "../notifications/mail";
 import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
 import { createSession, revokeAllSessions } from "../lib/sessions";
@@ -69,7 +70,7 @@ export async function otherSignInMethods(
   if (hostedMode(env)) return { github: false, email: false, hosted: true };
   return {
     github: !!env.GITHUB_CLIENT_ID && !!env.GITHUB_CLIENT_SECRET && !!(await getAdminGithubLogin(env)),
-    email: !!env.RESEND_API_KEY && !!(await getAdminEmail(env)),
+    email: emailConfigured(env) && !!(await getAdminEmail(env)),
   };
 }
 

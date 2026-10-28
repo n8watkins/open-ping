@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { getSetting, setSetting } from "../db/settings";
-import { sendResendEmail } from "./channels/resend";
+import { sendEmail } from "./mail";
 import { listMonitors } from "../db/monitors";
 import { escapeHtml, renderEmailLayout, renderEmailText } from "./email-layout";
 
@@ -364,12 +364,13 @@ export async function sendWeeklySummary(
 
   const from = (await getSetting(env, "email_from")) ?? DEFAULT_FROM;
 
-  const result = await sendResendEmail(env, {
+  const result = await sendEmail(env, {
     from,
     to: recipient,
     subject: email.subject,
     html: email.html,
     text: email.text,
+    category: "report",
   });
 
   if (!result.ok) {

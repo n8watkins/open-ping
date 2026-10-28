@@ -20,7 +20,9 @@ interface WaitlistResponse {
 
 /** Settings > Reports: the monthly report, the weekly summary email, and the Hosted waitlist where it runs. */
 export default function ReportsSettings() {
-  const { csrf, status } = useBootstrap();
+  const { csrf, status, me } = useBootstrap();
+  // OpenPing Hosted sends the email itself, to the account's address; no key to set.
+  const hosted = !!me?.hosted;
   const { data, error, reload } = useFetch<SettingsResponse>("/api/settings");
   // Only the canonical install collects the Hosted waitlist; elsewhere the
   // endpoint doesn't exist, so don't ask (a 404 would log a console error).
@@ -31,12 +33,14 @@ export default function ReportsSettings() {
       <ReportsCard
         emailEnabled={data?.settings.monthly_report_enabled === "true"}
         csrf={csrf ?? undefined}
+        hosted={hosted}
         onSaved={() => void reload()}
       />
       <WeeklySummaryCard
         settings={data?.settings ?? null}
         loadError={error}
         csrf={csrf ?? undefined}
+        hosted={hosted}
         onSaved={() => void reload()}
       />
       {waitlist && <WaitlistCard waitlist={waitlist} />}
@@ -49,11 +53,13 @@ function WeeklySummaryCard({
   settings,
   loadError,
   csrf,
+  hosted,
   onSaved,
 }: {
   settings: AppSettings | null;
   loadError: string | null;
   csrf: string | undefined;
+  hosted: boolean;
   onSaved: () => void;
 }) {
   const [saving, setSaving] = useState(false);
@@ -120,7 +126,9 @@ function WeeklySummaryCard({
               <span>
                 <span className="text-ink">Email me a weekly summary</span>
                 <span className="block text-xs text-ink-faint">
-                  Sent to the admin email. Needs RESEND_API_KEY; a send that fails is retried hourly.
+                  {hosted
+                    ? "Sent to your account email. A send that fails is retried hourly."
+                    : "Sent to the admin email. Needs RESEND_API_KEY; a send that fails is retried hourly."}
                 </span>
               </span>
             </label>

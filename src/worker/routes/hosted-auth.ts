@@ -10,6 +10,7 @@ import {
 import type { AppEnv } from "../types";
 import { hitRateLimit } from "../db/rate-limit";
 import { recordHandoffNonce } from "../db/handoff-nonces";
+import { setSetting } from "../db/settings";
 import { createSession, endCurrentSession } from "../lib/sessions";
 import { hostedProps } from "../lib/hosted";
 import { escapeHtml } from "../notifications/email-layout";
@@ -108,6 +109,17 @@ async function handOff(c: Ctx, props: TenantProps): Promise<Outcome> {
   } catch (error) {
     console.error("[hosted] could not audit a hand-off sign-in", error);
     if (support) return { ok: false, reason: "audit_failed" };
+  }
+
+  // The customer's account email is this OpenPing's admin email: the weekly
+  // summary and the monthly report go there (through the platform's mail).
+  // Kept in step on every sign-in, so a change on the platform reaches it.
+  // Before the session, and never fatal: a failed write can't leave a
+  // half-made sign-in; the reports just keep the address they had.
+  if (!support) {
+    await setSetting(c.env, "admin_email", claims.email).catch((error: unknown) =>
+      console.error("[hosted] could not store the account email for reports", error),
+    );
   }
 
   // 4. The normal session, rotated: whatever session this browser had ends.

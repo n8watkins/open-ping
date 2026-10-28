@@ -13,6 +13,7 @@ import {
 } from "../../shared/hosted-contract";
 import type { AppEnv, Env } from "../types";
 import { schemaIsCurrent } from "./migrate";
+import { platformTransport } from "../notifications/mail";
 
 /**
  * Hosted mode: OpenPing running as a customer's user Worker in the OpenPing
@@ -110,6 +111,8 @@ export function hostedGate({ dev }: { dev: boolean }): MiddlewareHandler<AppEnv>
       return c.json({ error: HOSTED_ERRORS.unavailable }, 503);
     }
     c.set("hosted", props);
+    // Email goes out through the platform (notifications/mail.ts), on this call's env only.
+    c.env = { ...c.env, MAIL_TRANSPORT: platformTransport(props.platform) };
     return next();
   };
 }

@@ -5,7 +5,7 @@ import { requireAuth } from "../middleware/auth";
 import { hitRateLimit } from "../db/rate-limit";
 import { getSetting } from "../db/settings";
 import { newId } from "../lib/ids";
-import { sendResendEmail } from "../notifications/channels/resend";
+import { emailConfigured, sendEmail } from "../notifications/mail";
 
 /**
  * The OpenPing Hosted waitlist, mounted at /api/waitlist (docs/HOSTED_PLAN.md,
@@ -90,11 +90,12 @@ waitlist.post("/", async (c) => {
 
   // A confirmation for new sign-ups only, when email is set up. Sent after the
   // response so a slow mail provider can't delay it, and its result is ignored.
-  if (inserted && c.env.RESEND_API_KEY) {
+  if (inserted && emailConfigured(c.env)) {
     const send = async () => {
       const from = (await getSetting(c.env, "email_from")) || DEFAULT_FROM;
-      await sendResendEmail(c.env, {
+      await sendEmail(c.env, {
         from,
+        category: "waitlist",
         to: email,
         subject: "You're on the OpenPing Hosted waitlist",
         text: [

@@ -826,17 +826,20 @@ function ChannelForm({
               className="input"
             />
           </Field>
-          <Field label="From address (optional)">
-            <input
-              name="from"
-              autoComplete="off"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              placeholder="openping@example.com"
-              type="email"
-              className="input"
-            />
-          </Field>
+          {/* OpenPing Hosted sends from its own verified address. */}
+          {!plan && (
+            <Field label="From address (optional)">
+              <input
+                name="from"
+                autoComplete="off"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                placeholder="openping@example.com"
+                type="email"
+                className="input"
+              />
+            </Field>
+          )}
         </>
       )}
 
