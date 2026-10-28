@@ -9,6 +9,7 @@ import type { AppEnv } from "../types";
 import { hasValidApiToken } from "../middleware/auth";
 import { hitRateLimit } from "../db/rate-limit";
 import { registerTools, type ToolContext } from "./tools";
+import { requestWaitUntil } from "../routes/monitors";
 import pkg from "../../../package.json";
 
 /**
@@ -140,5 +141,5 @@ mcp.all("/", async (c) => {
     }
   }
 
-  return serveMcp(c.req.raw, { env: c.env, origin: selfOrigin });
+  return serveMcp(c.req.raw, { env: c.env, origin: selfOrigin, waitUntil: requestWaitUntil(c) });
 });

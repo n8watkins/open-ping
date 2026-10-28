@@ -611,6 +611,25 @@ export function configFromFlags(type, flags) {
   return { ...config, ...(flags.config ?? {}) };
 }
 
+/** One line on a new monitor's first check, or null when there is nothing to say. */
+export function firstCheckLine(r) {
+  if (!r) return null;
+  switch (r.status) {
+    case "checked":
+      return r.ok
+        ? `First check: ${r.state}${r.durationMs != null ? ` (${r.durationMs} ms)` : ""}`
+        : `First check failed: ${r.error ?? "check_failed"}${r.errorMessage ? ` (${r.errorMessage})` : ""}. It shows warming up; the next run checks again and alerts if it still fails.`;
+    case "scheduled_off":
+      return "Outside its schedule now: shows scheduled off until its hours start.";
+    case "maintenance":
+      return "In a maintenance window now: shows maintenance.";
+    case "running":
+      return "First check still running; op monitors get shows the result in a few seconds.";
+    default:
+      return null;
+  }
+}
+
 /** The monitor fields other than config and schedule, from flags. */
 function commonFromFlags(flags) {
   if (flags.public && flags.private) throw new UsageError("Pass --public or --private, not both.");
@@ -631,9 +650,11 @@ async function cmdMonitorsCreate({ api, out, flags, config }) {
   const body = { type, ...commonFromFlags(flags), config: configFromFlags(type, flags) };
   const schedule = scheduleFromFlags(flags, null);
   if (schedule) body.schedule = schedule;
-  const { monitor } = await api("/api/monitors", { method: "POST", body });
-  if (flags.json) return out.json({ monitor });
+  const { monitor, firstCheck } = await api("/api/monitors", { method: "POST", body });
+  if (flags.json) return out.json({ monitor, firstCheck: firstCheck ?? null });
   out.line(`Created ${monitor.type} monitor ${monitor.id}  ${monitor.name}  (${scheduleText(monitor.schedule)})`);
+  const first = firstCheckLine(firstCheck);
+  if (first) out.line(first);
   if (monitor.heartbeatToken) {
     out.line(`Ping URL (shown only now, store it securely): ${config.url}/hb/${monitor.heartbeatToken}`);
   }

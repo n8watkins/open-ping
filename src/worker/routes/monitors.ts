@@ -14,6 +14,7 @@ import {
 } from "../db/monitors";
 import { runMonitorCheck } from "../checks/runner";
 import { applyCheckResult } from "../checks/state";
+import { firstCheckWithin, type FirstCheckResult } from "../checks/first-check";
 import {
   computeUptime,
   computeIncidentMetrics,
@@ -121,6 +122,34 @@ export async function createMonitorFromBody(
     return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
   }
   return { ok: true, monitor: await createMonitor(env, parsed.data) };
+}
+
+/**
+ * Create a monitor and run its first check right away (POST /api/monitors, the
+ * web editor, MCP create_monitor and the CLI). The response waits a few
+ * seconds for that check; a slower one finishes through `waitUntil`.
+ */
+export async function createMonitorAndCheck(
+  env: Env,
+  body: unknown,
+  waitUntil: ((p: Promise<unknown>) => void) | undefined,
+): Promise<MonitorWriteResult & { firstCheck?: FirstCheckResult }> {
+  const r = await createMonitorFromBody(env, body);
+  if (!r.ok) return r;
+  return { ...r, firstCheck: await firstCheckWithin(env, r.monitor, waitUntil) };
+}
+
+/** The request's `waitUntil`, when the runtime gave it one. */
+export function requestWaitUntil(c: {
+  executionCtx: { waitUntil(p: Promise<unknown>): void };
+}): ((p: Promise<unknown>) => void) | undefined {
+  try {
+    const ctx = c.executionCtx;
+    return (p) => ctx.waitUntil(p);
+  } catch {
+    // Hono throws when there is no execution context (some test harnesses).
+    return undefined;
+  }
 }
 
 /** Validate and fully replace a monitor (PUT /api/monitors/:id). */
@@ -232,9 +261,9 @@ monitors.get("/", async (c) => {
 
 monitors.post("/", async (c) => {
   const body = await c.req.json().catch(() => undefined);
-  const r = await createMonitorFromBody(c.env, body);
+  const r = await createMonitorAndCheck(c.env, body, requestWaitUntil(c));
   if (!r.ok) return c.json(writeError(r), r.status);
-  return c.json({ monitor: presentCreatedMonitor(r.monitor) }, 201);
+  return c.json({ monitor: presentCreatedMonitor(r.monitor), firstCheck: r.firstCheck }, 201);
 });
 
 // Registered before /:id so the static path wins.

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   COMMANDS,
   configFromFlags,
+  firstCheckLine,
   helpText,
   loadConfig,
   parseCommandLine,
@@ -193,6 +194,36 @@ describe("run", () => {
     });
     expect(r.calls[0].body).toEqual({ type: "heartbeat", name: "Job", config: { intervalSeconds: 3600 } });
     expect(r.stdout).toContain("https://op.test/hb/raw");
+  });
+
+  it("sends --confirm and prints the first check on create", async () => {
+    const r = await cli(["monitors", "create", "--name", "API", "--url", "https://a.test", "--confirm", "off"], {
+      "POST /api/monitors": [
+        201,
+        {
+          monitor: { id: "mon_1", type: "http", name: "API", schedule: { mode: "always" } },
+          firstCheck: { status: "checked", state: "up", ok: true, durationMs: 42 },
+        },
+      ],
+    });
+    expect(r.code).toBe(0);
+    expect(r.calls[0].body).toMatchObject({ confirmFailures: "off" });
+    expect(r.stdout).toContain("First check: up (42 ms)");
+  });
+
+  it("explains a failed or off-hours first check", () => {
+    expect(firstCheckLine({ status: "checked", state: "warming_up", ok: false, error: "timeout" })).toContain(
+      "First check failed: timeout",
+    );
+    expect(firstCheckLine({ status: "scheduled_off", state: "scheduled_off" })).toContain("Outside its schedule");
+    expect(firstCheckLine({ status: "skipped", reason: "heartbeat" })).toBeNull();
+    expect(firstCheckLine(undefined)).toBeNull();
+  });
+
+  it("rejects an unknown --confirm value", async () => {
+    const r = await cli(["monitors", "create", "--name", "API", "--url", "https://a.test", "--confirm", "twice"]);
+    expect(r.code).toBe(2);
+    expect(r.calls).toEqual([]);
   });
 
   it("reports API errors with their validation issues", async () => {
