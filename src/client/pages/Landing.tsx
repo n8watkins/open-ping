@@ -154,17 +154,20 @@ function StarButton() {
       href={GITHUB_URL}
       target="_blank"
       rel="noreferrer"
-      aria-label={stars == null ? "OpenPing on GitHub" : `OpenPing on GitHub, ${stars} ${stars === 1 ? "star" : "stars"}`}
       className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-line bg-surface text-sm font-semibold text-ink transition-colors hover:border-accent/50"
     >
       {stars != null && (
         <span className="flex h-full items-center gap-1 border-r border-line px-2.5 tabular-nums text-ink-muted">
           <Star className="size-3.5 fill-[#e3b341] text-[#e3b341]" aria-hidden />
           {stars.toLocaleString()}
+          {/* Spoken, not shown: the link reads "12 stars, OpenPing on GitHub",
+              built from its visible text so voice control matches it. */}
+          <span className="sr-only">{stars === 1 ? " star," : " stars,"}</span>
         </span>
       )}
       <span className="flex items-center gap-1.5 px-2.5">
         <Github className="size-4" aria-hidden />
+        <span className="sr-only">OpenPing on </span>
         GitHub
       </span>
     </a>
@@ -359,17 +362,18 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
           scrolled ? "h-14" : "h-16 sm:h-20"
         }`}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           <Link to="/" aria-label="OpenPing home">
             <Logo />
           </Link>
-          <span aria-hidden="true" className="hidden h-5 w-px bg-line lg:block" />
-          <span className="hidden lg:flex">
+          {/* Only where the full nav still fits beside it (the row is max-w-6xl). */}
+          <span aria-hidden="true" className="hidden h-5 w-px bg-line lg:block xl:hidden 2xl:block" />
+          <span className="hidden lg:flex xl:hidden 2xl:flex">
             <N8buildsMark />
           </span>
         </div>
 
-        <nav className="hidden items-center gap-6 whitespace-nowrap text-sm text-ink-muted xl:flex">
+        <nav className="hidden items-center gap-5 whitespace-nowrap text-sm text-ink-muted xl:flex">
           {NAV_LINKS.map((l) => (
             <a key={l.href} href={l.href} className="transition-colors hover:text-ink">
               {l.label}
@@ -404,8 +408,7 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
             className="inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
           >
             <Github className="size-4" />
-            <span className="hidden 2xl:inline">Deploy your own</span>
-            <span className="2xl:hidden">Deploy</span>
+            Deploy
           </a>
         </div>
 
