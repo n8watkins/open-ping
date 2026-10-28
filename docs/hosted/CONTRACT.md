@@ -180,11 +180,15 @@ It answers `HealthResponse` with HTTP 200 when `ok`, 503 when not:
 `ok` means the database answers, `schemaVersion` is at least `bundledSchemaVersion`, and no migration is in progress.
 "At least", because migrations are additive: after a rollback, an older bundle runs on the newer schema and is still healthy.
 
-### Self-migration on other calls
+### Self-migration and public calls
 
-Every other call in hosted mode, public or platform, also applies the missing migrations before it does anything else, so the first call after an update migrates the database whatever it is.
-Only one call migrates at a time; the others wait for it, for a few seconds at most.
-When the migrations can't be applied (one failed, or another call is still applying them after the wait), a public call answers 503 `hosted_unavailable`, `POST /__platform/scheduled` answers `outcome: "failed"`, and health answers `ok: false`.
+Only platform calls migrate: `POST /__platform/scheduled` and `GET /__platform/health`, which the scheduler calls every minute and the release runner calls right after an upload.
+Only one call migrates at a time; another platform call waits for it, for a few seconds at most.
+When the migrations can't be applied (one failed, or another call is still applying them after the wait), `POST /__platform/scheduled` answers `outcome: "failed"` and health answers `ok: false`.
+
+A public call never migrates, so a visitor's request (which the browser may cancel at any moment) can never hold the migration lock.
+When it finds the schema older than its bundle, it answers 503 `hosted_updating` with `Retry-After: 10` and does nothing else: JSON `{ "error": "hosted_updating" }` for the API, MCP and heartbeats, and a short "This OpenPing is updating" page for a browser's page load.
+The next platform call migrates, so this lasts about a minute at most after an update.
 
 ## 7. The sign-in hand-off
 
@@ -266,6 +270,7 @@ It is read only when Vite's compile-time `import.meta.env.DEV` is true, which a 
 | 404 | `managed_by_platform` | `/setup`, `/recover`, the GitHub OAuth configuration and the email magic link in hosted mode |
 | 404 | `not_found` | an internal path without a valid platform call, the same as any unknown route |
 | 503 | `hosted_unavailable` | hosted mode without valid props for this tenant (section 3) |
+| 503 | `hosted_updating` | a public call while the database is older than the bundle, until the next platform call migrates it (section 6), with `Retry-After` |
 
 The constants are in `HOSTED_ERRORS`.
 

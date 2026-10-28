@@ -431,6 +431,11 @@ export const HOSTED_ERRORS = {
   tenantSuspended: "tenant_suspended",
   /** 503 in hosted mode when props are missing, of another contract version, or for another tenant. */
   unavailable: "hosted_unavailable",
+  /**
+   * 503 with Retry-After for a public call while the database is older than
+   * the bundle: only platform calls migrate, and the next one will.
+   */
+  updating: "hosted_updating",
 } as const;
 
 // ---------------------------------------------------------------------------
