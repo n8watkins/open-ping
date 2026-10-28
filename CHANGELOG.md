@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0 - 2026-10-28
+
+### New
+
+- Sign in with a passkey; GitHub sign-in becomes optional ([#34](https://github.com/n8watkins/open-ping/pull/34))
+
+### Fixed
+
+- Ask before saving an Installation URL that would stop your passkeys working ([#35](https://github.com/n8watkins/open-ping/pull/35))
+
 ## 0.6.0 - 2026-10-28
 
 ### New
