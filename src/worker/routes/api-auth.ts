@@ -55,8 +55,8 @@ apiAuth.post("/logout", async (c) => {
 });
 
 /**
- * Sign out everywhere: revoke ALL sessions for the caller's identity, not just
- * the current cookie. Lets the admin forcibly kill a leaked/stolen session token
+ * Sign out everywhere: revoke ALL sessions, whichever way (GitHub, email or a
+ * passkey) they signed in, not just the current cookie. Lets the admin forcibly kill a leaked/stolen session token
  * (which is otherwise valid for up to 30 days) without waiting for expiry.
  */
 apiAuth.post("/logout-all", async (c) => {
@@ -66,7 +66,7 @@ apiAuth.post("/logout-all", async (c) => {
   if (!csrf || !(await timingSafeEqual(csrf, session.csrf_secret))) {
     return c.json({ error: "csrf_failed" }, 403);
   }
-  await revokeAllSessions(c.env, session.identity);
+  await revokeAllSessions(c.env);
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
   return c.json({ ok: true });
 });
