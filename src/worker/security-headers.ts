@@ -32,10 +32,11 @@ export const CANONICAL_ORIGIN = "https://openping.n8builds.dev";
 export const WIDGET_PATH = "/embed";
 
 /**
- * Who may frame the /embed widget.
+ * Who may frame the /embed widget. CSP host sources with a `*.` wildcard match
+ * subdomains only, so the bare domain is listed on its own.
  * To embed from another host, add its origin here (docs/WIDGET.md).
  */
-export const WIDGET_FRAME_ANCESTORS = ["https://*.n8builds.dev"] as const;
+export const WIDGET_FRAME_ANCESTORS = ["https://n8builds.dev", "https://*.n8builds.dev"] as const;
 
 export function isWidgetPath(path: string): boolean {
   return path === WIDGET_PATH || path.startsWith(`${WIDGET_PATH}/`);

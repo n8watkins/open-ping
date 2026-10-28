@@ -91,10 +91,11 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
     expect(res.status).toBe(200);
     // X-Frame-Options is removed so the iframe can load cross-origin.
     expect(res.headers.get("x-frame-options")).toBeNull();
-    // frame-ancestors is relaxed to n8builds.dev subdomains; the rest of the
-    // CSP (script-src 'self', etc.) is preserved.
+    // frame-ancestors is relaxed to n8builds.dev and its subdomains (a `*.`
+    // wildcard never matches the bare domain, so it is listed too); the rest of
+    // the CSP (script-src 'self', etc.) is preserved.
     const csp = res.headers.get("content-security-policy") ?? "";
-    expect(csp).toContain("frame-ancestors https://*.n8builds.dev;");
+    expect(csp).toContain("frame-ancestors https://n8builds.dev https://*.n8builds.dev;");
     expect(csp).not.toContain("frame-ancestors 'none'");
     expect(csp).toContain("script-src 'self'");
     expect(csp).toBe(widgetCsp);

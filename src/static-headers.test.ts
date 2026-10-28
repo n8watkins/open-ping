@@ -85,13 +85,13 @@ describe("the security policy", () => {
     expect(cspDirectives({ viteDev: true }).scriptSrc).toContain("'unsafe-inline'");
   });
 
-  it("lets n8builds.dev subdomains frame the widget, and no one frame anything else", () => {
-    expect(WIDGET_FRAME_ANCESTORS).toEqual(["https://*.n8builds.dev"]);
+  it("lets n8builds.dev and its subdomains frame the widget, and no one frame anything else", () => {
+    expect(WIDGET_FRAME_ANCESTORS).toEqual(["https://n8builds.dev", "https://*.n8builds.dev"]);
     expect(cspDirectives().frameAncestors).toEqual(["'none'"]);
     expect(serializeCsp(widgetCspDirectives())).toBe(
       serializeCsp(cspDirectives()).replace(
         "frame-ancestors 'none'",
-        "frame-ancestors https://*.n8builds.dev",
+        "frame-ancestors https://n8builds.dev https://*.n8builds.dev",
       ),
     );
   });
