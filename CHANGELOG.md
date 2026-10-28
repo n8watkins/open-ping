@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 - 2026-10-28
+
+### New
+
+- Change MASTER_KEY without losing data, and re-encrypt everything from Settings ([#25](https://github.com/n8watkins/open-ping/pull/25))
+- Both ways to run OpenPing, owner-only sign-in, and each install's own home page ([#27](https://github.com/n8watkins/open-ping/pull/27))
+
+### Fixed
+
+- Real version in the app, and an unreadable push device no longer breaks alerts ([#26](https://github.com/n8watkins/open-ping/pull/26))
+
 ## 0.3.0 - 2026-10-28
 
 ### New
