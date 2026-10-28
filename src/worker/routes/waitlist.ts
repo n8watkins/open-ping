@@ -130,9 +130,15 @@ waitlist.get("/", requireAuth, async (c) => {
   return c.json({ count: total?.n ?? 0, entries: results ?? [] });
 });
 
-/** Quote a CSV field when it holds a comma, quote or line break. */
+/**
+ * One CSV field. A value a spreadsheet would run as a formula (starting with
+ * = + - @, a tab or a carriage return) gets a leading ' so it opens as text
+ * (OWASP, CSV injection); then it is quoted when it holds a comma, quote or
+ * line break.
+ */
 export function csvField(value: string): string {
-  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+  const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
 waitlist.get("/export.csv", requireAuth, async (c) => {
