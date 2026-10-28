@@ -1,6 +1,7 @@
 import type { Env } from "../types";
 import { newId } from "../lib/ids";
 import { encryptValue, decryptValue, isCiphertext } from "../lib/crypto";
+import { CHANNEL_KINDS, type ChannelKind } from "../../shared/notifications";
 
 /**
  * Notification channel CRUD data layer. The `notification_channels` table stores
@@ -9,8 +10,9 @@ import { encryptValue, decryptValue, isCiphertext } from "../lib/crypto";
  * epoch milliseconds. Sending logic lives elsewhere (the dispatcher module);
  * this layer only persists configuration and last-result bookkeeping.
  *
- * Secret config fields are capability secrets (Discord and generic webhook
- * URLs, plus the generic-webhook HMAC secret) and are encrypted at rest.
+ * Secret config fields are capability secrets (Discord, Slack, Teams and
+ * generic webhook URLs, the generic-webhook HMAC secret and the Telegram bot
+ * token) and are encrypted at rest.
  * Encryption is BEST-EFFORT, mirroring monitors: when `env.MASTER_KEY` is unset
  * the config is stored as plaintext, and `getChannel`/`listChannels` DECRYPT so
  * the dispatcher always receives the real secret. Routes redact these fields in
@@ -21,10 +23,23 @@ import { encryptValue, decryptValue, isCiphertext } from "../lib/crypto";
 /** Capability-secret config field names per channel type. */
 const CHANNEL_SECRET_FIELDS: Record<string, readonly string[]> = {
   discord: ["url"],
+  // Slack incoming webhooks and Teams Workflows URLs embed their own
+  // credential (Teams' `sig` query parameter): whoever has one can post.
+  slack: ["url"],
+  teams: ["url"],
+  // The bot token is a full credential for the bot. The chat id is not secret.
+  telegram: ["botToken"],
   // A generic webhook destination is a capability URL just like Discord's:
   // possession is often enough to submit messages to the receiver.
   webhook: ["url", "secret"],
 };
+
+/** Every (channel type, secret field) pair, for the MASTER_KEY rotation report. */
+export function channelSecretFields(): Array<{ type: string; field: string }> {
+  return Object.entries(CHANNEL_SECRET_FIELDS).flatMap(([type, fields]) =>
+    fields.map((field) => ({ type, field })),
+  );
+}
 
 /** Secret config field names for a channel type ([] for types with no secrets). */
 export function secretFieldsFor(type: string): readonly string[] {
@@ -120,7 +135,7 @@ export function mergeChannelSecrets(
 
 export interface ChannelRecord {
   id: string;
-  type: "email" | "discord" | "webhook" | "push";
+  type: ChannelKind;
   name: string | null;
   enabled: boolean;
   config: Record<string, unknown>;
@@ -157,13 +172,12 @@ function parseJson<T>(raw: string | null, fallback: T): T {
   }
 }
 
-const CHANNEL_TYPES = ["email", "discord", "webhook", "push"] as const;
 
 /** Map a raw row to a typed record, parsing JSON and coercing 0/1 to booleans. */
 function rowToChannel(row: ChannelRow): ChannelRecord {
   return {
     id: row.id,
-    type: (CHANNEL_TYPES as readonly string[]).includes(row.type)
+    type: (CHANNEL_KINDS as readonly string[]).includes(row.type)
       ? (row.type as ChannelRecord["type"])
       : "webhook",
     name: row.name,

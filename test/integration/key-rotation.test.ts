@@ -90,6 +90,16 @@ const WEBHOOK_URLS = ["https://hooks.example.com/a?cap=1", "https://hooks.exampl
 const LEGACY_WEBHOOK_URL = "https://hooks.example.com/legacy?cap=3";
 const LEGACY_WEBHOOK_HMAC = fixture("legacy-hmac");
 const OUTBOX_V2_COUNT = 20;
+// One channel of each chat-app type, each with one encrypted capability.
+const CHAT_CHANNELS = [
+  { type: "slack", config: { url: `https://hooks.slack.com/services/T0/B0/${fixture("slack")}` }, field: "url" },
+  {
+    type: "teams",
+    config: { url: `https://contoso.environment.api.powerplatform.com/powerautomate/automations/direct/workflows/w1/triggers/manual/paths/invoke?sig=${fixture("teams")}` },
+    field: "url",
+  },
+  { type: "telegram", config: { botToken: `${Date.now()}:${crypto.randomUUID().replaceAll("-", "")}`, chatId: "-100123" }, field: "botToken" },
+] as const;
 
 interface Seeded {
   monitorIds: string[];
@@ -97,6 +107,7 @@ interface Seeded {
   channelIds: string[];
   legacyChannelId: string;
   strangerChannelId: string;
+  chatChannelIds: string[];
   pushIds: string[];
   legacyPushId: string;
   vapidPrivateKey: string;
@@ -163,6 +174,11 @@ beforeAll(async () => {
     config: { url: "https://discord.com/api/webhooks/1/x" },
   });
   seeded.strangerChannelId = stranger.id;
+  seeded.chatChannelIds = [];
+  for (const ch of CHAT_CHANNELS) {
+    const created = await createChannel(ENV_A, { type: ch.type, config: { ...ch.config } });
+    seeded.chatChannelIds.push(created.id);
+  }
 
   // --- Web Push subscriptions: two under A, one from before migration 0008
   // (plaintext, no endpoint digest).
@@ -269,6 +285,10 @@ async function expectEverythingReadable(target: Env) {
     secret: LEGACY_WEBHOOK_HMAC,
   });
 
+  for (const [i, ch] of CHAT_CHANNELS.entries()) {
+    expect(channels.get(seeded.chatChannelIds[i]!)).toEqual(ch.config);
+  }
+
   const subs = new Map((await listSubscriptions(target)).map((s) => [s.id, s]));
   for (const [i, id] of seeded.pushIds.entries()) {
     expect(subs.get(id)).toMatchObject({ endpoint: `https://push.example.com/send/${i}`, p256dh: `p256dh-${i}`, auth: `auth-${i}` });
@@ -320,12 +340,13 @@ describe("MASTER_KEY rotation", () => {
     expect(before.safeToRemovePreviousKey).toBe(false);
     const cls = Object.fromEntries(before.classes.map((c) => [c.id, c]));
     expect(cls.monitor_config).toMatchObject({ rows: 4, previous: 3, legacy: 1, unsealed: 1, current: 0 });
-    expect(cls.channel_secrets).toMatchObject({ rows: 4, previous: 4, legacy: 1, unsealed: 1, unreadable: 1 });
+    // 4 webhook/Discord rows plus one Slack, one Teams and one Telegram channel.
+    expect(cls.channel_secrets).toMatchObject({ rows: 7, previous: 7, legacy: 1, unsealed: 1, unreadable: 1 });
     expect(cls.push_secrets).toMatchObject({ rows: 3, previous: 6, unsealed: 3 });
     expect(cls.settings).toMatchObject({ rows: 1, previous: 1 });
     expect(cls.outbox_payloads).toMatchObject({ rows: OUTBOX_V2_COUNT + 7, previous: OUTBOX_V2_COUNT, legacy: 3, unsealed: 2, unreadable: 2 });
-    // 3+1 monitors, 4+1 channel values, 6 push, 1 setting, 20+3 outbox.
-    expect(before.dependsOnPreviousKey).toBe(39);
+    // 3+1 monitors, 7+1 channel values, 6 push, 1 setting, 20+3 outbox.
+    expect(before.dependsOnPreviousKey).toBe(42);
     expect(locations(before.unreadable)).toEqual(EXPECTED_UNREADABLE());
     expect(before.unreadableCount).toBe(3);
     // Reading upgrades the legacy plaintext channel secret and outbox payloads
@@ -336,7 +357,7 @@ describe("MASTER_KEY rotation", () => {
     const pass = await runPass(ENV_ROTATING, 7);
     expect(pass.batches.length).toBeGreaterThan(5);
     expect(pass.batches.at(-1)!.done).toBe(true);
-    expect(pass.scanned).toBe(1 + 4 + 4 + 3 + OUTBOX_V2_COUNT + 7);
+    expect(pass.scanned).toBe(1 + 4 + 7 + 3 + OUTBOX_V2_COUNT + 7);
     expect(pass.conflicts).toBe(0);
     // Plaintext sealed by the pass: the unsealed monitor config and 3 push fields.
     expect(pass.sealed).toBe(4);
@@ -354,6 +375,13 @@ describe("MASTER_KEY rotation", () => {
     expect(locations(after.unreadable)).toEqual(EXPECTED_UNREADABLE());
     for (const c of after.classes) {
       expect(c.previous + c.legacy + c.unsealed).toBe(0);
+    }
+    for (const [i, ch] of CHAT_CHANNELS.entries()) {
+      const row = await env.DB.prepare("SELECT config FROM notification_channels WHERE id = ?")
+        .bind(seeded.chatChannelIds[i])
+        .first<{ config: string }>();
+      const stored = JSON.parse(row!.config) as Record<string, string>;
+      expect(stored[ch.field]).toMatch(new RegExp(`^v2:${kidB}:`));
     }
     const legacyPush = await env.DB.prepare("SELECT endpoint, endpoint_hash FROM push_subscriptions WHERE id = ?")
       .bind(seeded.legacyPushId)

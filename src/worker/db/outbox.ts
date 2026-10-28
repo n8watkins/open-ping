@@ -213,6 +213,8 @@ export async function markSent(env: Env, id: string): Promise<void> {
  * count of attempts. `computeRetry` decides whether to schedule another retry
  * (`failed` with a backoff `next_attempt_at`) or park the record (`dead`) once
  * `maxAttempts` is reached. The error is truncated before being stored.
+ * `retryAfterMs` is the provider's own "try again in" hint (a 429's
+ * Retry-After); the next attempt is never sooner than it.
  */
 export async function markFailed(
   env: Env,
@@ -220,9 +222,10 @@ export async function markFailed(
   newAttemptCount: number,
   error: string,
   maxAttempts: number,
+  retryAfterMs?: number,
 ): Promise<void> {
   const now = Date.now();
-  const { status, nextAttemptAt } = computeRetry(newAttemptCount, maxAttempts, now);
+  const { status, nextAttemptAt } = computeRetry(newAttemptCount, maxAttempts, now, retryAfterMs);
   // Never resurrect a terminal row: if post-send bookkeeping throws after an
   // entry is already 'sent' (or 'dead'), the caller's catch must not be able to
   // flip it back to 'failed' and cause a duplicate delivery on the next claim.
@@ -256,15 +259,22 @@ export function backoffMs(attempt: number): number {
 /**
  * Pure retry decision. Once `newAttemptCount` reaches `maxAttempts` the record
  * is `dead` (no further retries, `nextAttemptAt = now`); otherwise it is
- * `failed` and scheduled `backoffMs(newAttemptCount)` into the future.
+ * `failed` and scheduled `backoffMs(newAttemptCount)` into the future, or
+ * later when the provider asked for more time (`retryAfterMs`, capped at the
+ * backoff ceiling so a hostile or broken header can't park a row for days).
  */
 export function computeRetry(
   newAttemptCount: number,
   maxAttempts: number,
   now: number,
+  retryAfterMs?: number,
 ): { status: "failed" | "dead"; nextAttemptAt: number } {
   if (newAttemptCount >= maxAttempts) {
     return { status: "dead", nextAttemptAt: now };
   }
-  return { status: "failed", nextAttemptAt: now + backoffMs(newAttemptCount) };
+  const floor =
+    retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0
+      ? Math.min(retryAfterMs, BACKOFF_CAP_MS)
+      : 0;
+  return { status: "failed", nextAttemptAt: now + Math.max(backoffMs(newAttemptCount), floor) };
 }

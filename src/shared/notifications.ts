@@ -14,22 +14,25 @@ export const NOTIFY_EVENTS = [
 
 export type NotifyEvent = (typeof NOTIFY_EVENTS)[number];
 
-export type ChannelKind = "push" | "email" | "discord" | "webhook";
+/** Every notification channel type, plus Web Push devices. */
+export const CHANNEL_KINDS = ["push", "email", "discord", "slack", "teams", "telegram", "webhook"] as const;
+
+export type ChannelKind = (typeof CHANNEL_KINDS)[number];
 
 /**
  * Default channel routing per event. A channel with its own `events` list
  * overrides these defaults; otherwise these decide whether it fires.
  */
 export const NOTIFY_DEFAULTS: Record<NotifyEvent, Record<ChannelKind, boolean>> = {
-  down: { push: true, email: true, discord: true, webhook: true },
-  recovered: { push: true, email: true, discord: true, webhook: true },
-  heartbeat_missed: { push: true, email: true, discord: true, webhook: true },
-  flapping: { push: true, email: true, discord: true, webhook: true },
-  degraded: { push: false, email: false, discord: false, webhook: false },
-  maintenance_start: { push: false, email: false, discord: false, webhook: true },
-  maintenance_end: { push: false, email: false, discord: false, webhook: true },
-  weekly: { push: false, email: true, discord: false, webhook: false },
-  test: { push: true, email: true, discord: true, webhook: true },
+  down: { push: true, email: true, discord: true, slack: true, teams: true, telegram: true, webhook: true },
+  recovered: { push: true, email: true, discord: true, slack: true, teams: true, telegram: true, webhook: true },
+  heartbeat_missed: { push: true, email: true, discord: true, slack: true, teams: true, telegram: true, webhook: true },
+  flapping: { push: true, email: true, discord: true, slack: true, teams: true, telegram: true, webhook: true },
+  degraded: { push: false, email: false, discord: false, slack: false, teams: false, telegram: false, webhook: false },
+  maintenance_start: { push: false, email: false, discord: false, slack: false, teams: false, telegram: false, webhook: true },
+  maintenance_end: { push: false, email: false, discord: false, slack: false, teams: false, telegram: false, webhook: true },
+  weekly: { push: false, email: true, discord: false, slack: false, teams: false, telegram: false, webhook: false },
+  test: { push: true, email: true, discord: true, slack: true, teams: true, telegram: true, webhook: true },
 };
 
 export function channelWantsEvent(

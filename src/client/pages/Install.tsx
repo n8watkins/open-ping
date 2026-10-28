@@ -154,7 +154,7 @@ export default function Install() {
           <Step n={9} title="Sign in and add your sites">
             <p>
               Sign in with GitHub, add monitors (HTTP, heartbeat, DNS, TCP or domain expiry), and set up alerts under
-              Integrations: email, Web Push, Discord or a webhook.
+              Integrations: email, Web Push, Slack, Microsoft Teams, Discord, Telegram or a webhook.
             </p>
           </Step>
 

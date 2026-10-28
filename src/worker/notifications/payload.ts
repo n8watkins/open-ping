@@ -139,7 +139,7 @@ const FONT =
   "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
 /** Short uppercase pill label for the email status accent. */
-const EVENT_PILL: Record<NotifyEvent, string> = {
+export const EVENT_PILL: Record<NotifyEvent, string> = {
   down: "Down",
   recovered: "Recovered",
   heartbeat_missed: "Missed heartbeat",
@@ -152,13 +152,14 @@ const EVENT_PILL: Record<NotifyEvent, string> = {
 };
 
 /** CTA label per event: incidents link to the monitor, test opens the app. */
-function emailButtonLabel(event: NotifyEvent): string {
+export function emailButtonLabel(event: NotifyEvent): string {
   if (event === "test") return "Open OpenPing";
   if (event === "maintenance_start" || event === "maintenance_end") return "View monitor";
   return "View incident";
 }
 
-function metaLines(p: NotificationPayload): Array<[string, string]> {
+/** The labelled facts every rich channel shows under the message body. */
+export function metaLines(p: NotificationPayload): Array<[string, string]> {
   const meta: Array<[string, string]> = [];
   if (p.statusCode) meta.push(["HTTP status", String(p.statusCode)]);
   if (p.error) meta.push(["Error", p.error]);
@@ -228,7 +229,7 @@ function escapeDiscordMarkdown(s: string): string {
  * render flapping/degraded/maintenance with the red "down" color; derive the
  * color from the real event instead so those show amber (degraded) / green.
  */
-function eventColorState(event: NotifyEvent): string {
+export function eventColorState(event: NotifyEvent): string {
   switch (event) {
     case "recovered":
     case "maintenance_end":

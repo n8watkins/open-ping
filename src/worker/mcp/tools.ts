@@ -469,7 +469,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     "list_channels",
     {
       title: "List notification channels",
-      description: "Notification channels (email, Discord, webhook, push) with delivery health. Webhook URLs and secrets are blanked.",
+      description: "Notification channels (email, Discord, Slack, Microsoft Teams, Telegram, webhook, push) with delivery health. Webhook URLs, webhook secrets and Telegram bot tokens are blanked.",
       annotations: READ,
     },
     async () => {

@@ -489,7 +489,7 @@ function StepBody(p: BodyProps) {
           </ul>
           <p className="mt-5 rounded-lg border border-line bg-surface-2/50 px-3 py-2 text-sm text-ink-muted">
             After signing in, create your first monitor from Monitoring and add
-            email, push, Discord, or webhook delivery under Integrations &amp;
+            email, push, Slack, Teams, Discord, Telegram or webhook delivery under Integrations &amp;
             API.
           </p>
         </Section>
