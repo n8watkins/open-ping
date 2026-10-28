@@ -4,7 +4,8 @@ import type { AppEnv } from "../types";
 import { requireAuth } from "../middleware/auth";
 import {
   upsertSubscription,
-  listSubscriptions,
+  listDevices,
+  subscriptionExists,
   getSubscription,
   deleteSubscription,
   setDisabled,
@@ -60,30 +61,27 @@ push.post("/subscribe", async (c) => {
 });
 
 push.get("/devices", async (c) => {
-  const devices = await listSubscriptions(c.env);
+  const devices = await listDevices(c.env);
   return c.json({ devices });
 });
 
 push.delete("/devices/:id", async (c) => {
   const id = c.req.param("id");
-  const existing = await getSubscription(c.env, id);
-  if (!existing) return c.json({ error: "not_found" }, 404);
+  if (!(await subscriptionExists(c.env, id))) return c.json({ error: "not_found" }, 404);
   await deleteSubscription(c.env, id);
   return c.json({ ok: true });
 });
 
 push.post("/devices/:id/disable", async (c) => {
   const id = c.req.param("id");
-  const existing = await getSubscription(c.env, id);
-  if (!existing) return c.json({ error: "not_found" }, 404);
+  if (!(await subscriptionExists(c.env, id))) return c.json({ error: "not_found" }, 404);
   await setDisabled(c.env, id, true);
   return c.json({ ok: true });
 });
 
 push.post("/devices/:id/enable", async (c) => {
   const id = c.req.param("id");
-  const existing = await getSubscription(c.env, id);
-  if (!existing) return c.json({ error: "not_found" }, 404);
+  if (!(await subscriptionExists(c.env, id))) return c.json({ error: "not_found" }, 404);
   await setDisabled(c.env, id, false);
   return c.json({ ok: true });
 });

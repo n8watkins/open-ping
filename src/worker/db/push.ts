@@ -215,16 +215,50 @@ export async function listSubscriptions(
   );
 }
 
-/** Subscriptions eligible for delivery (not disabled). */
-export async function listActiveSubscriptions(
-  env: Env,
-): Promise<PushSubscriptionRecord[]> {
+/** A device as the admin UI shows it: metadata only, never the push secrets. */
+export type PushDeviceSummary = Omit<PushSubscriptionRecord, "endpoint" | "p256dh" | "auth">;
+
+/**
+ * Every device, without decrypting anything, so the list (and removing a
+ * device) still works when a subscription can't be decrypted, for example
+ * after the MASTER_KEY was lost.
+ */
+export async function listDevices(env: Env): Promise<PushDeviceSummary[]> {
   const res = await env.DB.prepare(
-    "SELECT * FROM push_subscriptions WHERE disabled = 0 ORDER BY created_at",
-  ).all<PushSubscriptionRow>();
-  return Promise.all(
-    (res.results ?? []).map((row) => rowToSubscription(env, row)),
-  );
+    `SELECT id, label, user_agent, platform, created_at, last_success_at,
+            last_failure_at, failures, disabled
+       FROM push_subscriptions ORDER BY created_at`,
+  ).all<Omit<PushSubscriptionRow, "endpoint" | "endpoint_hash" | "p256dh" | "auth">>();
+  return (res.results ?? []).map((row) => ({
+    id: row.id,
+    label: row.label,
+    userAgent: row.user_agent,
+    platform: row.platform,
+    createdAt: row.created_at,
+    lastSuccessAt: row.last_success_at ?? null,
+    lastFailureAt: row.last_failure_at ?? null,
+    failures: row.failures ?? 0,
+    disabled: row.disabled !== 0,
+  }));
+}
+
+/**
+ * Ids of the devices eligible for delivery (not disabled). Enqueueing needs
+ * only the id; the dispatcher decrypts one subscription when it sends, so an
+ * unreadable device can't stop an incident's other notifications.
+ */
+export async function listActiveSubscriptionIds(env: Env): Promise<string[]> {
+  const res = await env.DB.prepare(
+    "SELECT id FROM push_subscriptions WHERE disabled = 0 ORDER BY created_at",
+  ).all<{ id: string }>();
+  return (res.results ?? []).map((row) => row.id);
+}
+
+export async function subscriptionExists(env: Env, id: string): Promise<boolean> {
+  const row = await env.DB.prepare("SELECT 1 AS found FROM push_subscriptions WHERE id = ?")
+    .bind(id)
+    .first<{ found: number }>();
+  return row != null;
 }
 
 export async function getSubscription(
