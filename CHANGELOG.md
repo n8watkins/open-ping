@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 - 2026-10-28
+
+### New
+
+- Run your OpenPing from Claude Code or any MCP client, plus a full admin CLI ([#24](https://github.com/n8watkins/open-ping/pull/24))
+
+### Fixed
+
+- Lighthouse findings - real 404s and robots.txt, readable widget footer, wide-screen header ([#21](https://github.com/n8watkins/open-ping/pull/21))
+
 ## 0.2.1 - 2026-10-28
 
 ### Fixed
