@@ -687,6 +687,56 @@ publicStatus.get("/status", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// Feed data (routes/feeds.ts): the same page resolution and privacy boundary as
+// GET /status, for the RSS and Atom feeds.
+// ---------------------------------------------------------------------------
+
+/** How many incidents a feed lists, newest first. */
+export const FEED_INCIDENT_LIMIT = 50;
+
+export interface PublicFeedData {
+  page: { name: string; description: string | null };
+  /** Public incidents on this page, newest first, each with its updates. */
+  incidents: PublicIncident[];
+}
+
+/**
+ * Everything a status page feed shows: the page's name and its public
+ * incidents with their updates. "not_found" for an unknown slug and for a page
+ * that is turned off, so a feed never reveals more than the page itself.
+ */
+export async function loadPublicFeed(
+  env: Env,
+  slug: string | undefined,
+): Promise<PublicFeedData | "not_found"> {
+  const resolved = await resolvePage(env, slug);
+  if (resolved === "not_found" || !resolved.enabled) return "not_found";
+
+  const visible = (await listMonitors(env)).filter((m) => m.public?.visible === true);
+  const pageMonitors = selectPageMonitors(resolved.include, visible);
+  const page = { name: resolved.page.name, description: resolved.page.description };
+  if (pageMonitors.length === 0) return { page, incidents: [] };
+
+  const publicNames = new Map(pageMonitors.map((m) => [m.id, m.public.name || m.name]));
+  const ids = pageMonitors.map((m) => m.id);
+  const res = await env.DB.prepare(
+    `SELECT id, monitor_id, started_at, resolved_at, duration_seconds, public_message
+       FROM incidents
+      WHERE public = 1 AND monitor_id IN (${ids.map(() => "?").join(", ")})
+      ORDER BY started_at DESC
+      LIMIT ?`,
+  )
+    .bind(...ids, FEED_INCIDENT_LIMIT)
+    .all<PublicIncidentRow>();
+  const rows = res.results ?? [];
+  const updates = await updatesForIncidents(env, rows.map((r) => r.id));
+  return {
+    page,
+    incidents: rows.map((r) => toPublicIncident(r, publicNames, updates.get(r.id))),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // GET /badge.svg - a shields.io-style status badge (bonus).
 //
 // Emits ONLY the aggregate banner state (the same `overall` value the status

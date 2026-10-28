@@ -6,6 +6,7 @@ import { api } from "./routes/api";
 import { auth } from "./routes/auth";
 import { magicFlow } from "./routes/magic";
 import { heartbeats } from "./routes/heartbeats";
+import { feeds } from "./routes/feeds";
 import { mcp, MCP_MAX_BODY_BYTES } from "./mcp/handler";
 import { runScheduled } from "./scheduler";
 import { homePage, withLandingHead } from "./lib/home-page";
@@ -96,6 +97,11 @@ app.route("/auth/magic", magicFlow);
 
 // Public heartbeat ingestion (called by external cron jobs / scripts).
 app.route("/hb", heartbeats);
+
+// RSS and Atom feeds of each status page (/status/feed.rss, /status/:slug/
+// feed.atom, ...). Their paths have an extension, so the catch-all below would
+// hand them to the assets binding, which has no such file.
+app.route("/status", feeds);
 
 // MCP server for AI clients (bearer API token only; see docs/MCP.md).
 app.route("/mcp", mcp);

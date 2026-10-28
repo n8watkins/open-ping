@@ -10,6 +10,7 @@ import {
   History,
   Loader2,
   MoonStar,
+  Rss,
   Wrench,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
@@ -350,10 +351,17 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
   // when they are http(s); a `javascript:` value would otherwise execute from
   // an href/src (rel/target do not prevent that).
   const safeLogo = safeHttpUrl(page.logo);
+
+  // This page's RSS and Atom feeds (src/worker/routes/feeds.ts). The <link>s
+  // below are hoisted into <head> by React, for feed autodiscovery.
+  const feedBase = slug ? `/status/${encodeURIComponent(slug)}` : "/status";
+  const feeds = { rss: `${feedBase}/feed.rss`, atom: `${feedBase}/feed.atom` };
   const safeHomepage = safeHttpUrl(page.homepage);
 
   return (
     <div className="min-h-full bg-canvas text-ink" data-theme={effectiveTheme} style={accentStyle}>
+      <link rel="alternate" type="application/rss+xml" title={`${page.name} status (RSS)`} href={feeds.rss} />
+      <link rel="alternate" type="application/atom+xml" title={`${page.name} status (Atom)`} href={feeds.atom} />
       <div className="mx-auto max-w-3xl px-4 py-10 sm:py-14">
         {/* Header */}
         <header className="flex items-center justify-between gap-4">
@@ -475,9 +483,18 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
 
         {/* Recent incidents */}
         <section className="mt-10">
-          <h2 className="mb-3 text-sm font-semibold tracking-tight text-ink-muted">
-            Recent incidents
-          </h2>
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <h2 className="text-sm font-semibold tracking-tight text-ink-muted">
+              Recent incidents
+            </h2>
+            <a
+              href={feeds.rss}
+              className="inline-flex shrink-0 items-center gap-1.5 text-xs text-ink-faint transition-colors hover:text-ink"
+            >
+              <Rss className="size-3.5" aria-hidden="true" />
+              Subscribe (RSS)
+            </a>
+          </div>
           {recentIncidents.length === 0 ? (
             <EmptyState
               icon={<History className="size-6" />}
