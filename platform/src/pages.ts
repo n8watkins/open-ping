@@ -1,57 +1,20 @@
 /**
  * The few pages the platform answers with itself, before any customer's
  * OpenPing is involved: no such OpenPing, one that is suspended or still
- * being set up, and the placeholder home of app.<domain>.
+ * being set up, and the 404 of app.<domain>.
  *
  * Plain HTML with inline CSS and no scripts, in OpenPing's design tokens
  * (src/client/index.css): the dark navy shell by default, and the light
  * palette when the visitor's system asks for it.
  */
 
-export const SUPPORT_EMAIL = "support@n8builds.dev";
+import { STYLE, SUPPORT_EMAIL, escapeHtml } from "./ui";
 
-const TOKENS_DARK = `
-  --canvas: #0b1220; --surface: #111b2e; --line: #1f2c44;
-  --ink: #e6edf6; --ink-muted: #9fb0c5; --ink-faint: #8595ad;
-  --accent: #6d8bff; --accent-hover: #859dff; --accent-soft: #1b2547; --link: #859dff;
-  --suspended: #c084fc; --degraded: #f5a524;`;
+export { SUPPORT_EMAIL, escapeHtml };
 
-const TOKENS_LIGHT = `
-  --canvas: #f6f8fb; --surface: #ffffff; --line: #d8e0ea;
-  --ink: #16233a; --ink-muted: #475569; --ink-faint: #5f6f87;
-  --accent-soft: #e3e9ff; --link: #3b5bdb;
-  --suspended: #9333ea; --degraded: #a85a08;`;
-
-const STYLE = `
-:root { color-scheme: dark light; ${TOKENS_DARK} }
-@media (prefers-color-scheme: light) { :root { ${TOKENS_LIGHT} } }
-* { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; }
-body {
-  background: var(--canvas); color: var(--ink);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  -webkit-font-smoothing: antialiased; line-height: 1.5;
-  display: flex; align-items: center; justify-content: center; padding: 24px 16px;
-  min-height: 100vh;
-}
-main {
-  width: 100%; max-width: 30rem; background: var(--surface);
-  border: 1px solid var(--line); border-radius: 0.875rem; padding: 28px 24px;
-}
-.brand { display: flex; align-items: center; gap: 8px; color: var(--ink-muted); font-size: 0.875rem; font-weight: 600; margin: 0 0 20px; }
-.dot { width: 10px; height: 10px; border-radius: 999px; background: var(--accent); }
-.badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--tone, var(--link)); margin: 0 0 12px; }
-h1 { font-size: 1.375rem; line-height: 1.3; margin: 0 0 8px; font-weight: 650; overflow-wrap: anywhere; }
-p { margin: 0 0 12px; color: var(--ink-muted); overflow-wrap: anywhere; }
+const PAGE_STYLE = `${STYLE}
 .actions { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-/* The app's primary button: accent fill, canvas-navy text (Button styles in src/client). */
-a.button { display: inline-block; background: var(--accent); color: #0b1220; text-decoration: none; font-weight: 500; font-size: 0.875rem; padding: 8px 16px; border-radius: 0.5rem; transition: background-color 120ms cubic-bezier(0.25, 1, 0.5, 1); }
-a.button:hover { background: var(--accent-hover); }
-a { color: var(--link); }
-a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.fine { font-size: 0.8125rem; color: var(--ink-faint); margin-top: 20px; margin-bottom: 0; }
-@media (prefers-reduced-motion: reduce) { a.button { transition: none; } }
-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.875em; color: var(--ink); }
+@media (min-width: 640px) { .actions .button { width: auto; } }
 `;
 
 /** Every platform page: no scripts, nothing framed, nothing cached. */
@@ -64,15 +27,6 @@ export const PAGE_HEADERS: Readonly<Record<string, string>> = {
   "referrer-policy": "no-referrer",
   "x-frame-options": "DENY",
 };
-
-export function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 interface PageInput {
   title: string;
@@ -88,16 +42,16 @@ function page(input: PageInput): Response {
   const tone = input.badge?.tone && input.badge.tone !== "accent" ? ` style="--tone: var(--${input.badge.tone})"` : "";
   const badge = input.badge ? `<p class="badge"${tone}>${escapeHtml(input.badge.text)}</p>` : "";
   const action = input.action
-    ? `<div class="actions"><a class="button" href="${escapeHtml(input.action.href)}">${escapeHtml(input.action.label)}</a></div>`
+    ? `<div class="actions"><a class="button primary" href="${escapeHtml(input.action.href)}">${escapeHtml(input.action.label)}</a></div>`
     : "";
   const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>${escapeHtml(input.title)} - OpenPing</title>
-<style>${STYLE}</style>
+<style>${PAGE_STYLE}</style>
 </head>
 <body>
 <main>
@@ -175,17 +129,5 @@ export function appNotFoundPage(appUrl: string): Response {
     title: "Page not found",
     body: ["There's nothing at this address."],
     action: { href: appUrl, label: "Go to OpenPing Hosted" },
-  });
-}
-
-/** app.<domain> until sign-up (B2) exists. */
-export function appHomePage(): Response {
-  return page({
-    status: 200,
-    title: "OpenPing Hosted is coming soon",
-    body: [
-      "Uptime monitoring and a status page, run for you: 20 monitors, 2 status pages and every alert channel for $24 a year.",
-      'Join the waitlist on <a href="https://openping.n8builds.dev/#pricing">openping.n8builds.dev</a> to hear when it opens.',
-    ],
   });
 }
