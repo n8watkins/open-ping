@@ -1921,7 +1921,7 @@ const FAQS: FaqItem[] = [
   },
   {
     q: "Who can sign in?",
-    a: "In your own Cloudflare account, only you: OpenPing has one administrator, who signs in with a passkey, GitHub or an email link, and the OpenPing project never sees that install. OpenPing Hosted, when it opens, will have normal accounts with email, Google or GitHub sign-in, kept separate from any install you run yourself.",
+    a: "In your own Cloudflare account, only you: OpenPing has one administrator, who signs in with a passkey, GitHub or an email link, and the OpenPing project never sees that install. OpenPing Hosted, when it opens, will have normal accounts with email, passkey or GitHub sign-in, kept separate from any install you run yourself.",
   },
   {
     q: "Can I automate it?",
