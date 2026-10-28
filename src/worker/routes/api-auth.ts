@@ -6,6 +6,7 @@ import { getAdminGithubLogin, getAdminEmail } from "../lib/admin";
 import { getSetting } from "../db/settings";
 import { timingSafeEqual } from "../lib/timing";
 import { isValidMasterKey } from "../lib/crypto";
+import { homePage } from "../lib/home-page";
 
 /** Session/identity endpoints mounted at /api/auth. */
 export const apiAuth = new Hono<AppEnv>();
@@ -23,7 +24,11 @@ apiAuth.get("/me", async (c) => {
   });
 });
 
-/** Unauthenticated bootstrap info for the login/setup screens. */
+/**
+ * Unauthenticated bootstrap info for the login/setup screens, and what `/`
+ * shows a signed-out visitor (`homePage`), which the app reads before it
+ * renders anything at `/`, so no visitor sees the wrong page first.
+ */
 apiAuth.get("/status", async (c) => {
   return c.json({
     setupComplete: (await getSetting(c.env, "setup_complete")) === "true",
@@ -31,6 +36,7 @@ apiAuth.get("/status", async (c) => {
     githubEnabled: !!c.env.GITHUB_CLIENT_ID,
     githubAdminConfigured: !!(await getAdminGithubLogin(c.env)),
     emailAdminConfigured: !!(await getAdminEmail(c.env)),
+    homePage: homePage(c.env),
   });
 });
 

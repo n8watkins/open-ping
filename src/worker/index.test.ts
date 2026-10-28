@@ -70,6 +70,26 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
     );
   });
 
+  it("serves the plain app shell at / unless HOME_PAGE is landing", async () => {
+    const res = await worker.fetch!(new Request("https://example.com/"), makeEnv(), ctx);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<!doctype html><title>spa</title>");
+  });
+
+  it("writes the landing page's title and preview tags into / on a landing install", async () => {
+    const env = { ...makeEnv(), HOME_PAGE: "landing", APP_URL: "https://openping.example" } as Env;
+    const res = await worker.fetch!(new Request("https://example.com/"), env, ctx);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    const html = await res.text();
+    expect(html).toContain("<title>OpenPing: uptime monitoring on your own Cloudflare</title>");
+    // (withLandingHead's own tests cover the preview tags in a full shell.)
+
+    // Only the root: every other client route keeps the generic shell.
+    const other = await worker.fetch!(new Request("https://example.com/install"), env, ctx);
+    expect(await other.text()).toBe("<!doctype html><title>spa</title>");
+  });
+
   it("lets Cloudflare Web Analytics load and report, and nothing else", async () => {
     const res = await worker.fetch!(new Request("https://example.com/"), makeEnv(), ctx);
     const csp = res.headers.get("content-security-policy") ?? "";

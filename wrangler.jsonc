@@ -27,8 +27,22 @@
     "WORKERS_PLAN": "free",
     // Leave "false". Only the canonical install (openping.n8builds.dev) sets it
     // to "true" to collect the OpenPing Hosted waitlist (docs/HOSTED_PLAN.md).
-    "WAITLIST_ENABLED": "false"
+    "WAITLIST_ENABLED": "false",
+    // What a signed-out visitor sees at "/": "status" shows this install's own
+    // default status page. Leave it. Only the canonical install sets "landing"
+    // (the OpenPing marketing page and its click counts); docs/INSTALL.md.
+    "HOME_PAGE": "status"
   },
+  // Caps the landing page's click counter per visitor (src/worker/routes/events.ts),
+  // so it needs no database write to rate limit. Only used when HOME_PAGE is
+  // "landing". namespace_id is any integer unique within your Cloudflare account.
+  "ratelimits": [
+    {
+      "name": "EVENT_LIMITER",
+      "namespace_id": "4271",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

@@ -2,6 +2,7 @@ import { Routes, Route, Outlet } from "react-router-dom";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 import { BootstrapProvider, useBootstrap } from "./lib/bootstrap";
+import { rootView } from "./lib/home";
 import { AppLayout } from "./components/AppLayout";
 import PublicStatus from "./pages/PublicStatus";
 import Login from "./pages/Login";
@@ -46,21 +47,24 @@ function PageFallback() {
 }
 
 /**
- * Gate for the site root "/".
- *  - while auth is loading: show the shared spinner (avoids a Landing flash);
- *  - authenticated admin: render <Outlet/> so the nested AppLayout→Dashboard
- *    renders exactly as before (chrome, nav, status pill, etc.);
- *  - unauthenticated visitor: render the marketing Landing page.
+ * Gate for the site root "/" (the decision itself is lib/home.ts rootView):
+ *  - while the bootstrap loads: the shared spinner, so no one sees one page
+ *    flash before another;
+ *  - a signed-in admin: <Outlet/>, so the nested AppLayout and Dashboard
+ *    render exactly as on any other admin route;
+ *  - anyone else: the HOME_PAGE choice. OpenPing's marketing page only on a
+ *    "landing" install (the canonical one); everywhere else this install's
+ *    own default status page, because each install belongs to its owner.
  *
- * This keeps the Dashboard at "/" (so AppLayout's "Overview" nav link is
- * untouched) while never letting AppLayout's own auth redirect fire for guests,
- * since the nested layout only mounts when the visitor is authenticated.
+ * AppLayout's own auth redirect never fires for guests, since the nested
+ * layout only mounts for a signed-in admin.
  */
 function RootIndex() {
-  const { loading, me } = useBootstrap();
-  if (loading) return <PageFallback />;
-  if (me?.authenticated) return <Outlet />;
-  return <Landing />;
+  const view = rootView(useBootstrap());
+  if (view === "loading") return <PageFallback />;
+  if (view === "dashboard") return <Outlet />;
+  if (view === "landing") return <Landing />;
+  return <PublicStatus asHome />;
 }
 
 export default function App() {
@@ -84,7 +88,7 @@ export default function App() {
           <Route path="/tools/mx-lookup" element={<MxLookup />} />
           <Route path="/tools/is-it-down" element={<IsItDown />} />
 
-          {/* Site root: Landing for guests, Dashboard (in AppLayout) for admins. */}
+          {/* Site root: the dashboard for admins; the HOME_PAGE choice for guests. */}
           <Route path="/" element={<RootIndex />}>
             <Route element={<AppLayout />}>
               <Route index element={<Dashboard />} />
