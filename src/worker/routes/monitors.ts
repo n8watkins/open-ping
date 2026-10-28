@@ -13,7 +13,8 @@ import {
   updateMonitor,
 } from "../db/monitors";
 import { runMonitorCheck } from "../checks/runner";
-import { applyCheckResult } from "../checks/state";
+import { applyCheckResult, readState } from "../checks/state";
+import { parseDomainCache } from "../checks/domain";
 import { firstCheckWithin, type FirstCheckResult } from "../checks/first-check";
 import {
   computeUptime,
@@ -389,7 +390,10 @@ monitors.post("/:id/rotate-heartbeat-token", async (c) => {
  * Manual test (PRD §9). Runs a check now and returns the outcome. By default it
  * does NOT affect stored history/state; pass ?apply=1 to persist the result.
  * Available for all polled types (http/dns/tcp/domain); heartbeats are
- * push-driven and cannot be actively probed.
+ * push-driven and cannot be actively probed. A domain monitor always asks RDAP,
+ * falling back to its cached read if that fails, like a scheduled check. An
+ * outcome whose confirmation was deferred (RDAP rate limited the lookup) is
+ * returned but never applied: it is the scheduler's to retry.
  */
 monitors.post("/:id/test", async (c) => {
   const monitor = await getMonitor(c.env, c.req.param("id"));
@@ -398,10 +402,15 @@ monitors.post("/:id/test", async (c) => {
     return c.json({ error: "not_testable", message: "Heartbeat monitors are push-driven." }, 400);
   }
   const apply = c.req.query("apply") === "1" || c.req.query("apply") === "true";
+  const known = monitor.type === "domain" || apply ? await readState(c.env, monitor.id) : undefined;
   const outcome = await runMonitorCheck(monitor, {
     confirm: monitor.confirmFailures !== "off",
+    ...(monitor.type === "domain"
+      ? { domainCache: parseDomainCache(known?.domain_cache), refreshDomain: true }
+      : {}),
     now: Date.now(),
   });
-  if (apply) await applyCheckResult(c.env, monitor, outcome);
-  return c.json({ outcome, applied: apply });
+  const applied = apply && outcome.confirmation !== "deferred";
+  if (applied) await applyCheckResult(c.env, monitor, outcome, known);
+  return c.json({ outcome, applied });
 });

@@ -32,7 +32,8 @@ const HEARTBEAT_DOWN_SLICE_SECONDS = 12 * 60;
 
 /** The monitor_state columns the check path reads; the scheduler preloads them. */
 export const STATE_COLUMNS = `state, state_since, last_success_at, last_beat_at, last_error,
-            consecutive_failures, consecutive_successes, active_incident_id, is_flapping`;
+            consecutive_failures, consecutive_successes, active_incident_id, is_flapping,
+            domain_cache`;
 
 export interface StateRow {
   state: MonitorState;
@@ -44,9 +45,11 @@ export interface StateRow {
   consecutive_successes: number;
   active_incident_id: string | null;
   is_flapping: number;
+  /** A domain monitor's cached RDAP read (checks/domain.ts parseDomainCache). */
+  domain_cache: string | null;
 }
 
-async function readState(env: Env, monitorId: string): Promise<StateRow | null> {
+export async function readState(env: Env, monitorId: string): Promise<StateRow | null> {
   return env.DB.prepare(`SELECT ${STATE_COLUMNS} FROM monitor_state WHERE monitor_id = ?`)
     .bind(monitorId)
     .first<StateRow>();
@@ -205,7 +208,8 @@ export async function applyCheckResult(
        state = ?, state_since = ?, last_checked_at = ?, last_success_at = ?,
        last_duration_ms = ?, last_status_code = ?, last_error = ?,
        consecutive_failures = ?, consecutive_successes = ?, next_check_at = ?,
-       warmup = ?, active_incident_id = ?, is_flapping = ?, updated_at = ?
+       warmup = ?, active_incident_id = ?, is_flapping = ?,
+       domain_cache = COALESCE(?, domain_cache), updated_at = ?
      WHERE monitor_id = ?`,
   )
     .bind(
@@ -222,6 +226,8 @@ export async function applyCheckResult(
       outcome.warmup ? 1 : 0,
       incident.activeIncidentId,
       incident.isFlapping ? 1 : 0,
+      // A domain check's new cached read; NULL keeps the stored one.
+      outcome.domainCache ? JSON.stringify(outcome.domainCache) : null,
       now,
       monitor.id,
     );

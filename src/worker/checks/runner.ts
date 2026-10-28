@@ -10,7 +10,7 @@ import type { CheckOutcome, ProbeResult } from "./types";
 import { MAX_REDIRECTS, runHttpCheck } from "./http";
 import { runDnsCheck } from "./dns";
 import { runTcpCheck } from "./tcp";
-import { runDomainCheck } from "./domain";
+import { planDomainCheck, runDomainCheck, type DomainCache } from "./domain";
 import { evaluateAssertions } from "./assertions";
 
 /**
@@ -38,15 +38,22 @@ import { evaluateAssertions } from "./assertions";
  *   - http follows up to MAX_REDIRECTS hops itself (checks/http.ts) and reports
  *     the real count, so this worst case is only held while the check runs;
  *   - domain asks rdap.org, which redirects to the registry's RDAP server, and
- *     the runtime follows that hop, so it costs two;
+ *     the runtime follows that hop, so it costs two; a cycle judged from the
+ *     cached read (checks/domain.ts) costs none, which `domain` tells it;
  *   - dns and tcp make one request.
  */
-export function probeFetchLimit(monitor: Pick<MonitorRecord, "type" | "config">): number {
+export function probeFetchLimit(
+  monitor: Pick<MonitorRecord, "type" | "config">,
+  /** A domain monitor's cached read and the time the cycle is planned at. */
+  domain?: { cache: DomainCache | null; now: number },
+): number {
   switch (monitor.type) {
     case "http":
       return (monitor.config as HttpConfig).followRedirects ? 1 + MAX_REDIRECTS : 1;
     case "domain":
-      return 2;
+      return domain && !planDomainCheck(monitor.config as DomainConfig, domain.cache, domain.now).lookup
+        ? 0
+        : 2;
     default:
       return 1;
   }
@@ -66,6 +73,17 @@ export interface RunOptions {
    * the outcome comes back with `confirmation: "deferred"`.
    */
   allowConfirm?: () => boolean;
+  /** Domain monitors: the cached read (monitor_state.domain_cache). */
+  domainCache?: DomainCache | null;
+  /**
+   * When the cycle was planned (default `now`): a domain check judges its
+   * cache's freshness at this time, the same one `probeFetchLimit` reserved for.
+   */
+  plannedAt?: number;
+  /** Domain monitors: ask RDAP even if the cached read is fresh (a manual test). */
+  refreshDomain?: boolean;
+  /** Awaited before each RDAP request, so one run spaces its lookups out. */
+  paceLookup?: () => Promise<void>;
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   now?: number;
@@ -135,7 +153,7 @@ interface Attempt {
 /** One probe of the monitor's target, with HTTP assertions applied. */
 async function probe(
   monitor: MonitorRecord,
-  opts: { warmup: boolean; fresh: boolean },
+  opts: { warmup: boolean; fresh: boolean; run: RunOptions },
 ): Promise<Attempt> {
   switch (monitor.type) {
     case "http": {
@@ -160,7 +178,14 @@ async function probe(
       return { result: r, ok: r.ok };
     }
     case "domain": {
-      const r = await runDomainCheck(monitor.config as DomainConfig);
+      const run = opts.run;
+      const at = run.plannedAt ?? run.now;
+      const r = await runDomainCheck(monitor.config as DomainConfig, {
+        cache: run.domainCache ?? null,
+        ...(at !== undefined ? { now: at } : {}),
+        ...(run.refreshDomain ? { force: true } : {}),
+        ...(run.paceLookup ? { pace: run.paceLookup } : {}),
+      });
       return { result: r, ok: r.ok };
     }
     default:
@@ -178,7 +203,7 @@ export async function runMonitorCheck(
   const sleep = opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
 
   const limit = probeFetchLimit(monitor);
-  const first = await probe(monitor, { warmup, fresh: false });
+  const first = await probe(monitor, { warmup, fresh: false, run: opts });
   let fetches = first.result.fetches ?? limit;
   let decided = first;
   let succeededAttempt = first.ok ? 1 : -1;
@@ -186,13 +211,17 @@ export async function runMonitorCheck(
   let confirmation: CheckOutcome["confirmation"];
 
   const confirmable =
-    !first.ok && confirm && !(first.result.error && PERMANENT_ERRORS.has(first.result.error));
+    !first.ok &&
+    confirm &&
+    first.result.recheck !== "skip" &&
+    !(first.result.error && PERMANENT_ERRORS.has(first.result.error));
   if (confirmable) {
-    if (opts.allowConfirm && !opts.allowConfirm()) {
+    // "defer": a re-check now would be refused the same way (RDAP's 429).
+    if (first.result.recheck === "defer" || (opts.allowConfirm && !opts.allowConfirm())) {
       confirmation = "deferred";
     } else {
       await sleep(opts.confirmDelayMs ?? CONFIRM_DELAY_MS);
-      decided = await probe(monitor, { warmup, fresh: true });
+      decided = await probe(monitor, { warmup, fresh: true, run: opts });
       fetches += decided.result.fetches ?? limit;
       attempts = 2;
       if (decided.ok) succeededAttempt = 2;
@@ -213,6 +242,7 @@ export async function runMonitorCheck(
     ...outcome,
     ...(confirmation ? { confirmation } : {}),
     meta: decided.result.meta,
+    ...(decided.result.domainCache ? { domainCache: decided.result.domainCache } : {}),
     fetches,
     at: opts.now ?? Date.now(),
   };

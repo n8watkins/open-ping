@@ -5,7 +5,10 @@ import type { MonitorRecord } from "../db/monitors";
 vi.mock("./http", () => ({ runHttpCheck: vi.fn(), MAX_REDIRECTS: 5 }));
 vi.mock("./dns", () => ({ runDnsCheck: vi.fn() }));
 vi.mock("./tcp", () => ({ runTcpCheck: vi.fn() }));
-vi.mock("./domain", () => ({ runDomainCheck: vi.fn() }));
+vi.mock("./domain", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./domain")>()),
+  runDomainCheck: vi.fn(),
+}));
 import { runHttpCheck } from "./http";
 import { runDnsCheck } from "./dns";
 import { runTcpCheck } from "./tcp";
@@ -289,6 +292,15 @@ describe("probeFetchLimit", () => {
     expect(probeFetchLimit(of("dns"))).toBe(1);
     expect(probeFetchLimit(of("tcp"))).toBe(1);
   });
+
+  it("reserves nothing for a domain cycle judged from a fresh cached read", () => {
+    const now = Date.UTC(2026, 9, 28);
+    const domain = { type: "domain", config: { domain: "x.test", warnDays: 30 } } as unknown as MonitorRecord;
+    const cache = { domain: "x.test", expiresAt: now + 200 * 86_400_000, checkedAt: now - 60_000 };
+    expect(probeFetchLimit(domain, { cache, now })).toBe(0);
+    expect(probeFetchLimit(domain, { cache: { ...cache, checkedAt: now - 7 * 3_600_000 }, now })).toBe(2);
+    expect(probeFetchLimit(domain, { cache: null, now })).toBe(2);
+  });
 });
 
 describe("runMonitorCheck dispatch by type", () => {
@@ -351,6 +363,53 @@ describe("runMonitorCheck dispatch by type", () => {
     expect(mockedDomain).toHaveBeenCalledOnce();
     expect(o.state).toBe("degraded");
     expect(o.meta).toEqual({ daysUntil: 10 });
+  });
+
+  it("passes the domain cache, plan time, force and pacing through, and returns the new read", async () => {
+    const cache = { domain: "x.test", expiresAt: 5_000, checkedAt: 1_000 };
+    const fresh = { domain: "x.test", expiresAt: 9_000, checkedAt: 3_000 };
+    mockedDomain.mockResolvedValue({ ok: true, durationMs: 5, domainCache: fresh });
+    const paceLookup = vi.fn().mockResolvedValue(undefined);
+    const o = await runMonitorCheck(monitorOf("domain", { domain: "x.test" }), {
+      domainCache: cache,
+      plannedAt: 2_500,
+      refreshDomain: true,
+      paceLookup,
+      now: 3_000,
+    });
+    expect(mockedDomain).toHaveBeenCalledWith(
+      { domain: "x.test" },
+      { cache, now: 2_500, force: true, pace: paceLookup },
+    );
+    expect(o.domainCache).toEqual(fresh);
+  });
+
+  it("does not re-check a domain result that can't change (recheck: skip)", async () => {
+    mockedDomain.mockResolvedValue({ ok: false, error: "domain_expired", recheck: "skip" });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const o = await runMonitorCheck(monitorOf("domain", { domain: "x.test" }), { sleep, now: 1 });
+    expect(o).toMatchObject({ state: "down", error: "domain_expired", attempts: 1 });
+    expect(o.confirmation).toBeUndefined();
+    expect(mockedDomain).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("defers the confirmation of a rate-limited lookup without a second request or a budget ask", async () => {
+    mockedDomain.mockResolvedValue({ ok: false, error: "rdap_rate_limited", recheck: "defer" });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const allowConfirm = vi.fn(() => true);
+    const o = await runMonitorCheck(monitorOf("domain", { domain: "x.test" }), { sleep, allowConfirm, now: 1 });
+    expect(o.confirmation).toBe("deferred");
+    expect(mockedDomain).toHaveBeenCalledOnce();
+    expect(allowConfirm).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("a rate-limited lookup with confirmation off simply fails", async () => {
+    mockedDomain.mockResolvedValue({ ok: false, error: "rdap_rate_limited", recheck: "defer" });
+    const o = await runMonitorCheck(monitorOf("domain", { domain: "x.test" }), { confirm: false, now: 1 });
+    expect(o).toMatchObject({ state: "down", error: "rdap_rate_limited" });
+    expect(o.confirmation).toBeUndefined();
   });
 
   it("throws for a heartbeat monitor (push-driven, never routed here)", async () => {

@@ -54,6 +54,8 @@ Details:
 - **Heartbeats aren't confirmed.**
   A missed heartbeat is the absence of a ping, so there is nothing to re-check; the grace period is the heartbeat's confirmation.
 - **SSRF-blocked targets** (`blocked_url`, `blocked_host`) aren't re-checked: the answer can't change.
+- **Domain monitors** re-check only a failed lookup with no recent read to fall back on, and not a rate-limited one (HTTP 429), which waits for the next run instead; an expired date isn't re-checked.
+  See [Domain expiry](#when-a-lookup-fails).
 - **It fits the free plan.**
   The re-check costs one more outbound fetch and no database queries.
   If a run has no fetch left for it, the failure is not recorded at all and the monitor stays due, so the next run (12 minutes later) checks and confirms it first; an unconfirmed failure never alerts.
@@ -296,9 +298,8 @@ purely "the port accepted the connection."
 Warns you *before* a domain silently lapses - the kind of outage that takes a
 whole site down and is painful to recover from.
 
-**What it does.** Looks up the domain's registration record over **RDAP** (the
-modern, structured successor to WHOIS) via `rdap.org`, which redirects to the
-authoritative registry's RDAP server, then reads the `expiration` event date.
+**What it does.** Looks up the domain's registration record over **RDAP** (the modern, structured successor to WHOIS) via `rdap.org`, which redirects to the authoritative registry's RDAP server, then reads the `expiration` event date.
+The date it read is cached on the monitor, so most checks are judged from that read without asking RDAP again (below).
 
 **Config fields.**
 
@@ -308,27 +309,50 @@ authoritative registry's RDAP server, then reads the `expiration` event date.
   (default `30`, range `1`–`365`).
 - `timeoutMs` - RDAP query timeout (default `15000`, max `30000`).
 
-**How up / degraded / down is decided** - based purely on the expiration date:
+**How up / degraded / down is decided** - based on the expiration date:
 
-- **Down** - the domain has already expired (`daysUntil <= 0`), or the RDAP
-  lookup failed / returned no parseable expiration event.
+- **Down** - the domain has already expired (`daysUntil <= 0`), or there is no usable expiry date at all: the lookup failed or returned no parseable expiration event, and there is no read from the last 7 days to fall back on.
 - **Degraded** - expiry is within `warnDays` (your early warning).
 - **Up** - expiry is further out than `warnDays`.
 
-Each result carries the parsed `expiresAt` timestamp and `daysUntil` count for
-display.
+Each result carries the `expiresAt` timestamp and `daysUntil` count for display, plus `checkedAt` (when the date was read from RDAP) and `source` (`rdap` when it was read on this check, `cache` when an earlier read was used).
+
+### How often RDAP is asked
+
+An expiration date rarely changes, so asking RDAP every 12 minutes would only spend subrequests and invite rate limits.
+Each domain monitor keeps its last successful read (`monitor_state.domain_cache`), and each check judges the date from it, making no request, while it is fresh:
+
+- **Every 6 hours** normally: a read older than that is refreshed on the next check.
+- **Every hour** while the domain is within `warnDays` of expiry, so a renewal clears the warning within the hour.
+- **At once** when the cached date passes, since the registry may have renewed it at the last minute.
+- **At once** when the monitor's `domain` changes, and on the monitor's first check right after it is created.
+- **Test** in the monitor page always asks RDAP.
+
+Days left are recomputed from the cached date on every check, so `daysUntil` and the up / degraded / down state stay current between lookups.
+A check judged from the cache costs no outbound fetch: the scheduler reserves none for it, and it adds no database queries, because the cache rides on the state row every check already reads and writes.
+Such a check records no response time, so the latency chart only shows real lookups.
+
+### When a lookup fails
+
+A failed lookup says nothing about the domain itself, so it does not take the monitor down while a recent read exists:
+
+- If a refresh fails (HTTP 429 or another non-2xx answer, a timeout, a network error, or no parseable expiration event) and the monitor has a read from the last **7 days**, the check is judged from that read: no state change, no incident, no alert.
+  The sample's meta carries `lookupError` (`code`, `message`, `at`), and the monitor page shows "Last lookup failed (...), using the expiry read 3h ago".
+- After a failed refresh, RDAP is not asked again for an hour, or for as long as a `Retry-After` header asks (up to a day); checks in between use the cached read.
+- Only with no usable read (never read, a different domain, or older than 7 days) does a failed lookup count as a failed check, with [Confirm before alerting](#confirm-before-alerting) as for any monitor.
+  A 429 is not re-checked 5 seconds later, since it would only be refused again: the confirmation waits for the next run instead, so a rate limit alone never alerts.
+- An expired date is down whatever the source, and isn't re-checked: RDAP already said so.
+
+**Rate limits.** `rdap.org` and the registries behind it rate limit bursts: about 16 lookups at once from Cloudflare's network drew HTTP 429s from both `rdap.org` (Cloudflare error 1015) and Google's registry, while lookups a few seconds apart all succeeded.
+Besides caching, each scheduler run spaces its RDAP lookups 2 seconds apart.
 
 > **Trusted RDAP endpoint.** Like the DNS resolver, `rdap.org` is a **fixed
 > constant** (never your input) - you supply the *domain to look up*, not the
 > server. Redirects to the authoritative registry are followed within the
 > runtime's hop cap. Coverage depends on the registry: most gTLDs (`.com`,
-> `.net`, `.org`, and many others) publish RDAP with an expiration event; some
-> ccTLDs expose limited or no RDAP data, in which case the check reports
-> `rdap_no_expiry`. A few registries - notably Google's `.dev`/`.app` - reject
-> automated RDAP requests from Cloudflare's network with an `rdap_error` (HTTP
-> 403); domain-expiry monitoring isn't available for those TLDs. (DNS and TCP
-> monitoring of hosts on those domains work fine - this only affects the
-> registration-expiry lookup.)
+> `.net`, `.org`, Google's `.dev` and `.app`, and many others) publish RDAP with
+> an expiration event; some ccTLDs expose limited or no RDAP data, in which case
+> the check reports `rdap_no_expiry`.
 
 ---
 

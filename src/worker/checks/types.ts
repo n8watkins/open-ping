@@ -1,4 +1,5 @@
 import type { MonitorState } from "../../shared/states";
+import type { DomainCache } from "./domain";
 
 /**
  * The raw result of a single probe attempt, shared by every executor
@@ -8,7 +9,8 @@ import type { MonitorState } from "../../shared/states";
  */
 export interface ProbeResult {
   ok: boolean;
-  durationMs: number;
+  /** Absent when the probe made no request (a domain check judged from its cached read). */
+  durationMs?: number;
   /** Short machine code (e.g. "timeout", "dns_nxdomain", "tcp_refused"). */
   error?: string;
   /** Human-readable detail (safe - never contains secrets). */
@@ -24,6 +26,15 @@ export interface ProbeResult {
    * worst case (`probeFetchLimit` in checks/runner.ts).
    */
   fetches?: number;
+  /**
+   * How a failed probe's confirmation re-check should go: "skip" when asking
+   * again can't change the answer (RDAP says the domain expired, or the result
+   * came from a cached read), "defer" when asking now would only be refused
+   * again (a 429), so the confirmation waits for the next run.
+   */
+  recheck?: "skip" | "defer";
+  /** A domain check's new cached read to store (monitor_state.domain_cache); absent leaves it as is. */
+  domainCache?: DomainCache;
 }
 
 /** The classified result of one full check cycle for a monitor. */
@@ -44,7 +55,8 @@ export interface CheckOutcome {
   /**
    * What the confirmation re-check did, when the first check failed:
    * "confirmed" (it failed too), "cleared" (it passed, so no incident), or
-   * "deferred" (the run had no budget left for it; the caller must not persist
+   * "deferred" (the run had no budget left for it, or RDAP rate limited the
+   * lookup so a re-check now would be refused too; the caller must not persist
    * this outcome and leaves the monitor due for the next run).
    * Absent when the first check passed or no re-check applied.
    */
@@ -52,6 +64,8 @@ export interface CheckOutcome {
   assertionFailures?: string[];
   /** Type-specific structured detail (resolved records, domain expiry, …). */
   meta?: unknown;
+  /** A domain check's new cached read to store; absent leaves the stored one as is. */
+  domainCache?: DomainCache;
   /** Outbound requests the whole cycle made: every probe, redirect hops included. */
   fetches: number;
   /** Epoch ms when the cycle completed. */

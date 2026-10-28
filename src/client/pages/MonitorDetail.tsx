@@ -111,6 +111,24 @@ interface SampleMeta {
   records?: string[];
   expiresAt?: string;
   daysUntil?: number;
+  /** Domain monitors: when the expiry date was read from RDAP (epoch ms). */
+  checkedAt?: number;
+  /** Domain monitors: the latest RDAP refresh failed, so the earlier read was used. */
+  lookupError?: { code: string; at: number };
+}
+
+/** Why a domain monitor's latest RDAP refresh failed, in words. */
+function lookupFailure(code: string): string {
+  switch (code) {
+    case "rdap_rate_limited":
+      return "rate limited";
+    case "rdap_timeout":
+      return "timed out";
+    case "rdap_no_expiry":
+      return "no expiry date";
+    default:
+      return "RDAP error";
+  }
 }
 function readMeta(meta: unknown): SampleMeta {
   if (!meta || typeof meta !== "object") return {};
@@ -121,6 +139,11 @@ function readMeta(meta: unknown): SampleMeta {
   }
   if (typeof m.expiresAt === "string") out.expiresAt = m.expiresAt;
   if (typeof m.daysUntil === "number") out.daysUntil = m.daysUntil;
+  if (typeof m.checkedAt === "number") out.checkedAt = m.checkedAt;
+  const le = m.lookupError as Record<string, unknown> | undefined;
+  if (le && typeof le === "object" && typeof le.code === "string" && typeof le.at === "number") {
+    out.lookupError = { code: le.code, at: le.at };
+  }
   return out;
 }
 
@@ -536,6 +559,15 @@ export default function MonitorDetail() {
                       {latestMeta.daysUntil != null
                         ? ` · in ${latestMeta.daysUntil} days`
                         : ""}
+                      {latestMeta.checkedAt != null && !latestMeta.lookupError
+                        ? ` · read ${formatRelativeTime(latestMeta.checkedAt)}`
+                        : ""}
+                    </div>
+                  )}
+                  {latestMeta.lookupError && latestMeta.checkedAt != null && (
+                    <div className="mt-1 text-xs text-degraded">
+                      Last lookup failed ({lookupFailure(latestMeta.lookupError.code)}), using
+                      the expiry read {formatRelativeTime(latestMeta.checkedAt)}
                     </div>
                   )}
                 </>

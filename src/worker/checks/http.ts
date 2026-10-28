@@ -47,6 +47,8 @@ const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 export const MAX_REDIRECTS = 5;
 
 export interface HttpCheckResult extends ProbeResult {
+  /** An HTTP check always makes its request, so it always has a duration. */
+  durationMs: number;
   statusCode?: number;
   /** True when the response matches the Render "Service Suspended" signature. */
   suspended?: boolean;
