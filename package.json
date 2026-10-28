@@ -1,6 +1,6 @@
 {
   "name": "open-ping",
-  "version": "0.8.3",
+  "version": "0.9.0",
   "description": "Open-source, self-hosted uptime monitoring and public status page running entirely in your own Cloudflare account.",
   "license": "MIT",
   "type": "module",

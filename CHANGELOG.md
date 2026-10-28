@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0 - 2026-10-28
+
+A redesigned app: week, month and quarter history with clearer charts, grouped incidents, a Maintenance page that explains itself, shorter Settings, and a Developers page with API tokens and one-step Claude setup.
+
+### New
+
+- Shorter Settings pages, a Developers page with API tokens, and an Alerts page ([#41](https://github.com/n8watkins/open-ping/pull/41))
+- Week, month and quarter history on the Overview and monitor pages ([#42](https://github.com/n8watkins/open-ping/pull/42))
+- Grouped incidents, a clearer Maintenance page and a more useful monitor list ([#43](https://github.com/n8watkins/open-ping/pull/43))
+
 ## 0.8.3 - 2026-10-28
 
 ### Fixed
