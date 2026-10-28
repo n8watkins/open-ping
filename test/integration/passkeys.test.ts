@@ -178,8 +178,11 @@ describe("passkeys", () => {
     const list = await (await browser.fetch("/api/passkeys")).json<{
       passkeys: { name: string; lastUsedAt: number | null }[];
       rpId: string;
+      appUrlFromEnv: boolean;
     }>();
     expect(list.rpId).toBe(RP_ID);
+    // APP_URL is a Worker variable here, so the Installation URL setting can't move passkeys.
+    expect(list.appUrlFromEnv).toBe(true);
     expect(list.passkeys).toHaveLength(1);
     expect(list.passkeys[0]!.lastUsedAt).not.toBeNull();
   });

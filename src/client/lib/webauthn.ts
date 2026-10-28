@@ -202,13 +202,72 @@ export async function registerPasskey<T>(
   return api<T>(`${base}/verify`, { method: "POST", json: { credential }, ...request });
 }
 
-/** How many passkeys a new Installation URL would strand (bound to another hostname). */
-export function strandedPasskeys(appUrl: string, passkeys: { rpId: string }[]): number {
-  let host: string;
+/** What GET /api/passkeys reports about passkeys and the other ways in. */
+export interface PasskeySignIn {
+  passkeys: { rpId: string }[];
+  /** The hostname passkeys work at now. */
+  rpId: string;
+  /** The origin passkeys work at now. */
+  origin: string;
+  /** The APP_URL Worker variable sets the address, so the Installation URL setting can't move it. */
+  appUrlFromEnv: boolean;
+  otherSignIn: { github: boolean; email: boolean };
+}
+
+/** The passkeys a new Installation URL would stop, and the ways in left afterwards. */
+export interface InstallationUrlImpact {
+  /** Passkeys that work now and would stop working. */
+  stranded: number;
+  newHost: string;
+  /** Passkeys already bound to the new hostname, which would start working. */
+  passkeysForNewHost: number;
+  github: boolean;
+  email: boolean;
+}
+
+/**
+ * What saving `appUrl` as the Installation URL does to passkeys, or null when
+ * it changes nothing for them: the value is unchanged or not a URL yet, the
+ * APP_URL Worker variable sets the address anyway, the hostname stays the
+ * same, or no passkey works at the current hostname (one already stranded by
+ * an earlier change isn't stranded again).
+ */
+export function installationUrlImpact(
+  appUrl: string,
+  savedUrl: string | null | undefined,
+  state: PasskeySignIn | null | undefined,
+): InstallationUrlImpact | null {
+  if (!state || state.appUrlFromEnv) return null;
+  if (appUrl.trim() === (savedUrl ?? "").trim()) return null;
+  let newHost: string;
   try {
-    host = new URL(appUrl).hostname;
+    newHost = new URL(appUrl).hostname;
   } catch {
-    return 0; // Not a URL yet; the server rejects it on save.
+    return null; // Not a URL yet; the server rejects it on save.
   }
-  return passkeys.filter((p) => p.rpId !== host).length;
+  if (newHost === state.rpId) return null;
+  const stranded = state.passkeys.filter((p) => p.rpId === state.rpId).length;
+  if (stranded === 0) return null;
+  return {
+    stranded,
+    newHost,
+    passkeysForNewHost: state.passkeys.filter((p) => p.rpId === newHost).length,
+    github: state.otherSignIn.github,
+    email: state.otherSignIn.email,
+  };
+}
+
+/** The confirmation shown before saving an Installation URL that strands passkeys. */
+export function installationUrlWarning(impact: InstallationUrlImpact): string {
+  const { stranded, newHost, passkeysForNewHost: forNew } = impact;
+  const lead = `Your ${stranded} ${stranded === 1 ? "passkey stops" : "passkeys stop"} working at the new address.`;
+  const ways = [
+    forNew > 0 && (forNew === 1 ? `the passkey you added for ${newHost}` : `the ${forNew} passkeys you added for ${newHost}`),
+    impact.github && "GitHub",
+    impact.email && "an email link",
+  ].filter((w): w is string => !!w);
+  const fallback = ways.length
+    ? `You can still sign in there with ${ways.length === 1 ? ways[0] : `${ways.slice(0, -1).join(", ")} or ${ways.at(-1)}`} and add new passkeys.`
+    : `${stranded === 1 ? "It is" : "They are"} your only way to sign in, so you would need a new SETUP_TOKEN and /recover to get back in.`;
+  return `${lead} ${fallback} Save anyway?`;
 }

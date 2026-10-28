@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
 import { createSession, revokeAllSessions } from "../lib/sessions";
+import { appUrlFromEnv } from "../lib/app-origin";
 import { hitRateLimit } from "../db/rate-limit";
 import { getAdminEmail, getAdminGithubLogin } from "../lib/admin";
 import { isSetupComplete, isSetupTokenUnspent, spendSetupToken } from "../db/setup";
@@ -100,6 +101,8 @@ passkeysAdmin.get("/", async (c) => {
     passkeys: (await listPasskeys(c.env)).map(summarize),
     rpId: rp.rpId,
     origin: rp.origin,
+    // When set, the Installation URL setting can't move passkeys (lib/app-origin.ts).
+    appUrlFromEnv: appUrlFromEnv(c.env),
     currentPasskeyId: session?.identity_kind === "passkey" ? session.identity : null,
     otherSignIn: await otherSignInMethods(c.env),
   });
