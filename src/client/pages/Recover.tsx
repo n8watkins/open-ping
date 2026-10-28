@@ -60,7 +60,7 @@ export default function Recover() {
       await registerPasskey("/api/auth/passkeys/recover", name.trim() || "Passkey", {
         headers: { "x-setup-token": token.trim() },
       });
-      window.location.assign("/settings#sign-in");
+      window.location.assign("/settings?recovered=1#sign-in");
     } catch (err) {
       setError(recoveryError(err));
     } finally {
@@ -79,7 +79,7 @@ export default function Recover() {
           <h1 className="text-center text-lg font-semibold tracking-tight text-ink">Recover access</h1>
           <p className="mt-3 text-sm leading-relaxed text-ink-muted">
             Lost every passkey? Set a new setup token in Cloudflare, then enter it here to create a new passkey and
-            sign in. Each token works once.
+            sign in. Each token works once, and every other device is signed out.
           </p>
           <pre className="mt-3 overflow-x-auto rounded-lg border border-line bg-canvas/60 px-3 py-2 font-mono text-xs text-ink">
             npx wrangler secret put SETUP_TOKEN

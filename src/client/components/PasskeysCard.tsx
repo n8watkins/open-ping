@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Fingerprint, Loader2, Plus, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import { useFetch } from "../lib/useFetch";
@@ -45,6 +46,15 @@ export function PasskeysCard({ csrf }: { csrf: string | undefined }) {
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // /recover lands here: every other session was just signed out, but a lost
+  // device's passkey still works until it is removed.
+  const [params, setParams] = useSearchParams();
+  const recovered = params.has("recovered");
+  function dismissRecovered() {
+    const next = new URLSearchParams(params);
+    next.delete("recovered");
+    setParams(next, { replace: true, preventScrollReset: true });
+  }
 
   const supported = passkeysSupported();
   const here = hostMatchesRpId(data?.rpId);
@@ -121,6 +131,24 @@ export function PasskeysCard({ csrf }: { csrf: string | undefined }) {
           </p>
         ) : data ? (
           <div className="space-y-4">
+            {recovered && (
+              <div
+                role="status"
+                className="flex flex-col gap-2 rounded-lg border border-degraded/40 bg-degraded/10 px-3 py-2.5 text-sm text-ink sm:flex-row sm:items-start"
+              >
+                <p className="flex-1">
+                  Access recovered, and every other device was signed out. Remove any passkey below that you no longer
+                  have or don&apos;t recognize: it still signs in until you do.
+                </p>
+                <button
+                  type="button"
+                  onClick={dismissRecovered}
+                  className="self-start rounded-md px-2 py-0.5 text-xs font-medium text-ink-muted hover:bg-surface-2 hover:text-ink"
+                >
+                  Done
+                </button>
+              </div>
+            )}
             {data.passkeys.length === 0 ? (
               <p className="rounded-lg border border-dashed border-line px-3 py-3 text-sm text-ink-muted">
                 No passkeys yet.

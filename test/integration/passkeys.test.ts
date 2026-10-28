@@ -341,6 +341,10 @@ describe("passkeys", () => {
     expect(wrong.status).toBe(403);
     expect(await wrong.json()).toEqual({ error: "setup_token_invalid" });
 
+    // A browser still signed in (perhaps the one that lost control) before recovery.
+    const before = new Browser("198.51.100.15");
+    expect((await signIn(before, laptop)).status).toBe(200);
+
     const header = { "x-setup-token": RECOVERY_TOKEN };
     const optRes = await owner.fetch("/api/auth/passkeys/recover/options", {
       method: "POST",
@@ -362,6 +366,10 @@ describe("passkeys", () => {
     expect(owner.cookies.has("op_session")).toBe(true);
     const me = await (await owner.fetch("/api/auth/me")).json<Record<string, unknown>>();
     expect(me).toMatchObject({ authenticated: true, identity: "New laptop", identityKind: "passkey" });
+    // Recovery signs out every other device: only the new session is left.
+    expect((await (await before.fetch("/api/auth/me")).json<{ authenticated: boolean }>()).authenticated).toBe(false);
+    const sessions = await env.DB.prepare("SELECT COUNT(*) AS n FROM sessions").first<{ n: number }>();
+    expect(sessions?.n).toBe(1);
 
     const reuse = await new Browser("198.51.100.12").fetch("/api/auth/passkeys/recover/options", {
       method: "POST",

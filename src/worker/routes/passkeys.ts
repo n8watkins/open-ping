@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
-import { createSession } from "../lib/sessions";
+import { createSession, revokeAllSessions } from "../lib/sessions";
 import { hitRateLimit } from "../db/rate-limit";
 import { getAdminEmail, getAdminGithubLogin } from "../lib/admin";
 import { isSetupComplete, isSetupTokenUnspent, spendSetupToken } from "../db/setup";
@@ -235,6 +235,9 @@ passkeyAuth.post("/recover/verify", async (c) => {
     await spendSetupToken(c.env);
     // Registering it was this sign-in, so it counts as used.
     await recordPasskeyUse(c.env, row, row.sign_count, row.backup_state === 1);
+    // Recovery means control of the account was in doubt: sign out every
+    // device, whichever way it signed in, before starting this session.
+    await revokeAllSessions(c.env);
     await createSession(c, row.id, "passkey");
     return c.json({ ok: true, passkey: summarize(row) }, 201);
   } catch (e) {
