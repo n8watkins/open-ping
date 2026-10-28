@@ -11,6 +11,7 @@ The following values can be configured with `wrangler secret put` or in the Clou
 - `MASTER_KEY` encrypts sensitive values stored in D1.
 - `MASTER_KEY_PREVIOUS` is set only while rotating `MASTER_KEY`: it holds the old key, which OpenPing then uses to read but never to write.
 - `SETUP_TOKEN` protects the unauthenticated first-run setup flow and stops working after setup is complete.
+  A new value, different from the one setup finished with, can be used once to recover access with a new passkey ([Passkeys](#passkeys)).
 - `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` configure GitHub OAuth.
 - `RESEND_API_KEY` authorizes email delivery.
 - `ADMIN_GITHUB_LOGIN` and `ADMIN_EMAIL` identify the single allowed administrator.
@@ -75,7 +76,8 @@ Normal monitor and channel API responses redact modeled secret fields, even thou
 ### One-way hashes
 
 - The random session cookie token is stored only as a SHA-256 session identifier.
-- GitHub OAuth state and email magic-link tokens are stored only as SHA-256 identifiers and are single use.
+- GitHub OAuth state, email magic-link tokens and passkey challenges are stored only as SHA-256 identifiers and are single use.
+- The `SETUP_TOKEN` that finished setup, or last recovered access, is stored as a SHA-256 hash (`setup_token_spent_hash`) so it can't be used again.
 - New heartbeat ingestion tokens are stored only as SHA-256 hashes.
 - A heartbeat token is returned in plaintext once when the monitor is created or the token is rotated.
 - Normal monitor API responses do not reveal a heartbeat ingestion token.
@@ -93,6 +95,8 @@ D1 necessarily retains operational and account metadata in plaintext, including:
 - Notification-channel names, non-secret configuration, delivery health, and last-error text.
 - Notification outbox routing targets, event types, retry state, and errors.
 - Session administrator identity, CSRF secret, expiry, last-seen time, IP address, and user agent.
+- Passkey public keys (COSE), credential ids, names, signature counters, hostnames and timestamps, and the admin's random WebAuthn user handle (`passkey_user_handle`).
+  A public key can only verify signatures; it can't be used to sign in.
 - Authentication-token metadata such as a magic-link email address, even though the bearer token itself is hashed.
 - Rate-limit keys and counters, which can include client IP addresses.
 - Push device labels, user agents, platform names, timestamps, and delivery health.
@@ -259,6 +263,44 @@ Set a fresh key so that new values are protected again:
    ```
 
 5. Run **Re-encrypt now** once to seal any legacy plaintext values under the new key, and confirm that the status reports no unreadable values.
+
+## Passkeys
+
+The administrator can sign in with passkeys (WebAuthn) as well as, or instead of, GitHub and email.
+Verification is implemented with Web Crypto only, in `src/worker/lib/webauthn.ts` and `src/worker/lib/cbor.ts`, with no third-party WebAuthn library.
+
+- **Relying party.** The RP ID is the hostname of `APP_URL` (or the wizard's `app_url`; before either exists, the request's own host) and the expected origin is that origin exactly.
+  A passkey therefore works only on that hostname: one made on `openping.n8builds.dev` does not work on `open-ping.<subdomain>.workers.dev`, and changing `APP_URL` strands every existing passkey (sign in another way, or recover, and add new ones).
+  Each passkey records the RP ID it was made for.
+- **Challenges** are 32 random bytes, stored in `auth_tokens` only as a SHA-256 id, valid for 5 minutes, and consumed with one `DELETE ... RETURNING`, so each can be answered once; a failed answer spends it too.
+  They are also bound to the browser that asked for them with an HttpOnly, Secure, `SameSite=Strict` cookie that must match in constant time.
+- **Checks on every ceremony:** client data type, challenge and origin (and not `crossOrigin`); the RP ID hash; user presence **and user verification** (a PIN, biometric or device unlock); ES256 (P-256) or RS256 (2048-bit or larger) keys only.
+  Sign-in and recovery POSTs from another `Origin` are refused before any work.
+- **Attestation** is requested as `none` and never trusted: a `none` statement must be empty, and any other format's statement is ignored, because OpenPing doesn't restrict which authenticators an admin uses.
+- **Sign-in** is usernameless (discoverable credentials); the browser may also offer passkeys in the email field's autofill.
+  The returned user handle must be this install's.
+  A signature counter must increase whenever either side is non-zero, and the update is a compare-and-swap, so a cloned authenticator or a replayed counter is refused; synced passkeys report 0 and are allowed.
+  A successful sign-in creates exactly the same session as GitHub and email (cookie, CSRF secret, 30 days).
+- **Rate limits:** sign-in options and verification share 30 a minute per IP and 600 a minute in total; recovery allows 5 a minute per IP and 20 in total.
+- **Registration** needs a signed-in browser session with its CSRF token (not the `API_TOKEN`), or, during first-run setup, the `SETUP_TOKEN`.
+- **Removal** of a passkey ends every session signed in with it.
+  The last passkey can't be removed while it is the only working way in (no GitHub app plus admin login, and no admin email plus `RESEND_API_KEY`).
+  "Sign out everywhere" ends every session, whichever way it signed in.
+
+### Recovery
+
+If every passkey is lost, GitHub or email sign-in still work where they are set up.
+Otherwise the Cloudflare account is the root of trust:
+
+1. Set a new random `SETUP_TOKEN`: `npx wrangler secret put SETUP_TOKEN`, or the dashboard's Variables and Secrets.
+2. Open `/recover` on the install's own address, enter the token, and create a passkey; you are signed in.
+3. Remove lost passkeys in Settings > Passkeys.
+
+Recovery accepts only a token whose hash differs from `setup_token_spent_hash`, then stores the new hash, so each token works once and the token that set the install up never does.
+On installs finished before passkeys existed nothing is recorded yet: the first passkey registration records the token set at that time, and recovery refuses until a new one is set.
+Anyone who can set Worker secrets can already change everything about the install, so this adds no new way in.
+
+Passkeys are not part of the JSON backup export (they are tied to a hostname); a D1 export includes them.
 
 ## Outbound alert destinations
 

@@ -569,6 +569,13 @@ Ship 1.0 first so the stage 1 gate (about 20 sign-ups in 8 weeks) is measured ag
 | 2.4 | If 2.3 works: the button on `/install` and the hero, the manual steps kept below | M | `/install` visits that end in a deployed install (GitHub repository copies per week as a proxy) |
 | 2.5 | First check right away on the first monitor, and a one-field empty state | S | Share of new installs with a monitor in their first session |
 
+Notes on how 2.1 and 2.2 were built (branch `feat/passkeys`):
+
+- 2.1: the wizard's Administrator step creates the first passkey under the `SETUP_TOKEN` guard, and setup can finish with a passkey alone; Settings > Passkeys adds and removes more.
+  The sign-in screen offers "Sign in with a passkey" only when one exists, and only on the hostname passkeys are bound to (`APP_URL`'s); elsewhere it points there.
+  Recovery is `/recover` with a new `SETUP_TOKEN`, which works once ([SECURITY.md](./SECURITY.md#passkeys)).
+- 2.2: `/install`, `docs/INSTALL.md` and the wizard treat the GitHub OAuth app as optional, a backup way in next to email.
+
 ### Stage 4: Hosted sign-up and sign-in
 
 | # | Change | Effort | Metric |
