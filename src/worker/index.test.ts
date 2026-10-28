@@ -70,6 +70,19 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
     );
   });
 
+  it("still serves the app shell at /status/:slug next to the feed routes", async () => {
+    let assetUrl = "";
+    const res = await worker.fetch!(
+      new Request("https://example.com/status/checkout"),
+      makeEnv((request) => {
+        assetUrl = request.url;
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(assetUrl).toBe("https://example.com/");
+  });
+
   it("serves the plain app shell at / unless HOME_PAGE is landing", async () => {
     const res = await worker.fetch!(new Request("https://example.com/"), makeEnv(), ctx);
     expect(res.status).toBe(200);

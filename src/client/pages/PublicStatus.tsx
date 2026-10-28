@@ -6,9 +6,11 @@ import {
   CheckCircle2,
   CircleSlash,
   ExternalLink,
+  Hourglass,
   History,
   Loader2,
   MoonStar,
+  Rss,
   Wrench,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
@@ -24,8 +26,13 @@ import {
   formatMs,
   formatPct,
   formatRelativeTime,
+  formatShortDateTime,
   formatSince,
 } from "../lib/format";
+import {
+  INCIDENT_UPDATE_LABELS,
+  type IncidentUpdateStatus,
+} from "../../shared/incident-updates";
 
 /* ------------------------------------------------------------------ *
  * Response shape (GET /api/public/status). Defined locally - the
@@ -38,7 +45,8 @@ type Overall =
   | "partial_outage"
   | "major_outage"
   | "maintenance"
-  | "all_off";
+  | "all_off"
+  | "awaiting_data";
 
 type ServiceState =
   | "operational"
@@ -76,14 +84,24 @@ interface ServiceGroup {
   services: PublicService[];
 }
 
+interface PublicIncidentUpdate {
+  id: string;
+  status: IncidentUpdateStatus;
+  message: string;
+  at: number;
+}
+
 interface PublicIncident {
   id: string;
   title: string;
+  /** The admin's one-line summary. */
   message: string | null;
   startedAt: number;
   resolvedAt: number | null;
   durationSeconds: number | null;
   monitorName: string | null;
+  /** Status updates, newest first. Optional for an older server. */
+  updates?: PublicIncidentUpdate[];
 }
 
 interface MaintenanceWindow {
@@ -175,6 +193,15 @@ const OVERALL_META: Record<Overall, OverallMeta> = {
     icon: <CircleSlash className="size-6" />,
     label: "No public services",
   },
+  // Every service on the page has yet to be checked: say so instead of
+  // claiming anything is operational.
+  awaiting_data: {
+    card: "border-line bg-surface-2/40",
+    iconWrap: "bg-surface-2",
+    text: "text-ink-muted",
+    icon: <Hourglass className="size-6" />,
+    label: "Waiting for the first checks",
+  },
 };
 
 // `all_off` with services on the page means every one of them is outside its
@@ -191,7 +218,8 @@ const ALL_SCHEDULED_OFF_META: OverallMeta = {
 function overallMetaFor(overall: Overall, serviceCount: number): OverallMeta {
   return overall === "all_off" && serviceCount > 0
     ? ALL_SCHEDULED_OFF_META
-    : OVERALL_META[overall];
+    : // A newer server may send a state this build doesn't know yet.
+      (OVERALL_META[overall] ?? OVERALL_META.all_off);
 }
 
 interface StateMeta {
@@ -323,10 +351,17 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
   // when they are http(s); a `javascript:` value would otherwise execute from
   // an href/src (rel/target do not prevent that).
   const safeLogo = safeHttpUrl(page.logo);
+
+  // This page's RSS and Atom feeds (src/worker/routes/feeds.ts). The <link>s
+  // below are hoisted into <head> by React, for feed autodiscovery.
+  const feedBase = slug ? `/status/${encodeURIComponent(slug)}` : "/status";
+  const feeds = { rss: `${feedBase}/feed.rss`, atom: `${feedBase}/feed.atom` };
   const safeHomepage = safeHttpUrl(page.homepage);
 
   return (
     <div className="min-h-full bg-canvas text-ink" data-theme={effectiveTheme} style={accentStyle}>
+      <link rel="alternate" type="application/rss+xml" title={`${page.name} status (RSS)`} href={feeds.rss} />
+      <link rel="alternate" type="application/atom+xml" title={`${page.name} status (Atom)`} href={feeds.atom} />
       <div className="mx-auto max-w-3xl px-4 py-10 sm:py-14">
         {/* Header */}
         <header className="flex items-center justify-between gap-4">
@@ -387,9 +422,11 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
               >
                 {/* Off-hours means no recent checks, so "Updated 2d ago" would
                     read like a dead monitor: name the last check instead. */}
-                {overallMeta === ALL_SCHEDULED_OFF_META
-                  ? `Last check ${formatSince(updatedAt)}`
-                  : `Updated ${formatRelativeTime(updatedAt)}`}
+                {overall === "awaiting_data"
+                  ? "No checks have run yet"
+                  : overallMeta === ALL_SCHEDULED_OFF_META
+                    ? `Last check ${formatSince(updatedAt)}`
+                    : `Updated ${formatRelativeTime(updatedAt)}`}
               </p>
             </div>
           </div>
@@ -420,7 +457,10 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
                     : `Started ${formatRelativeTime(inc.startedAt)}`
                 }
                 message={inc.message}
-              />
+                id={`incident-${inc.id}`}
+              >
+                <IncidentTimeline updates={inc.updates} />
+              </Callout>
             ))}
           </div>
         )}
@@ -445,9 +485,18 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
 
         {/* Recent incidents */}
         <section className="mt-10">
-          <h2 className="mb-3 text-sm font-semibold tracking-tight text-ink-muted">
-            Recent incidents
-          </h2>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold tracking-tight text-ink-muted">
+              Recent incidents
+            </h2>
+            <a
+              href={feeds.rss}
+              className="inline-flex shrink-0 items-center gap-1.5 text-xs text-ink-faint transition-colors hover:text-ink"
+            >
+              <Rss className="size-3.5" aria-hidden="true" />
+              Subscribe (RSS)
+            </a>
+          </div>
           {recentIncidents.length === 0 ? (
             <EmptyState
               icon={<History className="size-6" />}
@@ -457,7 +506,7 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
           ) : (
             <Card className="divide-y divide-line p-0">
               {recentIncidents.map((inc) => (
-                <div key={inc.id} className="px-4 py-3.5">
+                <div key={inc.id} id={`incident-${inc.id}`} className="scroll-mt-6 px-4 py-3.5">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                     <h3 className="text-sm font-medium text-ink">{inc.title}</h3>
                     <span className="text-xs text-ink-faint">
@@ -475,6 +524,7 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
                       {inc.message}
                     </p>
                   )}
+                  <IncidentTimeline updates={inc.updates} />
                 </div>
               ))}
             </Card>
@@ -604,9 +654,12 @@ function ServiceRow({ service }: { service: PublicService }) {
           </div>
           <div className="mt-1.5 flex items-center justify-between text-[11px] text-ink-faint">
             <span>90 days ago</span>
-            {service.uptime90d != null && (
-              <span>{formatPct(service.uptime90d)} uptime</span>
-            )}
+            {/* A service that was never checked has earned no uptime yet. */}
+            <span>
+              {service.uptime90d != null
+                ? `${formatPct(service.uptime90d)} uptime`
+                : "No data yet"}
+            </span>
             <span>Today</span>
           </div>
         </div>
@@ -621,15 +674,19 @@ function Callout({
   title,
   meta,
   message,
+  id,
+  children,
 }: {
   toneClass: string;
   icon: ReactNode;
   title: string;
   meta?: string;
   message?: string | null;
+  id?: string;
+  children?: ReactNode;
 }) {
   return (
-    <div className={cn("rounded-card border p-4", toneClass)}>
+    <div id={id} className={cn("scroll-mt-6 rounded-card border p-4", toneClass)}>
       <div className="flex items-start gap-3">
         <span className="mt-0.5 shrink-0">{icon}</span>
         <div className="min-w-0 flex-1">
@@ -638,9 +695,59 @@ function Callout({
             {meta && <span className="text-xs text-ink-faint">{meta}</span>}
           </div>
           {message && <p className="mt-1 text-sm text-ink-muted">{message}</p>}
+          {children}
         </div>
       </div>
     </div>
+  );
+}
+
+/** Dot and label color per update status (explicit classes for the extractor). */
+const UPDATE_TONE: Record<IncidentUpdateStatus, { dot: string; text: string }> = {
+  investigating: { dot: "bg-down", text: "text-down" },
+  identified: { dot: "bg-warming", text: "text-warming" },
+  monitoring: { dot: "bg-maint", text: "text-maint" },
+  resolved: { dot: "bg-up", text: "text-up" },
+};
+
+/**
+ * An incident's status updates, newest first, each with its status, when it
+ * was posted (relative and absolute) and the admin's message.
+ */
+function IncidentTimeline({ updates }: { updates?: PublicIncidentUpdate[] }) {
+  if (!updates || updates.length === 0) return null;
+  return (
+    <ol aria-label="Updates" className="mt-3 space-y-3 border-l border-line pl-4">
+      {updates.map((u) => {
+        const tone = UPDATE_TONE[u.status] ?? UPDATE_TONE.investigating;
+        return (
+          <li key={u.id} className="relative">
+            <span
+              aria-hidden="true"
+              className={cn(
+                "absolute top-1.5 -left-[21px] size-2 rounded-full ring-2 ring-canvas",
+                tone.dot,
+              )}
+            />
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className={cn("text-xs font-semibold", tone.text)}>
+                {INCIDENT_UPDATE_LABELS[u.status] ?? u.status}
+              </span>
+              <time
+                dateTime={new Date(u.at).toISOString()}
+                title={formatDateTime(u.at)}
+                className="text-xs text-ink-faint"
+              >
+                {formatRelativeTime(u.at)} · {formatShortDateTime(u.at)}
+              </time>
+            </div>
+            <p className="mt-0.5 text-sm break-words whitespace-pre-line text-ink-muted">
+              {u.message}
+            </p>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 

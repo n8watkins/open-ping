@@ -11,6 +11,11 @@ import {
   type StatusPageRecord,
 } from "../db/status-pages";
 import type { MonitorState } from "../../shared/states";
+import {
+  updatesForIncidents,
+  type IncidentUpdate,
+  type IncidentUpdateStatus,
+} from "../db/incident-updates";
 
 /**
  * Public status-page API mounted at /api/public (PRD §15). This router is
@@ -57,7 +62,8 @@ export type OverallStatus =
   | "partial_outage"
   | "major_outage"
   | "maintenance"
-  | "all_off";
+  | "all_off"
+  | "awaiting_data";
 
 /** One day in the 90-day uptime bar strip. */
 interface PublicBar {
@@ -84,14 +90,26 @@ interface PublicService {
   bars: PublicBar[];
 }
 
-interface PublicIncident {
+/** One admin-posted status update, as the public sees it. */
+export interface PublicIncidentUpdate {
+  id: string;
+  status: IncidentUpdateStatus;
+  message: string;
+  /** When it was posted (epoch ms). */
+  at: number;
+}
+
+export interface PublicIncident {
   id: string;
   title: string;
+  /** The admin's one-line public summary (incidents.public_message). */
   message: string;
   startedAt: number;
   resolvedAt: number | null;
   durationSeconds: number | null;
   monitorName: string;
+  /** The status updates, newest first (empty when none were posted). */
+  updates: PublicIncidentUpdate[];
 }
 
 interface PublicMaint {
@@ -124,6 +142,14 @@ interface PublicMaint {
  *
  * `all_off` covers two cases the caller tells apart by the service count: a
  * page with no public services, and a page whose services are all off-hours.
+ *
+ * `unknown` services (never checked yet, warming up or paused) carry no
+ * information, so they never count either way: they cannot make the page
+ * "operational", and a page where every service is unknown reads
+ * `awaiting_data` ("Waiting for the first checks") instead of claiming all
+ * systems are operational. Outage size is measured against the services that
+ * do have a state, so one down service next to a never-checked one is a major
+ * outage, not a partial one.
  */
 export function computeOverall(
   services: { state: PublicServiceState }[],
@@ -134,16 +160,20 @@ export function computeOverall(
   let down = 0;
   let degraded = 0;
   let off = 0;
+  let unknown = 0;
   for (const s of services) {
     if (s.state === "down" || s.state === "suspended") down += 1;
     else if (s.state === "degraded") degraded += 1;
     else if (s.state === "scheduled_off") off += 1;
+    else if (s.state === "unknown") unknown += 1;
   }
+  const known = services.length - unknown;
 
-  if (down > 0) return down === services.length ? "major_outage" : "partial_outage";
+  if (down > 0) return down === known ? "major_outage" : "partial_outage";
   if (hasActiveMaintenance) return "maintenance";
   if (degraded > 0) return "degraded";
-  if (off === services.length) return "all_off";
+  if (known === 0) return "awaiting_data";
+  if (off === known) return "all_off";
   return "operational";
 }
 
@@ -196,13 +226,14 @@ interface DaySummaryRow {
 /**
  * Pure reducer: turn daily summary rows into the 90-day uptime % and the bar
  * strip (one entry per UTC day, oldest first). Days with no data are emitted as
- * `{ uptimePct: null, state: "none" }`; the headline figure is 100 when there
- * is no data at all (nothing was observed, so nothing was down).
+ * `{ uptimePct: null, state: "none" }`; the headline figure is null when there
+ * is no data at all, so a service that was never checked shows "No data yet"
+ * rather than a 100% it never earned.
  */
 export function computeUptimeAndBars(
   rows: DaySummaryRow[],
   now: number,
-): { uptime90d: number; bars: PublicBar[] } {
+): { uptime90d: number | null; bars: PublicBar[] } {
   const byDate = new Map<string, { checks: number; ok: number }>();
   let totalChecks = 0;
   let totalOk = 0;
@@ -231,7 +262,7 @@ export function computeUptimeAndBars(
     bars.push({ date, uptimePct: roundPct(pct), state });
   }
 
-  const uptime90d = totalChecks > 0 ? roundPct((totalOk / totalChecks) * 100) : 100;
+  const uptime90d = totalChecks > 0 ? roundPct((totalOk / totalChecks) * 100) : null;
   return { uptime90d, bars };
 }
 
@@ -329,6 +360,7 @@ interface PublicIncidentRow {
 function toPublicIncident(
   row: PublicIncidentRow,
   publicNames: Map<string, string>,
+  updates: readonly IncidentUpdate[] = [],
 ): PublicIncident {
   const named = publicNames.get(row.monitor_id);
   const monitorName = named ?? "A service";
@@ -340,6 +372,8 @@ function toPublicIncident(
     resolvedAt: row.resolved_at,
     durationSeconds: row.duration_seconds,
     monitorName,
+    // Only the posted copy and when: never who posted it or when it was edited.
+    updates: updates.map((u) => ({ id: u.id, status: u.status, message: u.message, at: u.postedAt })),
   };
 }
 
@@ -626,12 +660,18 @@ publicStatus.get("/status", async (c) => {
   );
 
   // --- Public incidents (public=1 AND on this page; safe columns only) ---
+  // Their updates are looked up only by the ids of incidents that passed that
+  // boundary, so an update can never surface for a private incident.
   const incidents = await loadPublicIncidents(env, pageMonitorIds);
+  const updates = await updatesForIncidents(
+    env,
+    [...incidents.active, ...incidents.recent].map((r) => r.id),
+  );
   const activeIncidents = incidents.active.map((r) =>
-    toPublicIncident(r, publicNames),
+    toPublicIncident(r, publicNames, updates.get(r.id)),
   );
   const recentIncidents = incidents.recent.map((r) =>
-    toPublicIncident(r, publicNames),
+    toPublicIncident(r, publicNames, updates.get(r.id)),
   );
 
   return c.json({
@@ -645,6 +685,56 @@ publicStatus.get("/status", async (c) => {
     maintenance,
   });
 });
+
+// ---------------------------------------------------------------------------
+// Feed data (routes/feeds.ts): the same page resolution and privacy boundary as
+// GET /status, for the RSS and Atom feeds.
+// ---------------------------------------------------------------------------
+
+/** How many incidents a feed lists, newest first. */
+export const FEED_INCIDENT_LIMIT = 50;
+
+export interface PublicFeedData {
+  page: { name: string; description: string | null };
+  /** Public incidents on this page, newest first, each with its updates. */
+  incidents: PublicIncident[];
+}
+
+/**
+ * Everything a status page feed shows: the page's name and its public
+ * incidents with their updates. "not_found" for an unknown slug and for a page
+ * that is turned off, so a feed never reveals more than the page itself.
+ */
+export async function loadPublicFeed(
+  env: Env,
+  slug: string | undefined,
+): Promise<PublicFeedData | "not_found"> {
+  const resolved = await resolvePage(env, slug);
+  if (resolved === "not_found" || !resolved.enabled) return "not_found";
+
+  const visible = (await listMonitors(env)).filter((m) => m.public?.visible === true);
+  const pageMonitors = selectPageMonitors(resolved.include, visible);
+  const page = { name: resolved.page.name, description: resolved.page.description };
+  if (pageMonitors.length === 0) return { page, incidents: [] };
+
+  const publicNames = new Map(pageMonitors.map((m) => [m.id, m.public.name || m.name]));
+  const ids = pageMonitors.map((m) => m.id);
+  const res = await env.DB.prepare(
+    `SELECT id, monitor_id, started_at, resolved_at, duration_seconds, public_message
+       FROM incidents
+      WHERE public = 1 AND monitor_id IN (${ids.map(() => "?").join(", ")})
+      ORDER BY started_at DESC
+      LIMIT ?`,
+  )
+    .bind(...ids, FEED_INCIDENT_LIMIT)
+    .all<PublicIncidentRow>();
+  const rows = res.results ?? [];
+  const updates = await updatesForIncidents(env, rows.map((r) => r.id));
+  return {
+    page,
+    incidents: rows.map((r) => toPublicIncident(r, publicNames, updates.get(r.id))),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // GET /badge.svg - a shields.io-style status badge (bonus).
@@ -664,6 +754,7 @@ const BADGE_META: Record<OverallStatus | "unknown", { label: string; color: stri
   maintenance: { label: "maintenance", color: "#8b8bf5" },
   // Overridden to "off hours" when the page has services and all are off.
   all_off: { label: "no services", color: "#64748b" },
+  awaiting_data: { label: "no data yet", color: "#64748b" },
   unknown: { label: "unknown", color: "#64748b" },
 };
 

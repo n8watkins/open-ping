@@ -28,7 +28,10 @@ export interface RetentionConfig {
 }
 const DEFAULT_RETENTION: RetentionConfig = {
   sampleHours: 24,
-  hourlyDays: 35,
+  // 64 days keeps every hour of last month (in any timezone) until this month
+  // ends, so the monthly uptime report (reports/monthly.ts) never has to
+  // prorate a UTC day row at the month's edges.
+  hourlyDays: 64,
   dailyDays: 400,
 };
 
@@ -207,7 +210,7 @@ export function resolveRetention(stored: Partial<RetentionConfig> | null | undef
  *
  *  1. Recompute DAY summaries from their constituent HOUR rows.
  *  2. Recompute MONTH summaries from their constituent DAY rows.
- *  3. Prune expired tiers per the retention horizons: samples > 24h, hour > 35d,
+ *  3. Prune expired tiers per the retention horizons: samples > 24h, hour > 64d,
  *     day > 400d by default (overridable via the `retention` setting). Months
  *     are kept forever. Closed status intervals and scheduler-run diagnostics
  *     past the daily horizon go too (open intervals are always kept).

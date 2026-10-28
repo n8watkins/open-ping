@@ -211,3 +211,85 @@ describe("run", () => {
     expect(r.calls).toEqual([]);
   });
 });
+
+describe("incident updates and the monthly report", () => {
+  it("posts a status update with the given status and message", async () => {
+    const r = await cli(["incidents", "update", "inc_1", "--status", "identified", "--message", "Bad deploy, rolling back"], {
+      "POST /api/incidents/inc_1/updates": [201, { update: { id: "iup_1", status: "identified", postedAt: Date.UTC(2026, 9, 28, 15, 4) } }],
+    });
+    expect(r.code).toBe(0);
+    expect(r.calls[0]).toMatchObject({
+      path: "/api/incidents/inc_1/updates",
+      method: "POST",
+      body: { status: "identified", message: "Bad deploy, rolling back" },
+    });
+    expect(r.stdout).toContain('Posted "Identified" to inc_1');
+  });
+
+  it("needs a known status and a message, and sends nothing otherwise", async () => {
+    const bad = await cli(["incidents", "update", "inc_1", "--status", "fixed", "--message", "x"]);
+    expect(bad.code).toBe(2);
+    expect(bad.stderr).toContain("--status must be one of investigating, identified, monitoring, resolved");
+    const missing = await cli(["incidents", "update", "inc_1", "--status", "monitoring"]);
+    expect(missing.code).toBe(2);
+    expect(missing.stderr).toContain("--message is required");
+    expect(missing.calls).toHaveLength(0);
+  });
+
+  it("shows an incident with its updates", async () => {
+    const r = await cli(["incidents", "get", "inc_1"], {
+      "GET /api/incidents/inc_1": [
+        200,
+        {
+          incident: { id: "inc_1", status: "open", monitorName: "API", public: true, startedAt: 1, resolvedAt: null, publicMessage: "Slow API" },
+          updates: [{ id: "iup_1", status: "monitoring", message: "Fix is out", postedAt: 2 }],
+        },
+      ],
+    });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("(public)");
+    expect(r.stdout).toContain("Monitoring: Fix is out");
+  });
+
+  it("prints the report as a table, or the server's CSV with --csv", async () => {
+    const report = {
+      month: "2026-10",
+      timezone: "America/Los_Angeles",
+      partial: false,
+      monitors: [{ id: "mon_1", name: "API", uptimePct: 99.5, downtimeMinutes: 36, monitoredMinutes: 7200, incidents: 2, avgResponseMs: 180 }],
+      totals: { uptimePct: 99.5, downtimeMinutes: 36, monitoredMinutes: 7200, incidents: 2, avgResponseMs: 180 },
+    };
+    const table = await cli(["report", "--month", "2026-10"], { "GET /api/reports/monthly": [200, { report }] });
+    expect(table.code).toBe(0);
+    expect(table.calls[0].path).toBe("/api/reports/monthly?format=json&month=2026-10");
+    expect(table.stdout).toContain("Uptime report for 2026-10 (America/Los_Angeles)");
+    expect(table.stdout).toMatch(/API\s+mon_1\s+99\.5%\s+36\s+7200\s+2\s+180/);
+    expect(table.stdout).toContain("All monitors");
+
+    const csv = "month,monitor\r\n2026-10,API\r\n";
+    let path = "";
+    let stdout = "";
+    const code = await run(["report", "--csv"], {
+      env: ENV,
+      readFile: () => {
+        throw new Error("no file");
+      },
+      fetch: async (url) => {
+        path = url.replace("https://op.test", "");
+        return new Response(csv, { status: 200, headers: { "content-type": "text/csv" } });
+      },
+      stdout: (s) => (stdout += s),
+      stderr: () => {},
+    });
+    expect(code).toBe(0);
+    expect(path).toBe("/api/reports/monthly?format=csv");
+    expect(stdout).toBe(csv);
+  });
+
+  it("rejects a malformed --month before calling the API", async () => {
+    const r = await cli(["report", "--month", "2026-13"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("--month must be YYYY-MM");
+    expect(r.calls).toHaveLength(0);
+  });
+});

@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   CircleSlash,
+  Hourglass,
   Loader2,
   MoonStar,
   Wrench,
@@ -33,7 +34,8 @@ type Overall =
   | "partial_outage"
   | "major_outage"
   | "maintenance"
-  | "all_off";
+  | "all_off"
+  | "awaiting_data";
 
 type ServiceState =
   | "operational"
@@ -123,6 +125,15 @@ const OVERALL_META: Record<Overall, OverallMeta> = {
     icon: <CircleSlash className="size-5" />,
     label: "No public services",
   },
+  // Every service on the page has yet to be checked: say so instead of
+  // claiming anything is operational.
+  awaiting_data: {
+    card: "border-line bg-surface-2/40",
+    iconWrap: "bg-surface-2",
+    text: "text-ink-muted",
+    icon: <Hourglass className="size-5" />,
+    label: "Waiting for the first checks",
+  },
 };
 
 // `all_off` with services on the page means every one of them is outside its
@@ -139,7 +150,8 @@ const ALL_SCHEDULED_OFF_META: OverallMeta = {
 function overallMetaFor(overall: Overall, serviceCount: number): OverallMeta {
   return overall === "all_off" && serviceCount > 0
     ? ALL_SCHEDULED_OFF_META
-    : OVERALL_META[overall];
+    : // A newer server may send a state this build doesn't know yet.
+      (OVERALL_META[overall] ?? OVERALL_META.all_off);
 }
 
 // Public service states map onto the shared MonitorState palette so the widget

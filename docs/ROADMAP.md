@@ -42,12 +42,13 @@ These are the gaps a buyer is likely to notice, most valuable first:
 - [ ] **SSL certificate expiry monitor** (M, needs a spike).
   UptimeRobot, StatusCake and HetrixTools warn before a certificate expires.
   A Worker's `fetch()` doesn't expose the certificate, so this needs another source, such as Certificate Transparency logs; confirm it works before promising it.
-- [ ] **Incident updates on the status page** (M).
+- [x] **Incident updates on the status page** (M) (this PR).
   A timeline of posts ("Investigating", "Identified", "Fixed") instead of a single message, as Instatus and Better Stack show.
-- [ ] **Status page feeds** (S): RSS and Atom for incidents, so people can follow a page without an account.
+- [x] **Status page feeds** (S): RSS and Atom for incidents, so people can follow a page without an account (this PR).
 - [ ] **Status page email subscribers** (M, double opt-in, unsubscribe links, sending limits).
   Do this after the feeds, and only if people ask.
-- [ ] **Monthly uptime report** (S): a CSV and an email per monitor, for SLAs and clients.
+- [x] **Monthly uptime report** (S): a CSV and an email per monitor, for SLAs and clients (this PR).
+- [ ] Notify channels when an incident update is posted (the outbox has no event for it yet).
 - [ ] **Passkeys for the admin sign-in** (M, landing plan item 2.1), which makes the GitHub OAuth app optional (2.2).
 - [ ] **"Deploy to Cloudflare" button** (M spike, plan items 2.3 and 2.4), to cut the 20-minute install.
 - [ ] **First check right away** when the first monitor is added (S, plan item 2.5).

@@ -27,7 +27,14 @@ import {
 import { buildOverview, monitorTarget } from "../routes/overview";
 import { buildDiagnostics } from "../routes/diagnostics";
 import { rekeyStatus } from "../lib/rekey";
-import { listIncidents, type IncidentWithMonitor } from "../routes/incidents";
+import { listIncidents, type IncidentWithMonitor, type IncidentWithUpdates } from "../routes/incidents";
+import {
+  createIncidentUpdate,
+  INCIDENT_UPDATE_LABELS,
+  INCIDENT_UPDATE_STATUSES,
+  MAX_UPDATE_MESSAGE,
+} from "../db/incident-updates";
+import { monthlyReportFor } from "../routes/reports";
 import { redactChannel } from "../routes/channels";
 import { maintenanceCreateSchema } from "../routes/maintenance";
 import { patchStatusPage } from "../routes/status-pages";
@@ -129,6 +136,16 @@ function incidentLine(i: IncidentWithMonitor, zone: string, now: number): string
     (i.resolvedAt ? `, resolved ${iso(i.resolvedAt, zone)}` : "") +
     `, ${duration(lasted)}${what ? `, ${what}` : ""}`
   );
+}
+
+/** An incident's line plus one indented line per status update, newest first. */
+function incidentWithUpdatesLines(i: IncidentWithUpdates, zone: string, now: number): string[] {
+  return [
+    incidentLine(i, zone, now) + (i.public ? " (public)" : ""),
+    ...i.updates.map(
+      (u) => `  - ${INCIDENT_UPDATE_LABELS[u.status]} at ${iso(u.postedAt, zone)}: ${u.message.slice(0, 300)} [${u.id}]`,
+    ),
+  ];
 }
 
 function maintenanceStatus(w: MaintenanceWindow, now: number): "active" | "upcoming" | "ended" {
@@ -309,7 +326,8 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     "list_incidents",
     {
       title: "List incidents",
-      description: "Incidents, newest first, optionally only open or resolved ones, for one monitor, or since a time.",
+      description:
+        "Incidents, newest first, optionally only open or resolved ones, for one monitor, or since a time. Each includes its status updates (the public timeline), newest first, and whether it is shown on the public status page.",
       inputSchema: z.object({
         status: z.enum(["open", "resolved", "all"]).default("all"),
         monitorId: monitorId.optional(),
@@ -336,7 +354,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         zone(),
       ]);
       const text = page.incidents.length
-        ? [`${page.incidents.length} of ${page.total} incident(s):`, ...page.incidents.map((i) => incidentLine(i, tz, now))].join("\n")
+        ? [`${page.incidents.length} of ${page.total} incident(s):`, ...page.incidents.flatMap((i) => incidentWithUpdatesLines(i, tz, now))].join("\n")
         : "No incidents match.";
       return ok(text, page, tz);
     },
@@ -362,6 +380,38 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
           )].join("\n")
         : "No monitors yet.";
       return ok(text, { windows: uptime.windows, monitors }, tz);
+    },
+  );
+
+  server.registerTool(
+    "get_monthly_report",
+    {
+      title: "Get monthly uptime report",
+      description:
+        "Uptime report for one calendar month in the install's timezone: per monitor uptime %, downtime minutes, monitored minutes, incident count and average response time, plus totals. Off-hours are never counted. Computed from the rollups. Defaults to last month; the current month is reported so far (partial).",
+      inputSchema: z.object({
+        month: z
+          .string()
+          .regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Use YYYY-MM, e.g. 2026-10.")
+          .optional()
+          .describe("YYYY-MM; defaults to the previous calendar month."),
+      }),
+      annotations: READ,
+    },
+    async ({ month }) => {
+      const [r, tz] = await Promise.all([monthlyReportFor(env, month), zone()]);
+      if (!r.ok) return fail(r.message);
+      const rep = r.report;
+      const p = (v: number | null) => (v == null ? "no data" : pct(v));
+      const text = [
+        `Uptime report for ${rep.month} (${rep.timezone})${rep.partial ? ", so far" : ""}: ${p(rep.totals.uptimePct)} overall, ${rep.totals.downtimeMinutes} min down, ${rep.totals.incidents} incident(s).`,
+        ...(rep.monitors.length ? ["Per monitor (uptime, downtime, monitored, incidents, avg response):"] : ["No monitors."]),
+        ...rep.monitors.map(
+          (m) =>
+            `- ${m.name} [${m.id}]: ${p(m.uptimePct)}, ${m.downtimeMinutes} min down, ${m.monitoredMinutes} min monitored, ${m.incidents} incident(s), ${m.avgResponseMs == null ? "-" : `${m.avgResponseMs} ms`}`,
+        ),
+      ].join("\n");
+      return ok(text, { report: { ...rep, from: iso(rep.from, tz), to: iso(rep.to, tz) } }, tz);
     },
   );
 
@@ -640,6 +690,43 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       return ok(
         `Created maintenance window ${window.id} "${window.title ?? "Maintenance"}", ${iso(window.startsAt, tz)} to ${iso(window.endsAt, tz)} (${maintenanceStatus(window, now)}).`,
         { window: { ...window, status: maintenanceStatus(window, now) } },
+        tz,
+      );
+    },
+  );
+
+  server.registerTool(
+    "post_incident_update",
+    {
+      title: "Post incident update",
+      description:
+        "Add a status update to an incident's timeline: investigating, identified, monitoring or resolved, with a message. It shows on the public status page and its RSS/Atom feeds only while the incident is public. It describes the incident and does not open or close it. Write it for the public.",
+      inputSchema: z.object({
+        id: z.string().min(1).max(64).describe("Incident id (inc_...), from list_incidents."),
+        status: z.enum(INCIDENT_UPDATE_STATUSES),
+        message: z.string().min(1).max(MAX_UPDATE_MESSAGE).describe("What happened or what is being done, for the public."),
+      }),
+      annotations: { ...WRITE, idempotentHint: false },
+    },
+    async ({ id, status, message }) => {
+      const trimmed = message.trim();
+      if (!trimmed) return fail("The message is empty.");
+      const r = await createIncidentUpdate(env, id, { status, message: trimmed });
+      if (!r.ok) {
+        return fail(
+          r.error === "not_found"
+            ? "No incident has that id. Call list_incidents to find it."
+            : "This incident already has the most updates allowed (100).",
+        );
+      }
+      const tz = await zone();
+      const visible = await env.DB.prepare("SELECT public FROM incidents WHERE id = ?")
+        .bind(id)
+        .first<{ public: number }>();
+      return ok(
+        `Posted "${INCIDENT_UPDATE_LABELS[status]}" to incident ${id} at ${iso(r.update.postedAt, tz)}.` +
+          (visible?.public ? "" : " The incident is not public, so the update is not on the status page yet."),
+        { update: r.update },
         tz,
       );
     },

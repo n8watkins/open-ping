@@ -111,3 +111,25 @@ export function formatSince(
   }
   return fmt({ month: "short", day: "numeric", year: "numeric" });
 }
+
+/**
+ * Compact absolute date and time for timelines: "Oct 28, 3:04 PM", with the
+ * year added when it isn't the current one. Visitor's timezone and locale
+ * unless `opts` pins them (tests do).
+ */
+export function formatShortDateTime(
+  ts: number,
+  now: number = Date.now(),
+  opts: { locale?: string; timeZone?: string } = {},
+): string {
+  const { locale, timeZone } = opts;
+  const sameYear = calendarKey(ts, timeZone).slice(0, 4) === calendarKey(now, timeZone).slice(0, 4);
+  return new Intl.DateTimeFormat(locale, {
+    timeZone,
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(ts);
+}

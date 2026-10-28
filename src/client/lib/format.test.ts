@@ -5,6 +5,7 @@ import {
   formatMs,
   formatPct,
   formatSince,
+  formatShortDateTime,
 } from "./format";
 
 // Fixed reference instant (epoch ms) so relative-time math is deterministic.
@@ -102,5 +103,14 @@ describe("formatSince", () => {
 
   it("adds the year when it differs", () => {
     expect(formatSince(friday, Date.UTC(2027, 1, 1), opts)).toBe("Oct 23, 2026");
+  });
+});
+
+describe("formatShortDateTime", () => {
+  const opts = { locale: "en-US", timeZone: "UTC" };
+  it("omits the year within the current one and shows it otherwise", () => {
+    const now = Date.UTC(2026, 9, 28, 18);
+    expect(formatShortDateTime(Date.UTC(2026, 9, 28, 15, 4), now, opts)).toBe("Oct 28, 3:04 PM");
+    expect(formatShortDateTime(Date.UTC(2025, 11, 31, 9, 0), now, opts)).toBe("Dec 31, 2025, 9:00 AM");
   });
 });

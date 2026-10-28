@@ -20,6 +20,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export class UsageError extends Error {}
 
 const MONITOR_TYPES = ["http", "heartbeat", "dns", "tcp", "domain"];
+const UPDATE_STATUSES = ["investigating", "identified", "monitoring", "resolved"];
+const UPDATE_LABELS = { investigating: "Investigating", identified: "Identified", monitoring: "Monitoring", resolved: "Resolved" };
 
 // ---------------------------------------------------------------------------
 // Command table. Each command lists its positional arguments and flags; the
@@ -110,6 +112,28 @@ export const COMMANDS = {
       limit: { type: "number", help: "At most this many (default 20, max 500)" },
     },
     run: cmdIncidentsList,
+  },
+  "incidents get": {
+    summary: "Show one incident with its status updates",
+    args: ["id"],
+    run: cmdIncidentsGet,
+  },
+  "incidents update": {
+    summary: "Post a status update to an incident's public timeline",
+    args: ["id"],
+    flags: {
+      status: { type: "string", values: UPDATE_STATUSES, help: "The incident's status now" },
+      message: { type: "string", help: "What happened or what is being done, for the public" },
+    },
+    run: cmdIncidentsUpdate,
+  },
+  report: {
+    summary: "Monthly uptime report: uptime, downtime, incidents and response time per monitor",
+    flags: {
+      month: { type: "string", help: "YYYY-MM (default: last month, in the install's timezone)" },
+      csv: { type: "boolean", help: "Print the CSV instead of a table" },
+    },
+    run: cmdReport,
   },
   uptime: {
     summary: "Uptime per monitor over 24h, 7d, 30d and 90d",
@@ -670,6 +694,59 @@ async function cmdIncidentsList({ api, out, flags }) {
   if (page.total > page.incidents.length) out.line(`(${page.incidents.length} of ${page.total}; use --limit)`);
 }
 
+async function cmdIncidentsGet({ api, out, flags, positionals: [id] }) {
+  const data = await api(`/api/incidents/${encodeURIComponent(id)}`);
+  if (flags.json) return out.json(data);
+  const i = data.incident;
+  out.line(`${i.id}  ${i.status}  ${i.monitorName ?? i.monitorId}${i.public ? "  (public)" : ""}`);
+  out.line(`  started    ${fmtTime(i.startedAt)}`);
+  out.line(`  resolved   ${fmtTime(i.resolvedAt)}`);
+  if (i.publicMessage) out.line(`  summary    ${i.publicMessage}`);
+  if (!data.updates?.length) return out.line("  No status updates yet.");
+  out.line("  Updates (newest first):");
+  for (const u of data.updates) out.line(`  ${fmtTime(u.postedAt)}  ${UPDATE_LABELS[u.status] ?? u.status}: ${u.message}`);
+}
+
+async function cmdIncidentsUpdate({ api, out, flags, positionals: [id] }) {
+  if (!flags.status) throw new UsageError(`--status is required: ${UPDATE_STATUSES.join(", ")}.`);
+  if (!flags.message || !flags.message.trim()) throw new UsageError("--message is required.");
+  const result = await api(`/api/incidents/${encodeURIComponent(id)}/updates`, {
+    method: "POST",
+    body: { status: flags.status, message: flags.message },
+  });
+  if (flags.json) return out.json(result);
+  out.line(`Posted "${UPDATE_LABELS[result.update.status]}" to ${id} at ${fmtTime(result.update.postedAt)} (${result.update.id})`);
+}
+
+async function cmdReport({ api, out, flags }) {
+  if (flags.month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(flags.month)) {
+    throw new UsageError(`--month must be YYYY-MM, got "${flags.month}".`);
+  }
+  if (flags.csv && flags.json) throw new UsageError("Use --csv or --json, not both.");
+  const q = new URLSearchParams({ format: flags.csv ? "csv" : "json" });
+  if (flags.month) q.set("month", flags.month);
+  const data = await api(`/api/reports/monthly?${q}`, { raw: flags.csv });
+  if (flags.csv) return out.raw(data);
+  if (flags.json) return out.json(data);
+  const r = data.report;
+  const pct = (v) => (v == null ? "-" : `${Number(v.toFixed(3))}%`);
+  out.line(`Uptime report for ${r.month} (${r.timezone})${r.partial ? ", so far" : ""}`);
+  out.line("");
+  if (!r.monitors.length) return out.line("No monitors.");
+  const total = { name: "All monitors", id: "", ...r.totals };
+  out.line(
+    table([...r.monitors, total], [
+      ["NAME", (m) => m.name],
+      ["ID", (m) => m.id],
+      ["UPTIME", (m) => pct(m.uptimePct)],
+      ["DOWN MIN", (m) => m.downtimeMinutes],
+      ["MONITORED MIN", (m) => m.monitoredMinutes],
+      ["INCIDENTS", (m) => m.incidents],
+      ["AVG MS", (m) => m.avgResponseMs],
+    ]),
+  );
+}
+
 async function cmdUptime({ api, out, flags }) {
   const data = await api("/api/monitors/uptime");
   const monitors = data.monitors.filter((m) => !flags.monitor || m.id === flags.monitor);
@@ -888,14 +965,14 @@ export async function run(argv, io = {}) {
     return 1;
   }
 
-  const api = async (path, { method = "GET", body } = {}) => {
+  const api = async (path, { method = "GET", body, raw = false } = {}) => {
     let res;
     try {
       res = await fetchImpl(`${config.url}${path}`, {
         method,
         headers: {
           authorization: `Bearer ${config.token}`,
-          accept: "application/json",
+          accept: raw ? "*/*" : "application/json",
           ...(body ? { "content-type": "application/json" } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
@@ -904,6 +981,7 @@ export async function run(argv, io = {}) {
       throw new Error(`Could not reach ${config.url}: ${err.cause?.message ?? err.message}`);
     }
     const text = await res.text();
+    if (raw && res.ok) return text;
     let data;
     try {
       data = text ? JSON.parse(text) : null;
@@ -919,6 +997,7 @@ export async function run(argv, io = {}) {
   const out = {
     line: (s) => stdout(`${s}\n`),
     json: (v) => stdout(`${JSON.stringify(v, null, 2)}\n`),
+    raw: (s) => stdout(s),
   };
 
   try {
