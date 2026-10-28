@@ -61,4 +61,22 @@ describe("computeRetry (pure)", () => {
   it("treats maxAttempts of 1 as a single try then dead", () => {
     expect(computeRetry(1, 1, NOW)).toEqual({ status: "dead", nextAttemptAt: NOW });
   });
+
+  it("waits at least as long as the provider's Retry-After", () => {
+    // backoffMs(1) is 60s; a 429 asking for 5 minutes pushes the retry out.
+    expect(computeRetry(1, 5, NOW, 300_000)).toEqual({ status: "failed", nextAttemptAt: NOW + 300_000 });
+    // A shorter hint never makes the retry sooner than the normal backoff.
+    expect(computeRetry(1, 5, NOW, 1_000)).toEqual({ status: "failed", nextAttemptAt: NOW + backoffMs(1) });
+  });
+
+  it("caps an oversized or invalid Retry-After", () => {
+    expect(computeRetry(1, 5, NOW, 7 * 86_400_000)).toEqual({ status: "failed", nextAttemptAt: NOW + CAP });
+    for (const bad of [Number.NaN, -5, 0, Number.POSITIVE_INFINITY]) {
+      expect(computeRetry(1, 5, NOW, bad).nextAttemptAt).toBe(NOW + backoffMs(1));
+    }
+  });
+
+  it("still marks dead at max attempts whatever the provider asks", () => {
+    expect(computeRetry(5, 5, NOW, 60_000)).toEqual({ status: "dead", nextAttemptAt: NOW });
+  });
 });

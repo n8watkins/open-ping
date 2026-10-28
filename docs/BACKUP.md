@@ -33,6 +33,8 @@ The exporter applies these protections:
 - Heartbeat shared secrets and ingestion tokens are removed.
 - Secret-looking settings are excluded.
 - Internal incident errors and private notes are excluded.
+- Notification channels (Slack, Teams, Discord, Telegram, email and webhook) are not exported at all, so no webhook URL, signing secret or bot token leaves the install.
+  Add them again after a restore; see [Alert channels](./ALERT_CHANNELS.md#backups).
 
 An export contains no usable credentials, but it can still contain operationally sensitive metadata such as monitor URLs, names, schedules, usernames, incident history, and public messages.
 Store it with access controls appropriate for that information.

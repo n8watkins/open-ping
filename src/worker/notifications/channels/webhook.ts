@@ -1,15 +1,13 @@
 /**
  * Generic signed-webhook sender (PRD §12). Pure delivery: serializes a payload
  * and POSTs it, optionally signing the body with an HMAC-SHA256 secret. No DB
- * access, no outbox/retry logic. Runs in the Cloudflare Workers runtime — only
+ * access, no outbox/retry logic. Runs in the Cloudflare Workers runtime - only
  * global `fetch` and Web Crypto (`crypto.subtle`) are used; no Node APIs.
  */
 
-export interface SendResult {
-  ok: boolean;
-  status?: number;
-  error?: string;
-}
+import { parseRetryAfter, type SendResult } from "./http";
+
+export type { SendResult };
 
 /** HMAC-SHA256 of `body` keyed by `secret`, returned as lowercase hex. */
 export async function signPayload(
@@ -83,5 +81,7 @@ export async function sendWebhook(
     ok: false,
     status: res.status,
     error: detail ? `webhook_error: ${detail}` : "webhook_error",
+    // A 429 (or 503) says when to come back; the outbox honours it.
+    retryAfterMs: parseRetryAfter(res.headers.get("Retry-After")),
   };
 }

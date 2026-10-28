@@ -61,7 +61,8 @@ The protections in this section apply when a valid `MASTER_KEY` is configured.
 
 - The complete monitor `config` document is sealed as one AES-GCM value on create and update.
 - Complete monitor configuration includes target URLs and query strings, custom headers, request bodies, authentication credentials, and heartbeat shared secrets.
-- Discord webhook URLs, generic webhook destination URLs, and generic webhook HMAC secrets are encrypted inside notification-channel configuration.
+- Discord, Slack and Microsoft Teams webhook URLs, the Telegram bot token, generic webhook destination URLs, and generic webhook HMAC secrets are encrypted inside notification-channel configuration.
+- A Telegram chat id is not a credential and stays plaintext.
 - Web Push subscription endpoints, `p256dh` keys, and browser authentication secrets are encrypted.
 - A Web Push endpoint also has a SHA-256 digest for indexed lookup without exposing the endpoint.
 - An in-app generated VAPID private key is encrypted in the settings table when `MASTER_KEY` is configured.
@@ -128,7 +129,7 @@ The re-encryption pass and the status report cover every value that `MASTER_KEY`
 | --- | --- | --- |
 | Encrypted settings | `settings` rows with `encrypted = 1`, plus `vapid_private_key` | The generated VAPID private key |
 | Monitor configuration | `monitors.config` | The whole sealed configuration, including legacy field-level values inside it |
-| Notification channel secrets | `notification_channels.config` | Discord URLs, generic webhook URLs and HMAC secrets |
+| Notification channel secrets | `notification_channels.config` | Discord, Slack and Teams webhook URLs, Telegram bot tokens, generic webhook URLs and HMAC secrets |
 | Web Push subscriptions | `push_subscriptions` | Endpoint, `p256dh` and `auth` |
 | Notification outbox payloads | `notification_outbox.payload` | Every payload, including delivered and dead history |
 
@@ -217,7 +218,7 @@ A template install without `deploy.local.json` can drop the `-c` flag.
    npx wrangler secret delete MASTER_KEY_PREVIOUS -c .wrangler.prod.jsonc
    ```
 
-9. Confirm that the status now reads "Every protected value is encrypted with the current key", open a monitor's edit page, and send a test notification to a webhook or Discord channel.
+9. Confirm that the status now reads "Every protected value is encrypted with the current key", open a monitor's edit page, and send a test notification to a webhook, Discord, Slack, Teams or Telegram channel.
 10. Keep the old key and the pre-rotation D1 export together for at least one full backup cycle (30 days is a reasonable minimum), because the export can only be decrypted with the old key.
     Then destroy both together.
 
@@ -239,7 +240,8 @@ Set a fresh key so that new values are protected again:
    - **Monitor configuration:** the whole configuration of each listed monitor is unreadable, so its checks fail until it is fixed.
      Open the monitor's edit page, enter the URL again along with its headers, body and credentials, and save.
      History, schedule and notification settings are kept.
-   - **Notification channel secrets:** in Integrations, edit each listed Discord or webhook channel and enter the URL again.
+   - **Notification channel secrets:** in Integrations, edit each listed Discord, Slack, Teams or webhook channel and enter the URL again, or a Telegram channel's bot token.
+     Until then its deliveries fail with `channel_secret_unreadable` and nothing is sent.
      Re-enter a webhook's HMAC secret as well, because a blank secret keeps the unreadable one, which the status still lists.
    - **VAPID private key:** Web Push cannot sign messages, and existing browser subscriptions belong to the old key pair.
      Delete the stored key pair, generate a new one under Integrations, and subscribe each device again.
@@ -258,10 +260,22 @@ Set a fresh key so that new values are protected again:
 
 5. Run **Re-encrypt now** once to seal any legacy plaintext values under the new key, and confirm that the status reports no unreadable values.
 
+## Outbound alert destinations
+
+Chat-app channels can only send to their provider, checked when a channel is saved and again before every delivery, so a hand-edited row cannot redirect a capability:
+
+- Slack: `https://hooks.slack.com/services/...` or `https://hooks.slack-gov.com/services/...`.
+- Microsoft Teams: an https host ending in `.environment.api.powerplatform.com` or `.logic.azure.com`, with `/workflows/` in the path.
+- Telegram: always `https://api.telegram.org`, and the bot token must match the BotFather format, so it cannot alter the request path.
+
+Discord, Slack, Teams and generic webhook URLs also pass the same SSRF guard as monitor checks (no private, loopback, link-local or metadata addresses, no embedded credentials).
+Provider error text stored in `last_error` has the webhook URL or bot token removed before it is saved.
+See [Alert channels](./ALERT_CHANNELS.md) for the URL patterns and the sources they were checked against.
+
 ## Backups and restores
 
 The in-app JSON export is designed to omit modeled secrets.
-It removes monitor authentication credentials, custom header values, request bodies, heartbeat shared secrets, heartbeat ingestion tokens, secret-named settings, internal incident errors, and private incident notes.
+It leaves out notification channels entirely (so no webhook URL, signing secret or bot token), and it removes monitor authentication credentials, custom header values, request bodies, heartbeat shared secrets, heartbeat ingestion tokens, secret-named settings, internal incident errors, and private incident notes.
 It still includes target URLs and query strings, monitor assertions, schedules, public history, and other non-secret configuration.
 Do not embed credentials in a target URL or assertion value if the JSON export will leave your trusted environment.
 
@@ -291,7 +305,7 @@ It exists only while `API_TOKEN` is set; otherwise it answers `404`.
 - Unauthenticated requests are rejected before any D1 access.
 - Authenticated requests are capped at 120 a minute per install through the `rate_limits` table, and bodies at 256 KB.
 - It is stateless: nothing about an MCP client is stored between requests.
-- Tool results go to the client's model provider, so they are redacted more strictly than REST responses: modeled secrets (HTTP auth passwords and tokens, heartbeat shared secrets, webhook URLs and secrets) are blanked as in the API, and custom header values and request bodies are blanked as in a backup export.
+- Tool results go to the client's model provider, so they are redacted more strictly than REST responses: modeled secrets (HTTP auth passwords and tokens, heartbeat shared secrets, webhook URLs and secrets, Telegram bot tokens) are blanked as in the API, and custom header values and request bodies are blanked as in a backup export.
 - Heartbeat ping tokens are returned only by `create_monitor` and `rotate_heartbeat_token`, matching the API's one-time disclosure.
 - Plaintext operational data does reach the model provider: monitor names and target URLs (with query strings), schedules, incident errors and private notes, maintenance notes and status page settings.
 - Destructive tools (`delete_monitor`, `delete_maintenance_window`, `rotate_heartbeat_token`) are annotated as destructive and refuse to act without `confirm: true`.

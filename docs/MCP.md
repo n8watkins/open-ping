@@ -96,7 +96,7 @@ Read-only tools (annotated `readOnlyHint`):
 | `get_monthly_report` | One calendar month's [uptime report](./STATUS_PAGES.md#monthly-uptime-report) per monitor (uptime, downtime and monitored minutes, incidents, average response) in the install's timezone; `month` (YYYY-MM) defaults to last month. |
 | `get_diagnostics` | Recent scheduler runs (checked, skipped, failures, duration, D1 queries) and table counts. |
 | `get_key_status` | `MASTER_KEY` rotation status: key ids, protected values per storage class by key, unreadable values by location, and whether `MASTER_KEY_PREVIOUS` is safe to delete ([runbook](./SECURITY.md#rotating-master_key)). |
-| `list_channels` | Notification channels and their delivery health, with webhook URLs and secrets blanked. |
+| `list_channels` | Notification channels (email, Slack, Teams, Discord, Telegram, webhook) and their delivery health, with webhook URLs, secrets and Telegram bot tokens blanked. |
 | `list_status_pages` | Status pages with slug, URL, enabled flag and which monitors they show. |
 | `list_categories` | Monitor categories. |
 | `list_maintenance` | Maintenance windows marked active, upcoming or ended; filter by `status`. |

@@ -12,7 +12,7 @@ import {
   SEALED_CONFIG_KEY,
   openConfigStrict,
 } from "./secret-config";
-import { secretFieldsFor } from "../db/channels";
+import { channelSecretFields, secretFieldsFor } from "../db/channels";
 import { sha256hex } from "./ids";
 
 /**
@@ -213,7 +213,8 @@ export const STORAGE_CLASSES: readonly StorageClass[] = [
     },
   },
   {
-    // Discord and generic webhook URLs and the webhook HMAC secret.
+    // Discord, Slack, Teams and generic webhook URLs, the webhook HMAC secret
+    // and the Telegram bot token (see CHANNEL_SECRET_FIELDS in db/channels.ts).
     id: "channel_secrets",
     label: "Notification channel secrets",
     select: (env, after, limit) =>
@@ -477,6 +478,21 @@ export async function runRekeyBatch(
  * forces a classification the value itself cannot carry: "plaintext" for a
  * legacy unsealed location, "invalid" for a row whose JSON cannot be read.
  */
+/**
+ * The (field, JSON path, channel type) rows of every channel secret, built from
+ * the data layer's own list so a new channel type is always counted. It is a
+ * `json_each` table rather than a chain of UNION ALLs, because D1 allows only a
+ * few terms in one compound SELECT. The names are fixed identifiers from code,
+ * never user input, and contain no quotes.
+ */
+const CHANNEL_SECRET_SOURCE = `
+            SELECT json_extract(value, '$.field') AS field,
+                   json_extract(value, '$.path') AS path,
+                   json_extract(value, '$.type') AS type
+              FROM json_each('${JSON.stringify(
+                channelSecretFields().map(({ type, field }) => ({ field, path: `$.${field}`, type })),
+              )}')`;
+
 const VALUE_SOURCES: Record<StorageClassId, string> = {
   settings: `
     SELECT key AS id, 'value' AS field, value AS v,
@@ -503,9 +519,7 @@ const VALUE_SOURCES: Record<StorageClassId, string> = {
            CASE WHEN json_valid(config) THEN json_extract(config, f.path) END AS v,
            CASE WHEN NOT json_valid(config) THEN 'invalid' END AS hint
       FROM notification_channels,
-           (SELECT 'url' AS field, '$.url' AS path, 'discord' AS type
-            UNION ALL SELECT 'url', '$.url', 'webhook'
-            UNION ALL SELECT 'secret', '$.secret', 'webhook') AS f
+           (${CHANNEL_SECRET_SOURCE}) AS f
      WHERE notification_channels.type = f.type
        AND (NOT json_valid(config) OR json_type(config, f.path) = 'text')`,
   push_secrets: `

@@ -1,12 +1,23 @@
 import type { Env } from "../types";
 import type { ChannelRecord } from "../db/channels";
-import { getChannel, recordChannelResult } from "../db/channels";
+import { getChannel, recordChannelResult, secretFieldsFor } from "../db/channels";
 import { getSubscription, recordPushResult } from "../db/push";
 import { claimDue, markSent, markFailed, type OutboxEntry } from "../db/outbox";
 import { getSetting } from "../db/settings";
 import { sendResendEmail } from "./channels/resend";
 import { sendDiscordMessage } from "./channels/discord";
 import { sendWebhook } from "./channels/webhook";
+import { sendSlackMessage, toSlackMessage } from "./channels/slack";
+import { sendTeamsMessage, toTeamsMessage } from "./channels/teams";
+import { sendTelegramMessage, toTelegramMessage } from "./channels/telegram";
+import type { SendResult } from "./channels/http";
+import {
+  checkSlackWebhookUrl,
+  checkTeamsWebhookUrl,
+  checkTelegramBotToken,
+  checkTelegramChatId,
+  type TargetCheck,
+} from "../../shared/channel-targets";
 import { sendWebPush } from "./push/webpush";
 import { getVapid } from "./push/vapid";
 import {
@@ -17,16 +28,15 @@ import {
   type NotificationPayload,
 } from "./payload";
 import { assertSafeUrl } from "../lib/ssrf";
-import { DecryptError } from "../lib/crypto";
+import { DecryptError, isCiphertext } from "../lib/crypto";
 
 const MAX_ATTEMPTS = 5;
 const BATCH = 25;
 const DEFAULT_FROM = "OpenPing <onboarding@resend.dev>";
 
-interface SendResult {
-  ok: boolean;
-  status?: number;
-  error?: string;
+/** A provider-specific destination check failed: never send anywhere else. */
+function invalidTarget(check: TargetCheck, prefix: string): SendResult | null {
+  return check.ok ? null : { ok: false, error: `${prefix}: ${check.reason}` };
 }
 
 /** Deliver one payload to one channel via the appropriate provider. */
@@ -36,6 +46,12 @@ export async function deliverToChannel(
   payload: NotificationPayload,
 ): Promise<SendResult> {
   const cfg = channel.config as Record<string, string | undefined>;
+  // A secret that is still ciphertext here could not be decrypted (for example
+  // the MASTER_KEY that sealed it is gone). Fail closed instead of sending the
+  // ciphertext to a provider as if it were a URL or a bot token.
+  for (const field of secretFieldsFor(channel.type)) {
+    if (isCiphertext(cfg[field])) return { ok: false, error: "channel_secret_unreadable" };
+  }
   switch (channel.type) {
     case "discord": {
       if (!cfg.url) return { ok: false, error: "missing_webhook_url" };
@@ -43,9 +59,37 @@ export async function deliverToChannel(
       if (!safe.ok) return { ok: false, error: `unsafe_url: ${safe.reason}` };
       return sendDiscordMessage(cfg.url, { embeds: [toDiscordEmbed(payload)] });
     }
+    case "slack": {
+      if (!cfg.url) return { ok: false, error: "missing_webhook_url" };
+      // Checked per delivery, not just on save: only Slack's own hosts, ever.
+      const bad = invalidTarget(checkSlackWebhookUrl(cfg.url), "invalid_slack_url");
+      if (bad) return bad;
+      const safe = assertSafeUrl(cfg.url);
+      if (!safe.ok) return { ok: false, error: `unsafe_url: ${safe.reason}` };
+      return sendSlackMessage(cfg.url, toSlackMessage(payload));
+    }
+    case "teams": {
+      if (!cfg.url) return { ok: false, error: "missing_webhook_url" };
+      const bad = invalidTarget(checkTeamsWebhookUrl(cfg.url), "invalid_teams_url");
+      if (bad) return bad;
+      const safe = assertSafeUrl(cfg.url);
+      if (!safe.ok) return { ok: false, error: `unsafe_url: ${safe.reason}` };
+      return sendTeamsMessage(cfg.url, toTeamsMessage(payload));
+    }
+    case "telegram": {
+      if (!cfg.botToken) return { ok: false, error: "missing_bot_token" };
+      if (!cfg.chatId) return { ok: false, error: "missing_chat_id" };
+      // The token lands in the request path, so it must be exactly a token:
+      // anything else (a slash, a query) could change where the request goes.
+      const bad =
+        invalidTarget(checkTelegramBotToken(cfg.botToken), "invalid_telegram_config") ??
+        invalidTarget(checkTelegramChatId(cfg.chatId), "invalid_telegram_config");
+      if (bad) return bad;
+      return sendTelegramMessage(cfg.botToken, toTelegramMessage(cfg.chatId, payload));
+    }
     case "webhook": {
       if (!cfg.url) return { ok: false, error: "missing_url" };
-      // Same SSRF guard the monitor checks use — a channel URL could otherwise
+      // Same SSRF guard the monitor checks use - a channel URL could otherwise
       // point at loopback/link-local/metadata/private ranges and reflect the
       // internal response into last_error. Validated per-delivery (not just at
       // create time) so pre-existing configs are covered and there's no TOCTOU.
@@ -78,7 +122,7 @@ export function outboxTake(limit: number = BATCH): number {
 /**
  * Process due outbox entries (PRD §12 outbox): deliver each independently,
  * record success/failure, retry transient failures with backoff, stop at max.
- * Never throws — a provider failure must not break the monitoring cycle.
+ * Never throws - a provider failure must not break the monitoring cycle.
  */
 export async function processOutbox(
   env: Env,
@@ -154,7 +198,7 @@ export async function processOutbox(
 
       const channel = entry.channelId ? await getChannel(env, entry.channelId) : null;
       if (!channel || !channel.enabled) {
-        // Channel removed/disabled — drop the entry as dead.
+        // Channel removed/disabled - drop the entry as dead.
         await markFailed(env, entry.id, MAX_ATTEMPTS, "channel_unavailable", MAX_ATTEMPTS);
         failed++;
         continue;
@@ -162,7 +206,7 @@ export async function processOutbox(
       const result = await deliverToChannel(env, channel, entry.payload);
       if (result.ok) {
         await markSent(env, entry.id);
-        // Bookkeeping only — must never reach the outer catch (which would
+        // Bookkeeping only - must never reach the outer catch (which would
         // re-mark this already-sent entry failed and re-deliver it).
         try {
           await recordChannelResult(env, channel.id, true);
@@ -171,7 +215,14 @@ export async function processOutbox(
         }
         sent++;
       } else {
-        await markFailed(env, entry.id, entry.attempts + 1, result.error ?? "send_failed", MAX_ATTEMPTS);
+        await markFailed(
+          env,
+          entry.id,
+          entry.attempts + 1,
+          result.error ?? "send_failed",
+          MAX_ATTEMPTS,
+          result.retryAfterMs,
+        );
         await recordChannelResult(env, channel.id, false, result.error ?? "send_failed");
         failed++;
       }
@@ -226,7 +277,7 @@ async function deliverPush(
   });
   if (result.ok) {
     await markSent(env, entryId);
-    // Bookkeeping only — isolate so a failure here can't reach the caller's
+    // Bookkeeping only - isolate so a failure here can't reach the caller's
     // catch and re-mark this already-sent entry failed (duplicate push).
     try {
       await recordPushResult(env, sub.id, true);

@@ -32,11 +32,11 @@ The only shared things are the source code on GitHub and, if an install chooses 
 ## Stage 2: close the feature gaps that matter
 
 Competitors checked on 2026-10-28 (see section 5 of the landing plan).
-OpenPing already has HTTP with keyword and JSON assertions, heartbeat (cron), DNS, TCP port and domain-expiry monitors, slow-response "degraded" thresholds, maintenance windows, incidents with public notes and CSV export, many status pages, an embeddable widget and badge, email, Discord, signed webhooks and web push alerts, a weekly summary email, and free tools.
+OpenPing already has HTTP with keyword and JSON assertions, heartbeat (cron), DNS, TCP port and domain-expiry monitors, slow-response "degraded" thresholds, maintenance windows, incidents with public notes and CSV export, many status pages, an embeddable widget and badge, email, Slack, Microsoft Teams, Discord, Telegram, signed webhooks and web push alerts, a weekly summary email, and free tools.
 These are the gaps a buyer is likely to notice, most valuable first:
 
-- [ ] **Slack, Telegram and Microsoft Teams alerts** (S each).
-  Nearly every competitor has them; today they need the generic webhook and some glue.
+- [x] **Slack, Telegram and Microsoft Teams alerts** (S each) (this PR).
+  Native channels with setup help, a test button, encrypted capabilities and provider rate-limit handling ([Alert channels](./ALERT_CHANNELS.md)).
 - [ ] **Confirm before alerting** (M, overlaps Hosted stage 2).
   Re-check a failure once, ideally from a second Cloudflare location, before opening an incident, so one bad request doesn't page anyone.
 - [ ] **SSL certificate expiry monitor** (M, needs a spike).

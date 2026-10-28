@@ -18,7 +18,7 @@ import { sendWebPush } from "../notifications/push/webpush";
 /**
  * Web Push device-management API mounted at /api/push (PRD §12.1 PWA device
  * management). All routes require an authenticated session; the auth middleware
- * also enforces CSRF on mutations. This module is registry-only — sending lives
+ * also enforces CSRF on mutations. This module is registry-only - sending lives
  * in the push-delivery module, and POST /devices/:id/test is wired later by the
  * push-delivery integration.
  */
@@ -98,7 +98,7 @@ push.post("/devices/:id/test", async (c) => {
   if (!sub) return c.json({ error: "not_found" }, 404);
   const vapid = await getVapid(c.env);
   if (!vapid) return c.json({ error: "vapid_not_configured" }, 400);
-  const appUrl = (await getSetting(c.env, "app_url")) ?? undefined;
+  const appUrl = c.env.APP_URL ?? (await getSetting(c.env, "app_url")) ?? undefined;
   const result = await sendWebPush({
     subscription: { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
     payload: JSON.stringify({

@@ -37,8 +37,11 @@ OpenPing checks monitors from a **Cron Trigger that fires every 12 minutes**
   `dead` means it exhausted retries.
 - **Email:** verify `RESEND_API_KEY` is set and your Resend sending
   domain/sender is verified.
-- **Discord/webhook:** re-check the URL; use the channel's test action to send a
-  test event and watch `wrangler tail`.
+- **Slack, Teams, Discord, Telegram or webhook:** re-check the URL (or the
+  Telegram bot token and chat id); use the channel's **Send test** button and
+  read its error. [Alert channels](./ALERT_CHANNELS.md) lists the accepted URLs
+  and what each provider's errors mean. A `429` is retried after the delay the
+  provider asks for.
 - Confirm the event type you expect is enabled for that channel (channels have
   per-event preferences).
 

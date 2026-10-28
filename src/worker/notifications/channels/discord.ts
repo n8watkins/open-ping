@@ -1,14 +1,12 @@
 /**
  * Discord webhook sender (PRD §12). Pure delivery: POSTs a message (optionally
  * with embeds) to a Discord webhook URL. No DB access, no outbox/retry logic.
- * Runs in the Cloudflare Workers runtime — only global `fetch` is used.
+ * Runs in the Cloudflare Workers runtime - only global `fetch` is used.
  */
 
-export interface SendResult {
-  ok: boolean;
-  status?: number;
-  error?: string;
-}
+import { parseRetryAfter, type SendResult } from "./http";
+
+export type { SendResult };
 
 export interface DiscordEmbed {
   title?: string;
@@ -72,5 +70,7 @@ export async function sendDiscordMessage(
     ok: false,
     status: res.status,
     error: detail ? `discord_error: ${detail}` : "discord_error",
+    // A 429 (or 503) says when to come back; the outbox honours it.
+    retryAfterMs: parseRetryAfter(res.headers.get("Retry-After")),
   };
 }

@@ -30,8 +30,8 @@ OpenPing's footprint has three parts:
    to the number of checks per run.
 
 There's also occasional traffic from you loading the dashboard and from visitors
-viewing the public status page, plus notification deliveries (email/push/Discord/
-webhook) when incidents happen - all typically minor for a small install.
+viewing the public status page, plus notification deliveries (email/push/Slack/Teams/
+Discord/Telegram/webhook) when incidents happen - all typically minor for a small install.
 
 ## How this maps to the free tier
 

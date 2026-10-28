@@ -16,15 +16,23 @@ import {
 import { deliverToChannel } from "../notifications/dispatcher";
 import { buildTestPayload } from "../notifications/payload";
 import { getSetting } from "../db/settings";
+import {
+  checkSlackWebhookUrl,
+  checkTeamsWebhookUrl,
+  checkTelegramBotToken,
+  checkTelegramChatId,
+  targetMessage,
+  type TargetCheck,
+} from "../../shared/channel-targets";
 
 /**
  * Notification channel CRUD API mounted at /api/channels (PRD §16 Integrations).
  * All routes require an authenticated session; the auth middleware also enforces
- * CSRF on mutations. This module is config-only — sending lives in the dispatcher
+ * CSRF on mutations. This module is config-only - sending lives in the dispatcher
  * module, and POST /:id/test is added later by the dispatcher integration.
  *
- * Secret config fields (Discord and generic webhook URLs, plus the generic
- * webhook secret) are blanked in every response via `redactChannel`; the editor
+ * Secret config fields (Discord, Slack, Teams and generic webhook URLs, the
+ * generic webhook secret and the Telegram bot token) are blanked in every response via `redactChannel`; the editor
  * resubmits the blanked value and the data layer merges the stored secret back
  * in (see db/channels.ts).
  */
@@ -60,6 +68,22 @@ const httpsUrl = z
     }
   }, "must be an https URL");
 
+/** A string that passes one of the provider destination checks. */
+const checked = (check: (raw: string) => TargetCheck) =>
+  z
+    .string()
+    .max(MAX_URL)
+    .superRefine((value, ctx) => {
+      const message = targetMessage(check(value.trim()));
+      if (message) ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+    })
+    .transform((value) => value.trim());
+
+const slackUrl = checked(checkSlackWebhookUrl);
+const teamsUrl = checked(checkTeamsWebhookUrl);
+const telegramBotToken = checked(checkTelegramBotToken);
+const telegramChatId = checked(checkTelegramChatId);
+
 const emailAddr = z.string().max(MAX_EMAIL).email();
 const optionalSecret = z.string().max(MAX_SECRET).optional();
 
@@ -76,6 +100,27 @@ const channelCreateSchema = z.discriminatedUnion("type", [
     name: nameField,
     enabled: z.boolean().optional(),
     config: z.object({ url: httpsUrl }).passthrough(),
+    events: eventsSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("slack"),
+    name: nameField,
+    enabled: z.boolean().optional(),
+    config: z.object({ url: slackUrl }).passthrough(),
+    events: eventsSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("teams"),
+    name: nameField,
+    enabled: z.boolean().optional(),
+    config: z.object({ url: teamsUrl }).passthrough(),
+    events: eventsSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("telegram"),
+    name: nameField,
+    enabled: z.boolean().optional(),
+    config: z.object({ botToken: telegramBotToken, chatId: telegramChatId }).passthrough(),
     events: eventsSchema.optional(),
   }),
   z.object({
@@ -97,7 +142,7 @@ const channelCreateSchema = z.discriminatedUnion("type", [
 ]);
 
 // Update: `type` is not in the body (it comes from the stored record) and secret
-// config fields arrive blanked ("") to be merged back by the data layer — so the
+// config fields arrive blanked ("") to be merged back by the data layer - so the
 // Discord and generic webhook URLs may legitimately be empty here. The config
 // is validated against the channel's actual type in the handler
 // (updateConfigSchemas).
@@ -114,6 +159,14 @@ const secretUrl = z.union([z.literal(""), httpsUrl]);
 /** Per-type config validators for UPDATE (secret fields may be blank). */
 const updateConfigSchemas: Record<string, z.ZodTypeAny> = {
   discord: z.object({ url: secretUrl }).passthrough(),
+  slack: z.object({ url: z.union([z.literal(""), slackUrl]) }).passthrough(),
+  teams: z.object({ url: z.union([z.literal(""), teamsUrl]) }).passthrough(),
+  telegram: z
+    .object({
+      botToken: z.union([z.literal(""), telegramBotToken]).optional(),
+      chatId: telegramChatId,
+    })
+    .passthrough(),
   webhook: z.object({ url: secretUrl, secret: optionalSecret }).passthrough(),
   email: z.object({ to: emailAddr, from: emailAddr.optional() }).passthrough(),
 };
@@ -159,6 +212,8 @@ channels.put("/:id", async (c) => {
       if (!cfg.success) {
         return c.json({ error: "validation", issues: cfg.error.issues }, 400);
       }
+      // Store the normalized (trimmed) values the schema produced.
+      parsed.data.config = cfg.data as Record<string, unknown>;
     }
   }
 
@@ -179,7 +234,7 @@ channels.delete("/:id", async (c) => {
 channels.post("/:id/test", async (c) => {
   const channel = await getChannel(c.env, c.req.param("id"));
   if (!channel) return c.json({ error: "not_found" }, 404);
-  const appUrl = (await getSetting(c.env, "app_url")) ?? undefined;
+  const appUrl = c.env.APP_URL ?? (await getSetting(c.env, "app_url")) ?? undefined;
   const payload = buildTestPayload(channel.name ?? channel.type, appUrl);
   const result = await deliverToChannel(c.env, channel, payload);
   await recordChannelResult(c.env, channel.id, result.ok, result.error ?? null);

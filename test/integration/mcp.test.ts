@@ -249,10 +249,22 @@ describe("/mcp over JSON-RPC against D1", () => {
       body: JSON.stringify({ type: "webhook", name: "MCP hook", config: { url: "https://hooks.example.com/secret-path", secret: "hook-secret" } }),
     });
     expect(created.status).toBe(201);
+    // Chat-app capabilities, generated per run so no literal looks like a credential.
+    const botToken = `${Date.now()}:${crypto.randomUUID().replaceAll("-", "")}`;
+    const slackPath = `services/T${crypto.randomUUID().slice(0, 8)}/B${crypto.randomUUID().slice(0, 8)}/${crypto.randomUUID()}`;
+    for (const body of [
+      { type: "telegram", name: "MCP telegram", config: { botToken, chatId: "-1001234567890" } },
+      { type: "slack", name: "MCP slack", config: { url: `https://hooks.slack.com/${slackPath}` } },
+    ]) {
+      expect((await api("/api/channels", { method: "POST", body: JSON.stringify(body) })).status).toBe(201);
+    }
     const channels = await call("list_channels");
     expect(channels.content[0]!.text).toContain("MCP hook");
+    expect(channels.content[0]!.text).toContain("telegram MCP telegram");
     expect(JSON.stringify(channels)).not.toContain("secret-path");
     expect(JSON.stringify(channels)).not.toContain("hook-secret");
+    expect(JSON.stringify(channels)).not.toContain(botToken);
+    expect(JSON.stringify(channels)).not.toContain(slackPath);
 
     const diagnostics = await call("get_diagnostics", { runs: 5 });
     expect(diagnostics.content[0]!.text).toContain("Database ok");

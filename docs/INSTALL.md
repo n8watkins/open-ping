@@ -322,7 +322,8 @@ Further changes require signing in as the admin.
 Sign in with **GitHub** or an **email magic link**, then:
 
 - **Configure notification channels** under **Integrations** (email via Resend,
-  Web Push, Discord, signed webhooks) and send a test event from each.
+  Web Push, Slack, Microsoft Teams, Discord, Telegram, signed webhooks) and send
+  a test event from each; [Alert channels](./ALERT_CHANNELS.md) has the setup steps.
 - **Add your monitors** - OpenPing supports five check types (HTTP/API,
   heartbeat/cron, DNS record, TCP port, and domain-expiry), each with an
   operating schedule if you want schedule-aware monitoring. See

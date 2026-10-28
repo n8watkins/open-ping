@@ -16,6 +16,9 @@ import {
   CheckCircle2,
   XCircle,
   Bell,
+  Hash,
+  Users,
+  Bot,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
@@ -29,12 +32,25 @@ import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { formatRelativeTime } from "../lib/format";
 import { cn } from "../lib/cn";
+import {
+  checkSlackWebhookUrl,
+  checkTeamsWebhookUrl,
+  checkTelegramBotToken,
+  checkTelegramChatId,
+  targetMessage,
+} from "../../shared/channel-targets";
 
 // ---------------------------------------------------------------------------
-// Types (local — these mirror the server records but the client owns its view)
+// Types (local - these mirror the server records but the client owns its view)
 // ---------------------------------------------------------------------------
 
-type ChannelType = "discord" | "webhook" | "email";
+type ChannelType = "slack" | "teams" | "discord" | "telegram" | "email" | "webhook";
+
+const CHANNEL_TYPES: readonly ChannelType[] = ["slack", "teams", "discord", "telegram", "email", "webhook"];
+
+function isChannelType(t: string | undefined): t is ChannelType {
+  return (CHANNEL_TYPES as readonly string[]).includes(t ?? "");
+}
 
 interface Channel {
   id: string;
@@ -68,7 +84,10 @@ const CHANNEL_META: Record<
   string,
   { label: string; icon: ReactNode }
 > = {
+  slack: { label: "Slack", icon: <Hash className="size-4" /> },
+  teams: { label: "Microsoft Teams", icon: <Users className="size-4" /> },
   discord: { label: "Discord", icon: <MessageSquare className="size-4" /> },
+  telegram: { label: "Telegram", icon: <Bot className="size-4" /> },
   webhook: { label: "Webhooks", icon: <Webhook className="size-4" /> },
   email: { label: "Email", icon: <Mail className="size-4" /> },
   push: { label: "Push", icon: <Bell className="size-4" /> },
@@ -80,7 +99,10 @@ const CHANNEL_META: Record<
 
 function errMessage(e: unknown, fallback: string): string {
   if (e instanceof ApiError) {
-    const d = e.data as { error?: string } | null;
+    const d = e.data as { error?: string; issues?: Array<{ message?: string }> } | null;
+    // A validation failure carries a readable reason; show it, not "validation".
+    const issue = d?.issues?.find((i) => typeof i.message === "string")?.message;
+    if (issue) return issue;
     if (d && typeof d.error === "string") return d.error;
   }
   return e instanceof Error ? e.message : fallback;
@@ -243,7 +265,7 @@ export default function Integrations() {
             <EmptyState
               icon={<Bell className="size-6 text-accent" />}
               title="No channels yet"
-              description="Add a Discord, webhook, or email channel to start receiving incident notifications."
+              description="Add a Slack, Microsoft Teams, Discord, Telegram, email or webhook channel to start receiving incident notifications."
             />
           ) : (
             <div className="space-y-5">
@@ -324,9 +346,14 @@ function ChannelRow({
   onDelete: () => void;
 }) {
   const healthy = channelHealthy(channel);
+  const chatId = cfgStr(channel.config, "chatId");
   const target =
     cfgStr(channel.config, "to") ||
-    (channel.type === "email" ? "" : "Destination stored securely");
+    (channel.type === "email"
+      ? ""
+      : channel.type === "telegram" && chatId
+        ? `Chat ${chatId}`
+        : "Destination stored securely");
 
   return (
     <div className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -457,12 +484,7 @@ function ChannelForm({
   onCancel: () => void;
 }) {
   const isEdit = existing != null;
-  const initialType: ChannelType =
-    existing?.type === "email" ||
-    existing?.type === "discord" ||
-    existing?.type === "webhook"
-      ? existing.type
-      : "discord";
+  const initialType: ChannelType = isChannelType(existing?.type) ? existing.type : "slack";
 
   const [type, setType] = useState<ChannelType>(initialType);
   const [name, setName] = useState(existing?.name ?? "");
@@ -470,6 +492,8 @@ function ChannelForm({
   const [secret, setSecret] = useState(
     existing ? cfgStr(existing.config, "secret") : "",
   );
+  const [botToken, setBotToken] = useState("");
+  const [chatId, setChatId] = useState(existing ? cfgStr(existing.config, "chatId") : "");
   const [to, setTo] = useState(existing ? cfgStr(existing.config, "to") : "");
   const [from, setFrom] = useState(
     existing ? cfgStr(existing.config, "from") : "",
@@ -478,7 +502,9 @@ function ChannelForm({
   const [error, setError] = useState<string | null>(null);
 
   function buildConfig(): Record<string, unknown> {
-    if (type === "discord") return { url: url.trim() };
+    if (type === "discord" || type === "slack" || type === "teams") return { url: url.trim() };
+    // A blank token on edit keeps the stored one.
+    if (type === "telegram") return { botToken: botToken.trim(), chatId: chatId.trim() };
     if (type === "webhook")
       return secret.trim()
         ? { url: url.trim(), secret: secret.trim() }
@@ -486,8 +512,25 @@ function ChannelForm({
     return from.trim() ? { to: to.trim(), from: from.trim() } : { to: to.trim() };
   }
 
+  /** The same destination checks the server runs, for an instant answer. */
+  function localProblem(): string | null {
+    const u = url.trim();
+    if (type === "slack" && u) return targetMessage(checkSlackWebhookUrl(u));
+    if (type === "teams" && u) return targetMessage(checkTeamsWebhookUrl(u));
+    if (type === "telegram") {
+      const t = botToken.trim();
+      return (t ? targetMessage(checkTelegramBotToken(t)) : null) ?? targetMessage(checkTelegramChatId(chatId.trim()));
+    }
+    return null;
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
+    const problem = localProblem();
+    if (problem) {
+      setError(problem);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -536,22 +579,30 @@ function ChannelForm({
       {!isEdit && (
         <Field label="Type">
           <select
+            name="type"
             value={type}
-            onChange={(e) => setType(e.target.value as ChannelType)}
+            onChange={(e) => {
+              setType(e.target.value as ChannelType);
+              setError(null);
+            }}
             className="input"
           >
-            <option value="discord">Discord</option>
-            <option value="webhook">Webhook</option>
-            <option value="email">Email</option>
+            {CHANNEL_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t === "webhook" ? "Webhook" : metaFor(t).label}
+              </option>
+            ))}
           </select>
         </Field>
       )}
 
       <Field label="Name">
         <input
+          name="name"
+          autoComplete="off"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. On-call Discord"
+          placeholder={`e.g. On-call ${type === "webhook" || type === "email" ? "alerts" : metaFor(type).label}`}
           className="input"
         />
       </Field>
@@ -559,6 +610,8 @@ function ChannelForm({
       {type === "discord" && (
         <Field label="Discord webhook URL">
           <input
+            name="url"
+            autoComplete="off"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder={
@@ -573,10 +626,131 @@ function ChannelForm({
         </Field>
       )}
 
+      {type === "slack" && (
+        <>
+          <SetupSteps title="How to get a Slack webhook URL">
+            <li>
+              Open <ExternalLink href="https://api.slack.com/apps">api.slack.com/apps</ExternalLink>,
+              choose <b>Create New App</b>, then <b>From scratch</b>, and pick your workspace.
+            </li>
+            <li>
+              Open <b>Incoming Webhooks</b> and turn on <b>Activate Incoming Webhooks</b>.
+            </li>
+            <li>
+              Click <b>Add New Webhook</b>, choose the channel for alerts and click <b>Allow</b>.
+            </li>
+            <li>Copy the webhook URL and paste it below.</li>
+          </SetupSteps>
+          <Field label="Slack webhook URL">
+            <input
+              name="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder={
+                isEdit
+                  ? "Leave blank to keep the current URL"
+                  : "https://hooks.slack.com/services/..."
+              }
+              type="url"
+              required={!isEdit}
+              autoComplete="off"
+              spellCheck={false}
+              className="input"
+            />
+          </Field>
+        </>
+      )}
+
+      {type === "teams" && (
+        <>
+          <SetupSteps title="How to get a Teams Workflows URL">
+            <li>
+              In Teams, open the channel, click <b>...</b> next to its name and choose <b>Workflows</b>.
+            </li>
+            <li>
+              Pick the template <b>Send webhook alerts to a channel</b> (or{" "}
+              <b>Post to a channel when a webhook request is received</b>).
+            </li>
+            <li>Name it, confirm the team and channel, and click <b>Add workflow</b>.</li>
+            <li>
+              Copy the URL it shows and paste it below. Its address is on{" "}
+              <code className="font-mono">environment.api.powerplatform.com</code>{" "}
+              (or <code className="font-mono">logic.azure.com</code> for an Azure Logic App).
+              Old Office 365 connector URLs (<code className="font-mono">webhook.office.com</code>) are retired and won't work.
+            </li>
+          </SetupSteps>
+          <Field label="Workflows webhook URL">
+            <input
+              name="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder={
+                isEdit
+                  ? "Leave blank to keep the current URL"
+                  : "https://....environment.api.powerplatform.com/..."
+              }
+              type="url"
+              required={!isEdit}
+              autoComplete="off"
+              spellCheck={false}
+              className="input"
+            />
+          </Field>
+        </>
+      )}
+
+      {type === "telegram" && (
+        <>
+          <SetupSteps title="How to get a bot token and chat id">
+            <li>
+              In Telegram, message <ExternalLink href="https://t.me/BotFather">@BotFather</ExternalLink>,
+              send <code className="font-mono">/newbot</code> and follow the prompts. It replies with the bot token.
+            </li>
+            <li>
+              Add the bot to your group, or as an administrator to your channel. For a private chat, open the bot and press <b>Start</b>.
+            </li>
+            <li>
+              Send a message there, then open{" "}
+              <code className="font-mono [overflow-wrap:anywhere]">https://api.telegram.org/bot&lt;token&gt;/getUpdates</code>{" "}
+              in your browser. The chat id is the number in{" "}
+              <code className="font-mono">"chat":{"{"}"id": ...{"}"}</code>.
+              Groups are negative and channels start with -100. A public channel can use its @name instead.
+            </li>
+          </SetupSteps>
+          <Field label="Bot token">
+            <input
+              name="botToken"
+              value={botToken}
+              onChange={(e) => setBotToken(e.target.value)}
+              placeholder={isEdit ? "Leave blank to keep the current token" : "123456789:AA..."}
+              type="password"
+              required={!isEdit}
+              autoComplete="off"
+              spellCheck={false}
+              className="input"
+            />
+          </Field>
+          <Field label="Chat id">
+            <input
+              name="chatId"
+              value={chatId}
+              onChange={(e) => setChatId(e.target.value)}
+              placeholder="-1001234567890 or @channelname"
+              required
+              autoComplete="off"
+              spellCheck={false}
+              className="input"
+            />
+          </Field>
+        </>
+      )}
+
       {type === "webhook" && (
         <>
           <Field label="Webhook URL">
             <input
+              name="url"
+              autoComplete="off"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={
@@ -591,6 +765,8 @@ function ChannelForm({
           </Field>
           <Field label="Signing secret (optional)">
             <input
+              name="secret"
+              autoComplete="off"
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
               placeholder="Used to sign the payload (HMAC)"
@@ -604,6 +780,8 @@ function ChannelForm({
         <>
           <Field label="Recipient address">
             <input
+              name="to"
+              autoComplete="off"
               value={to}
               onChange={(e) => setTo(e.target.value)}
               placeholder="alerts@example.com"
@@ -614,6 +792,8 @@ function ChannelForm({
           </Field>
           <Field label="From address (optional)">
             <input
+              name="from"
+              autoComplete="off"
               value={from}
               onChange={(e) => setFrom(e.target.value)}
               placeholder="openping@example.com"
@@ -955,6 +1135,24 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
 // ---------------------------------------------------------------------------
 // Shared field wrapper
 // ---------------------------------------------------------------------------
+
+function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="font-medium text-accent hover:underline">
+      {children}
+    </a>
+  );
+}
+
+/** Collapsible setup instructions shown above a provider's fields. */
+function SetupSteps({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details className="rounded-lg border border-line bg-surface px-3 py-2 text-xs leading-relaxed text-ink-muted" open>
+      <summary className="cursor-pointer select-none font-medium text-ink">{title}</summary>
+      <ol className="mt-2 list-decimal space-y-1.5 pl-4">{children}</ol>
+    </details>
+  );
+}
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
