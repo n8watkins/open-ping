@@ -6,6 +6,7 @@ import { api } from "./routes/api";
 import { auth } from "./routes/auth";
 import { magicFlow } from "./routes/magic";
 import { heartbeats } from "./routes/heartbeats";
+import { mcp, MCP_MAX_BODY_BYTES } from "./mcp/handler";
 import { runScheduled } from "./scheduler";
 import {
   BASE_SECURITY_HEADERS,
@@ -80,6 +81,7 @@ app.use("/api/auth/magic/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: pay
 app.use("/api/tools/is-it-down", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/api/waitlist", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/hb/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
+app.use("/mcp", bodyLimit({ maxSize: MCP_MAX_BODY_BYTES, onError: payloadTooLarge }));
 app.use("/api/*", bodyLimit({ maxSize: API_BODY_LIMIT, onError: payloadTooLarge }));
 
 // JSON API (auth, monitors, incidents, settings, …). Mounted before the SPA
@@ -92,6 +94,16 @@ app.route("/auth/magic", magicFlow);
 
 // Public heartbeat ingestion (called by external cron jobs / scripts).
 app.route("/hb", heartbeats);
+
+// MCP server for AI clients (bearer API token only; see docs/MCP.md).
+app.route("/mcp", mcp);
+
+// OpenPing has no OAuth server. MCP clients probe these metadata documents
+// after a 401; answer with a clean JSON 404 instead of the SPA's HTML shell.
+app.all("/.well-known/*", async (c, next) => {
+  if (c.req.path.startsWith("/.well-known/oauth-")) return c.json({ error: "not_found" }, 404);
+  await next();
+});
 
 // Everything else: serve the built SPA. `not_found_handling: single-page-application`
 // in wrangler.jsonc makes ASSETS return index.html for client-side routes.
