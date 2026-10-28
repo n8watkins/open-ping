@@ -1,10 +1,13 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
+import { openpingBundle } from "./scripts/bundle-module";
 
 // Standalone test config so vitest doesn't pull in the Cloudflare Vite plugin
 // from vite.config.ts. Pure unit tests run in Node (Web Crypto is available).
 // D1-backed route tests use the separate vitest.integration.config.ts config.
 export default defineConfig({
+  // The Worker imports virtual:openping-bundle (its version and migrations).
+  plugins: [openpingBundle()],
   resolve: {
     alias: {
       // The Workers-only `cloudflare:sockets` built-in has no Node implementation.

@@ -4,6 +4,7 @@ import {
   HOSTED_CONTRACT_VERSION,
   HOSTED_ERRORS,
   isHostedMode,
+  isInternalPath,
   isTenantId,
   isTenantProps,
   type PlatformCapability,
@@ -11,6 +12,7 @@ import {
   type TenantProps,
 } from "../../shared/hosted-contract";
 import type { AppEnv, Env } from "../types";
+import { schemaIsCurrent } from "./migrate";
 
 /**
  * Hosted mode: OpenPing running as a customer's user Worker in the OpenPing
@@ -111,6 +113,53 @@ export function hostedGate({ dev }: { dev: boolean }): MiddlewareHandler<AppEnv>
     return next();
   };
 }
+
+/** How long a visitor is asked to wait while the database is older than the bundle. */
+export const UPDATING_RETRY_AFTER_SECONDS = 10;
+
+const UPDATING_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="${UPDATING_RETRY_AFTER_SECONDS}">
+<title>Updating | OpenPing</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f7f8fb; --ink: #121826; --muted: #5b6475; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0b1020; --ink: #e8ebf3; --muted: #9aa3b5; } }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+    background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 22rem; text-align: center; }
+  h1 { font-size: 1.125rem; margin: 0 0 .5rem; }
+  p { margin: 0; color: var(--muted); font-size: .875rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>This OpenPing is updating</h1>
+<p>It will be back in a few seconds. This page reloads on its own.</p>
+</main>
+</body>
+</html>
+`;
+
+/**
+ * A public call in hosted mode, right after the hosted gate: when the database
+ * is older than the bundle, answer 503 "updating" with Retry-After and do
+ * nothing else (contract, section 6). It never migrates: only platform calls
+ * do (routes/platform.ts), so a visitor's request, which the browser may cancel
+ * at any moment, can never hold the migration lock. The check is a read at
+ * most, and none while this isolate saw the schema current recently. A plain
+ * install passes straight through: its migrations run from `npm run deploy`.
+ */
+export const hostedSchemaGate: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (!hostedProps(c) || isInternalPath(c.req.path)) return next();
+  if ((await schemaIsCurrent(c.env.DB)) !== false) return next();
+  c.header("Retry-After", String(UPDATING_RETRY_AFTER_SECONDS));
+  c.header("Cache-Control", "no-store");
+  const page = c.req.method === "GET" && (c.req.header("accept") ?? "").includes("text/html");
+  return page ? c.html(UPDATING_PAGE, 503) : c.json({ error: HOSTED_ERRORS.updating }, 503);
+};
 
 /** The 404 every platform-managed path answers in hosted mode (contract, section 8). */
 export function managedByPlatform(c: Ctx): Response {

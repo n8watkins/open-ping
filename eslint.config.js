@@ -40,7 +40,7 @@ export default defineConfig([
   },
   {
     // Node tooling: scripts and configs.
-    files: ["scripts/**/*.mjs", "*.config.{js,ts}", "platform/*.config.ts"],
+    files: ["scripts/**/*.{mjs,ts}", "*.config.{js,ts}", "platform/*.config.ts"],
     languageOptions: { globals: globals.node },
   },
   {

@@ -118,6 +118,15 @@ Run it again to rotate the key.
 Preview what it would do with `npm run release -- --plan`.
 Releasing by hand still works at any time; the train just finds less to do.
 
+## Database migrations
+
+Migrations are additive only.
+A migration may add tables, columns, indexes and triggers, and fill in data; it never drops or renames anything, and a new `NOT NULL` column always has a `DEFAULT`.
+Each customer's OpenPing on OpenPing Hosted migrates its own database, and during a rollout, or after a rollback, an older version keeps running on the newer schema, so it must still find everything it uses ([the Hosted contract, section 6](docs/hosted/CONTRACT.md#6-internal-paths)).
+Self-hosted installs get the same guarantee when they deploy an older version.
+`scripts/check-migrations.test.mjs` fails `npm test` for a migration after 0020 that drops, renames, or adds a `NOT NULL` column without a default.
+Removing something takes two releases: stop using it in one, and drop it in a later one once no running version reads it, as a deliberate exception made in that check.
+
 ## Baselines and backfills
 
 - `npm run release -- --baseline` tags the version this repo is already at, without a GitHub Release, so the first real release lists only new work.
