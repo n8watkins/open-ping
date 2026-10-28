@@ -131,12 +131,16 @@ passkeysAdmin.post("/register/verify", async (c) => {
 passkeysAdmin.delete("/:id", async (c) => {
   const id = c.req.param("id");
   const all = await listPasskeys(c.env);
-  if (!all.some((p) => p.id === id)) return c.json({ error: "not_found" }, 404);
-  const others = await otherSignInMethods(c.env);
-  // Never remove the only way in. GitHub or email (or another passkey) must
-  // still work afterwards; otherwise only SETUP_TOKEN recovery would remain.
-  if (all.length === 1 && !others.github && !others.email) {
-    return c.json({ error: "last_sign_in_method" }, 409);
+  const target = all.find((p) => p.id === id);
+  if (!target) return c.json({ error: "not_found" }, 404);
+  // Never remove the only way in. GitHub or email, or another passkey for this
+  // hostname, must still work afterwards; otherwise only SETUP_TOKEN recovery
+  // would remain. A passkey for another hostname can't sign in here, so it
+  // neither counts as a way in nor is one to protect.
+  const { rpId } = await relyingParty(c);
+  if (target.rp_id === rpId && !all.some((p) => p.id !== id && p.rp_id === rpId)) {
+    const others = await otherSignInMethods(c.env);
+    if (!others.github && !others.email) return c.json({ error: "last_sign_in_method" }, 409);
   }
   await deletePasskey(c.env, id);
   return c.json({ ok: true });

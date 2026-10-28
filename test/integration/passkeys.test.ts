@@ -175,7 +175,10 @@ describe("passkeys", () => {
     // Mutations still need the session's CSRF token.
     const noCsrf = await browser.fetch("/api/passkeys/register/options", { method: "POST", json: {} });
     expect(noCsrf.status).toBe(403);
-    const list = await (await browser.fetch("/api/passkeys")).json<{ passkeys: { name: string; lastUsedAt: number | null }[]; rpId: string }>();
+    const list = await (await browser.fetch("/api/passkeys")).json<{
+      passkeys: { name: string; lastUsedAt: number | null }[];
+      rpId: string;
+    }>();
     expect(list.rpId).toBe(RP_ID);
     expect(list.passkeys).toHaveLength(1);
     expect(list.passkeys[0]!.lastUsedAt).not.toBeNull();
@@ -298,6 +301,22 @@ describe("passkeys", () => {
     const last = await browser.fetch(`/api/passkeys/${laptopId}`, { method: "DELETE", headers: { "x-csrf-token": csrf } });
     expect(last.status).toBe(409);
     expect(await last.json()).toEqual({ error: "last_sign_in_method" });
+
+    // A passkey for another hostname (left over from an earlier APP_URL) can't
+    // sign in here, so it doesn't count as another way in...
+    await env.DB.prepare(
+      `INSERT INTO passkeys (id, credential_id, public_key, alg, sign_count, rp_id, name, created_at)
+       SELECT 'pk_stale', 'stale-credential', public_key, alg, 0, 'old.openping.test', 'Old laptop', created_at
+       FROM passkeys WHERE id = ?`,
+    )
+      .bind(laptopId)
+      .run();
+    const withStale = await browser.fetch(`/api/passkeys/${laptopId}`, { method: "DELETE", headers: { "x-csrf-token": csrf } });
+    expect(withStale.status).toBe(409);
+    expect(await withStale.json()).toEqual({ error: "last_sign_in_method" });
+    // ...and removing it never takes away a way in.
+    const stale = await browser.fetch("/api/passkeys/pk_stale", { method: "DELETE", headers: { "x-csrf-token": csrf } });
+    expect(stale.status).toBe(200);
   });
 
   it("recovers with a new SETUP_TOKEN, once", async () => {
