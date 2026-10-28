@@ -97,7 +97,8 @@ Each method runs inside the platform Worker, already bound to the calling tenant
   `action` is dotted lowercase (`AUDIT_ACTION_PATTERN`, for example `session.created`), `actor` is `customer`, `support` or `system`, and `detail` is small, flat and never secret.
   Support sign-ins (section 7) are always audited, by both sides.
 
-In the skeleton (B1) `audit` is real, `reportUsage` is accepted and dropped, and `sendEmail` answers `email_unavailable` until A5 and B2 wire the mail provider.
+`audit` records the event in the platform's audit log, and `reportUsage` keeps each tenant's latest counts for the admin console, ignoring a report older than the stored one (ordered by the tenant's own `at`).
+`sendEmail` still answers `email_unavailable`: the tenant side (A5) is done, and the platform's mail provider is wired in wave 3.
 
 ### How OpenPing sends its email
 
@@ -309,11 +310,18 @@ Tests pass them the same way, by calling the Worker's `fetch(request, env, ctx)`
 It is read only when Vite's compile-time `import.meta.env.DEV` is true, which a production build replaces with false, so a deployed Worker ignores it whatever its vars say.
 `.dev.vars.example` has an example.
 
+### What a support sign-in may do
+
+A `hosted_support` session can look at everything and fix monitors, status pages and channels, but nothing that changes who can sign in or that can't be undone.
+It is refused, with 403 `support_restricted`, for any delete, the customer's passkeys, API tokens, the rekey endpoint, data import, generating push keys, signing every session out, and the `app_url`, `email_from`, `vapid_subject` and `retention` settings (`src/worker/lib/support.ts`).
+Every support sign-in, every change support makes and every refused one is kept in the tenant's `support_activity` table (migration 0021), shown to the customer in Settings > Sign-in & security, and reported through `props.platform.audit`.
+
 ## 8. Error codes
 
 | Status | `error` | When |
 | --- | --- | --- |
 | 402 | `plan_limit` | a create or update over the plan (section 5) |
+| 403 | `support_restricted` | a change a support sign-in may not make (section 7) |
 | 403 | `tenant_suspended` | a write while `tenant.status` is `suspended` (reads and exports still work) |
 | 400 | `managed_by_platform` | a change to `app_url` in hosted mode (section 2) |
 | 404 | `managed_by_platform` | `/setup`, `/recover`, the GitHub OAuth configuration and the email magic link in hosted mode |

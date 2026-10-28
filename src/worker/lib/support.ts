@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import type { AppEnv, Env, SessionRow } from "../types";
+import { HOSTED_ERRORS } from "../../shared/hosted-contract";
 
 /**
  * What a support sign-in may do (docs/hosted/CONTRACT.md, section 7).
@@ -15,7 +16,7 @@ import type { AppEnv, Env, SessionRow } from "../types";
 
 /** The answer to a refused change, for the app to show as is. */
 export const SUPPORT_RESTRICTED = {
-  error: "support_restricted",
+  error: HOSTED_ERRORS.supportRestricted,
   message: "A support sign-in can't do this. The account owner can, from their own sign-in.",
 } as const;
 
