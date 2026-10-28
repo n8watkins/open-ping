@@ -33,13 +33,14 @@ export default defineConfig([
     },
   },
   {
-    // The Worker, and the service worker the browser installs.
-    files: ["src/worker/**/*.ts", "public/**/*.js"],
+    // The Workers (OpenPing's and the Hosted platform's), and the service
+    // worker the browser installs.
+    files: ["src/worker/**/*.ts", "platform/src/**/*.ts", "platform/test/**/*.ts", "public/**/*.js"],
     languageOptions: { globals: globals.serviceworker },
   },
   {
     // Node tooling: scripts and configs.
-    files: ["scripts/**/*.mjs", "*.config.{js,ts}"],
+    files: ["scripts/**/*.mjs", "*.config.{js,ts}", "platform/*.config.ts"],
     languageOptions: { globals: globals.node },
   },
   {

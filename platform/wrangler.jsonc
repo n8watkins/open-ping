@@ -1,0 +1,58 @@
+{
+  // The OpenPing Hosted platform Worker (docs/HOSTED_BUILD_PLAN.md, B1).
+  // NOT DEPLOYED YET. Nothing in this file has been created in any Cloudflare
+  // account: the database, the dispatch namespace and the queue below are
+  // placeholders the owner creates later (platform/README.md, "Owner setup").
+  // There are no account ids or database ids here on purpose, the same as the
+  // root wrangler.jsonc: an id belongs to one account, and this file is public.
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "openping-platform",
+  "main": "src/index.ts",
+  // 2025-11-17 or later turns on ctx.exports, which the platform uses to hand
+  // each customer's OpenPing its capability stub (src/index.ts, TenantPlatform).
+  "compatibility_date": "2026-10-15",
+  "compatibility_flags": ["nodejs_compat"],
+  // Customers reach the platform only through its routes on HOSTED_DOMAIN
+  // (added with the domain, decision D2), never a workers.dev address.
+  "workers_dev": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    // The Hosted domain (decision D2, docs/hosted/DECISIONS.md): the platform
+    // serves app.<HOSTED_DOMAIN> itself and dispatches <slug>.<HOSTED_DOMAIN>
+    // to that customer's OpenPing. ".invalid" can never resolve, so nothing
+    // routes here until the owner buys the domain and sets it.
+    "HOSTED_DOMAIN": "openping-hosted.invalid"
+  },
+  // Accounts, tenants, subscriptions, escrowed keys, audit events and rate
+  // limits (migrations/). Never monitoring data. Created later by the owner;
+  // binding by name, like the root config, until then.
+  "d1_databases": [
+    {
+      "binding": "PLATFORM_DB",
+      "database_name": "openping-platform",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // One user Worker per customer, named t-<tenant id>. Workers for Platforms
+  // must be on (owner action O1) before this namespace can be created.
+  "dispatch_namespaces": [
+    {
+      "binding": "TENANTS",
+      "namespace": "openping-tenants"
+    }
+  ],
+  // The per-minute scheduler puts each due customer on this queue (B4).
+  "queues": {
+    "producers": [
+      {
+        "binding": "SCHEDULE_QUEUE",
+        "queue": "openping-schedule"
+      }
+    ]
+  }
+  // Secrets, set later with `wrangler secret put` from the owner's machine,
+  // never in this file: HANDOFF_SIGNING_KEY (B2), PLATFORM_KEY (B3),
+  // CF_API_TOKEN (B3), STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (B5).
+}
