@@ -257,6 +257,10 @@ describe("/mcp over JSON-RPC against D1", () => {
     const diagnostics = await call("get_diagnostics", { runs: 5 });
     expect(diagnostics.content[0]!.text).toContain("Database ok");
 
+    const keys = await call("get_key_status");
+    expect(keys.content[0]!.text).toMatch(/Current key id: [0-9a-f]{8}/);
+    expect(JSON.stringify(keys)).not.toContain("hook-secret");
+
     expect((await call("list_categories")).isError).toBeUndefined();
     expect((await call("list_incidents", { status: "open" })).isError).toBeUndefined();
   });

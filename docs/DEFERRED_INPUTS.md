@@ -18,7 +18,8 @@ On 2026-10-28 no copy existed on the development machine; both local `.dev.vars`
 Today very little depends on it: the Web Push signing key (no devices subscribed) and copies of alerts that were already sent.
 Monitor settings get encrypted the next time each monitor is saved, so a fresh key is cheapest now, before that happens.
 Do not paste the key into an issue, pull request, chat or repository file.
-See [Security and secret storage](./SECURITY.md#key-rotation-readiness) and [Backup and restore](./BACKUP.md).
+Once this release is deployed, either path is supported: rotate online with the old key ([Rotating `MASTER_KEY`](./SECURITY.md#rotating-master_key)), or start fresh without it ([If the old key is lost](./SECURITY.md#if-the-old-key-is-lost)), and Settings > Encryption keys lists exactly what each path leaves unreadable.
+See also [Backup and restore](./BACKUP.md).
 
 ### 2. Optional: send alert emails from your own domain
 

@@ -15,6 +15,11 @@
 # Generate one with:  openssl rand -base64 32
 MASTER_KEY=
 
+# Only while rotating MASTER_KEY: the old key, used to read but never to write.
+# Delete it once Settings > Encryption keys says it is no longer needed
+# (docs/SECURITY.md, "Rotating MASTER_KEY").
+# MASTER_KEY_PREVIOUS=
+
 # One-time credential that protects the unauthenticated first-run wizard.
 # Generate one with: openssl rand -base64 32
 SETUP_TOKEN=

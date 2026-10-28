@@ -66,7 +66,7 @@ They also do not replace the `database_id` in `wrangler.jsonc`.
 
 If a release introduces a new secret, it is documented in [`.dev.vars.example`](../.dev.vars.example) and the `Env` interface in `src/worker/types.ts`.
 Set it with `npx wrangler secret put <NAME>` for the target Worker.
-Back up `MASTER_KEY` before changing it because previously encrypted values cannot be decrypted with a replacement key.
+Back up `MASTER_KEY` before changing it, and change it only with the [rotation runbook](./SECURITY.md#rotating-master_key), because a replacement key alone cannot decrypt previously encrypted values.
 
 ## Rolling back
 
@@ -80,4 +80,5 @@ npm run deploy
 
 Migrations are additive, so older code generally tolerates a newer schema.
 Do not assume that a rollback reverses data transformations or restores secrets.
+Values encrypted by a release with key rotation use the `v2` ciphertext form, which earlier releases cannot read, so do not roll back below that release once it has written data.
 Use the backup procedure when data restoration is required.

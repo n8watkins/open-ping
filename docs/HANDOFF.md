@@ -177,8 +177,7 @@ Commit future work on a feature branch, then run `no-mistakes axi run --intent "
    The stored `showScheduledOff` key is left in each monitor's `public` JSON and dropped on read; no migration.
    Details: [docs/BUG-public-scheduled-off.md](./BUG-public-scheduled-off.md) and [docs/STATUS_PAGES.md](./STATUS_PAGES.md#off-hours-scheduled-off).
 
-1. Implement dual-key `MASTER_KEY` rotation.
-   The storage inventory and safety requirements are documented, but an online rotation still needs dual-key reads, an idempotent re-encryption pass over every protected storage class, and a proof that the previous key is no longer required.
+1. `MASTER_KEY` rotation is implemented (dual-key reads, `POST /api/admin/rekey`, Settings > Encryption keys) but has not been run in production; follow [the runbook](./SECURITY.md#rotating-master_key) once the owner has the current key (DEFERRED_INPUTS item 1).
 
 2. Complete live delivery verification.
    Exercise a real browser push subscription, a real push delivery and deep link, a Resend down-and-recovery sequence, a Discord delivery, and at least one real production monitor incident.

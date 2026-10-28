@@ -1,7 +1,6 @@
 import type { Env } from "../types";
 import { newId } from "../lib/ids";
-import { encryptValue, decryptValue } from "../lib/crypto";
-import { isCiphertext } from "../lib/secret-config";
+import { encryptValue, decryptValue, isCiphertext } from "../lib/crypto";
 
 /**
  * Notification channel CRUD data layer. The `notification_channels` table stores
@@ -19,8 +18,6 @@ import { isCiphertext } from "../lib/secret-config";
  * update (see `mergeChannelSecrets`).
  */
 
-const CIPHERTEXT_PREFIX = "v1:";
-
 /** Capability-secret config field names per channel type. */
 const CHANNEL_SECRET_FIELDS: Record<string, readonly string[]> = {
   discord: ["url"],
@@ -30,13 +27,13 @@ const CHANNEL_SECRET_FIELDS: Record<string, readonly string[]> = {
 };
 
 /** Secret config field names for a channel type ([] for types with no secrets). */
-function secretFieldsFor(type: string): readonly string[] {
+export function secretFieldsFor(type: string): readonly string[] {
   return CHANNEL_SECRET_FIELDS[type] ?? [];
 }
 
 /**
  * Deep-clone `config`, encrypting each secret field that holds a non-empty
- * plaintext string. Idempotent (`v1:` values are left as-is). When
+ * plaintext string. Idempotent (ciphertext values are left as-is). When
  * `env.MASTER_KEY` is unset the clone is returned UNCHANGED (plaintext at rest).
  */
 async function encryptChannelConfig(
@@ -60,7 +57,7 @@ async function encryptChannelConfig(
 }
 
 /**
- * Deep-clone `config`, decrypting each secret field whose value is a `v1:`
+ * Deep-clone `config`, decrypting each secret field whose value is a stored
  * ciphertext. A failed decrypt never throws outward — the value is left as-is.
  */
 async function decryptChannelConfig(
@@ -71,7 +68,7 @@ async function decryptChannelConfig(
   const clone = structuredClone(config);
   for (const field of secretFieldsFor(type)) {
     const value = clone[field];
-    if (typeof value === "string" && value.startsWith(CIPHERTEXT_PREFIX)) {
+    if (isCiphertext(value)) {
       try {
         clone[field] = await decryptValue(env, value);
       } catch {

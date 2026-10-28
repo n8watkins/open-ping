@@ -1,7 +1,6 @@
 import type { Env } from "../types";
 import { newId } from "../lib/ids";
-import { decryptValue, encryptValue } from "../lib/crypto";
-import { isCiphertext } from "../lib/secret-config";
+import { decryptValue, encryptValue, isCiphertext } from "../lib/crypto";
 
 /**
  * Notification outbox (PRD §12). Every notification we intend to deliver is

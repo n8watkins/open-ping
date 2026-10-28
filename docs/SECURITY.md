@@ -9,6 +9,7 @@ This document describes what is stored, how it is protected, and what must be ba
 The following values can be configured with `wrangler secret put` or in the Cloudflare dashboard and are injected into the Worker at runtime:
 
 - `MASTER_KEY` encrypts sensitive values stored in D1.
+- `MASTER_KEY_PREVIOUS` is set only while rotating `MASTER_KEY`: it holds the old key, which OpenPing then uses to read but never to write.
 - `SETUP_TOKEN` protects the unauthenticated first-run setup flow and stops working after setup is complete.
 - `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` configure GitHub OAuth.
 - `RESEND_API_KEY` authorizes email delivery.
@@ -32,16 +33,25 @@ Wrangler deploys configured Worker secrets separately rather than using local de
 
 `MASTER_KEY` must be a base64-encoded 32-byte key.
 OpenPing uses it as an AES-256-GCM key with a fresh random 12-byte nonce for every encrypted value.
-Ciphertext is stored in the versioned form `v1:<base64 nonce>:<base64 ciphertext and tag>`.
+Ciphertext is stored in the versioned form `v2:<key id>:<base64 nonce>:<base64 ciphertext and tag>`.
+The key id is 8 hex characters derived from the key with HMAC-SHA-256 over a fixed label.
+It is not secret, it cannot be used to recover the key, and it tells OpenPing which key sealed a value without trying each one.
+Settings > Encryption keys shows the id of the current key, so you can tell keys apart without ever displaying one.
+
+Releases before key ids wrote `v1:<base64 nonce>:<base64 ciphertext and tag>`.
+Those values stay readable: OpenPing tries `MASTER_KEY` first and then `MASTER_KEY_PREVIOUS`.
+Every new write uses the `v2` form and `MASTER_KEY`.
+An older release cannot read `v2` values, so do not roll back below the release that introduced them (see [Upgrading](./UPGRADE.md#rolling-back)).
+OpenPing does not bind a ciphertext to its row with AES-GCM additional data, because some write paths do not know the row's final identity when they encrypt.
 
 A valid `MASTER_KEY` is required to complete setup on a new installation.
 Older installations can still boot without one for compatibility, but writes that use compatibility mode can remain plaintext and the administrator receives a warning.
 
-Do not replace `MASTER_KEY` on an existing installation without first migrating every encrypted record.
-OpenPing does not currently provide an automated key-rotation or re-encryption command.
-Cloudflare does not expose the current value of a deployed Worker secret, so a safe migration requires the operator's backed-up current key as well as the new key.
-Changing the key in place makes values encrypted with the previous key unreadable and causes protected notification deliveries to fail closed.
-Back up the original key separately from D1 and restrict access to both copies.
+Never simply replace `MASTER_KEY` on an existing installation.
+Follow [Rotating `MASTER_KEY`](#rotating-master_key), which keeps the old key readable until every value has been re-encrypted and verified.
+Cloudflare does not expose the current value of a deployed Worker secret, so a rotation needs your own backed-up copy of the current key as well as the new key.
+Replacing the key without the old one makes everything sealed under it unreadable, and protected notification deliveries fail closed.
+Back up the key separately from D1 and restrict access to every copy.
 
 ## D1 storage inventory
 
@@ -100,26 +110,153 @@ Compatibility upgrades therefore happen as records are used:
 - An older notification-channel capability URL or secret is encrypted the next time that channel is read or updated with `MASTER_KEY` configured.
 - An older plaintext notification outbox payload is encrypted when the dispatcher claims it for delivery.
 
-Plaintext VAPID private keys generated before `MASTER_KEY` was configured are not automatically re-encrypted.
-OpenPing does not currently provide an automated migration for a legacy plaintext VAPID private key.
-For immediate hardening after an upgrade, read each notification channel through the authenticated API, re-save monitors, re-register push devices, and rotate heartbeat tokens.
-Verify that `MASTER_KEY` is configured before performing those actions.
+For immediate hardening after an upgrade, configure `MASTER_KEY` and click **Re-encrypt now** in Settings > Encryption keys (or call `POST /api/admin/rekey`, below).
+The pass encrypts every legacy plaintext value in the classes above at once.
+That includes an unsealed monitor configuration, a plaintext VAPID private key generated before `MASTER_KEY` was configured, and a Web Push subscription from before migration 0008, which also receives its endpoint digest.
+Heartbeat tokens are hashes rather than ciphertext, so rotate any legacy plaintext heartbeat token from the monitor detail screen.
 
-## Key rotation readiness
+## Rotating `MASTER_KEY`
 
-A safe online `MASTER_KEY` rotation needs a dual-key read window, an idempotent re-encryption pass over every protected storage location, and a verification pass that proves no ciphertext still depends on the previous key.
-OpenPing deliberately does not offer a command that swaps the key first or performs an unverifiable partial rewrite.
-Until dual-key rotation support is implemented, preserve these recovery prerequisites:
+A rotation replaces the key that protects stored values without downtime and without losing data.
+It has three parts: a dual-key window in which both keys can read, a re-encryption pass that moves every value onto the new key, and a check that proves nothing needs the old key any more.
 
-1. Retain the current `MASTER_KEY` in a secret manager that is independent of Cloudflare and D1.
-2. Take and retain a second D1 backup immediately before maintenance.
-3. Keep the deployed `MASTER_KEY` unchanged while auditing or preparing migration tooling.
-4. Do not remove the old key backup until every encrypted storage class has been re-encrypted and independently verified.
-5. If the current key is unavailable, restore it from the secret manager rather than replacing it in Cloudflare.
+### What is covered
 
-Protected storage classes currently include monitor configuration, notification-channel capabilities, notification outbox payloads, Web Push subscription secrets, and generated VAPID private keys.
-Production rotation remains blocked until the operator supplies the backed-up current key and approves a maintenance window with a verified D1 backup.
-Track those prerequisites in [Deferred operator inputs](./DEFERRED_INPUTS.md).
+The re-encryption pass and the status report cover every value that `MASTER_KEY` protects:
+
+| Storage class | Where | What |
+| --- | --- | --- |
+| Encrypted settings | `settings` rows with `encrypted = 1`, plus `vapid_private_key` | The generated VAPID private key |
+| Monitor configuration | `monitors.config` | The whole sealed configuration, including legacy field-level values inside it |
+| Notification channel secrets | `notification_channels.config` | Discord URLs, generic webhook URLs and HMAC secrets |
+| Web Push subscriptions | `push_subscriptions` | Endpoint, `p256dh` and `auth` |
+| Notification outbox payloads | `notification_outbox.payload` | Every payload, including delivered and dead history |
+
+Worker secrets such as `VAPID_PRIVATE_KEY` or `API_TOKEN` live outside D1 and are not affected.
+Hashed values (sessions, sign-in tokens, heartbeat tokens) do not depend on `MASTER_KEY`.
+
+### The API
+
+Both endpoints are administrator-only: a signed-in session (with the CSRF header on the `POST`) or the `API_TOKEN` bearer.
+Neither ever returns a stored value, encrypted or not.
+
+- `GET /api/admin/rekey/status` counts the values in each storage class by key: `current`, `previous`, `legacy` (a `v1` value), `unsealed` (legacy plaintext) and `unreadable`.
+  It opens up to 50 `legacy` and `previous` values to prove which key they need, lists unreadable values by storage class, row id and field, and returns `safeToRemovePreviousKey`.
+- `POST /api/admin/rekey` with `{"cursor": null}` runs one batch of the re-encryption pass and returns `stats`, the `unreadable` values it found and the next `cursor`.
+  Send the returned `cursor` back until `done` is `true`.
+  A batch reads at most 25 rows by default (`limit` up to 35) and makes one D1 query per storage class it reaches plus one batched update per changed row.
+  That keeps each call well under the Workers Free limit of 50 D1 queries, and the cryptography for 35 rows is a small fraction of the 10 ms CPU limit.
+
+The pass is idempotent and safe to run beside normal traffic.
+It rewrites a value only when it is not already a `v2` value under the current key, and every write is a compare-and-swap on the exact stored value, so a concurrent save from the app wins.
+A value that no configured key can open is reported and left exactly as it is: the pass never drops or overwrites data it cannot read.
+If a call fails, run the pass again; resuming or restarting is harmless.
+
+### Runbook
+
+These steps rotate a production install deployed with `npm run deploy:prod`.
+Run `node scripts/prod-config.mjs` first, so the gitignored `.wrangler.prod.jsonc` exists, and pass `-c .wrangler.prod.jsonc` to every Wrangler command.
+A template install without `deploy.local.json` can drop the `-c` flag.
+
+1. Deploy a release that includes key rotation, and confirm that Settings > Encryption keys shows a current key id.
+2. Back up D1 and keep the file with the current key, because only that key can decrypt it:
+
+   ```bash
+   npx wrangler d1 export open-ping --remote -c .wrangler.prod.jsonc --output openping-before-key-rotation.sql
+   ```
+
+3. Find your backed-up copy of the current `MASTER_KEY` and generate the new one:
+
+   ```bash
+   openssl rand -base64 32
+   ```
+
+   Save the new key in your secret manager next to the old one, clearly labelled, before you set it anywhere.
+4. Set `MASTER_KEY_PREVIOUS` to the **old** key first:
+
+   ```bash
+   npx wrangler secret put MASTER_KEY_PREVIOUS -c .wrangler.prod.jsonc
+   ```
+
+   Settings > Encryption keys should now show the same id for the current and the previous key.
+   Setting the previous key first means there is never a moment in which stored values are unreadable.
+5. Set `MASTER_KEY` to the **new** key:
+
+   ```bash
+   npx wrangler secret put MASTER_KEY -c .wrangler.prod.jsonc
+   ```
+
+   The current key id changes, the badge reads "Rotation in progress", and everything keeps working through the previous key.
+6. Run the re-encryption pass: click **Re-encrypt now** in Settings > Encryption keys, or loop the API:
+
+   ```bash
+   cursor=null
+   while :; do
+     res=$(curl -s https://status.example.com/api/admin/rekey \
+       -H "Authorization: Bearer $OPENPING_TOKEN" -H "Content-Type: application/json" \
+       --data "{\"cursor\": $cursor}")
+     echo "$res" | jq -c '{stats, unreadable}'
+     cursor=$(echo "$res" | jq '.cursor')
+     [ "$cursor" = "null" ] && break
+   done
+   ```
+
+7. Check the status, and continue only when `safeToRemovePreviousKey` is `true` and the summary says it is safe to delete `MASTER_KEY_PREVIOUS`:
+
+   ```bash
+   curl -s https://status.example.com/api/admin/rekey/status \
+     -H "Authorization: Bearer $OPENPING_TOKEN" | jq '{safeToRemovePreviousKey, dependsOnPreviousKey, unreadable, summary}'
+   ```
+
+   If values are still listed as depending on the previous key, run the pass again (something wrote with the old key mid-pass, or the pass was interrupted).
+   Unreadable values were already unreadable before the rotation.
+   They do not block removing the previous key; fix them as described under [If the old key is lost](#if-the-old-key-is-lost).
+8. Delete the previous key:
+
+   ```bash
+   npx wrangler secret delete MASTER_KEY_PREVIOUS -c .wrangler.prod.jsonc
+   ```
+
+9. Confirm that the status now reads "Every protected value is encrypted with the current key", open a monitor's edit page, and send a test notification to a webhook or Discord channel.
+10. Keep the old key and the pre-rotation D1 export together for at least one full backup cycle (30 days is a reasonable minimum), because the export can only be decrypted with the old key.
+    Then destroy both together.
+
+Never set `MASTER_KEY` to the new key before `MASTER_KEY_PREVIOUS` holds the old one.
+In that window every protected value fails closed: monitors lose their configuration, notifications to protected channels are not sent, and pending deliveries can be retried until they are marked dead.
+
+### If the old key is lost
+
+Without the old key, the values sealed under it cannot be recovered by anyone, including OpenPing.
+Everything else in D1 is unaffected: monitor names, schedules, history, incidents, status pages, categories, email channels and settings stay as they are.
+
+Set a fresh key so that new values are protected again:
+
+1. Back up D1 as in step 2 above, even though some of it is unreadable.
+2. Generate a new key, save it in your secret manager, and set it as `MASTER_KEY` without setting `MASTER_KEY_PREVIOUS`.
+3. Open Settings > Encryption keys, or `GET /api/admin/rekey/status`, for the list of unreadable values by storage class, row id and field.
+4. Fix each storage class that is listed:
+
+   - **Monitor configuration:** the whole configuration of each listed monitor is unreadable, so its checks fail until it is fixed.
+     Open the monitor's edit page, enter the URL again along with its headers, body and credentials, and save.
+     History, schedule and notification settings are kept.
+   - **Notification channel secrets:** in Integrations, edit each listed Discord or webhook channel and enter the URL again.
+     Re-enter a webhook's HMAC secret as well, because a blank secret keeps the unreadable one, which the status still lists.
+   - **VAPID private key:** Web Push cannot sign messages, and existing browser subscriptions belong to the old key pair.
+     Delete the stored key pair, generate a new one under Integrations, and subscribe each device again.
+   - **Web Push subscriptions:** the device list fails to load while an unreadable subscription exists, so delete the listed rows directly.
+   - **Notification outbox payloads:** a pending delivery fails closed and is never sent, and delivered history is unreadable but harmless.
+     Delete the listed rows if you want the status to read clean.
+
+   Delete the rows that cannot be fixed from the app with Wrangler, using the ids from the status report:
+
+   ```bash
+   npx wrangler d1 execute open-ping --remote -c .wrangler.prod.jsonc --command \
+     "DELETE FROM settings WHERE key IN ('vapid_public_key', 'vapid_private_key');
+      DELETE FROM push_subscriptions WHERE id IN ('psub_...');
+      DELETE FROM notification_outbox WHERE id IN ('out_...');"
+   ```
+
+5. Run **Re-encrypt now** once to seal any legacy plaintext values under the new key, and confirm that the status reports no unreadable values.
 
 ## Backups and restores
 
@@ -130,7 +267,9 @@ Do not embed credentials in a target URL or assertion value if the JSON export w
 
 A Wrangler D1 export contains encrypted values, one-way hashes, and all plaintext operational data described above.
 It does not contain Worker secrets.
-Restoring encrypted D1 values requires the same `MASTER_KEY`, while hashed heartbeat tokens remain usable only if the calling system still has the original raw token.
+Restoring encrypted D1 values requires the key they were sealed with.
+For an export taken before a rotation that is the old key: set it as `MASTER_KEY_PREVIOUS` after the restore and run the re-encryption pass.
+Hashed heartbeat tokens remain usable only if the calling system still has the original raw token.
 If the raw token is unavailable after a restore, rotate it.
 
 Back up these items separately:
