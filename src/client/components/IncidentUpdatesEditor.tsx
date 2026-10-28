@@ -118,6 +118,7 @@ export function IncidentUpdatesEditor({
           <textarea
             className="input"
             rows={3}
+            name="update-message"
             maxLength={MAX_MESSAGE}
             value={message}
             onChange={(e) => {
@@ -209,7 +210,8 @@ function UpdateRow({
             <textarea
               className="input"
               rows={3}
-              maxLength={MAX_MESSAGE}
+              name="update-message"
+            maxLength={MAX_MESSAGE}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
             />

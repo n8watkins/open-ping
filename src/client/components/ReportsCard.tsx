@@ -114,6 +114,7 @@ export function ReportsCard({
             className="input sm:w-56"
             value={month}
             onChange={(e) => setMonth(e.target.value)}
+            name="report-month"
             aria-label="Report month"
           >
             {months.map((m, i) => (
@@ -142,17 +143,17 @@ export function ReportsCard({
 
         {report && (
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[520px] text-sm">
+            <table className="w-full text-sm">
               <caption className="sr-only">
                 Uptime report for {monthName(report.month)} ({report.timezone})
               </caption>
               <thead>
                 <tr className="border-b border-line text-left text-xs text-ink-faint">
                   <th scope="col" className="py-2 pr-3 font-medium">Monitor</th>
-                  <th scope="col" className="py-2 px-3 text-right font-medium">Uptime</th>
-                  <th scope="col" className="py-2 px-3 text-right font-medium">Downtime</th>
-                  <th scope="col" className="py-2 px-3 text-right font-medium">Incidents</th>
-                  <th scope="col" className="py-2 pl-3 text-right font-medium">Avg response</th>
+                  <th scope="col" className="py-2 px-2 sm:px-3 text-right font-medium">Uptime</th>
+                  <th scope="col" className="py-2 px-2 sm:px-3 text-right font-medium">Downtime</th>
+                  <th scope="col" className="py-2 pl-2 sm:px-3 text-right font-medium">Incidents</th>
+                  <th scope="col" className="hidden py-2 pl-3 text-right font-medium sm:table-cell">Avg response</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -165,13 +166,13 @@ export function ReportsCard({
                 )}
                 {report.monitors.map((m) => (
                   <tr key={m.id}>
-                    <th scope="row" className="max-w-[16rem] truncate py-2 pr-3 text-left font-normal text-ink">
+                    <th scope="row" className="max-w-[9rem] truncate py-2 pr-3 text-left font-normal text-ink sm:max-w-[16rem]">
                       {m.name}
                     </th>
-                    <td className="py-2 px-3 text-right tabular-nums text-ink">{pct(m.uptimePct)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-ink-muted">{minutes(m.downtimeMinutes)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-ink-muted">{m.incidents}</td>
-                    <td className="py-2 pl-3 text-right tabular-nums text-ink-muted">{formatMs(m.avgResponseMs)}</td>
+                    <td className="py-2 px-2 sm:px-3 text-right tabular-nums text-ink">{pct(m.uptimePct)}</td>
+                    <td className="py-2 px-2 sm:px-3 text-right tabular-nums text-ink-muted">{minutes(m.downtimeMinutes)}</td>
+                    <td className="py-2 pl-2 sm:px-3 text-right tabular-nums text-ink-muted">{m.incidents}</td>
+                    <td className="hidden py-2 pl-3 text-right tabular-nums text-ink-muted sm:table-cell">{formatMs(m.avgResponseMs)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -179,10 +180,10 @@ export function ReportsCard({
                 <tfoot>
                   <tr className="border-t border-line font-medium">
                     <th scope="row" className="py-2 pr-3 text-left text-ink">All monitors</th>
-                    <td className="py-2 px-3 text-right tabular-nums text-ink">{pct(report.totals.uptimePct)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-ink-muted">{minutes(report.totals.downtimeMinutes)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-ink-muted">{report.totals.incidents}</td>
-                    <td className="py-2 pl-3 text-right tabular-nums text-ink-muted">{formatMs(report.totals.avgResponseMs)}</td>
+                    <td className="py-2 px-2 sm:px-3 text-right tabular-nums text-ink">{pct(report.totals.uptimePct)}</td>
+                    <td className="py-2 px-2 sm:px-3 text-right tabular-nums text-ink-muted">{minutes(report.totals.downtimeMinutes)}</td>
+                    <td className="py-2 pl-2 sm:px-3 text-right tabular-nums text-ink-muted">{report.totals.incidents}</td>
+                    <td className="hidden py-2 pl-3 text-right tabular-nums text-ink-muted sm:table-cell">{formatMs(report.totals.avgResponseMs)}</td>
                   </tr>
                 </tfoot>
               )}
@@ -197,6 +198,7 @@ export function ReportsCard({
         <label className="mt-5 flex items-start gap-2.5 border-t border-line pt-4 text-sm">
           <input
             type="checkbox"
+            name="monthly-report-email"
             checked={emailEnabled}
             disabled={saving}
             onChange={(e) => void toggleEmail(e.target.checked)}

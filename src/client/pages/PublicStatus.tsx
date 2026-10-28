@@ -422,9 +422,11 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
               >
                 {/* Off-hours means no recent checks, so "Updated 2d ago" would
                     read like a dead monitor: name the last check instead. */}
-                {overallMeta === ALL_SCHEDULED_OFF_META
-                  ? `Last check ${formatSince(updatedAt)}`
-                  : `Updated ${formatRelativeTime(updatedAt)}`}
+                {overall === "awaiting_data"
+                  ? "No checks have run yet"
+                  : overallMeta === ALL_SCHEDULED_OFF_META
+                    ? `Last check ${formatSince(updatedAt)}`
+                    : `Updated ${formatRelativeTime(updatedAt)}`}
               </p>
             </div>
           </div>
@@ -483,7 +485,7 @@ export default function PublicStatus({ asHome = false }: { asHome?: boolean } = 
 
         {/* Recent incidents */}
         <section className="mt-10">
-          <div className="mb-3 flex items-baseline justify-between gap-3">
+          <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold tracking-tight text-ink-muted">
               Recent incidents
             </h2>
