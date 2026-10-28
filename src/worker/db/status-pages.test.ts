@@ -25,7 +25,7 @@ function page(
   return { includeMode, categoryIds, monitorIds };
 }
 
-describe("selectPageMonitors — 'all' mode", () => {
+describe("selectPageMonitors - 'all' mode", () => {
   it("returns every visible monitor", () => {
     expect(selectPageMonitors(page("all"), monitors)).toEqual(monitors);
   });
@@ -43,7 +43,7 @@ describe("selectPageMonitors — 'all' mode", () => {
   });
 });
 
-describe("selectPageMonitors — 'categories' mode", () => {
+describe("selectPageMonitors - 'categories' mode", () => {
   it("returns monitors whose categoryId is in categoryIds", () => {
     const result = selectPageMonitors(page("categories", ["cat_api"]), monitors);
     expect(result.map((m) => m.id)).toEqual(["mon_a", "mon_b"]);
@@ -84,7 +84,7 @@ describe("selectPageMonitors — 'categories' mode", () => {
   });
 });
 
-describe("selectPageMonitors — 'monitors' mode", () => {
+describe("selectPageMonitors - 'monitors' mode", () => {
   it("returns monitors whose id is in monitorIds", () => {
     const result = selectPageMonitors(
       page("monitors", [], ["mon_a", "mon_c"]),
@@ -125,7 +125,7 @@ describe("selectPageMonitors — 'monitors' mode", () => {
   });
 });
 
-describe("selectPageMonitors — purity", () => {
+describe("selectPageMonitors - purity", () => {
   it("does not mutate the input array", () => {
     const input = [...monitors];
     selectPageMonitors(page("categories", ["cat_api"]), input);

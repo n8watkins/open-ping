@@ -5,7 +5,7 @@ import { assertSafeUrl } from "../lib/ssrf";
 /**
  * DNS record check executor. Resolves a record over Cloudflare's public DNS-over-
  * HTTPS JSON API and (optionally) asserts the resolved value(s) equal/contain an
- * expected string. Runs in the Workers runtime — only global `fetch`,
+ * expected string. Runs in the Workers runtime - only global `fetch`,
  * `AbortController` and the `URL` global are used.
  *
  * The resolver host is a FIXED constant (never user input), so this cannot be an
@@ -96,7 +96,7 @@ export async function runDnsCheck(config: DnsConfig): Promise<ProbeResult> {
     }
 
     // Keep only answers of the requested record type (an A query may also carry
-    // the CNAME chain that led there — we assert against the requested kind).
+    // the CNAME chain that led there - we assert against the requested kind).
     const answers = (json.Answer ?? []).filter(
       (a) => a.type === TYPE_NUM[config.recordType],
     );

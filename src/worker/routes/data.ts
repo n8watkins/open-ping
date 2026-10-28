@@ -75,8 +75,8 @@ function blankHeaders(headers: unknown): Array<{ name: string; value: string }> 
 
 /**
  * Strip secrets from a monitor's config. HTTP: drop the request body, blank
- * header values, redact auth credentials (all other fields — url, method,
- * timeouts, thresholds, expectedStatus — are kept). Heartbeat: drop the secret.
+ * header values, redact auth credentials (all other fields - url, method,
+ * timeouts, thresholds, expectedStatus - are kept). Heartbeat: drop the secret.
  * Defensive against malformed/partial config blobs.
  */
 function redactConfig(monitor: MonitorRecord): Record<string, unknown> {
@@ -287,7 +287,7 @@ interface ExportedIncident {
   publicMessage: string | null;
 }
 
-// GET /export — full, secret-free JSON backup as a downloadable attachment.
+// GET /export - full, secret-free JSON backup as a downloadable attachment.
 data.get("/export", async (c) => {
   const [monitorsList, maintenanceList, settings] = await Promise.all([
     listMonitors(c.env),
@@ -331,7 +331,7 @@ interface ImportRequest {
   options?: { dryRun?: boolean; skipExisting?: boolean };
 }
 
-// POST /import — validate, optionally preview (dryRun), else selectively import.
+// POST /import - validate, optionally preview (dryRun), else selectively import.
 data.post("/import", async (c) => {
   const body = (await c.req.json().catch(() => undefined)) as
     | ImportRequest
@@ -487,7 +487,7 @@ data.post("/import", async (c) => {
       )
       .run();
     if (res.meta?.changes) importedIncidents++;
-    else skippedIncidents++; // id collision — already present
+    else skippedIncidents++; // id collision - already present
   }
 
   return c.json({

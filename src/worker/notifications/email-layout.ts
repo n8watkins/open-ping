@@ -2,7 +2,7 @@
  * Shared, branded HTML email layout for every OpenPing email (incident down /
  * recovery / test, the weekly summary, and the magic-link sign-in mail).
  *
- * Design goals — maximum cross-client compatibility:
+ * Design goals - maximum cross-client compatibility:
  *  - Table-based structure, every style INLINE (no <style>, no external CSS,
  *    no JS), fluid width capped at ~600px so it reads on mobile.
  *  - A LIGHT body (white card on a light page) with dark ink text is the safe
@@ -10,10 +10,10 @@
  *    dark-background design. The brand still shows through a dark header bar,
  *    the accent CTA, and the status pill / accent rail.
  *  - The "ping" glyph from Logo.tsx is recreated with nested border-radius
- *    elements (no SVG — Gmail strips it); it degrades to neat nested squares in
+ *    elements (no SVG - Gmail strips it); it degrades to neat nested squares in
  *    Outlook's Word engine.
  *
- * Pure string builders only — no Env, no I/O — so they unit-test trivially.
+ * Pure string builders only - no Env, no I/O - so they unit-test trivially.
  */
 
 /** HTML-escape text for safe interpolation into element bodies and attributes. */
@@ -26,7 +26,7 @@ export function escapeHtml(s: string): string {
 }
 
 /** Drop a leading status emoji (+ following space) so the HTML heading stays
- *  clean — the colored pill already conveys state. The inbox subject keeps it. */
+ *  clean - the colored pill already conveys state. The inbox subject keeps it. */
 export function stripLeadingEmoji(s: string): string {
   return s.replace(/^[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}️‍\s]+/u, "");
 }
@@ -43,7 +43,7 @@ const BRAND = {
   pageBg: "#eef2f7",
   cardBg: "#ffffff",
   cardBorder: "#e3e9f2",
-  headerBg: "#0b1220", // brand canvas — the one dark band
+  headerBg: "#0b1220", // brand canvas - the one dark band
   headerInk: "#e6edf6",
   glyphBg: "#1b2547", // brand accent-soft
   ink: "#16233a",
@@ -86,7 +86,7 @@ export interface EmailButton {
 export interface EmailLayoutOptions {
   /** Visible heading at the top of the card body. */
   heading: string;
-  /** Inner HTML for the message body — caller is responsible for escaping. */
+  /** Inner HTML for the message body - caller is responsible for escaping. */
   bodyHtml: string;
   /** Accent key ("down" | "up" | "degraded" | "suspended" | "neutral"). */
   accent?: string;

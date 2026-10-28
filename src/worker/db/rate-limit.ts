@@ -8,7 +8,7 @@ import type { Env } from "../types";
  * other public endpoints can reuse it.
  *
  * Model: one D1 row per (scope, window). The row `key` embeds the window index,
- * so a new window always upserts a fresh row starting at 1 — counters reset with
+ * so a new window always upserts a fresh row starting at 1 - counters reset with
  * no scheduled job. On each hit we increment and compare the post-increment
  * `count` to the cap. Expired rows are reaped opportunistically so the table
  * stays bounded without a cron.
@@ -44,7 +44,7 @@ export function rateLimitKey(scope: string, now: number, windowMs: number): stri
 }
 
 /**
- * Pure decision from a post-increment `count` — no I/O, so it is unit-testable
+ * Pure decision from a post-increment `count` - no I/O, so it is unit-testable
  * without D1. `allowed` is true only while the count is within the cap.
  */
 export function decideRateLimit(
@@ -92,7 +92,7 @@ export async function hitRateLimit(
   const count = row?.count ?? 1;
 
   // Opportunistic reap of long-expired windows keeps the table bounded without a
-  // dedicated cron. Best-effort and low-probability — never blocks the request,
+  // dedicated cron. Best-effort and low-probability - never blocks the request,
   // and only touches rows several windows in the past (never the live one).
   if (Math.random() < 0.02) {
     await env.DB.prepare("DELETE FROM rate_limits WHERE window_start < ?")

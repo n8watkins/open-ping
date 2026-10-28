@@ -11,7 +11,7 @@ import type { MonitorState } from "../../shared/states";
  * rolled-up check/latency aggregates, instead of one row per sample.
  *
  * Timestamps are epoch milliseconds. Latency is only aggregated when a finite
- * `latencyMs` is supplied — states like `scheduled_off` or a missed heartbeat
+ * `latencyMs` is supplied - states like `scheduled_off` or a missed heartbeat
  * carry no measured latency and must not pollute min/sum/max.
  */
 

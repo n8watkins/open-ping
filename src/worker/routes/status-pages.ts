@@ -14,7 +14,7 @@ import {
 } from "../db/status-pages";
 
 /**
- * Status-page CRUD API mounted at /api/status-pages (PRD §16 — multiple public
+ * Status-page CRUD API mounted at /api/status-pages (PRD §16 - multiple public
  * status pages). All routes require an authenticated session; the auth
  * middleware also enforces CSRF on mutations. Bodies are validated with the
  * shared `statusPageSchema`. The default page's `is_default` flag is managed

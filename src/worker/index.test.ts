@@ -49,7 +49,7 @@ const ctx = {
   passThroughOnException() {},
 } as unknown as ExecutionContext;
 
-describe("worker fetch — SPA fallback + secureHeaders", () => {
+describe("worker fetch - SPA fallback + secureHeaders", () => {
   it("serves a direct-loaded client route (/status) as 200 with security headers", async () => {
     let assetUrl = "";
     const res = await worker.fetch!(
@@ -212,7 +212,7 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
 
   it("OAuth start 302-redirects (Response.redirect headers are also immutable)", async () => {
     // The GitHub OAuth start returns Response.redirect(), whose headers are
-    // immutable just like ASSETS — this 500'd before the mutable-clone fix.
+    // immutable just like ASSETS - this 500'd before the mutable-clone fix.
     const env = {
       GITHUB_CLIENT_ID: "Ov23test",
       APP_URL: "https://example.com",

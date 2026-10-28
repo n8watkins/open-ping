@@ -62,8 +62,8 @@
 
   /* The dark status tokens are tuned for dark surfaces and are unreadable on
      light backgrounds, so re-tune them here. Darker, saturated variants that
-     clear 4.5:1 on the darkest light surface (surface-2 #eef2f7) — and so also
-     on canvas #f6f8fb and white — for pill/label text and ≥3:1 for the large
+     clear 4.5:1 on the darkest light surface (surface-2 #eef2f7) - and so also
+     on canvas #f6f8fb and white - for pill/label text and ≥3:1 for the large
      overall-status banner icon/text. */
   --color-up: #167c3c;
   --color-down: #cf1b2b;

@@ -97,8 +97,8 @@ export async function setJSON<T>(
 /**
  * True for a settings key that names a secret and must never be returned to a
  * client or written into a backup. The `encrypted` column alone is NOT a safe
- * filter: best-effort mode (no MASTER_KEY) stores secrets — notably the VAPID
- * private key — with encrypted=0/plaintext. This name-based denylist guarantees
+ * filter: best-effort mode (no MASTER_KEY) stores secrets - notably the VAPID
+ * private key - with encrypted=0/plaintext. This name-based denylist guarantees
  * every consumer (export, GET /api/settings, PUT response) is protected.
  */
 export function isSecretSettingKey(key: string): boolean {
@@ -112,7 +112,7 @@ export function isSecretSettingKey(key: string): boolean {
   );
 }
 
-/** Non-secret settings only — safe for export/backup (PRD §23 excludes secrets). */
+/** Non-secret settings only - safe for export/backup (PRD §23 excludes secrets). */
 export async function getExportableSettings(
   env: Env,
 ): Promise<Record<string, string>> {

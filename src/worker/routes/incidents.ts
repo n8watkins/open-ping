@@ -118,7 +118,7 @@ function toNumber(value: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Whitelisted sort columns (ORDER BY can't be bound — never interpolate). */
+/** Whitelisted sort columns (ORDER BY can't be bound - never interpolate). */
 const SORT_COLUMNS = {
   started_at: "i.started_at",
   resolved_at: "i.resolved_at",
@@ -249,7 +249,7 @@ async function queryIncidents(
   return (results ?? []).map(mapRow);
 }
 
-// GET / — filtered list (status, monitorId, rootCause, from, to, q, sort, limit).
+// GET / - filtered list (status, monitorId, rootCause, from, to, q, sort, limit).
 incidents.get("/", async (c) => c.json(await listIncidents(c.env, c.req.query())));
 
 /**
@@ -278,7 +278,7 @@ export async function listIncidents(
   return { incidents: list, total: countRow?.c ?? 0 };
 }
 
-// GET /export.json — full filtered array as a downloadable JSON attachment.
+// GET /export.json - full filtered array as a downloadable JSON attachment.
 // Registered before /:id so the static path wins.
 incidents.get("/export.json", async (c) => {
   const list = await queryIncidents(c.env, c.req.query());
@@ -287,7 +287,7 @@ incidents.get("/export.json", async (c) => {
   return c.body(JSON.stringify(list));
 });
 
-// GET /export.csv — full filtered array as a downloadable CSV attachment.
+// GET /export.csv - full filtered array as a downloadable CSV attachment.
 incidents.get("/export.csv", async (c) => {
   const list = await queryIncidents(c.env, c.req.query());
   const header = [
@@ -324,7 +324,7 @@ incidents.get("/export.csv", async (c) => {
   return c.body(lines.join("\r\n"));
 });
 
-// GET /:id — incident detail plus its timeline (events ordered by `at`).
+// GET /:id - incident detail plus its timeline (events ordered by `at`).
 incidents.get("/:id", async (c) => {
   const id = c.req.param("id");
   const row = await c.env.DB.prepare(
@@ -398,7 +398,7 @@ const patchSchema = z.object({
   resolution: z.string().max(2000).nullable().optional(),
 });
 
-// PATCH /:id — annotate the incident; only provided fields are updated. When a
+// PATCH /:id - annotate the incident; only provided fields are updated. When a
 // non-empty publicMessage is set, append a `public_update` timeline event.
 incidents.patch("/:id", async (c) => {
   const id = c.req.param("id");

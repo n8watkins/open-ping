@@ -3,7 +3,7 @@ import type { StatusPageInput } from "../../shared/schemas";
 import { newId } from "../lib/ids";
 
 /**
- * Status-page CRUD data layer (PRD §16 — multiple, per-category public pages).
+ * Status-page CRUD data layer (PRD §16 - multiple, per-category public pages).
  * Each `status_pages` row is one published public page with its own slug,
  * branding, kill switch, ordering, and monitor selection. `category_ids` and
  * `monitor_ids` are stored as JSON TEXT arrays (mirroring
@@ -13,7 +13,7 @@ import { newId } from "../lib/ids";
  *
  * The default page (`is_default = 1`, at most one, enforced by a partial unique
  * index) is served at /status with no slug. The default flag is NOT managed
- * through create/update here — new pages are never default, updates never touch
+ * through create/update here - new pages are never default, updates never touch
  * the flag, and the default page cannot be deleted.
  */
 
@@ -299,7 +299,7 @@ export async function deleteStatusPage(env: Env, id: string): Promise<void> {
 }
 
 /**
- * PURE monitor selection for a page — the heart of per-page filtering. Given a
+ * PURE monitor selection for a page - the heart of per-page filtering. Given a
  * page's include configuration and the set of monitors already deemed visible,
  * return the subset that belongs on this page:
  *   - "all"        → every visible monitor

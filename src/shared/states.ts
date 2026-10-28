@@ -16,7 +16,7 @@ export type MonitorState = (typeof MONITOR_STATES)[number];
 /**
  * Down-family states that contribute to incident downtime / not-up rollups
  * (PRD §10). `suspended` (a Render free-tier app turned off) is a real outage:
- * the service is unavailable, so it accrues downtime exactly like `down` — it is
+ * the service is unavailable, so it accrues downtime exactly like `down` - it is
  * only stored and displayed under a distinct label.
  */
 export const DOWNTIME_STATES: ReadonlySet<MonitorState> = new Set([

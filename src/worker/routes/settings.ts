@@ -127,7 +127,7 @@ const VALIDATORS: Record<string, (v: string) => string | null> = {
       : "must be a hex color (e.g. #6d8bff)",
   status_page_theme: (v) =>
     v === "dark" || v === "light" ? null : "must be 'dark' or 'light'",
-  // Rendered as an href/src on the PUBLIC status page — require a safe scheme.
+  // Rendered as an href/src on the PUBLIC status page - require a safe scheme.
   status_page_homepage: optionalUrlSetting(),
   status_page_logo: optionalUrlSetting(),
   status_page_enabled: boolSetting,

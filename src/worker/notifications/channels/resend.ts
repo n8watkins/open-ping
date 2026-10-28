@@ -3,7 +3,7 @@ import type { Env } from "../../types";
 /**
  * Resend email sender (PRD §12). Pure delivery: takes an already-rendered
  * message and POSTs it to the Resend API. No DB access, no outbox/retry logic.
- * Runs in the Cloudflare Workers runtime — only global `fetch` is used.
+ * Runs in the Cloudflare Workers runtime - only global `fetch` is used.
  */
 
 export interface SendResult {

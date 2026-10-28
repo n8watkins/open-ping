@@ -7,11 +7,11 @@ import { getJSON } from "../db/settings";
 /**
  * Diagnostics + usage-estimate API mounted at /api/diagnostics (PRD §19, §25).
  * Admin-only: surfaces scheduler health, table counts and OpenPing's *own*
- * usage estimates. The usage numbers are deliberately labelled as estimates —
+ * usage estimates. The usage numbers are deliberately labelled as estimates -
  * Cloudflare's dashboard is the authoritative source for billing/limits.
  *
  * All routes require an authenticated session (auth middleware also enforces
- * CSRF on mutations — there are none here, but the guard is uniform).
+ * CSRF on mutations - there are none here, but the guard is uniform).
  */
 export const diagnostics = new Hono<AppEnv>();
 
@@ -45,7 +45,7 @@ const DEFAULT_RETENTION: RetentionConfig = {
 /**
  * Pure helper: derive OpenPing's own usage estimates from current sizing.
  * No DB or runtime access so it is trivially unit-testable. These are
- * estimates only — authoritative usage lives in the Cloudflare dashboard.
+ * estimates only - authoritative usage lives in the Cloudflare dashboard.
  */
 export function estimateUsage(input: {
   monitors: number;

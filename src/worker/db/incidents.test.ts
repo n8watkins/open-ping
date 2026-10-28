@@ -5,8 +5,8 @@ import type { Env } from "../types";
 /**
  * resolveIncident is a thin D1 wrapper, so it is exercised here through a tiny
  * in-memory fake of the `incidents` / `incident_events` tables. The fake models
- * just enough SQL — the by-id SELECT, the `status = 'open'`-guarded UPDATE (whose
- * `meta.changes` the function keys off), and the recovery-event INSERT — to prove
+ * just enough SQL - the by-id SELECT, the `status = 'open'`-guarded UPDATE (whose
+ * `meta.changes` the function keys off), and the recovery-event INSERT - to prove
  * the idempotency contract: a repeat resolve must not re-stamp resolved_at,
  * inflate the duration, or write a second `recovered` event. (The repo has no D1
  * test harness yet; see vitest.config.ts.)

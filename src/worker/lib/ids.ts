@@ -14,7 +14,7 @@ export function randomToken(bytes = 32): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** Lowercase hex SHA-256 — used to store hashes of tokens, never the token. */
+/** Lowercase hex SHA-256 - used to store hashes of tokens, never the token. */
 export async function sha256hex(input: string): Promise<string> {
   const buf = await crypto.subtle.digest(
     "SHA-256",

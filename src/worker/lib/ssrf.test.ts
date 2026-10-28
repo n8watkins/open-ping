@@ -29,7 +29,7 @@ const BLOCKED = [
   "http://service.internal",
   "http://[::2]", // single-hextet IPv4-compatible -> 0.0.0.2 (0.0.0.0/8)
   // Encoded-loopback forms that rely on WHATWG normalizing the host to a
-  // dotted-quad before the IPv4 denylist sees it — regression guards.
+  // dotted-quad before the IPv4 denylist sees it - regression guards.
   "http://0x7f000001", // hex 127.0.0.1
   "http://2130706433", // decimal 127.0.0.1
   "http://0177.0.0.1", // octal-first-octet 127.0.0.1

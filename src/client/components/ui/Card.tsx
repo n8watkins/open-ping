@@ -16,7 +16,7 @@ export function Card({
   );
 }
 
-/** Optional header row for a Card — title on the left, actions on the right. */
+/** Optional header row for a Card - title on the left, actions on the right. */
 export function CardHeader({
   children,
   className,

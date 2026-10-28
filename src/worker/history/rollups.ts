@@ -14,7 +14,7 @@ import type { LabeledStatement } from "../lib/batch";
  * its last full value, so pruning the sources can never silently shrink it.
  * Per-sample accumulation is an additive upsert keyed by (monitor_id, period,
  * bucket_start); derived passes write absolute recomputed totals. All time math
- * is plain UTC epoch-ms — no Node APIs, no timezone libraries.
+ * is plain UTC epoch-ms - no Node APIs, no timezone libraries.
  */
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -35,7 +35,7 @@ const DEFAULT_RETENTION: RetentionConfig = {
   dailyDays: 400,
 };
 
-/** A summary's numeric accumulator columns — shared by samples, hour/day/month rows. */
+/** A summary's numeric accumulator columns - shared by samples, hour/day/month rows. */
 export interface SummaryTotals {
   checks: number;
   ok_checks: number;
@@ -68,7 +68,7 @@ export function bucketStart(period: "hour" | "day" | "month", at: number): numbe
 
 /**
  * Sum a set of summary rows into one total. Min/max ignore NULL inputs and stay
- * NULL when no row carries a latency. PURE — used by both rollup passes.
+ * NULL when no row carries a latency. PURE - used by both rollup passes.
  */
 export function aggregateSummaries(rows: SummaryTotals[]): SummaryTotals {
   const out: SummaryTotals = {
@@ -106,7 +106,7 @@ export function aggregateSummaries(rows: SummaryTotals[]): SummaryTotals {
  * Latency (ms) a single check contributes to `sum_latency_ms`. Only OK checks
  * contribute, so the weekly `avgResponseMs = sum_latency_ms / ok_checks` divides
  * a numerator and denominator that cover the SAME set of checks. A non-finite or
- * absent duration contributes 0. PURE — exported for unit testing.
+ * absent duration contributes 0. PURE - exported for unit testing.
  */
 export function okLatencyMs(ok: boolean, durationMs?: number | null): number {
   if (!ok) return 0;

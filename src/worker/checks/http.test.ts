@@ -272,7 +272,7 @@ describe("runHttpCheck", () => {
 
     const result = await runHttpCheck(makeConfig());
 
-    // The blocked target is never fetched — re-validation happens before the hop.
+    // The blocked target is never fetched - re-validation happens before the hop.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.ok).toBe(false);
     expect(result.error).toBe("blocked_url");

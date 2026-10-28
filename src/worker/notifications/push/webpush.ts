@@ -5,12 +5,12 @@
  * implements the two relevant specs directly on top of Web Crypto
  * (`crypto.subtle`) and global `fetch`. NO Node APIs are used (no `Buffer`).
  *
- *   - RFC 8292 — VAPID: Voluntary Application Server Identification.
+ *   - RFC 8292 - VAPID: Voluntary Application Server Identification.
  *     A short-lived ES256 (ECDSA P-256 + SHA-256) JWT identifies this
  *     application server to the push service. Sent as
  *     `Authorization: vapid t=<jwt>, k=<base64url server public key>`.
  *
- *   - RFC 8291 — Message Encryption for Web Push (Content-Encoding:
+ *   - RFC 8291 - Message Encryption for Web Push (Content-Encoding:
  *     aes128gcm, layered on RFC 8188). The plaintext is encrypted with a
  *     per-message AES-128-GCM key derived via ECDH + HKDF from the
  *     subscription's `p256dh`/`auth` values and a fresh ephemeral server
@@ -26,7 +26,7 @@
 import { assertSafeUrl } from "../../lib/ssrf";
 
 // ---------------------------------------------------------------------------
-// base64url helpers (no padding) — Uint8Array <-> base64url string.
+// base64url helpers (no padding) - Uint8Array <-> base64url string.
 // Style mirrors src/worker/lib/crypto.ts (btoa/atob, byte-at-a-time).
 // ---------------------------------------------------------------------------
 
@@ -177,8 +177,8 @@ async function importVapidSigningKey(vapid: VapidKeys): Promise<CryptoKey> {
 /**
  * Build a signed VAPID JWT (RFC 8292) for the given audience (the origin of
  * the push endpoint). Header `{typ:"JWT",alg:"ES256"}`, claims `{aud,exp,sub}`.
- * The ECDSA signature is raw r||s (64 bytes) — exactly what Web Crypto returns
- * — base64url-encoded. Returns `<header>.<payload>.<signature>`.
+ * The ECDSA signature is raw r||s (64 bytes) - exactly what Web Crypto returns
+ * - base64url-encoded. Returns `<header>.<payload>.<signature>`.
  *
  * Exported for unit testing of the token structure.
  */
@@ -312,7 +312,7 @@ export async function sendWebPush(opts: {
   const { subscription, payload, vapid, ttl } = opts;
 
   // SSRF guard: a device registers its own push endpoint, and POST
-  // /devices/:id/test reflects ~200 bytes of the endpoint's response — so an
+  // /devices/:id/test reflects ~200 bytes of the endpoint's response - so an
   // unvalidated endpoint could be aimed at loopback/link-local/metadata/private
   // hosts. Validate before any crypto or fetch so this covers BOTH the test
   // route and outbox delivery with no TOCTOU. A blocked/malformed endpoint is

@@ -77,7 +77,7 @@ export function AppLayout() {
     try {
       await api("/api/auth/logout", { method: "POST", csrf: csrf ?? undefined });
     } catch {
-      // Ignore — clear the local view and head to login regardless.
+      // Ignore - clear the local view and head to login regardless.
     }
     // Full reload so bootstrap/auth state (and any PWA cache) resets cleanly.
     window.location.assign("/login");

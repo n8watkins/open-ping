@@ -9,7 +9,7 @@ import { hitRateLimit } from "../db/rate-limit";
 /**
  * Public, UNAUTHENTICATED "Is it down?" tool. Mounted by the integrator at
  * /api/tools/is-it-down. Given a user-supplied URL it performs a single GET and
- * reports ONLY reachability — never the response body or headers, so it can't be
+ * reports ONLY reachability - never the response body or headers, so it can't be
  * abused as a content proxy.
  *
  * Because it fetches arbitrary URLs on behalf of anonymous callers, two guards
@@ -50,7 +50,7 @@ const GLOBAL_LIMIT = 300;
  * site. Generous for real use (a host is up or down for everyone alike).
  */
 const PER_TARGET_LIMIT = 30;
-/** Short outbound timeout — this is a liveness probe, not a full monitor. */
+/** Short outbound timeout - this is a liveness probe, not a full monitor. */
 const CHECK_TIMEOUT_MS = 10_000;
 /** Fallback bucket when Cloudflare doesn't provide a client IP (e.g. local dev). */
 const UNKNOWN_IP = "unknown";
@@ -119,7 +119,7 @@ isItDown.post("/", async (c) => {
   const status = result.statusCode ?? null;
   // "Up" = the server answered with a non-5xx HTTP status. A 5xx, or any
   // connection/DNS/timeout failure (no status at all), is reported as down. Only
-  // reachability leaves this handler — never the body or headers.
+  // reachability leaves this handler - never the body or headers.
   const up = status !== null && status < 500;
 
   const response: IsItDownResponse = {

@@ -50,7 +50,7 @@ async function baseUrl(c: { env: Env; req: { url: string } }): Promise<string> {
 }
 
 // Use c.redirect (NOT Response.redirect): Response.redirect returns a brand-new
-// Response that discards anything set on c.res — including Set-Cookie headers from
+// Response that discards anything set on c.res - including Set-Cookie headers from
 // setCookie()/createSession(). c.redirect preserves them, so the OAuth state and
 // session cookies actually reach the browser.
 function loginRedirect(c: Context<AppEnv>, base: string, error?: string): Response {
