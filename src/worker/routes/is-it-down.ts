@@ -17,8 +17,8 @@ import { hitRateLimit } from "../db/rate-limit";
  *  - SSRF: `assertSafeUrl` rejects loopback/private/link-local/metadata targets
  *    and credentialed URLs (400 blocked_url). runHttpCheck additionally
  *    re-validates every redirect hop.
- *  - Rate limiting: a fixed-window counter in D1 caps requests per client IP and
- *    enforces a global ceiling (429 rate_limited).
+ *  - Rate limiting: a fixed-window counter in D1 caps requests per client IP,
+ *    per target hostname, and overall (429 rate_limited).
  */
 export const isItDown = new Hono<AppEnv>();
 
@@ -44,6 +44,12 @@ const requestSchema = z.object({
 const PER_IP_LIMIT = 15;
 /** Global ceiling across all callers in the same window (abuse backstop). */
 const GLOBAL_LIMIT = 300;
+/**
+ * Per-target cap: checks of one hostname per minute, across all callers, so
+ * many IPs together can't turn the tool into a request flood against a single
+ * site. Generous for real use (a host is up or down for everyone alike).
+ */
+const PER_TARGET_LIMIT = 30;
 /** Short outbound timeout — this is a liveness probe, not a full monitor. */
 const CHECK_TIMEOUT_MS = 10_000;
 /** Fallback bucket when Cloudflare doesn't provide a client IP (e.g. local dev). */
@@ -79,6 +85,15 @@ isItDown.post("/", async (c) => {
   const ipHit = await hitRateLimit(c.env, `iid:ip:${ip}`, PER_IP_LIMIT);
   if (!ipHit.allowed) {
     c.header("Retry-After", String(ipHit.retryAfterSeconds));
+    return c.json({ error: "rate_limited" }, 429);
+  }
+  const targetHit = await hitRateLimit(
+    c.env,
+    `iid:host:${safe.url.hostname.toLowerCase()}`,
+    PER_TARGET_LIMIT,
+  );
+  if (!targetHit.allowed) {
+    c.header("Retry-After", String(targetHit.retryAfterSeconds));
     return c.json({ error: "rate_limited" }, 429);
   }
   const globalHit = await hitRateLimit(c.env, "iid:global", GLOBAL_LIMIT);
