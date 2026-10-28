@@ -14,6 +14,7 @@
     "postbuild": "node scripts/secure-build-output.mjs",
     "preview": "vite preview",
     "deploy": "npm run build && wrangler deploy",
+    "deploy:prod": "node scripts/prod-config.mjs && OPENPING_WRANGLER_CONFIG=.wrangler.prod.jsonc npm run deploy",
     "typecheck": "tsc -b",
     "lint": "tsc -b",
     "test": "npm run test:unit && npm run test:integration",
@@ -24,6 +25,7 @@
     "db:create": "wrangler d1 create open-ping",
     "db:migrate:local": "wrangler d1 migrations apply open-ping --local",
     "db:migrate": "wrangler d1 migrations apply open-ping --remote",
+    "db:migrate:prod": "node scripts/prod-config.mjs && wrangler d1 migrations apply open-ping --remote -c .wrangler.prod.jsonc",
     "release": "release-kit release",
     "release:check": "release-kit check && npm run lint && npm run typecheck && npm test && npm run build",
     "prepare": "git config core.hooksPath .githooks || true"
@@ -62,5 +64,9 @@
     "@cloudflare/vitest-pool-workers": {
       "zod": "^4.6.7"
     }
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "workerd": true
   }
 }

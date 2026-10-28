@@ -13,12 +13,17 @@ Last updated: 2026-10-27.
 - Tagline everywhere: "Uptime monitoring on your own Cloudflare".
 - Open bug: off-hours monitors show as "operational" (known gap 0 below).
 
-### Owner steps before the next deploy
+### How production is deployed
 
-1. Set `WAITLIST_ENABLED` to "true" for the production deploy only.
-2. `npm run db:migrate` (applies migration 0010 to the remote D1).
-3. `npm run deploy`, then sign in at https://openping.n8builds.dev/login (check the `ADMIN_GITHUB_LOGIN` secret).
-4. Optional: `RESEND_API_KEY` for waitlist confirmations; `WORKERS_PLAN` "paid" if on Workers Paid.
+Production's own values live in a gitignored `deploy.local.json` in the main checkout: the real D1 `database_id` and `"vars": { "WAITLIST_ENABLED": "true" }`.
+`wrangler.jsonc` keeps the template's placeholder, so never run the plain `db:migrate` or `deploy` scripts for production.
+
+1. Cut a release from an up-to-date `main`: `npm run release -- --dry-run`, then `npm run release -- --push` (see RELEASING.md).
+2. `npm run db:migrate:prod` applies any pending migrations to the remote D1.
+3. `npm run deploy:prod` builds and deploys with the generated `.wrangler.prod.jsonc`.
+4. Verify: `/api/public/status`, `/status`, `/embed`, `/install`, `POST /api/waitlist`, sign-in at https://openping.n8builds.dev/login, and `GET /api/diagnostics` with the bearer token after the next cron run.
+   Off-hours, check that https://portfolio.n8builds.dev shows the three Render apps as "Asleep"; it reads the public feed.
+5. Optional: `RESEND_API_KEY` for waitlist confirmations; `WORKERS_PLAN` "paid" if on Workers Paid.
 
 ### Next
 

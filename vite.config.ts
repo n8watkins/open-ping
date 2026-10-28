@@ -22,7 +22,13 @@ async function starCount(): Promise<number | null> {
 }
 
 export default defineConfig(async () => ({
-  plugins: [react(), tailwindcss(), cloudflare()],
+  // `npm run deploy:prod` points the build at the generated production config
+  // (scripts/prod-config.mjs); everything else uses wrangler.jsonc.
+  plugins: [
+    react(),
+    tailwindcss(),
+    cloudflare({ configPath: process.env.OPENPING_WRANGLER_CONFIG || undefined }),
+  ],
   define: {
     __OP_STARS__: JSON.stringify(await starCount()),
   },

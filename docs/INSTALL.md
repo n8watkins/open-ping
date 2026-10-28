@@ -93,6 +93,29 @@ placeholder value that ships in the repo:
 > This value is account-specific, so in a public template it's never a real id -
 > you always fill in your own.
 
+### Keep your own ids out of git
+
+If you deploy from a fork you push publicly, or you want `git pull` to never conflict with your id, leave `wrangler.jsonc` untouched and put your values in a gitignored `deploy.local.json` instead:
+
+```json
+{
+  "database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "vars": { "WORKERS_PLAN": "free" }
+}
+```
+
+`vars` is optional and may override only vars that `wrangler.jsonc` already defines, so a typo fails loudly.
+Then use the `:prod` scripts in place of the plain ones in steps 7 and 8:
+
+```bash
+npm run db:migrate:prod    # instead of npm run db:migrate
+npm run deploy:prod        # instead of npm run deploy
+```
+
+Each one first runs `scripts/prod-config.mjs`, which merges `deploy.local.json` into `wrangler.jsonc` and writes the gitignored `.wrangler.prod.jsonc`.
+Because that file is regenerated on every run, new settings in `wrangler.jsonc` reach your deploy automatically.
+Don't edit `.wrangler.prod.jsonc` by hand.
+
 ---
 
 ## 4. Create a GitHub OAuth app (sign-in)
@@ -214,7 +237,7 @@ Create the schema in your remote D1 database:
 npm run db:migrate         # wrangler d1 migrations apply open-ping --remote
 ```
 
-This applies every migration in `migrations/` (currently `0001` through `0009`) in
+This applies every migration in `migrations/` (currently `0001` through `0010`) in
 order. Migrations are **additive and tracked by Wrangler**, so re-running is
 safe - only unapplied migrations run. Wrangler will ask you to confirm before
 applying to the remote database.
