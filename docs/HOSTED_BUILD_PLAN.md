@@ -150,9 +150,10 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
 
 ### B. The platform Worker (`platform/`)
 
-- **B1 Skeleton (M).** Workspace layout, its own `wrangler.jsonc`, Hono app, platform D1 schema and migrations, host-based routing (`app.` versus `<slug>.`), dispatch with custom limits, 404 and suspended pages, tests with a fake namespace. Needs: C0.
+- [x] **B1 Skeleton (M), done in #40.** Workspace layout, its own `wrangler.jsonc`, Hono app, platform D1 schema and migrations, host-based routing (`app.` versus `<slug>.`), dispatch with custom limits, 404 and suspended pages, tests with a fake namespace. Needs: C0.
 - **B2 Accounts and sign-in (L).** Email link plus code (reusing the magic-link code), passkeys (reusing `src/worker/lib/webauthn.ts`), GitHub OAuth, sessions, rate limits, the account page, issuing hand-off tokens. Needs: B1.
-- **B3 Provisioning (L).** A Cloudflare API client (create and delete D1, upload a user Worker with assets, bindings, secrets and tags, delete it), the provisioning state machine (`requested`, `db_created`, `uploaded`, `migrated`, `ready`, with retry and clean rollback), slug rules and reserved names, and a fake API for tests. Needs: B1 for wiring; the client itself can start with C0.
+- [x] **B3 Provisioning (L), done.** A Cloudflare API client (create and delete D1, upload a user Worker with assets, bindings, secrets and tags, delete it), the provisioning state machine (`requested`, `db_created`, `uploaded`, `migrated`, `ready`, with retry and clean rollback), slug rules and reserved names, and a fake API for tests. Needs: B1 for wiring; the client itself can start with C0.
+  The tenant's migrations run through the contract's `POST /__platform/scheduled` (A3); the bundle comes from an R2 bucket the release runner (C1) fills.
 - **B4 Scheduling (M).** Cron every minute, due calculation from each tenant's interval, Queue producer and consumer, per-tenant timeouts, run metrics in the platform database. Needs: B1, A3.
 - **B5 Billing (L).** Stripe Checkout (yearly plan and the add-on), the Customer Portal, the signed webhook, subscription state, dunning (past due, suspended), trial end, Stripe Tax, plan changes reaching the tenant props. Needs: B1.
 - **B6 Owner's admin console (M).** Tenant list and search, status, plan, version, last run, usage, suspend and resume, impersonate-for-support with an audit trail, waitlist import. Needs: B1.

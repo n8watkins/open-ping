@@ -23,7 +23,19 @@
     // serves app.<HOSTED_DOMAIN> itself and dispatches <slug>.<HOSTED_DOMAIN>
     // to that customer's OpenPing. ".invalid" can never resolve, so nothing
     // routes here until the owner buys the domain and sets it.
-    "HOSTED_DOMAIN": "openping-hosted.invalid"
+    "HOSTED_DOMAIN": "openping-hosted.invalid",
+    // The dispatch namespace's name, for the Cloudflare API calls that upload
+    // and delete user Workers (src/provisioning.ts); the same as the binding's.
+    "DISPATCH_NAMESPACE": "openping-tenants",
+    // base64url of the raw 32-byte Ed25519 public key every tenant verifies
+    // hand-off tokens with. Public by design; empty until the owner makes the
+    // pair (owner action O6), and provisioning stays off until it is set.
+    "HANDOFF_PUBLIC_KEY": ""
+  },
+  // Every minute: retry provisioning steps that failed (src/provisioning.ts);
+  // the scheduler (B4) runs from the same trigger.
+  "triggers": {
+    "crons": ["* * * * *"]
   },
   // Accounts, tenants, subscriptions, escrowed keys, audit events and rate
   // limits (migrations/). Never monitoring data. Created later by the owner;
@@ -43,6 +55,14 @@
       "namespace": "openping-tenants"
     }
   ],
+  // Tenant bundles, one per OpenPing release, written by the release runner
+  // (C1) and read by provisioning (layout in src/bundle.ts).
+  "r2_buckets": [
+    {
+      "binding": "BUNDLES",
+      "bucket_name": "openping-tenant-bundles"
+    }
+  ],
   // The per-minute scheduler puts each due customer on this queue (B4).
   "queues": {
     "producers": [
@@ -54,5 +74,6 @@
   }
   // Secrets, set later with `wrangler secret put` from the owner's machine,
   // never in this file: HANDOFF_SIGNING_KEY (B2), PLATFORM_KEY (B3),
-  // CF_API_TOKEN (B3), STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (B5).
+  // CF_ACCOUNT_ID and CF_API_TOKEN (B3), STRIPE_SECRET_KEY and
+  // STRIPE_WEBHOOK_SECRET (B5).
 }

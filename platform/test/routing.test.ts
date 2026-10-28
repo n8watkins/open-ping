@@ -88,6 +88,7 @@ describe("the platform database", () => {
       "audit_events",
       "escrowed_keys",
       "rate_limits",
+      "slug_holds",
       "subscriptions",
       "tenants",
     ]);

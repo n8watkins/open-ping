@@ -20,6 +20,9 @@ import { createApp } from "./app";
 import { TenantCapability } from "./capability";
 import { NamespaceDispatcher } from "./dispatch";
 import type { PlatformEnv } from "./env";
+import { provisionDue } from "./provisioning";
+import { provisioningSetup } from "./provisioning-env";
+import type { TenantRecord } from "./tenants";
 
 /** Set by the platform when it makes the stub; never by the tenant. */
 export interface TenantPlatformProps {
@@ -48,16 +51,32 @@ export class TenantPlatform
   }
 }
 
+/** The capability stub one call to `tenant` carries as props.platform. */
+function capabilityFor(ctx: ExecutionContext, tenant: TenantRecord): PlatformCapability {
+  // The RPC stub forwards each method to TenantPlatform above; its Rpc
+  // result types are the same promises PlatformCapability declares.
+  return ctx.exports.TenantPlatform({
+    props: { tenantId: tenant.id, accountId: tenant.accountId },
+  }) as unknown as PlatformCapability;
+}
+
 const app = createApp({
   dispatcher: (env) => new NamespaceDispatcher(env.TENANTS),
-  capability: (_env, ctx, tenant) =>
-    // The RPC stub forwards each method to TenantPlatform above; its Rpc
-    // result types are the same promises PlatformCapability declares.
-    ctx.exports.TenantPlatform({
-      props: { tenantId: tenant.id, accountId: tenant.accountId },
-    }) as unknown as PlatformCapability,
+  capability: (_env, ctx, tenant) => capabilityFor(ctx, tenant),
 });
+
+/** Every minute: retry provisioning that failed or never started (B4 adds the scheduler here). */
+async function scheduled(env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
+  const setup = provisioningSetup(env, (tenant) => capabilityFor(ctx, tenant));
+  if (!setup.ok) {
+    console.warn("[provision] off until these are set:", setup.missing.join(", "));
+    return;
+  }
+  const outcomes = await provisionDue(setup.deps);
+  if (outcomes.length) console.log("[provision] sweep", outcomes.map((o) => `${o.tenantId}:${o.kind}`).join(" "));
+}
 
 export default {
   fetch: (request, env, ctx) => app.fetch(request, env, ctx),
+  scheduled: (_controller, env, ctx) => scheduled(env, ctx),
 } satisfies ExportedHandler<PlatformEnv>;
