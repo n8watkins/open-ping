@@ -163,7 +163,7 @@ A template install without `deploy.local.json` can drop the `-c` flag.
 2. Back up D1 and keep the file with the current key, because only that key can decrypt it:
 
    ```bash
-   npx wrangler d1 export open-ping --remote -c .wrangler.prod.jsonc --output openping-before-key-rotation.sql
+   npx wrangler d1 export DB --remote -c .wrangler.prod.jsonc --output openping-before-key-rotation.sql
    ```
 
 3. Find your backed-up copy of the current `MASTER_KEY` and generate the new one:

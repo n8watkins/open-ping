@@ -40,6 +40,23 @@ That works today because the alerts go to you, but it would fail for anyone else
 
 The drill checks, with a real failure: detection, the incident, the down and recovery emails, uptime accounting and what the public page shows.
 
+### 5. Click the Deploy to Cloudflare button once
+
+- [ ] Open https://github.com/n8watkins/open-ping (after this change is merged) and click **Deploy to Cloudflare** in the README.
+- [ ] In the form, keep the suggested names (or add `-test` to the Worker, repository and database names), and paste a `MASTER_KEY` and `SETUP_TOKEN` made with `openssl rand -base64 32`.
+  Note what the form shows: does it list exactly those two secrets plus the three vars, with the descriptions from `package.json`, and a D1 database to create?
+- [ ] Watch the build log (Workers & Pages, the new Worker, Deployments, or the build link the form shows).
+  It should run `npm ci`, `npm run build`, then `npm run deploy`, and print either migrations applied before the deploy or "The D1 database does not exist yet", then the deploy, then the migrations.
+- [ ] Open the new `*.workers.dev` address: the setup page should ask for the setup token, and the welcome step should show "Encryption at rest configured".
+  Finish setup with your GitHub username; you don't need to sign in, so you can skip the GitHub OAuth app.
+- [ ] Check the new repository in your GitHub account: did the button change `wrangler.jsonc` (a `database_id`, a new `name`), and does it carry this repository's history or start fresh?
+- [ ] Tell the agent what you saw, especially anything that failed or differed, and whether the new repository is public or private.
+- [ ] Delete the test install: in the Cloudflare dashboard, delete the new Worker (Workers & Pages) and its D1 database (Storage & Databases, D1), then delete the new GitHub repository.
+
+Why: everything the button runs was checked locally on 2026-10-28 (a clean clone, `npm ci` with npm 11, the build, `wrangler deploy --dry-run`, and the deploy script's order with and without an existing database), but only a real click shows what the deploy form asks and what it writes into the new repository.
+The test creates a separate Worker and D1 database in your account, so it can't touch openping.n8builds.dev, and both can be deleted afterwards.
+Cloudflare's docs (Deploy buttons page, updated 2026-10-12) say the button provisions D1 and runs the `deploy` script; they don't say how it treats a config without a `database_id`, which is the main thing this click confirms.
+
 ## Not needed
 
 - **Discord alerts.** Email alerts work, so Discord is not set up and not required.

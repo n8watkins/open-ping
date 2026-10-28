@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-// `wrangler.jsonc` is the public template, so it keeps a placeholder D1 id and
-// the template's defaults. A real install keeps its own values in the
+// `wrangler.jsonc` is the public template, so it has no D1 database id (an id
+// belongs to one Cloudflare account) and keeps the template's defaults. A real install keeps its own values in the
 // gitignored `deploy.local.json` and this script merges them into the
 // gitignored `.wrangler.prod.jsonc` before every production command, so the
 // two files can never drift apart (`npm run deploy:prod`, `db:migrate:prod`).
@@ -14,7 +14,6 @@ import { pathToFileURL } from "node:url";
 export const OVERRIDES_PATH = "deploy.local.json";
 export const OUTPUT_PATH = ".wrangler.prod.jsonc";
 
-const PLACEHOLDER_ID = "REPLACE_WITH_YOUR_D1_DATABASE_ID";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -82,15 +81,17 @@ export function buildProdConfig(template, overrides) {
     }
   }
   const dbs = template.d1_databases ?? [];
-  if (!dbs.some((db) => db.database_id === PLACEHOLDER_ID)) {
-    throw new Error("wrangler.jsonc: expected a D1 database with the placeholder id");
+  if (!dbs.some((db) => db.binding === "DB")) {
+    throw new Error('wrangler.jsonc: expected a D1 database bound as "DB"');
+  }
+  if (dbs.some((db) => db.database_id)) {
+    // A public template must never carry one account's id; it goes in here.
+    throw new Error(`wrangler.jsonc: remove the D1 database_id; put it in ${OVERRIDES_PATH}`);
   }
   return {
     ...template,
     vars: { ...template.vars, ...vars },
-    d1_databases: dbs.map((db) =>
-      db.database_id === PLACEHOLDER_ID ? { ...db, database_id: id } : db,
-    ),
+    d1_databases: dbs.map((db) => (db.binding === "DB" ? { ...db, database_id: id } : db)),
   };
 }
 

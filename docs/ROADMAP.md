@@ -53,6 +53,8 @@ These are the gaps a buyer is likely to notice, most valuable first:
 - [ ] Notify channels when an incident update is posted (the outbox has no event for it yet).
 - [ ] **Passkeys for the admin sign-in** (M, landing plan item 2.1), which makes the GitHub OAuth app optional (2.2).
 - [ ] **"Deploy to Cloudflare" button** (M spike, plan items 2.3 and 2.4), to cut the 20-minute install.
+  Built in this PR: the button on the README and `/install`, a deploy that creates the database and applies migrations, and setup-page help for a missing secret.
+  Left: one real click by the owner ([Deferred inputs](./DEFERRED_INPUTS.md), item 5), then the button in the landing hero.
 - [x] **First check right away** when a monitor is added (S, plan item 2.5) (this PR): from the editor, API, MCP and CLI, with off-hours monitors showing Scheduled off at once.
 
 Deliberately not on the list, because others do them better and they don't fit a $24-a-year product: free hosted tiers, 30-second checks from dozens of regions, on-call rotations and phone calls, browser (Playwright) monitoring, white-label status pages as the main product, SOC 2 and SAML.

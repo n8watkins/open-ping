@@ -26,11 +26,12 @@ Last updated: 2026-10-28.
 
 Production's own values live in a gitignored `deploy.local.json` in the main checkout: the real D1 `database_id` and `"vars": { "WAITLIST_ENABLED": "true", "HOME_PAGE": "landing" }`.
 Without `HOME_PAGE` "landing", openping.n8builds.dev would show its status page at `/` instead of the marketing page.
-`wrangler.jsonc` keeps the template's placeholder, so never run the plain `db:migrate` or `deploy` scripts for production.
+`wrangler.jsonc` has no database id, so use the `:prod` scripts for production.
+Plain `npm run deploy` refuses to run while `deploy.local.json` exists, and from any other checkout (a worktree, a fresh clone) it stops when it would change the live Worker's vars, because a plain deploy binds the production database by name and would otherwise replace the landing and waitlist vars.
 
 1. Cut a release from an up-to-date `main`: `npm run release -- --dry-run`, then `npm run release -- --push` (see RELEASING.md).
 2. `npm run db:migrate:prod` applies any pending migrations to the remote D1.
-3. `npm run deploy:prod` builds and deploys with the generated `.wrangler.prod.jsonc`.
+3. `npm run deploy:prod` builds, applies pending migrations (none after step 2) and deploys with the generated `.wrangler.prod.jsonc`.
 4. Verify: `/` shows the marketing page signed out, `/api/public/status`, `/status`, `/embed`, `/install`, `POST /api/waitlist`, sign-in at https://openping.n8builds.dev/login, and `GET /api/diagnostics` with the bearer token after the next cron run.
    Off-hours, check that https://portfolio.n8builds.dev shows the three Render apps as "Asleep"; it reads the public feed.
 5. Optional: `RESEND_API_KEY` for waitlist confirmations; `WORKERS_PLAN` "paid" if on Workers Paid.

@@ -9,7 +9,7 @@ Take a backup even though migrations are designed to be additive.
 See [Backup & restore](./BACKUP.md).
 
 - Use `GET /api/data/export` for a portable, credential-free JSON backup.
-- Optionally create a full D1 dump with `npx wrangler d1 export open-ping --remote --output backup.sql`.
+- Optionally create a full D1 dump with `npx wrangler d1 export DB --remote --output backup.sql`.
 - Preserve `MASTER_KEY`, other Worker secrets, and active heartbeat URLs separately because they are not recoverable from the portable export.
 
 ## Steps
@@ -17,18 +17,30 @@ See [Backup & restore](./BACKUP.md).
 ```bash
 git pull                 # get the latest code
 npm install              # install updated dependencies
-npm run db:migrate       # apply pending migrations to remote D1
-npm run deploy           # build and deploy the Worker and SPA
+npm run deploy           # build, apply pending migrations to remote D1, deploy
 ```
 
 The commands have these effects:
 
 - `git pull` updates the working copy, so commit or stash local changes first.
 - `npm install` installs dependency versions from the updated lockfile.
-- `npm run db:migrate` runs `wrangler d1 migrations apply open-ping --remote` and applies only pending migrations.
-- `npm run db:migrate:local` performs the equivalent operation for the local development database.
-- `npm run deploy` runs `vite build && wrangler deploy` and reapplies the Cron Trigger from `wrangler.jsonc`.
+- `npm run deploy` builds, runs `wrangler d1 migrations apply DB --remote` (only pending migrations apply, before the new Worker goes live), then runs `wrangler deploy`, which also reapplies the Cron Trigger from `wrangler.jsonc`.
+- `npm run db:migrate` applies pending migrations on their own; `npm run db:migrate:local` does the same for the local development database.
 - If you keep your ids in `deploy.local.json` ([Install, "Keep your own ids out of git"](./INSTALL.md#keep-your-own-ids-out-of-git)), run `npm run db:migrate:prod` and `npm run deploy:prod` instead.
+
+### Installed with the Deploy to Cloudflare button
+
+Your repository is a copy of this one, so bring the new code into it and push; Workers Builds runs the same `npm run deploy`:
+
+```bash
+git clone https://github.com/<you>/<your-copy>.git && cd <your-copy>
+git remote add upstream https://github.com/n8watkins/open-ping.git
+git pull upstream main   # resolve any conflicts, for example in wrangler.jsonc
+git push
+```
+
+If git refuses to merge unrelated histories (a copy may start without this repository's history), add `--allow-unrelated-histories` to that first pull.
+GitHub's web interface can't sync a copy that isn't a fork, so this needs git; after the first time, `git pull upstream main && git push` is the whole upgrade.
 
 ## Security migrations in `0008` and `0009`
 
@@ -62,7 +74,7 @@ Until each row is rewritten, a full D1 dump may contain those plaintext values.
 ## Worker secrets and configuration
 
 Database migrations and deployments do not copy or rotate Cloudflare Worker secrets.
-They also do not replace the `database_id` in `wrangler.jsonc`.
+They find the D1 database by its name in `wrangler.jsonc` (or the `database_id` in `deploy.local.json`), so upgrades never need a database id.
 
 If a release introduces a new secret, it is documented in [`.dev.vars.example`](../.dev.vars.example) and the `Env` interface in `src/worker/types.ts`.
 Set it with `npx wrangler secret put <NAME>` for the target Worker.

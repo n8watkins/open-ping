@@ -40,12 +40,12 @@ All scripts come from `package.json`:
 | --- | --- |
 | `npm run dev` | Vite + workerd dev server (`http://localhost:5173`) |
 | `npm run build` | Production build (client + worker) |
-| `npm run deploy` | Build, then `wrangler deploy` |
+| `npm run deploy` | Build, apply remote migrations, then `wrangler deploy` (`scripts/deploy.mjs`) |
 | `npm run typecheck` | `tsc -b` across project references |
 | `npm run test` | Run the Vitest suite once |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run cf-typegen` | Regenerate Worker types from `wrangler.jsonc` |
-| `npm run db:create` | Create the `open-ping` D1 database |
+| `npm run db:create` | Create the `open-ping` D1 database (optional: the first deploy creates it) |
 | `npm run db:migrate:local` | Apply migrations to the local D1 database |
 | `npm run db:migrate` | Apply migrations to the remote D1 database |
 

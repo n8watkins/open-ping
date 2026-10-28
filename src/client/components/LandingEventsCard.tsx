@@ -22,6 +22,7 @@ const LABELS: Record<string, string> = {
   cta_deploy: "Closing: Deploy free",
   cta_waitlist: "Closing: Join the waitlist",
   install_view: "Install guide views",
+  install_deploy: "Install guide: Deploy to Cloudflare",
   signin_open: "Owner sign-in opened",
   signin_not_admin: "Sign-ins by someone not the admin",
 };

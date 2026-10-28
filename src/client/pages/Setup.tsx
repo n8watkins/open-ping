@@ -11,6 +11,7 @@ import { Check, Loader2, ArrowRight, ArrowLeft } from "lucide-react";
 import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { Logo } from "../components/Logo";
+import { AddSecretHelp } from "../components/AddSecretHelp";
 import { cn } from "../lib/cn";
 
 interface SetupStatus {
@@ -79,6 +80,7 @@ export default function Setup() {
   const [done, setDone] = useState<string[]>([]);
   const [setupToken, setSetupToken] = useState("");
   const [unlocked, setUnlocked] = useState(false);
+  const [tokenMissing, setTokenMissing] = useState(false);
 
   // Form fields
   const [appUrl, setAppUrl] = useState("");
@@ -109,6 +111,7 @@ export default function Setup() {
         setUnlocked(true);
       } catch (cause) {
         const code = cause instanceof Error ? cause.message : "error";
+        setTokenMissing(code === "setup_token_not_configured");
         setError(
           code === "setup_token_invalid"
             ? "That setup token is not valid."
@@ -249,6 +252,7 @@ export default function Setup() {
                 {error}
               </p>
             )}
+            {tokenMissing && <AddSecretHelp name="SETUP_TOKEN" />}
             <button
               type="submit"
               className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
@@ -403,6 +407,7 @@ function StepBody(p: BodyProps) {
             <Ready ok={p.status?.githubEnabled} label="GitHub OAuth credentials present" optional />
             <Ready ok={p.status?.resendConfigured} label="Resend email configured" optional />
           </ul>
+          {p.status && !p.status.encryptionConfigured && <AddSecretHelp name="MASTER_KEY" />}
         </Section>
       );
     case "url":

@@ -3,10 +3,11 @@
 #
 # Commit messages are checked by commits.yml (release-kit), not here.
 #
-# There is deliberately no deploy job. wrangler.jsonc keeps a placeholder D1
-# database_id (the real one is never committed), so a deploy from CI would have
-# no database to bind. Deploy from a machine that has deploy.local.json
-# (`npm run deploy:prod`, docs/INSTALL.md) until CI is given that config.
+# There is deliberately no deploy job. wrangler.jsonc is the public template
+# (no database id, the template's vars), so production deploys run from a
+# machine that has deploy.local.json (`npm run deploy:prod`, docs/INSTALL.md).
+# Installs made with the Deploy to Cloudflare button deploy from their own
+# copy of the repository with Workers Builds instead.
 name: CI
 
 on:

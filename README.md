@@ -67,13 +67,19 @@ npm run test       # Node unit tests plus workerd/D1 route integration tests
 
 ## Deploy your own
 
-OpenPing runs entirely in **your own Cloudflare account** and deploys in a few
-minutes. The outline:
+OpenPing runs entirely in **your own Cloudflare account**.
+The quickest way is the button: it copies this repository into your GitHub account, creates the database, applies the migrations and deploys, asking only for the two required secrets.
 
-1. `npm run db:create`, then copy the printed `database_id` into `wrangler.jsonc`.
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/n8watkins/open-ping)
+
+Then open your new address, unlock the setup page with your `SETUP_TOKEN`, and add a GitHub sign-in app ([the button's steps](./docs/INSTALL.md#the-quick-way-deploy-to-cloudflare)).
+
+By hand, the outline is:
+
+1. Clone, `npm install`, and `npx wrangler login`.
 2. Configure GitHub OAuth and/or email magic-link sign-in, then generate a `MASTER_KEY`.
-3. Set Worker secrets (`MASTER_KEY`, `SETUP_TOKEN`, `APP_URL`, admin identity, GitHub OAuth, optionally Resend).
-4. `npm run db:migrate` to apply migrations, then `npm run deploy`.
+3. Set Worker secrets (`MASTER_KEY`, `SETUP_TOKEN`, GitHub OAuth, optionally `APP_URL`, an admin identity and Resend).
+4. `npm run deploy`: it builds, creates the D1 database on the first run, applies the migrations and deploys.
 5. Open the app, unlock the first-run wizard with `SETUP_TOKEN`, finish setup, and add monitors.
 
 **Follow the full, copy-pasteable walkthrough in

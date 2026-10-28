@@ -8,6 +8,10 @@
 # mirroring the production secrets you set with `wrangler secret put <NAME>`.
 # Anything left blank or omitted makes that feature "not configured" locally.
 # The app boots for diagnostics, but setup cannot complete without MASTER_KEY.
+#
+# Only the two required secrets are uncommented: the Deploy to Cloudflare
+# button asks for every uncommented key here (package.json "cloudflare"
+# describes each). Uncomment the others in your .dev.vars as you need them.
 
 # --- Required for anything beyond a bare boot ---
 
@@ -27,30 +31,30 @@ SETUP_TOKEN=
 # --- GitHub OAuth (sign-in) ---
 # Create a GitHub OAuth app and set the callback to ${APP_URL}/auth/github/callback.
 # For local dev that's usually http://localhost:5173/auth/github/callback.
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
+# GITHUB_CLIENT_ID=
+# GITHUB_CLIENT_SECRET=
 
 # --- Administrator allowlist (at least ONE identity is required) ---
 # The GitHub login and/or email allowed to sign in as the single admin.
-ADMIN_GITHUB_LOGIN=
-ADMIN_EMAIL=
+# ADMIN_GITHUB_LOGIN=
+# ADMIN_EMAIL=
 
 # --- Email + magic links (Resend) ---
-RESEND_API_KEY=
+# RESEND_API_KEY=
 
 # --- Public base URL of this installation ---
-# Local dev default:
-APP_URL=http://localhost:5173
+# Local dev default (or enter it in the local setup wizard):
+# APP_URL=http://localhost:5173
 
 # --- Admin API token for the CLI / automation (optional) ---
 # When set, `Authorization: Bearer <API_TOKEN>` grants full admin API access
 # (used by scripts/op.mjs). Treat it like a password; rotate by changing it.
 # Generate one with:  openssl rand -base64 32
-API_TOKEN=
+# API_TOKEN=
 
 # --- Web Push (optional) ---
 # VAPID keys can instead be generated in-app under Integrations and stored in
 # settings. Set them here only if you want to manage them as secrets.
-VAPID_PUBLIC_KEY=
-VAPID_PRIVATE_KEY=
-VAPID_SUBJECT=
+# VAPID_PUBLIC_KEY=
+# VAPID_PRIVATE_KEY=
+# VAPID_SUBJECT=

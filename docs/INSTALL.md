@@ -13,9 +13,47 @@ If you get stuck at any point, jump to
 [Troubleshooting the common gotchas](#troubleshooting-the-common-gotchas) at the
 bottom, or the full [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md).
 
-**Roughly what's ahead:** clone → create a database → register a GitHub sign-in
-app → set a few secrets → deploy → finish the in-app setup wizard. Budget
-15–20 minutes the first time.
+There are two ways to install it:
+
+- **[The Deploy to Cloudflare button](#the-quick-way-deploy-to-cloudflare)**: about 5 minutes in the browser, no terminal needed.
+- **[By hand](#1-prerequisites)**: clone → register a GitHub sign-in app → set a few secrets → deploy → finish the in-app setup wizard.
+  Budget about 15 minutes the first time.
+
+---
+
+## The quick way: Deploy to Cloudflare
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/n8watkins/open-ping)
+
+The button copies OpenPing into a new repository in your GitHub (or GitLab) account and deploys it to your Cloudflare account with [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/).
+The D1 database is created for you, and the deploy script creates its tables.
+Every later push to that repository's main branch deploys again, and applies any new migrations first.
+
+The deploy form asks for:
+
+- **The Worker and repository names.** The Worker name becomes your address, `https://<worker-name>.<your-subdomain>.workers.dev`.
+- **The database (`DB`).** Let it create a new one; any name works.
+- **`MASTER_KEY` and `SETUP_TOKEN`**, the two required secrets.
+  Generate each with `openssl rand -base64 32`, or with the generator on [the install page](https://openping.n8builds.dev/install#generate), which makes them in your browser and sends them nowhere.
+  **Save both in your password manager before you deploy**: Cloudflare never shows a secret again, `SETUP_TOKEN` unlocks the setup page, and `MASTER_KEY` is the only key to your encrypted data ([Backup & restore](./BACKUP.md)).
+- **`WORKERS_PLAN`, `WAITLIST_ENABLED` and `HOME_PAGE`.** Keep the defaults (`free`, `false`, `status`), or set `WORKERS_PLAN` to `paid` on Workers Paid.
+
+When the build finishes:
+
+1. Open your new address.
+   It shows the setup page: enter your `SETUP_TOKEN`, confirm the address, pick your timezone and enter your GitHub username (or an email address).
+2. Create a GitHub OAuth app for sign-in, as in [step 3](#3-create-a-github-oauth-app-sign-in), with your new address.
+3. Add its Client ID and Client Secret to the Worker: in the Cloudflare dashboard, open **Workers & Pages**, your Worker, **Settings**, **Variables and Secrets**, then **Add**, choose type **Secret**, and save `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
+   Any optional secret from [step 5](#5-set-your-worker-secrets), such as `RESEND_API_KEY` for email, is added the same way.
+4. Sign in and add your monitors ([step 8](#8-first-run-complete-setup-then-add-monitors)).
+
+Good to know:
+
+- **Upgrading.** The new repository is a copy, not a fork, so it doesn't follow this one by itself.
+  To upgrade, pull this repository's `main` into your copy and push; Workers Builds migrates and deploys ([Upgrading](./UPGRADE.md)).
+- **A missing secret.** If you skipped `MASTER_KEY` or `SETUP_TOKEN`, the setup page says which one is missing and how to add it in the dashboard.
+- **Changing vars.** `WORKERS_PLAN`, `WAITLIST_ENABLED` and `HOME_PAGE` live in your copy's `wrangler.jsonc`; change them there and push, because each deploy resets vars to that file.
+- **Limits.** The button needs a public repository on github.com or gitlab.com, and deploys Workers only ([Cloudflare's docs](https://developers.cloudflare.com/workers/platform/deploy-buttons/)).
 
 ---
 
@@ -32,7 +70,7 @@ app → set a few secrets → deploy → finish the in-app setup wizard. Budget
 
 Optional, but recommended for a real install:
 
-- **A GitHub account** - to create the OAuth app used for sign-in (step 4).
+- **A GitHub account** - to create the OAuth app used for sign-in (step 3).
 - **A [Resend](https://resend.com) account** - for transactional email and
   email magic-link sign-in (a free tier is available).
 
@@ -55,70 +93,7 @@ npm install
 
 ---
 
-## 3. Create your D1 database
-
-```bash
-npm run db:create
-```
-
-This runs `wrangler d1 create open-ping` and prints a block like:
-
-```
-[[d1_databases]]
-binding = "DB"
-database_name = "open-ping"
-database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-```
-
-Copy the printed **`database_id`** into `wrangler.jsonc`, replacing the
-placeholder value that ships in the repo:
-
-```jsonc
-"d1_databases": [
-  {
-    "binding": "DB",
-    "database_name": "open-ping",
-    "database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",  // <- your id here
-    "migrations_dir": "migrations"
-  }
-]
-```
-
-> **About that placeholder.** The `database_id` in `wrangler.jsonc` ships as
-> `REPLACE_WITH_YOUR_D1_DATABASE_ID`, which is *not* a real database in your
-> account. It's intentional: if you forget this step, the deploy fails loudly
-> ("database not found") instead of silently doing the wrong thing. The
-> `database_id` only matters for **remote** commands (`--remote` / `deploy`);
-> local development (`--local`) keys off `database_name`, so it works without it.
-> This value is account-specific, so in a public template it's never a real id -
-> you always fill in your own.
-
-### Keep your own ids out of git
-
-If you deploy from a fork you push publicly, or you want `git pull` to never conflict with your id, leave `wrangler.jsonc` untouched and put your values in a gitignored `deploy.local.json` instead:
-
-```json
-{
-  "database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "vars": { "WORKERS_PLAN": "free" }
-}
-```
-
-`vars` is optional and may override only vars that `wrangler.jsonc` already defines (`WORKERS_PLAN`, `WAITLIST_ENABLED`, `HOME_PAGE`), so a typo fails loudly.
-Then use the `:prod` scripts in place of the plain ones in steps 7 and 8:
-
-```bash
-npm run db:migrate:prod    # instead of npm run db:migrate
-npm run deploy:prod        # instead of npm run deploy
-```
-
-Each one first runs `scripts/prod-config.mjs`, which merges `deploy.local.json` into `wrangler.jsonc` and writes the gitignored `.wrangler.prod.jsonc`.
-Because that file is regenerated on every run, new settings in `wrangler.jsonc` reach your deploy automatically.
-Don't edit `.wrangler.prod.jsonc` by hand.
-
----
-
-## 4. Create a GitHub OAuth app (sign-in)
+## 3. Create a GitHub OAuth app (sign-in)
 
 OpenPing has a **single administrator**, and GitHub OAuth is the primary way to
 sign in. (Email magic links are an alternative/backup - see the note below.)
@@ -134,10 +109,10 @@ sign in. (Email magic links are an alternative/backup - see the note below.)
    OpenPing requests only the `read:user` scope.
 5. Click **Register application**, then note the **Client ID** and use
    **Generate a new client secret** to get the **Client Secret**. Copy both -
-   you'll set them as secrets in step 6.
+   you'll set them as secrets in step 5.
 
 > **Don't know your URL yet?** If you're going to deploy to a `*.workers.dev`
-> URL and don't know it, you can deploy once (step 8) to learn it, then come
+> URL and don't know it, you can deploy once (step 6) to learn it, then come
 > back and fill in the Homepage/callback URLs and `APP_URL`. If you plan to use a
 > custom domain, set everything to that domain from the start - see
 > [`CUSTOM_DOMAIN.md`](./CUSTOM_DOMAIN.md).
@@ -150,7 +125,7 @@ You must configure **at least one** identity before setup can finish, either as 
 - **`ADMIN_GITHUB_LOGIN`** - your GitHub **login (username)**, e.g. `octocat`
   (not your display name or email). Pairs with the GitHub OAuth app above.
 - **`ADMIN_EMAIL`** - your email address. Enables **email magic-link** sign-in
-  as an alternative or backup. This path also requires `RESEND_API_KEY` (step 6)
+  as an alternative or backup. This path also requires `RESEND_API_KEY` (step 5)
   so OpenPing can actually send the link.
 
 A common, robust setup is to configure **both**: GitHub for everyday sign-in, and email magic link as a fallback in case you ever cannot use GitHub.
@@ -158,7 +133,7 @@ Worker-secret values take precedence over identities saved by the wizard, which 
 
 ---
 
-## 5. Generate your `MASTER_KEY`
+## 4. Generate your `MASTER_KEY`
 
 `MASTER_KEY` is a base64-encoded **32-byte AES-GCM key** that enables
 **encryption-at-rest** for sensitive values stored in D1 (monitor auth
@@ -177,7 +152,7 @@ Copy the output - you'll set it as the `MASTER_KEY` secret in the next step.
 
 ---
 
-## 6. Set your Worker secrets
+## 5. Set your Worker secrets
 
 Secrets are stored encrypted by Cloudflare and injected into the Worker at
 runtime - they live **outside** `wrangler.jsonc` and are never committed. Set
@@ -191,14 +166,14 @@ You'll be prompted to paste the value. Here's every secret OpenPing recognizes:
 
 | Secret | Required? | What it is / how to obtain it |
 | --- | --- | --- |
-| `MASTER_KEY` | **Yes** | Base64 32-byte AES-GCM key for encryption-at-rest. Generate with `openssl rand -base64 32` (step 5). |
+| `MASTER_KEY` | **Yes** | Base64 32-byte AES-GCM key for encryption-at-rest. Generate with `openssl rand -base64 32` (step 4). |
 | `MASTER_KEY_PREVIOUS` | Only while rotating | The old `MASTER_KEY` during a [key rotation](./SECURITY.md#rotating-master_key); read-only, and deleted once Settings > Encryption keys says it is no longer needed. |
 | `SETUP_TOKEN` | **Yes** | One-time credential that protects the first-run wizard before you can sign in. Generate with `openssl rand -base64 32`. |
 | `APP_URL` | Recommended override | Public origin of this install, e.g. `https://status.example.com`; used for OAuth callbacks, magic links, and Web Push; must use `https://` with no path, query, fragment, credentials, or trailing slash; can instead be saved in the setup wizard. |
 | `ADMIN_GITHUB_LOGIN` | Optional override | Your GitHub login/username, which can instead be saved in the setup wizard; at least one GitHub or email administrator must exist before setup can finish. |
 | `ADMIN_EMAIL` | Optional override | Your email for magic-link sign-in, which can instead be saved in the setup wizard; at least one GitHub or email administrator must exist before setup can finish. |
-| `GITHUB_CLIENT_ID` | For GitHub sign-in | Client ID from the OAuth app (step 4). |
-| `GITHUB_CLIENT_SECRET` | For GitHub sign-in | Client secret from the OAuth app (step 4). |
+| `GITHUB_CLIENT_ID` | For GitHub sign-in | Client ID from the OAuth app (step 3). |
+| `GITHUB_CLIENT_SECRET` | For GitHub sign-in | Client secret from the OAuth app (step 3). |
 | `RESEND_API_KEY` | For email / magic links | API key from [Resend](https://resend.com). Required for email notifications and email magic-link sign-in. |
 | `API_TOKEN` | Optional | Admin token for the CLI / automation. When set, `Authorization: Bearer <API_TOKEN>` is treated as full admin. Generate with `openssl rand -base64 32`. See [`CLI.md`](./CLI.md). |
 | `VAPID_PUBLIC_KEY` | Optional | Web Push public key. You can instead generate VAPID keys in-app under **Integrations**. |
@@ -230,39 +205,60 @@ npx wrangler secret put RESEND_API_KEY
 
 ---
 
-## 7. Apply the database migrations
-
-Create the schema in your remote D1 database:
+## 6. Deploy
 
 ```bash
-npm run db:migrate         # wrangler d1 migrations apply open-ping --remote
+npm run deploy             # build, create the database if needed, migrate, deploy
 ```
 
-This applies every migration in `migrations/` (currently `0001` through `0010`) in
-order. Migrations are **additive and tracked by Wrangler**, so re-running is
-safe - only unapplied migrations run. Wrangler will ask you to confirm before
-applying to the remote database.
+`npm run deploy` runs `scripts/deploy.mjs`, which:
 
-(For local development against a local D1 file, use `npm run db:migrate:local`
-instead - see the [local-dev quickstart](#local-development-quickstart).)
+1. builds the SPA and the Worker (`vite build`),
+2. applies any pending migrations in `migrations/` to the remote D1 database (`wrangler d1 migrations apply DB --remote`),
+3. and publishes the Worker, then prints your deployed URL (something like `https://open-ping.<your-subdomain>.workers.dev`).
 
----
+There is no database to create by hand.
+`wrangler.jsonc` names the database `open-ping` but carries no `database_id`, because an id belongs to one Cloudflare account.
+On the first deploy, Wrangler's [automatic provisioning](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning) creates the database (or binds an existing one with that name), so the script deploys first and migrates straight after; from then on it migrates before it deploys.
+Wrangler then writes the new id into your `wrangler.jsonc`; keeping or discarding that change both work, because later deploys and `wrangler d1` commands find the database by name.
+Migrations are additive and tracked by Wrangler, so only unapplied ones run, and Wrangler asks you to confirm before applying them.
+To run them on their own, use `npm run db:migrate`.
 
-## 8. Deploy
-
-```bash
-npm run deploy             # vite build && wrangler deploy
-```
-
-Wrangler builds the SPA and publishes the Worker, then prints your deployed URL
-(something like `https://open-ping.<your-subdomain>.workers.dev`).
+Before it builds, the script also compares the vars your live Worker runs with against the ones in `wrangler.jsonc`.
+If a deploy would change one (say `WORKERS_PLAN` from `paid` back to `free`), it lists them and asks before going on; without a terminal it stops, and `OPENPING_ALLOW_VAR_CHANGES=1 npm run deploy` deploys anyway.
+Installs made with the button skip that check, because their repository is the source of truth.
+To run a second OpenPing in the same Cloudflare account, change both `name` and `database_name` in `wrangler.jsonc` first, or the deploy binds the first install's database.
 
 The Cron Trigger that runs the checker **every 12 minutes** (`*/12 * * * *`,
 defined in `wrangler.jsonc`) is enabled automatically on deploy - you don't need
 to configure anything for monitoring to start.
 
 > If you deployed first to learn your `*.workers.dev` URL, enter that origin in the setup wizard or set `APP_URL` with `wrangler secret put`.
-> Update the GitHub OAuth Homepage and callback URLs from step 4 to match it.
+> Update the GitHub OAuth Homepage and callback URLs from step 3 to match it.
+
+### Keep your own ids out of git
+
+To pin your database id, or keep your own var values, without editing `wrangler.jsonc` (so `git pull` never conflicts), put them in a gitignored `deploy.local.json`; `npx wrangler d1 list` shows the id:
+
+```json
+{
+  "database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "vars": { "WORKERS_PLAN": "free" }
+}
+```
+
+`vars` is optional and may override only vars that `wrangler.jsonc` already defines (`WORKERS_PLAN`, `WAITLIST_ENABLED`, `HOME_PAGE`), so a typo fails loudly.
+Then use the `:prod` scripts in place of the plain ones:
+
+```bash
+npm run db:migrate:prod    # instead of npm run db:migrate
+npm run deploy:prod        # instead of npm run deploy
+```
+
+Each one first runs `scripts/prod-config.mjs`, which merges `deploy.local.json` into `wrangler.jsonc` and writes the gitignored `.wrangler.prod.jsonc`.
+Because that file is regenerated on every run, new settings in `wrangler.jsonc` reach your deploy automatically.
+Don't edit `.wrangler.prod.jsonc` by hand.
+While `deploy.local.json` exists, plain `npm run deploy` refuses to run, so a deploy can't silently drop your values.
 
 ### What visitors see at `/`
 
@@ -283,7 +279,7 @@ The `ratelimits` entry named `EVENT_LIMITER` in `wrangler.jsonc` caps that page'
 
 ---
 
-## 9. (Optional) Add a custom domain
+## 7. (Optional) Add a custom domain
 
 A custom domain (e.g. `https://status.example.com`) gives you a nicer public
 status page and stable OAuth/push URLs. Full instructions are in
@@ -302,11 +298,11 @@ status page and stable OAuth/push URLs. Full instructions are in
 
 ---
 
-## 10. First run: complete setup, then add monitors
+## 8. First run: complete setup, then add monitors
 
 Open the deployed public URL in a browser.
 
-While setup is incomplete, the **first-run wizard** can be opened before signing in, but it requires the `SETUP_TOKEN` you configured in step 6.
+While setup is incomplete, the **first-run wizard** can be opened before signing in, but it requires the `SETUP_TOKEN` you configured in step 5.
 This prevents an anonymous visitor from claiming a newly deployed instance before you reach it.
 The wizard saves:
 
@@ -337,7 +333,7 @@ Sign in with **GitHub** or an **email magic link**, then:
 
 ---
 
-## 11. Verify it's working
+## 9. Verify it's working
 
 A quick checklist to confirm a healthy install:
 
@@ -366,10 +362,8 @@ A few things trip up almost everyone on a first deploy. See
 [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) for the full list; the greatest
 hits:
 
-- **"Database not found" / `no such table` on deploy or in the app.** You
-  forgot to replace the sentinel `database_id` in `wrangler.jsonc` (step 3),
-  it points at the wrong database, or you haven't run `npm run db:migrate`
-  (step 7).
+- **"Database not found" / `no such table` on deploy or in the app.** The migrations didn't run: run `npm run db:migrate`, or check the deploy log.
+  If you set a `database_id` yourself, check it points at the right database (`npx wrangler d1 list`).
 - **GitHub sign-in fails with a state / callback / "redirect URI" error.** The
   OAuth app's **Authorization callback URL** must be **exactly**
   `<configured-app-origin>/auth/github/callback`. A mismatch between the configured app origin and the
@@ -377,7 +371,7 @@ hits:
   OAuth state check. Re-check both, then redeploy.
 - **"Not authorized" after a successful GitHub login.** The administrator GitHub login saved in the wizard or overridden by `ADMIN_GITHUB_LOGIN` must match your GitHub **login/username** exactly, not your display name or email.
 - **Setup reports that `MASTER_KEY` is required, or the dashboard warns that encryption is disabled.**
-  Configure a valid base64-encoded 32-byte `MASTER_KEY` secret (step 5).
+  Configure a valid base64-encoded 32-byte `MASTER_KEY` secret (step 4).
 - **Magic-link / notification emails don't arrive.** Make sure `RESEND_API_KEY`
   is set and your Resend **sending domain/sender is verified**. For quick
   testing without verifying a domain, Resend lets you send from
