@@ -98,7 +98,7 @@ push.post("/devices/:id/test", async (c) => {
   if (!sub) return c.json({ error: "not_found" }, 404);
   const vapid = await getVapid(c.env);
   if (!vapid) return c.json({ error: "vapid_not_configured" }, 400);
-  const appUrl = (await getSetting(c.env, "app_url")) ?? undefined;
+  const appUrl = c.env.APP_URL ?? (await getSetting(c.env, "app_url")) ?? undefined;
   const result = await sendWebPush({
     subscription: { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
     payload: JSON.stringify({

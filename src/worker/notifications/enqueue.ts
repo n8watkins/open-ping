@@ -79,7 +79,7 @@ export async function enqueueIncidentEvent(
   const channels = (await listChannels(env)).filter((c) => c.enabled && c.type !== "push");
   if (!channels.length) return;
 
-  const appUrl = (await getSetting(env, "app_url")) ?? undefined;
+  const appUrl = env.APP_URL ?? (await getSetting(env, "app_url")) ?? undefined;
   const payload = buildIncidentPayload(monitor, incident, event, appUrl);
   const restrict = monitor.notify?.channels ?? [];
 

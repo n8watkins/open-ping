@@ -179,7 +179,7 @@ channels.delete("/:id", async (c) => {
 channels.post("/:id/test", async (c) => {
   const channel = await getChannel(c.env, c.req.param("id"));
   if (!channel) return c.json({ error: "not_found" }, 404);
-  const appUrl = (await getSetting(c.env, "app_url")) ?? undefined;
+  const appUrl = c.env.APP_URL ?? (await getSetting(c.env, "app_url")) ?? undefined;
   const payload = buildTestPayload(channel.name ?? channel.type, appUrl);
   const result = await deliverToChannel(c.env, channel, payload);
   await recordChannelResult(c.env, channel.id, result.ok, result.error ?? null);
