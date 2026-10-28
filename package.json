@@ -13,7 +13,7 @@
     "build": "vite build",
     "postbuild": "node scripts/secure-build-output.mjs",
     "preview": "vite preview",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "node scripts/deploy.mjs",
     "deploy:prod": "node scripts/prod-config.mjs && OPENPING_WRANGLER_CONFIG=.wrangler.prod.jsonc npm run deploy",
     "typecheck": "tsc -b",
     "lint": "tsc -b",
@@ -24,12 +24,34 @@
     "op": "node scripts/op.mjs",
     "cf-typegen": "wrangler types",
     "db:create": "wrangler d1 create open-ping",
-    "db:migrate:local": "wrangler d1 migrations apply open-ping --local",
-    "db:migrate": "wrangler d1 migrations apply open-ping --remote",
-    "db:migrate:prod": "node scripts/prod-config.mjs && wrangler d1 migrations apply open-ping --remote -c .wrangler.prod.jsonc",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate": "wrangler d1 migrations apply DB --remote",
+    "db:migrate:prod": "node scripts/prod-config.mjs && wrangler d1 migrations apply DB --remote -c .wrangler.prod.jsonc",
     "release": "release-kit release",
     "release:check": "release-kit check && npm run lint && npm run typecheck && npm test && npm run build",
     "prepare": "git config core.hooksPath .githooks || true"
+  },
+  "cloudflare": {
+    "bindings": {
+      "MASTER_KEY": {
+        "description": "Encrypts the credentials OpenPing stores. Must be 32 random bytes in base64: run `openssl rand -base64 32`, or use the generator at [openping.n8builds.dev/install](https://openping.n8builds.dev/install#generate). **Save a copy in your password manager**: Cloudflare never shows it again."
+      },
+      "SETUP_TOKEN": {
+        "description": "Unlocks the first-run setup page until you finish it, so nobody else can claim your new install. Generate another value the same way (`openssl rand -base64 32`) and keep it: the setup page asks for it."
+      },
+      "WORKERS_PLAN": {
+        "description": "Your Cloudflare Workers plan, `free` or `paid`. On Free each 12-minute run checks about 8 monitors and leaves the rest for the next run. [More](https://github.com/n8watkins/open-ping/blob/main/docs/FREE_TIER.md)"
+      },
+      "WAITLIST_ENABLED": {
+        "description": "Leave `false`. Only the OpenPing project's own site collects the Hosted waitlist."
+      },
+      "HOME_PAGE": {
+        "description": "Leave `status`, so visitors see your status page at `/`. Only the OpenPing project's own site uses `landing`."
+      },
+      "DB": {
+        "description": "OpenPing's database: monitors, check results, incidents and settings. The deploy creates its tables."
+      }
+    }
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.4.0",

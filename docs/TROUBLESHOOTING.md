@@ -81,9 +81,8 @@ you're using:
 - Remote: `npm run db:migrate`
 - Local dev: `npm run db:migrate:local`
 
-Also confirm the `database_id` in `wrangler.jsonc` matches the database you
-created with `npm run db:create` - pointing at the wrong (empty) database
-produces the same symptoms.
+If you pinned a `database_id` (in `wrangler.jsonc` or `deploy.local.json`), confirm it matches the database you meant (`npx wrangler d1 list`).
+Pointing at the wrong (empty) database produces the same symptoms.
 
 ## A monitor reports `blocked_url`
 

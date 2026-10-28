@@ -1449,19 +1449,13 @@ function QuickStart() {
             {"\n"}
             <span className="text-ink-faint">$ </span>npm install
             {"\n"}
-            <span className="text-ink-faint">$ </span>npm run db:create
-            {"  "}
-            <span className="text-up"># then paste its id into wrangler.jsonc</span>
-            {"\n"}
             <span className="text-ink-faint">$ </span>npx wrangler secret put MASTER_KEY
             {"  "}
             <span className="text-up"># and SETUP_TOKEN</span>
             {"\n"}
-            <span className="text-ink-faint">$ </span>npm run db:migrate
-            {"\n"}
             <span className="text-ink-faint">$ </span>npm run deploy
             {"  "}
-            <span className="text-up"># live on your *.workers.dev</span>
+            <span className="text-up"># creates the database, live on *.workers.dev</span>
           </code>
         </pre>
       </Reveal>

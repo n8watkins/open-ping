@@ -47,11 +47,13 @@
     {
       "binding": "DB",
       "database_name": "open-ping",
-      // Replace with the id printed by `wrangler d1 create open-ping` before
-      // deploying. Left as an obvious sentinel (not a zero-UUID) so a missed
-      // setup step fails loudly instead of with a cryptic "database not found".
-      // Local dev (`--local`) uses database_name, so this value is remote-only.
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      // No database_id on purpose: this file is a public template, and an id
+      // belongs to one Cloudflare account. On deploy, Wrangler binds the
+      // database named above, creating it the first time (its automatic
+      // provisioning), and `wrangler d1` commands look it up by that name.
+      // The Deploy to Cloudflare button creates it the same way. To pin your
+      // own id without editing this file, use deploy.local.json
+      // (scripts/prod-config.mjs, docs/INSTALL.md).
       "migrations_dir": "migrations"
     }
   ]

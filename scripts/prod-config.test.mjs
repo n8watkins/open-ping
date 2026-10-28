@@ -27,7 +27,9 @@ describe("parseJsonc", () => {
 
   it("parses the real wrangler.jsonc", () => {
     expect(template.name).toBe("open-ping");
-    expect(template.d1_databases[0].database_id).toBe("REPLACE_WITH_YOUR_D1_DATABASE_ID");
+    expect(template.d1_databases[0]).toMatchObject({ binding: "DB", database_name: "open-ping" });
+    // A public template never carries one account's database id.
+    expect(template.d1_databases[0]).not.toHaveProperty("database_id");
   });
 });
 
@@ -50,6 +52,20 @@ describe("buildProdConfig", () => {
   it("rejects a missing or malformed database id", () => {
     expect(() => buildProdConfig(template, {})).toThrow(/database_id/);
     expect(() => buildProdConfig(template, { database_id: "nope" })).toThrow(/database_id/);
+  });
+
+  it("refuses a template that already carries a database id", () => {
+    const withId = {
+      ...template,
+      d1_databases: [{ ...template.d1_databases[0], database_id: ID }],
+    };
+    expect(() => buildProdConfig(withId, { database_id: ID })).toThrow(/remove the D1 database_id/);
+  });
+
+  it("rejects a template without the DB binding", () => {
+    expect(() => buildProdConfig({ ...template, d1_databases: [] }, { database_id: ID })).toThrow(
+      /bound as "DB"/,
+    );
   });
 
   it("rejects a var the template does not define, so typos fail loudly", () => {

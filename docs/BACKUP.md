@@ -105,7 +105,7 @@ Always perform a dry run first, then securely capture the real import response b
 Use Wrangler for a complete D1 snapshot:
 
 ```bash
-npx wrangler d1 export open-ping --remote --output openping-d1-backup.sql
+npx wrangler d1 export DB --remote --output openping-d1-backup.sql
 ```
 
 A full dump includes sessions, samples, summaries, encrypted values, and compatibility rows that may still be plaintext after an older upgrade.
