@@ -3,7 +3,7 @@
 This is the platform Worker for OpenPing Hosted: the code that owns customers rather than monitoring.
 It is planned in [the build plan](../docs/HOSTED_BUILD_PLAN.md), and it talks to each customer's OpenPing only through [the contract](../docs/hosted/CONTRACT.md).
 
-**Status: skeleton (B1), provisioning (B3) and accounts (B2), not deployed anywhere.**
+**Status: skeleton (B1), provisioning (B3), accounts (B2) and the admin console (B6), not deployed anywhere.**
 Nothing here has been created in a Cloudflare account yet; see [Owner setup](#owner-setup-not-done-yet).
 
 ## What it does today
@@ -42,7 +42,17 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   - `/open?tenant=<slug>` mints the Ed25519 hand-off (`src/handoff.ts`, only the contract's helpers) and redirects to `https://<slug>.<domain>/auth/hosted?t=...`;
   - `SIGN_UPS` stays `closed` until launch: existing accounts sign in, no new ones are made, and the email form sends nothing to an address without an account (it shows the same page either way);
   - signing out is a POST; the tenant's sign-out lands on `GET /sign-out`, which offers one tap to end the platform session too.
-- Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit` is real; `sendEmail` and `reportUsage` are stubs until A5, B2 and B6).
+- Runs the owner's admin console at `app.<domain>/admin` (B6, `src/admin/`):
+  - who gets in: an account named in `PLATFORM_OWNERS` (account ids or emails, never in code), signed in with a passkey in the last 12 hours, and in the last 10 minutes for any change; everyone else, signed in or not, gets the ordinary 404 on every path and method, and the owner without a fresh passkey gets one tap to sign in with it again and come back;
+  - the tenant list: search by address, email, tenant id or account id, filters for status, plan and setup state (paused included), counts of what needs a look, 50 a page;
+  - each tenant: slug, script and D1 names, the D1 id, plan, status, version, its live `GET /__platform/health` (with its last run), usage against its limits, provisioning state with the last error, and its history from the audit log;
+  - suspend (with a reason) and resume, which restores the billing state it interrupted (`status_before_suspend`); routing changes at once in the isolate that made the change (`forgetTenant`) and within 30 seconds in the others;
+  - for a paused provisioning: resume it, or remove the tenant after typing its address; both run from the queue, or after the answer when there is none;
+  - sign in as support: the contract's hand-off with role `support`, signed as the owner, with a reason the customer sees on their account page ("Support access"), recorded as `support.handoff_issued` before the token leaves;
+  - the audit log, newest first, filtered by tenant, actor and action prefix;
+  - the waitlist: an upload (or paste) of the canonical install's CSV export (Settings > Reports > Download CSV), or the JSON of `/api/waitlist`, into `waitlist_entries`, idempotent, up to 5,000 addresses at a time; the platform never calls the install;
+  - every change is a POST from this origin, limited to 120 an hour (support sign-ins 20), and audited with actor `owner` or `support`.
+- Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit` and `reportUsage` are real, the latter keeping each tenant's latest counts in `tenant_usage` for the console; `sendEmail` is a stub until A5).
 
 ## Layout
 
@@ -62,6 +72,7 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 | `src/account-routes.ts`, `src/account-pages.ts` | Sign-up, sign-in, the account page, `/start` and `/open` |
 | `src/auth/` | Sessions, email codes and links, passkeys, GitHub OAuth, ceremonies and rate limits |
 | `src/accounts.ts`, `src/mail.ts`, `src/handoff.ts` | Accounts and identities, the Resend mailer, minting hand-off tokens |
+| `src/admin/` | The admin console: `owner.ts` (who may use it), `data.ts` (queries, suspend and resume), `waitlist.ts` (the import), `pages.ts`, `routes.ts` |
 | `src/provisioning.ts` | The provisioning state machine: `requestTenant`, `runProvisioning`, `removeTenant`, and `provisionDue` (the retry sweep) |
 | `src/provisioning-env.ts` | Builds provisioning's dependencies from the env, or names the settings that are missing |
 | `src/cloudflare/api.ts` | `CloudflareApi`: the D1 and Workers for Platforms calls provisioning makes, with links to Cloudflare's docs |
@@ -111,5 +122,8 @@ They are needed before staging in wave 3 ([build plan, section 12](../docs/HOSTE
    - `CF_ACCOUNT_ID`: the account's 32 hex character id, a secret only to keep it out of this public config;
    - `CF_API_TOKEN`: a custom API token for that one account with **Account, Workers Scripts, Edit** and **Account, D1, Edit**, nothing else (O5); the dispatch namespace's scripts are Workers Scripts;
    - `RESEND_API_KEY` and `GITHUB_CLIENT_SECRET`, for sign-in;
-   - `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`, in test mode first (O3).
+   - `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`, in test mode first (O3);
+   - `PLATFORM_OWNERS`, if it names the owner by email rather than by account id (otherwise the var in `wrangler.jsonc`).
+   The owner signs in once and adds a passkey on the account page; naming them by email in a `PLATFORM_OWNERS` secret opens the console at once.
+   Their account id then appears in the console's audit log (`by: acc_...` on each of their changes), and can replace the email in the public var.
 9. **Support address:** support@n8builds.dev, decided; forward it with Cloudflare Email Routing (O4).
