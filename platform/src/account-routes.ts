@@ -315,6 +315,9 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
   // --- Passkeys ------------------------------------------------------------
 
   app.post("/sign-in/passkey/options", async (c) => {
+    // Each call stores a ceremony, so anonymous callers are limited too.
+    const limited = await hitAll(c.env.PLATFORM_DB, [[LIMITS.passkeyPerIp, clientIp(c)]], c.get("now"));
+    if (limited) return c.json({ error: "rate_limited", message: tooMany() }, 429, NO_STORE);
     const body = (await c.req.json().catch(() => ({}))) as { next?: unknown };
     const challenge = newChallenge();
     const cookie = await startCeremony(c.env.PLATFORM_DB, {
