@@ -23,7 +23,7 @@ import { useBootstrap } from "../lib/bootstrap";
 import { useFetch } from "../lib/useFetch";
 import type { OverviewResponse } from "../lib/types";
 import { shellTransitionKey } from "../lib/section-routes";
-import { clearSavedData, offlineBanner, precacheApp, useSavedAt } from "../lib/offline";
+import { clearSavedData, offlineBanner, offlineSummary, precacheApp, useSavedAt } from "../lib/offline";
 import { InstallNavButton, IosInstallSheet, canOfferInstall } from "./InstallApp";
 import { useInstallState } from "../lib/install";
 import { PAGE_REFRESHED_EVENT } from "../lib/pull-to-refresh";
@@ -40,7 +40,16 @@ const STATUS_PILL = {
   degraded: { dot: "bg-degraded", text: "text-degraded", label: "Degraded" },
   down: { dot: "bg-down", text: "text-down", label: "Down" },
   suspended: { dot: "bg-suspended", text: "text-suspended", label: "Suspended" },
+  // Offline: what's on screen is saved or stale, so no live status is claimed.
+  offline: { dot: "bg-ink-faint", text: "text-ink-muted", label: "Offline" },
 } as const;
+
+/** Only a live problem pulses; operational and offline stay still. */
+const PULSING: ReadonlySet<(typeof STATUS_PILL)[keyof typeof STATUS_PILL]> = new Set([
+  STATUS_PILL.down,
+  STATUS_PILL.suspended,
+  STATUS_PILL.degraded,
+]);
 
 /** The sidebar's one-line summary: what's wrong, or that all is well. */
 function statusSummary(counts: OverviewResponse["counts"] | undefined): string {
@@ -111,7 +120,6 @@ export function AppLayout() {
   const { data: overview, reload: reloadOverview } = useFetch<OverviewResponse>(
     me?.authenticated || offlineShell ? "/api/overview" : null,
   );
-  const pill = deriveStatus(overview?.counts);
 
   // Surface offline/stale state (PWA cache): listen for connectivity changes.
   const [online, setOnline] = useState(
@@ -190,9 +198,12 @@ export function AppLayout() {
   if (status && !status.setupComplete) return <Navigate to="/setup" replace />;
 
   const moreActive = MOBILE_MORE_NAV.some((item) => isActivePath(pathname, item.to));
-  const summary = statusSummary(overview?.counts);
   // Date.now() only decides whether the saved time needs its date too.
-  const banner = offlineBanner({ online: online && !offlineShell, savedAt, now: Date.now() });
+  const now = Date.now();
+  const banner = offlineBanner({ online: online && !offlineShell, savedAt, now });
+  // While the banner shows, the pill and the summary never claim live status.
+  const pill = banner ? STATUS_PILL.offline : deriveStatus(overview?.counts);
+  const summary = banner ? offlineSummary(savedAt, now) : statusSummary(overview?.counts);
 
   return (
     <div className="flex min-h-full">
@@ -240,7 +251,7 @@ export function AppLayout() {
             )}
           >
             <span className="relative mt-[3px] grid size-2 shrink-0 place-items-center" aria-hidden>
-              {pill !== STATUS_PILL.operational && (
+              {PULSING.has(pill) && (
                 <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", pill.dot)} />
               )}
               <span className={cn("relative size-2 rounded-full", pill.dot)} />

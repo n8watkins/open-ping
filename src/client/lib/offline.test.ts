@@ -5,6 +5,7 @@ import {
   isApiCacheMessage,
   nextSavedAt,
   offlineBanner,
+  offlineSummary,
   type ApiCacheMessage,
 } from "./offline";
 
@@ -80,5 +81,15 @@ describe("isApiCacheMessage", () => {
     expect(isApiCacheMessage({ type: API_CACHE_MESSAGE, source: "maybe" })).toBe(false);
     expect(isApiCacheMessage({ type: API_CACHE_MESSAGE, source: "cached", savedAt: "10:42" })).toBe(false);
     expect(isApiCacheMessage({ type: API_CACHE_MESSAGE, source: "cached", savedAt: Number.NaN })).toBe(false);
+  });
+});
+
+describe("offlineSummary", () => {
+  it("says when the status on screen is from", () => {
+    expect(offlineSummary(tenFortyTwo, now)).toBe("Offline, status from 10:42");
+  });
+
+  it("says it may be out of date when nothing saved is on screen", () => {
+    expect(offlineSummary(null, now)).toBe("Offline, status may be out of date");
   });
 });

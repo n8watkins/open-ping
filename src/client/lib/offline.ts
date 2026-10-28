@@ -69,6 +69,11 @@ export function offlineBanner({
   return null;
 }
 
+/** The shell's status line while offline: when the status on screen is from. */
+export function offlineSummary(savedAt: number | null, now: number, locale?: string): string {
+  return savedAt === null ? "Offline, status may be out of date" : `Offline, status from ${formatSavedAt(savedAt, now, locale)}`;
+}
+
 let savedAt: number | null = null;
 const listeners = new Set<() => void>();
 
