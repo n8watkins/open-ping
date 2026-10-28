@@ -13,11 +13,15 @@ import {
   backoffMs,
   newTenantId,
   provisionDue,
+  DUE_TENANTS_SQL,
   removeTenant,
   requestTenant,
+  resumeProvisioning,
   runProvisioning,
   type ProvisioningDeps,
 } from "../src/provisioning";
+import { PermanentError } from "../src/errors";
+import { handleProvisionBatch, type ProvisionMessage } from "../src/provisioning-queue";
 import { checkSlugAvailability } from "../src/slugs";
 import { FakeCloudflareApi } from "./fake-cloudflare";
 import { FakeDispatcher } from "./fake-dispatcher";
@@ -106,10 +110,14 @@ async function signUp(w: World, slug: string): Promise<string> {
 
 async function row(tenantId: string) {
   return env.PLATFORM_DB.prepare(
-    "SELECT provision_state, provision_attempts, provision_error, provision_next_at, provision_lease_until, d1_id, version, provisioned_at FROM tenants WHERE id = ?",
+    "SELECT provision_state, provision_attempts, provision_error, provision_next_at, provision_lease_until, provision_paused_at, d1_id, version, provisioned_at FROM tenants WHERE id = ?",
   )
     .bind(tenantId)
     .first<Record<string, any>>();
+}
+
+async function count(sql: string, ...binds: unknown[]): Promise<number> {
+  return (await env.PLATFORM_DB.prepare(sql).bind(...binds).first<{ n: number }>())!.n;
 }
 
 async function auditActions(tenantId: string): Promise<string[]> {
@@ -260,7 +268,7 @@ describe("runProvisioning", () => {
     const first = await runProvisioning(w.deps, id, { force: true });
     expect(first).toMatchObject({ kind: "retry", state: "db_created", attempts: 1, nextAt: w.clock.now + backoffMs(1) });
     const r = await row(id);
-    expect(r).toMatchObject({ provision_state: "db_created", provision_attempts: 1, provision_lease_until: null });
+    expect(r).toMatchObject({ provision_state: "db_created", provision_attempts: 1, provision_lease_until: null, provision_paused_at: null });
     expect(r!.provision_error).toMatch(/^db_created: Cloudflare API fake\.putScript failed \(503\)/);
 
     // Not due yet: the sweep leaves it alone.
@@ -280,7 +288,8 @@ describe("runProvisioning", () => {
     w.clock.now += backoffMs(1);
     // Sending new_tag v1 again to a script already at v1 would be refused; the retry deletes it first.
     expect(await runProvisioning(w.deps, id)).toEqual({ kind: "ready", tenantId: id });
-    expect(w.api.count("deleteScript")).toBe(1);
+    // Every upload clears the way first, whatever the attempt count says.
+    expect(w.api.count("deleteScript")).toBe(2);
   });
 
   it("recovers a database whose create answer was lost, instead of making a second one", async () => {
@@ -306,31 +315,47 @@ describe("runProvisioning", () => {
     expect(await runProvisioning(w.deps, id)).toEqual({ kind: "ready", tenantId: id });
   });
 
-  it("rolls back cleanly after the last allowed failure, and frees the slug", async () => {
+  it("pauses, with nothing rolled back, after the last allowed failure, and resumes once the owner fixes it", async () => {
     const w = world();
     const id = await signUp(w, "doomedco");
     w.api.failAlways("putScript", { status: 500 });
 
     let outcome = await runProvisioning(w.deps, id, { force: true });
-    for (let attempt = 1; attempt < PROVISION_MAX_ATTEMPTS - 1; attempt++) {
+    for (let attempt = 1; attempt < PROVISION_MAX_ATTEMPTS; attempt++) {
       expect(outcome).toMatchObject({ kind: "retry", state: "db_created", attempts: attempt });
       w.clock.now += backoffMs(attempt);
       outcome = await runProvisioning(w.deps, id);
     }
-    // The last failure: torn down at once, in the same run.
-    w.clock.now += backoffMs(PROVISION_MAX_ATTEMPTS - 1);
-    expect(await runProvisioning(w.deps, id)).toEqual({ kind: "removed", tenantId: id });
+    expect(outcome).toMatchObject({ kind: "paused", state: "db_created" });
+    const r = await row(id);
+    expect(r).toMatchObject({ provision_state: "db_created", provision_next_at: null, provision_lease_until: null });
+    expect(r!.provision_paused_at).toBe(w.clock.now);
+    // Nothing was thrown away: the database and the key are still there.
+    expect(w.api.databases.size).toBe(1);
+    expect(await count("SELECT COUNT(*) AS n FROM escrowed_keys WHERE tenant_id = ?", id)).toBe(1);
+    expect(await auditActions(id)).toEqual(["tenant.provision_paused"]);
+    // Paused tenants are left alone by the sweep and by any message.
+    w.clock.now += 86_400_000;
+    expect(await provisionDue(w.deps)).toEqual([]);
+    expect(await runProvisioning(w.deps, id)).toMatchObject({ kind: "paused" });
+    // The address stays the customer's.
+    expect(await checkSlugAvailability(env.PLATFORM_DB, "doomedco", w.clock.now)).toMatchObject({ ok: false, reason: "taken" });
 
-    expect(await row(id)).toBeNull();
-    expect(w.api.databases.size).toBe(0);
-    expect(w.api.scripts.size).toBe(0);
-    // Each retried upload cleared the way first (5), then the teardown (1).
-    expect(w.api.count("deleteScript")).toBe(PROVISION_MAX_ATTEMPTS);
-    const keys = await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM escrowed_keys WHERE tenant_id = ?").bind(id).first<{ n: number }>();
-    expect(keys!.n).toBe(0);
-    expect(await auditActions(id)).toEqual(["tenant.provision_failed", "tenant.removed"]);
-    // Never served anyone, so the name is free again at once.
-    expect(await checkSlugAvailability(env.PLATFORM_DB, "doomedco", w.clock.now)).toEqual({ ok: true, slug: "doomedco" });
+    w.api.heal("putScript");
+    expect(await resumeProvisioning(w.deps, id)).toEqual({ kind: "ready", tenantId: id });
+  });
+
+  it("pauses at once on a failure retrying can't fix", async () => {
+    for (const [what, fail] of [
+      ["a refused API token", (w: World) => w.api.failNext("createDatabase", { status: 403 })],
+      ["a broken bundle", (w: World) => (w.deps.bundles = { current: async () => Promise.reject(new PermanentError("tenant bundle: releases/current is missing")) })],
+    ] as const) {
+      const w = world();
+      const id = await signUp(w, `perm${what.length}co`);
+      fail(w);
+      expect(await runProvisioning(w.deps, id, { force: true }), what).toMatchObject({ kind: "paused" });
+      expect((await row(id))!.provision_attempts, what).toBe(1);
+    }
   });
 
   it("keeps retrying a teardown that fails, without giving up", async () => {
@@ -385,5 +410,115 @@ describe("runProvisioning", () => {
     expect(await runProvisioning(w.deps, id, { force: true })).toEqual({ kind: "removed", tenantId: id });
     expect(w.api.scripts.size).toBe(0);
     expect(w.api.databases.size).toBe(0);
+  });
+});
+
+describe("the lease", () => {
+  it("keeps a run that lost its lease from writing anything", async () => {
+    const w = world();
+    const id = await signUp(w, "stolenco");
+    const original = w.api.createDatabase.bind(w.api);
+    w.api.createDatabase = async (name) => {
+      const db = await original(name);
+      // The run stalls past its lease, and another run takes the tenant.
+      await env.PLATFORM_DB.prepare("UPDATE tenants SET provision_lease_token = 'someone-else' WHERE id = ?").bind(id).run();
+      return db;
+    };
+    expect(await runProvisioning(w.deps, id, { force: true })).toEqual({ kind: "busy", tenantId: id });
+    const r = await row(id);
+    // Its step's result was not written, and the other run's lease is untouched.
+    expect(r!.provision_state).toBe("requested");
+    expect((await env.PLATFORM_DB.prepare("SELECT provision_lease_token AS t FROM tenants WHERE id = ?").bind(id).first<{ t: string }>())!.t).toBe("someone-else");
+  });
+
+  it("is renewed before every step, so a long run keeps it", async () => {
+    const w = world();
+    const id = await signUp(w, "slowco");
+    const leases: number[] = [];
+    const slow = <A extends unknown[], R>(f: (...a: A) => Promise<R>) => async (...a: A): Promise<R> => {
+      leases.push((await row(id))!.provision_lease_until);
+      w.clock.now += 90_000; // each step takes most of a lease
+      return f(...a);
+    };
+    w.api.createDatabase = slow(w.api.createDatabase.bind(w.api));
+    w.api.putScript = slow(w.api.putScript.bind(w.api));
+    expect(await runProvisioning(w.deps, id, { force: true })).toEqual({ kind: "ready", tenantId: id });
+    expect(leases).toHaveLength(2);
+    // Renewed from the later step's start, not left at the first step's.
+    expect(leases[1]! - leases[0]!).toBeGreaterThanOrEqual(90_000);
+  });
+});
+
+describe("escrow", () => {
+  it("keeps one active key per tenant even when two runs race, and uploads that one", async () => {
+    const w = world();
+    const id = await signUp(w, "raceescrowco");
+    const { ensureMasterKey } = await import("../src/keys");
+    const [a, b] = await Promise.all([
+      ensureMasterKey(env.PLATFORM_DB, id, PLATFORM_KEY, 1),
+      ensureMasterKey(env.PLATFORM_DB, id, PLATFORM_KEY, 1),
+    ]);
+    expect(a.masterKey).toBe(b.masterKey);
+    expect(await count("SELECT COUNT(*) AS n FROM escrowed_keys WHERE tenant_id = ? AND retired_at IS NULL", id)).toBe(1);
+    await runProvisioning(w.deps, id, { force: true });
+    expect(w.tenants.get(`t-${id}`)!.env.MASTER_KEY).toBe(a.masterKey);
+  });
+});
+
+describe("the sweep", () => {
+  it("reads only tenants still being provisioned, through the partial index", async () => {
+    const plan = await env.PLATFORM_DB.prepare(`EXPLAIN QUERY PLAN ${DUE_TENANTS_SQL}`).bind(0, 10).all<{ detail: string }>();
+    const details = plan.results.map((r) => r.detail).join(" | ");
+    expect(details).toContain("idx_tenants_provisioning");
+    expect(details).not.toMatch(/SCAN tenants(?! USING)/);
+  });
+});
+
+describe("the provisioning queue", () => {
+  function batchOf(ids: string[]) {
+    const acks: string[] = [];
+    const retries: { id: string; delaySeconds?: number }[] = [];
+    const batch = {
+      queue: "openping-provision",
+      messages: ids.map((tenantId, i) => ({
+        id: `m${i}`,
+        attempts: 1,
+        body: { tenantId },
+        ack: () => acks.push(tenantId),
+        retry: (o?: { delaySeconds?: number }) => retries.push({ id: tenantId, delaySeconds: o?.delaySeconds }),
+      })),
+    } as unknown as MessageBatch<ProvisionMessage>;
+    return { batch, acks, retries };
+  }
+  function fakeQueue() {
+    const sent: { body: ProvisionMessage; delaySeconds?: number }[] = [];
+    const queue = { send: async (body: ProvisionMessage, o?: { delaySeconds?: number }) => void sent.push({ body, delaySeconds: o?.delaySeconds }) } as unknown as Queue<ProvisionMessage>;
+    return { queue, sent };
+  }
+
+  it("runs a new tenant to ready and acks the message", async () => {
+    const w = world();
+    const id = await signUp(w, "queuedco");
+    const { batch, acks } = batchOf([id]);
+    const { queue, sent } = fakeQueue();
+    expect(await handleProvisionBatch(w.deps, batch, queue)).toEqual([{ kind: "ready", tenantId: id }]);
+    expect(acks).toEqual([id]);
+    expect(sent).toEqual([]);
+  });
+
+  it("schedules a failed step as a new delayed message, and retries a held tenant later", async () => {
+    const w = world();
+    const id = await signUp(w, "queueretryco");
+    w.api.failNext("createDatabase", { status: 503 });
+    const first = batchOf([id]);
+    const q = fakeQueue();
+    await handleProvisionBatch(w.deps, first.batch, q.queue);
+    expect(first.acks).toEqual([id]);
+    expect(q.sent).toEqual([{ body: { tenantId: id }, delaySeconds: backoffMs(1) / 1000 + 1 }]);
+
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET provision_next_at = NULL, provision_lease_until = ? WHERE id = ?").bind(w.clock.now + 60_000, id).run();
+    const held = batchOf([id]);
+    await handleProvisionBatch(w.deps, held.batch, q.queue);
+    expect(held.retries).toEqual([{ id, delaySeconds: 60 }]);
   });
 });

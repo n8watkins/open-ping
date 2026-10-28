@@ -12,6 +12,8 @@ export interface PlatformEnv {
   // --- Provisioning (B3, src/provisioning.ts) ---
   /** The dispatch namespace's name, for the Cloudflare API (the binding above is TENANTS). */
   DISPATCH_NAMESPACE?: string;
+  /** Runs of provisioning, one message per tenant and retry (src/provisioning-queue.ts). */
+  PROVISION_QUEUE?: Queue<import("./provisioning-queue").ProvisionMessage>;
   /** Tenant bundles written by the release runner (C1; layout in src/bundle.ts). */
   BUNDLES?: R2Bucket;
   /** Secret: the 32 hex character Cloudflare account id. A secret only so it stays out of this public repo's config. */

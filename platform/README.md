@@ -25,9 +25,12 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   - `db_created`: uploads the current tenant bundle as `t-<id>`: static assets first, then the script with its database, `ASSETS`, the hosted vars, the `MASTER_KEY` secret and its tags, plus whatever Durable Objects, migrations and vars the release's own wrangler config declares (`workerConfigFromWrangler` in `src/bundle.ts`, for example the second-region probe); a retried upload deletes the half-made script first, so its Durable Object migrations start from a known tag;
   - `uploaded`: has the tenant apply its migrations through one `POST /__platform/scheduled`;
   - `migrated`: waits for `GET /__platform/health` to answer ok, then marks it `ready`, which is when visitors reach it.
-- Retries a failed step with backoff (10 seconds up to 30 minutes) from the every-minute cron, and after 6 failures in a row rolls the tenant back: deletes its script, its database, its key and its row, so the slug is free again.
-  A lease on the row keeps two runs from working on one tenant.
-  `removeTenant` uses the same teardown, and holds a ready tenant's slug for 90 days so nobody else picks up its address.
+- Drives each run from a Queue (`PROVISION_QUEUE`, `src/provisioning-queue.ts`): a message per new tenant and per retry, so a run gets minutes rather than a request's 30-second `waitUntil`, and a run that dies is delivered again; the every-minute cron (`provisionDue`) is the safety net.
+- Retries a failed step with backoff (10 seconds up to 30 minutes).
+  A failure retrying can't fix (a Cloudflare 4xx, a broken bundle, a `PLATFORM_KEY` that can't open the escrowed key), or 6 failures in a row, pauses the tenant (`provision_paused_at`) with nothing rolled back, for the owner to fix and `resumeProvisioning`, or `removeTenant`.
+  One lease per tenant with a token, renewed before each step and checked by every write, keeps two runs from ever working on one tenant.
+  `removeTenant` deletes the script, the database (D1's "not found", code 7404, counts as done), the key and the row, and holds a ready tenant's slug for 90 days so nobody else picks up its address.
+- Caches each tenant's row per isolate for routing: 30 seconds for a ready tenant, 5 seconds for an unknown slug, never for one still being set up.
 - Checks slugs at sign-up (`checkSlugAvailability`): the rules and reserved names in `src/slugs.ts`, existing tenants, and held slugs.
 - Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit` is real; `sendEmail` and `reportUsage` are stubs until A5, B2 and B6).
 
@@ -84,7 +87,7 @@ They are needed before staging in wave 3 ([build plan, section 12](../docs/HOSTE
 2. **The Hosted domain** (decision D2, owner action O2): buy it, add it to Cloudflare, then set `HOSTED_DOMAIN` and add routes for `app.<domain>/*` and `*.<domain>/*` to this Worker.
 3. **The dispatch namespace:** `wrangler dispatch-namespace create openping-tenants` (and `openping-tenants-staging` for staging).
 4. **The platform database:** `wrangler d1 create openping-platform`, then put its id in a gitignored local config (as `deploy.local.json` does for OpenPing), and apply `migrations/` with `wrangler d1 migrations apply PLATFORM_DB --remote`.
-5. **The queue:** `wrangler queues create openping-schedule` (B4 adds the consumer).
+5. **The queues:** `wrangler queues create openping-provision` (provisioning; this Worker is its consumer) and `wrangler queues create openping-schedule` (B4 adds its consumer).
 6. **The bundle bucket:** `wrangler r2 bucket create openping-tenant-bundles`; the release runner (C1) writes each release there in the layout `src/bundle.ts` describes.
 7. **Secrets**, with `wrangler secret put` from the owner's machine and a copy of each in the password manager:
    - `HANDOFF_SIGNING_KEY`: the hand-off private key; `generateHandoffKeyPair()` in the contract makes the pair, and the public half goes in the `HANDOFF_PUBLIC_KEY` var in `wrangler.jsonc`, which provisioning copies to every tenant (O6);

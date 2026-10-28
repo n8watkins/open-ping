@@ -14,17 +14,28 @@
  *   migrated    /__platform/health answers ok            -> ready
  *   ready       dispatched to; provisioning is done
  *
- *   deleting    a failed (out of retries), cancelled or removed tenant being
- *               torn down: script, then database, then the row
+ *   deleting    a cancelled or removed tenant being torn down: script,
+ *               then database, then the row (removeTenant)
  *
  * Every remote step is idempotent: the database is looked up by its name
- * before it is created, an upload replaces the script with the same one, and
- * deleting something already gone succeeds. A failed step is tried again
- * with backoff (`provisionDue`, from the platform's cron); after
- * PROVISION_MAX_ATTEMPTS failures in a row the tenant is rolled back cleanly
- * and the slug is free again.
+ * before it is created, the upload starts by deleting any half-made script,
+ * and deleting something already gone succeeds.
  *
- * Only one run works on a tenant at a time, through a lease on its row.
+ * Runs are driven by the provisioning queue (./provisioning-queue.ts): a
+ * message when the tenant is requested and one per retry. A queue consumer
+ * has minutes, not the 30 seconds a waitUntil gets, and a message whose run
+ * dies is delivered again. The every-minute cron (`provisionDue`) is the
+ * safety net for anything a message missed.
+ *
+ * A failed step is tried again with backoff. A failure retrying can't fix
+ * (a Cloudflare 4xx, a broken bundle, a PLATFORM_KEY that can't open the
+ * escrowed key), or PROVISION_MAX_ATTEMPTS failures in a row, pauses the
+ * tenant instead (`provision_paused_at`), with nothing rolled back: one bad
+ * token or release must not throw away every sign-up. The owner then fixes
+ * the cause and calls `resumeProvisioning`, or `removeTenant`.
+ *
+ * Only one run works on a tenant at a time: a lease on its row with a token,
+ * renewed before each step and checked by every write the run makes.
  */
 
 import {
@@ -42,19 +53,20 @@ import {
   type ScheduledRunSummary,
 } from "../../src/shared/hosted-contract";
 import type { BundleSource } from "./bundle";
-import type { CloudflareApi } from "./cloudflare/api";
+import { CloudflareApiError, type CloudflareApi } from "./cloudflare/api";
 import { uploadUserWorker } from "./cloudflare/upload";
 import { callTenant, type TenantDispatcher } from "./dispatch";
+import { PermanentError } from "./errors";
 import { ensureMasterKey } from "./keys";
 import { checkSlugAvailability, holdSlug, type SlugAvailability } from "./slugs";
-import { PROVISION_STATES, tenantFromRow, type ProvisionState, type TenantRecord } from "./tenants";
+import { PROVISION_STATES, forgetTenant, tenantFromRow, type ProvisionState, type TenantRecord } from "./tenants";
 
-/** Failures in a row before a tenant is rolled back. */
+/** Failures in a row before a tenant is paused for the owner. */
 export const PROVISION_MAX_ATTEMPTS = 6;
 /** Wait before attempt n+1 after n failures (the last value repeats). About 45 minutes in all. */
 export const PROVISION_BACKOFF_MS = [10_000, 30_000, 120_000, 600_000, 1_800_000] as const;
-/** How long one run may hold a tenant. Longer than any run; a crashed run frees it after this. */
-export const PROVISION_LEASE_MS = 5 * 60_000;
+/** How long a run holds a tenant without renewing (it renews before each step); a dead run frees it after this. */
+export const PROVISION_LEASE_MS = 2 * 60_000;
 /** A new tenant's trial (decision D5). */
 export const TRIAL_DAYS = 14;
 
@@ -82,9 +94,11 @@ export interface ProvisioningDeps {
 
 export type ProvisionOutcome =
   | { kind: "ready"; tenantId: string }
-  /** A step failed; the sweep tries again at `nextAt`. */
+  /** A step failed; it is tried again at `nextAt`. */
   | { kind: "retry"; tenantId: string; state: ProvisionState; attempts: number; nextAt: number; error: string }
-  /** Torn down: out of retries, cancelled or removed. The row is gone. */
+  /** Stopped for the owner: a permanent failure, or too many in a row. Nothing was rolled back. */
+  | { kind: "paused"; tenantId: string; state: ProvisionState; error: string }
+  /** Torn down (removeTenant). The row is gone. */
   | { kind: "removed"; tenantId: string }
   /** Another run holds the lease, or the next attempt isn't due yet. */
   | { kind: "busy"; tenantId: string }
@@ -114,8 +128,8 @@ export type RequestTenantResult =
 
 /**
  * Records a new tenant in state `requested`, on a 14-day trial. The caller
- * then runs `runProvisioning` (in waitUntil, so sign-up answers at once);
- * if that run never happens, the sweep picks the tenant up.
+ * then queues its provisioning (enqueueProvisioning), so sign-up answers at
+ * once; if that message never arrives, the sweep picks the tenant up.
  */
 export async function requestTenant(
   db: D1Database,
@@ -160,56 +174,87 @@ interface ProvisionRow {
   d1_id: string | null;
   provision_attempts: number;
   provision_next_at: number | null;
+  provision_paused_at: number | null;
   provisioned_at: number | null;
+  created_at: number;
 }
 
 interface ProvisionTenant {
   record: TenantRecord;
   d1Id: string | null;
   attempts: number;
+  pausedAt: number | null;
   provisionedAt: number | null;
+  createdAt: number;
 }
 
 async function loadTenant(db: D1Database, tenantId: string): Promise<ProvisionTenant | null> {
   const row = await db
     .prepare(
       `SELECT id, account_id, slug, script_name, status, plan, provision_state, version, limit_overrides, trial_ends_at,
-              d1_id, provision_attempts, provision_next_at, provisioned_at
+              d1_id, provision_attempts, provision_next_at, provision_paused_at, provisioned_at, created_at
        FROM tenants WHERE id = ?`,
     )
     .bind(tenantId)
     .first<ProvisionRow>();
   if (!row) return null;
-  return { record: tenantFromRow(row), d1Id: row.d1_id, attempts: row.provision_attempts, provisionedAt: row.provisioned_at };
+  return {
+    record: tenantFromRow(row),
+    d1Id: row.d1_id,
+    attempts: row.provision_attempts,
+    pausedAt: row.provision_paused_at,
+    provisionedAt: row.provisioned_at,
+    createdAt: row.created_at,
+  };
 }
 
-/** Takes the tenant for this run, or null when another run has it or it isn't due. */
-async function acquireLease(db: D1Database, tenantId: string, now: number, ignoreSchedule: boolean): Promise<boolean> {
+const newLeaseToken = () => crypto.randomUUID();
+
+/**
+ * Takes the tenant for this run: not ready, not paused, nobody else's lease
+ * live, and (unless forced) its next attempt due. Answers the run's lease
+ * token, or null.
+ */
+async function acquireLease(db: D1Database, tenantId: string, now: number, ignoreSchedule: boolean): Promise<string | null> {
+  const token = newLeaseToken();
   const result = await db
     .prepare(
-      `UPDATE tenants SET provision_lease_until = ?1
-       WHERE id = ?2 AND provision_state <> 'ready'
-         AND (provision_lease_until IS NULL OR provision_lease_until <= ?3)
-         AND (?4 = 1 OR provision_next_at IS NULL OR provision_next_at <= ?3)`,
+      `UPDATE tenants SET provision_lease_until = ?1, provision_lease_token = ?2
+       WHERE id = ?3 AND provision_state <> 'ready' AND provision_paused_at IS NULL
+         AND (provision_lease_until IS NULL OR provision_lease_until <= ?4)
+         AND (?5 = 1 OR provision_next_at IS NULL OR provision_next_at <= ?4)`,
     )
-    .bind(now + PROVISION_LEASE_MS, tenantId, now, ignoreSchedule ? 1 : 0)
+    .bind(now + PROVISION_LEASE_MS, token, tenantId, now, ignoreSchedule ? 1 : 0)
+    .run();
+  return (result.meta.changes ?? 0) > 0 ? token : null;
+}
+
+/** Extends this run's lease before a step; false when the run no longer holds it. */
+async function renewLease(db: D1Database, tenantId: string, token: string, now: number): Promise<boolean> {
+  const result = await db
+    .prepare("UPDATE tenants SET provision_lease_until = ? WHERE id = ? AND provision_lease_token = ?")
+    .bind(now + PROVISION_LEASE_MS, tenantId, token)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }
 
-async function releaseLease(db: D1Database, tenantId: string): Promise<void> {
-  await db.prepare("UPDATE tenants SET provision_lease_until = NULL WHERE id = ?").bind(tenantId).run();
+async function releaseLease(db: D1Database, tenantId: string, token: string): Promise<void> {
+  await db
+    .prepare("UPDATE tenants SET provision_lease_until = NULL, provision_lease_token = NULL WHERE id = ? AND provision_lease_token = ?")
+    .bind(tenantId, token)
+    .run();
 }
 
 /**
  * A step succeeded: the next state, a clean slate for retries, and any
- * columns the step set. Only from the state the step started in, so a
- * removal that lands mid-step (removeTenant) is never overwritten; the run
- * then sees `deleting` and tears down.
+ * columns the step set. Only from the state the step started in, and only
+ * while this run holds the lease, so neither a removal that lands mid-step
+ * (removeTenant) nor another run is ever overwritten; the run then sees the
+ * new state, or its lost lease, on its next turn.
  */
 async function advance(
   db: D1Database,
-  tenantId: string,
+  run: { tenantId: string; token: string },
   from: ProvisionState,
   to: ProvisionState,
   now: number,
@@ -220,9 +265,9 @@ async function advance(
   await db
     .prepare(
       `UPDATE tenants SET provision_state = ?, provision_attempts = 0, provision_error = NULL, provision_next_at = NULL,
-       updated_at = ?${assignments ? `, ${assignments}` : ""} WHERE id = ? AND provision_state = ?`,
+       updated_at = ?${assignments ? `, ${assignments}` : ""} WHERE id = ? AND provision_state = ? AND provision_lease_token = ?`,
     )
-    .bind(to, now, ...columns.map((c) => set[c]!), tenantId, from)
+    .bind(to, now, ...columns.map((c) => set[c]!), run.tenantId, from, run.token)
     .run();
 }
 
@@ -243,6 +288,12 @@ export function backoffMs(attempts: number): number {
   return PROVISION_BACKOFF_MS[Math.min(attempts, PROVISION_BACKOFF_MS.length) - 1] ?? PROVISION_BACKOFF_MS[0];
 }
 
+/** A failure trying again won't fix: pause instead of retrying. */
+export function isPermanentFailure(error: unknown): boolean {
+  if (error instanceof CloudflareApiError) return !error.retryable;
+  return error instanceof PermanentError;
+}
+
 // ---------------------------------------------------------------------------
 // The steps
 // ---------------------------------------------------------------------------
@@ -255,7 +306,9 @@ export class ProvisionStepError extends Error {
   }
 }
 
-async function stepCreateDatabase(deps: ProvisioningDeps, t: ProvisionTenant, now: number): Promise<void> {
+type Step = (deps: ProvisioningDeps, t: ProvisionTenant, run: { tenantId: string; token: string }, now: number) => Promise<void>;
+
+const stepCreateDatabase: Step = async (deps, t, run, now) => {
   // The key first: nothing remote exists yet, and the upload needs it.
   await ensureMasterKey(deps.db, t.record.id, deps.config.platformKey, now);
   const name = tenantDatabaseName(t.record.id);
@@ -269,18 +322,19 @@ async function stepCreateDatabase(deps: ProvisioningDeps, t: ProvisionTenant, no
       if (!database) throw error;
     }
   }
-  await advance(deps.db, t.record.id, "requested", "db_created", now, { d1_id: database.id });
-}
+  await advance(deps.db, run, "requested", "db_created", now, { d1_id: database.id });
+};
 
-async function stepUpload(deps: ProvisioningDeps, t: ProvisionTenant, now: number): Promise<void> {
-  if (!t.d1Id) throw new ProvisionStepError("db_created without a database id");
+const stepUpload: Step = async (deps, t, run, now) => {
+  if (!t.d1Id) throw new PermanentError("db_created without a database id");
   const { masterKey } = await ensureMasterKey(deps.db, t.record.id, deps.config.platformKey, now);
   const bundle = await deps.bundles.current();
-  // A retried upload starts from no script: an earlier attempt may have
-  // created it (its answer lost) with Durable Object migrations applied,
-  // and the next upload's migrations must start from a known tag. A tenant
-  // in this state has never served anyone, so nothing is lost.
-  if (t.attempts > 0) await deps.api.deleteScript(deps.config.namespace, t.record.scriptName);
+  // Every upload starts from no script. An earlier attempt may have created
+  // it (its answer lost, or its run killed) with Durable Object migrations
+  // applied, and this upload's migrations must start from a known tag. A
+  // tenant in this state has never served anyone, so nothing is lost, and
+  // deleting a script that isn't there succeeds.
+  await deps.api.deleteScript(deps.config.namespace, t.record.scriptName);
   await uploadUserWorker(deps.api, {
     namespace: deps.config.namespace,
     scriptName: t.record.scriptName,
@@ -295,11 +349,11 @@ async function stepUpload(deps: ProvisioningDeps, t: ProvisionTenant, now: numbe
     tags: tenantTags(t.record.id, bundle.version),
     previousMigrationTag: null,
   });
-  await advance(deps.db, t.record.id, "db_created", "uploaded", now, {
+  await advance(deps.db, run, "db_created", "uploaded", now, {
     version: bundle.version,
     do_migration_tag: bundle.migrations.at(-1)?.tag ?? null,
   });
-}
+};
 
 /** The script's tags: find every tenant's Worker, one tenant's, or one release's in the namespace. */
 export function tenantTags(tenantId: string, version: string): string[] {
@@ -323,7 +377,7 @@ async function health(deps: ProvisioningDeps, t: ProvisionTenant): Promise<Healt
   return (status === 200 || status === 503) && body && typeof body.ok === "boolean" ? body : null;
 }
 
-async function stepMigrate(deps: ProvisioningDeps, t: ProvisionTenant, now: number): Promise<void> {
+const stepMigrate: Step = async (deps, t, run, now) => {
   const before = await health(deps, t);
   if (!before?.ok) {
     // The contract's scheduled entry applies any missing migrations first
@@ -333,10 +387,10 @@ async function stepMigrate(deps: ProvisioningDeps, t: ProvisionTenant, now: numb
     if (status !== 200 || !body) throw new ProvisionStepError(`scheduled call answered ${status}`);
     if (body.outcome === "failed") throw new ProvisionStepError(`first run failed: ${String(body.error ?? "no reason")}`);
   }
-  await advance(deps.db, t.record.id, "uploaded", "migrated", now);
-}
+  await advance(deps.db, run, "uploaded", "migrated", now);
+};
 
-async function stepVerify(deps: ProvisioningDeps, t: ProvisionTenant, now: number): Promise<void> {
+const stepVerify: Step = async (deps, t, run, now) => {
   const answer = await health(deps, t);
   if (!answer) throw new ProvisionStepError("health check gave no answer");
   if (!answer.ok) {
@@ -344,24 +398,19 @@ async function stepVerify(deps: ProvisioningDeps, t: ProvisionTenant, now: numbe
       `not healthy yet: schema ${answer.schemaVersion} of ${answer.bundledSchemaVersion}${answer.migrating ? ", migrating" : ""}`,
     );
   }
-  await advance(deps.db, t.record.id, "migrated", "ready", now, { provisioned_at: now });
+  await advance(deps.db, run, "migrated", "ready", now, { provisioned_at: now });
   await audit(deps.db, t.record, "tenant.provisioned", now, {
     version: t.record.version,
-    seconds: Math.round((now - (await createdAt(deps.db, t.record.id))) / 1000),
+    seconds: Math.round((now - t.createdAt) / 1000),
   });
-}
-
-async function createdAt(db: D1Database, tenantId: string): Promise<number> {
-  const row = await db.prepare("SELECT created_at FROM tenants WHERE id = ?").bind(tenantId).first<{ created_at: number }>();
-  return row?.created_at ?? 0;
-}
+};
 
 /**
  * Removes everything the tenant has in Cloudflare, then its row (and with it
  * its escrowed key). Each delete tolerates "already gone", so it can be
  * repeated after a failure until it completes.
  */
-async function stepTeardown(deps: ProvisioningDeps, t: ProvisionTenant, now: number): Promise<void> {
+const stepTeardown: Step = async (deps, t, run, now) => {
   await deps.api.deleteScript(deps.config.namespace, t.record.scriptName);
   // The id may never have been recorded (a create whose answer was lost), so also look it up by name.
   const d1Id = t.d1Id ?? (await deps.api.findDatabaseByName(tenantDatabaseName(t.record.id)))?.id ?? null;
@@ -369,14 +418,17 @@ async function stepTeardown(deps: ProvisioningDeps, t: ProvisionTenant, now: num
   // A tenant that ever served visitors keeps its slug out of reach for a while.
   if (t.provisionedAt !== null) await holdSlug(deps.db, t.record.slug, "deleted", now);
   await audit(deps.db, t.record, "tenant.removed", now, { slug: t.record.slug, wasReady: t.provisionedAt !== null });
+  forgetTenant(t.record.slug);
+  // One batch, all guarded by this run's lease, so a run that lost it removes nothing.
+  const held = "EXISTS (SELECT 1 FROM tenants WHERE id = ?1 AND provision_lease_token = ?2)";
   await deps.db.batch([
-    deps.db.prepare("UPDATE subscriptions SET tenant_id = NULL WHERE tenant_id = ?").bind(t.record.id),
-    deps.db.prepare("DELETE FROM escrowed_keys WHERE tenant_id = ?").bind(t.record.id),
-    deps.db.prepare("DELETE FROM tenants WHERE id = ?").bind(t.record.id),
+    deps.db.prepare(`UPDATE subscriptions SET tenant_id = NULL WHERE tenant_id = ?1 AND ${held}`).bind(t.record.id, run.token),
+    deps.db.prepare(`DELETE FROM escrowed_keys WHERE tenant_id = ?1 AND ${held}`).bind(t.record.id, run.token),
+    deps.db.prepare("DELETE FROM tenants WHERE id = ?1 AND provision_lease_token = ?2").bind(t.record.id, run.token),
   ]);
-}
+};
 
-const STEPS: Partial<Record<ProvisionState, (deps: ProvisioningDeps, t: ProvisionTenant, now: number) => Promise<void>>> = {
+const STEPS: Partial<Record<ProvisionState, Step>> = {
   requested: stepCreateDatabase,
   db_created: stepUpload,
   uploaded: stepMigrate,
@@ -390,9 +442,9 @@ const STEPS: Partial<Record<ProvisionState, (deps: ProvisioningDeps, t: Provisio
 
 /**
  * Takes the tenant as far as it will go in one run: to `ready`, to a
- * scheduled retry, or (after the last allowed failure, or for a tenant being
- * deleted) through teardown. `force` ignores the retry schedule, for the run
- * that starts right after sign-up and for the owner's "retry now".
+ * scheduled retry, to a pause, or (for a tenant being removed) through
+ * teardown. `force` ignores the retry schedule, for the run right after
+ * sign-up and for the owner's "retry now".
  */
 export async function runProvisioning(
   deps: ProvisioningDeps,
@@ -404,11 +456,18 @@ export async function runProvisioning(
   const first = await loadTenant(deps.db, tenantId);
   if (!first) return { kind: "missing", tenantId };
   if (first.record.provisionState === "ready") return { kind: "ready", tenantId };
-  if (!(await acquireLease(deps.db, tenantId, now(), options.force === true))) return { kind: "busy", tenantId };
+  if (first.pausedAt !== null) {
+    return { kind: "paused", tenantId, state: first.record.provisionState, error: "paused for the owner" };
+  }
+  const token = await acquireLease(deps.db, tenantId, now(), options.force === true);
+  if (!token) return { kind: "busy", tenantId };
+  const run = { tenantId, token };
 
   let removed = false;
   try {
     for (let guard = 0; guard < PROVISION_STATES.length + 1; guard++) {
+      // Renewed before every step, so a slow run keeps its lease and a stalled one loses it.
+      if (!(await renewLease(deps.db, tenantId, token, now()))) return { kind: "busy", tenantId };
       const t = await loadTenant(deps.db, tenantId);
       if (!t) return { kind: "missing", tenantId };
       const state = t.record.provisionState;
@@ -416,56 +475,78 @@ export async function runProvisioning(
       const step = STEPS[state];
       if (!step) throw new Error(`no step for ${state}`);
       try {
-        await step(deps, t, now());
+        await step(deps, t, run, now());
         if (state === "deleting") {
           removed = true;
           return { kind: "removed", tenantId };
         }
       } catch (error) {
-        const failure = await recordFailure(deps, t, error, now());
-        // Out of retries: the tenant is now `deleting`, and this run tears it down.
-        if (failure.kind === "retry" && failure.state === "deleting" && state !== "deleting") continue;
-        return failure;
+        return await recordFailure(deps, t, run, error, now());
       }
     }
     throw new Error("provisioning did not settle");
   } finally {
-    if (!removed) await releaseLease(deps.db, tenantId);
+    if (!removed) await releaseLease(deps.db, tenantId, token);
   }
 }
 
-async function recordFailure(deps: ProvisioningDeps, t: ProvisionTenant, error: unknown, now: number): Promise<ProvisionOutcome> {
+async function recordFailure(
+  deps: ProvisioningDeps,
+  t: ProvisionTenant,
+  run: { tenantId: string; token: string },
+  error: unknown,
+  now: number,
+): Promise<ProvisionOutcome> {
   const attempts = t.attempts + 1;
   const message = describeError(error);
   const state = t.record.provisionState;
-  console.error("[provision] step failed", { tenant: t.record.id, state, attempts, error: message });
-  // Out of retries: roll back. A teardown that fails just keeps retrying, since there is nothing behind it.
-  const rollBack = state !== "deleting" && attempts >= PROVISION_MAX_ATTEMPTS;
-  const nextState: ProvisionState = rollBack ? "deleting" : state;
-  const nextAttempts = rollBack ? 0 : attempts;
-  const nextAt = rollBack ? now : now + backoffMs(attempts);
+  const permanent = isPermanentFailure(error);
+  console.error("[provision] step failed", { tenant: t.record.id, state, attempts, permanent, error: message });
+  // A teardown keeps retrying whatever happens: there is nothing behind it to protect.
+  const pause = state !== "deleting" && (permanent || attempts >= PROVISION_MAX_ATTEMPTS);
+  const nextAt = now + backoffMs(attempts);
   await deps.db
     .prepare(
-      `UPDATE tenants SET provision_state = ?, provision_attempts = ?, provision_error = ?, provision_next_at = ?, updated_at = ?
-       WHERE id = ? AND provision_state = ?`,
+      `UPDATE tenants SET provision_attempts = ?, provision_error = ?, provision_next_at = ?, provision_paused_at = ?, updated_at = ?
+       WHERE id = ? AND provision_state = ? AND provision_lease_token = ?`,
     )
-    .bind(nextState, nextAttempts, `${state}: ${message}`, nextAt, now, t.record.id, state)
+    .bind(attempts, `${state}: ${message}`, pause ? null : nextAt, pause ? now : null, now, t.record.id, state, run.token)
     .run();
-  if (rollBack) await audit(deps.db, t.record, "tenant.provision_failed", now, { state, error: message.slice(0, 200) });
-  return { kind: "retry", tenantId: t.record.id, state: nextState, attempts: nextAttempts, nextAt, error: message };
+  if (pause) {
+    await audit(deps.db, t.record, "tenant.provision_paused", now, { state, attempts, permanent, error: message.slice(0, 200) });
+    return { kind: "paused", tenantId: t.record.id, state, error: message };
+  }
+  return { kind: "retry", tenantId: t.record.id, state, attempts, nextAt, error: message };
 }
 
 /**
- * Marks a tenant for removal and runs the teardown: a sign-up cancelled
- * before it finished, or (B7) an account past its 30 days. The tenant stops
- * being dispatched to at once, since only `ready` tenants are.
+ * Starts a paused tenant again from the step it stopped at, with a clean
+ * slate of retries: the owner fixed the cause (admin console, B6).
+ */
+export async function resumeProvisioning(deps: ProvisioningDeps, tenantId: string): Promise<ProvisionOutcome> {
+  const now = (deps.now ?? Date.now)();
+  const changed = await deps.db
+    .prepare(
+      `UPDATE tenants SET provision_paused_at = NULL, provision_attempts = 0, provision_next_at = NULL, updated_at = ?
+       WHERE id = ? AND provision_paused_at IS NOT NULL`,
+    )
+    .bind(now, tenantId)
+    .run();
+  if ((changed.meta.changes ?? 0) === 0) return runProvisioning(deps, tenantId);
+  return runProvisioning(deps, tenantId, { force: true });
+}
+
+/**
+ * Marks a tenant for removal and runs the teardown: a sign-up the owner
+ * gives up on, or (B7) an account past its 30 days. The tenant stops being
+ * dispatched to at once, since only `ready` tenants are.
  */
 export async function removeTenant(deps: ProvisioningDeps, tenantId: string): Promise<ProvisionOutcome> {
   const now = (deps.now ?? Date.now)();
   const changed = await deps.db
     .prepare(
       `UPDATE tenants SET provision_state = 'deleting', provision_attempts = 0, provision_error = NULL,
-       provision_next_at = NULL, updated_at = ? WHERE id = ?`,
+       provision_next_at = NULL, provision_paused_at = NULL, updated_at = ? WHERE id = ?`,
     )
     .bind(now, tenantId)
     .run();
@@ -474,22 +555,25 @@ export async function removeTenant(deps: ProvisioningDeps, tenantId: string): Pr
 }
 
 /**
- * The retry sweep, for the platform's cron: every tenant that isn't ready,
- * whose next attempt is due and that no run holds, oldest first. Runs them
- * one after another so one slow Cloudflare call can't fan out.
+ * The SQL of the sweep. Its `provision_state <> 'ready'` matches the partial
+ * index idx_tenants_provisioning (migration 0002), so the ready tenants,
+ * nearly all of them, are never read.
+ */
+export const DUE_TENANTS_SQL = `SELECT id FROM tenants
+       WHERE provision_state <> 'ready'
+         AND provision_paused_at IS NULL
+         AND (provision_next_at IS NULL OR provision_next_at <= ?1)
+         AND (provision_lease_until IS NULL OR provision_lease_until <= ?1)
+       ORDER BY provision_next_at LIMIT ?2`;
+
+/**
+ * The safety net, from the platform's every-minute cron: every tenant that
+ * isn't ready or paused, whose next attempt is due and that no run holds.
+ * Runs them one after another so one slow Cloudflare call can't fan out.
  */
 export async function provisionDue(deps: ProvisioningDeps, limit = 10): Promise<ProvisionOutcome[]> {
   const now = (deps.now ?? Date.now)();
-  const due = await deps.db
-    .prepare(
-      `SELECT id FROM tenants
-       WHERE provision_state <> 'ready'
-         AND (provision_next_at IS NULL OR provision_next_at <= ?1)
-         AND (provision_lease_until IS NULL OR provision_lease_until <= ?1)
-       ORDER BY updated_at LIMIT ?2`,
-    )
-    .bind(now, limit)
-    .all<{ id: string }>();
+  const due = await deps.db.prepare(DUE_TENANTS_SQL).bind(now, limit).all<{ id: string }>();
   const outcomes: ProvisionOutcome[] = [];
   for (const { id } of due.results) outcomes.push(await runProvisioning(deps, id));
   return outcomes;

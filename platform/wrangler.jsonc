@@ -32,7 +32,7 @@
     // pair (owner action O6), and provisioning stays off until it is set.
     "HANDOFF_PUBLIC_KEY": ""
   },
-  // Every minute: retry provisioning steps that failed (src/provisioning.ts);
+  // Every minute: the safety net for provisioning (src/provisioning.ts);
   // the scheduler (B4) runs from the same trigger.
   "triggers": {
     "crons": ["* * * * *"]
@@ -64,11 +64,26 @@
     }
   ],
   // The per-minute scheduler puts each due customer on this queue (B4).
+  // Provisioning runs (src/provisioning-queue.ts): one message per new
+  // tenant and per retry. A consumer gets minutes per batch, where the
+  // sign-up request's waitUntil would be cut after 30 seconds.
   "queues": {
     "producers": [
       {
         "binding": "SCHEDULE_QUEUE",
         "queue": "openping-schedule"
+      },
+      {
+        "binding": "PROVISION_QUEUE",
+        "queue": "openping-provision"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "openping-provision",
+        "max_batch_size": 5,
+        "max_batch_timeout": 1,
+        "max_retries": 20
       }
     ]
   }

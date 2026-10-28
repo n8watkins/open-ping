@@ -21,6 +21,7 @@ import { TenantCapability } from "./capability";
 import { NamespaceDispatcher } from "./dispatch";
 import type { PlatformEnv } from "./env";
 import { provisionDue } from "./provisioning";
+import { handleProvisionBatch, type ProvisionMessage } from "./provisioning-queue";
 import { provisioningSetup } from "./provisioning-env";
 import type { TenantRecord } from "./tenants";
 
@@ -65,7 +66,10 @@ const app = createApp({
   capability: (_env, ctx, tenant) => capabilityFor(ctx, tenant),
 });
 
-/** Every minute: retry provisioning that failed or never started (B4 adds the scheduler here). */
+/**
+ * Every minute: the safety net for provisioning, picking up any tenant a
+ * queue message missed (B4 adds the scheduler here).
+ */
 async function scheduled(env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
   const setup = provisioningSetup(env, (tenant) => capabilityFor(ctx, tenant));
   if (!setup.ok) {
@@ -76,7 +80,25 @@ async function scheduled(env: PlatformEnv, ctx: ExecutionContext): Promise<void>
   if (outcomes.length) console.log("[provision] sweep", outcomes.map((o) => `${o.tenantId}:${o.kind}`).join(" "));
 }
 
+/** The provisioning queue's consumer. */
+async function queue(batch: MessageBatch<unknown>, env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
+  // openping-provision, or a staging copy of it (openping-provision-staging).
+  if (!batch.queue.startsWith("openping-provision")) {
+    console.error("[queue] message for an unknown queue", batch.queue);
+    batch.retryAll({ delaySeconds: 300 });
+    return;
+  }
+  const setup = provisioningSetup(env, (tenant) => capabilityFor(ctx, tenant));
+  if (!setup.ok || !env.PROVISION_QUEUE) {
+    console.warn("[provision] off until these are set:", setup.ok ? "PROVISION_QUEUE" : setup.missing.join(", "));
+    batch.retryAll({ delaySeconds: 600 });
+    return;
+  }
+  await handleProvisionBatch(setup.deps, batch as MessageBatch<ProvisionMessage>, env.PROVISION_QUEUE);
+}
+
 export default {
   fetch: (request, env, ctx) => app.fetch(request, env, ctx),
   scheduled: (_controller, env, ctx) => scheduled(env, ctx),
+  queue: (batch, env, ctx) => queue(batch, env, ctx),
 } satisfies ExportedHandler<PlatformEnv>;
