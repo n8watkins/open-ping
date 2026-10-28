@@ -20,6 +20,7 @@ import { activeWindowsFromRows, listMaintenanceStatement, type MaintenanceRow } 
 import { compactionStatements, resolveRetention, type RetentionConfig } from "./history/rollups";
 import { outboxTake, processOutbox } from "./notifications/dispatcher";
 import { sendWeeklySummary, WEEKLY_GATE_SETTINGS } from "./notifications/weekly";
+import { MONTHLY_GATE_SETTINGS, sendMonthlyReport } from "./notifications/monthly";
 import {
   acquireLeaseStatement,
   leaseHolderStatement,
@@ -73,7 +74,9 @@ async function mapLimit<T>(
 }
 
 /** Settings a run reads up front, in its first round trip. */
-const RUN_SETTINGS = ["retention", ...WEEKLY_GATE_SETTINGS] as const;
+const RUN_SETTINGS = [
+  ...new Set(["retention", ...WEEKLY_GATE_SETTINGS, ...MONTHLY_GATE_SETTINGS]),
+] as const;
 
 /**
  * Every-12-minute check cycle (PRD §9). Acquires an execution lease, evaluates
@@ -313,10 +316,26 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
 
     // Weekly summary (self-guards on enabled/recipient/due, from the settings
     // read up front, so a run where it isn't due costs no queries).
+    let weeklyAttempted = false;
     try {
-      await sendWeeklySummary(env, Date.now(), settings);
+      const weekly = await sendWeeklySummary(env, Date.now(), settings);
+      weeklyAttempted =
+        weekly.sent || !["disabled", "no_recipient", "not_due"].includes(weekly.reason ?? "");
     } catch (e) {
+      weeklyAttempted = true;
       console.error("[scheduler] weekly summary failed", e);
+    }
+
+    // Monthly report (opt-in, on the 1st; notifications/monthly.ts). It costs
+    // two queries when it sends and none otherwise. If the weekly summary
+    // already spent its queries this run, the report waits for the next run,
+    // 12 minutes later and still on the 1st, so the tail reserve holds both.
+    if (!weeklyAttempted) {
+      try {
+        await sendMonthlyReport(env, Date.now(), settings, retention);
+      } catch (e) {
+        console.error("[scheduler] monthly report failed", e);
+      }
     }
 
     stats = {

@@ -10,6 +10,7 @@ import {
   XCircle,
   KeyRound,
   RefreshCw,
+  FileBarChart,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
@@ -19,6 +20,7 @@ import { Stat } from "../components/ui/Stat";
 import { formatMs, formatRelativeTime } from "../lib/format";
 import { cn } from "../lib/cn";
 import { LandingEventsCard } from "../components/LandingEventsCard";
+import { ReportsCard } from "../components/ReportsCard";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -120,6 +122,7 @@ function timezones(): string[] {
 
 const NAV = [
   { id: "general", label: "General", icon: <SettingsIcon className="size-4" /> },
+  { id: "reports", label: "Reports", icon: <FileBarChart className="size-4" /> },
   { id: "retention", label: "Data retention", icon: <Database className="size-4" /> },
   { id: "usage", label: "Usage estimates", icon: <Gauge className="size-4" /> },
   { id: "diagnostics", label: "Diagnostics", icon: <ServerCog className="size-4" /> },
@@ -179,6 +182,11 @@ export default function Settings() {
             settings={settingsData?.settings ?? null}
             loading={settingsLoading && !settingsData}
             error={settingsError}
+            csrf={csrf ?? undefined}
+            onSaved={() => void reloadSettings()}
+          />
+          <ReportsCard
+            emailEnabled={settingsData?.settings.monthly_report_enabled === "true"}
             csrf={csrf ?? undefined}
             onSaved={() => void reloadSettings()}
           />

@@ -29,6 +29,7 @@ const WRITABLE = new Set([
   "weekly_summary_enabled",
   "weekly_summary_day",
   "weekly_summary_hour",
+  "monthly_report_enabled",
   "retention",
   "notify_defaults",
 ]);
@@ -134,6 +135,7 @@ const VALIDATORS: Record<string, (v: string) => string | null> = {
   weekly_summary_enabled: boolSetting,
   weekly_summary_day: intRange(0, 6),
   weekly_summary_hour: intRange(0, 23),
+  monthly_report_enabled: boolSetting,
 };
 
 settings.get("/", async (c) => {
