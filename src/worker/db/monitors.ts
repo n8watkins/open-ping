@@ -53,7 +53,7 @@ export interface MonitorRecord {
 }
 
 /** Raw shape of a `monitors` row as returned by D1. */
-interface MonitorRow {
+export interface MonitorRow {
   id: string;
   type: string;
   name: string;
@@ -143,11 +143,19 @@ async function decryptRecord(env: Env, rec: MonitorRecord): Promise<MonitorRecor
   return rec;
 }
 
+/** Every monitor, in display order (for a caller that batches its reads). */
+export function listMonitorsStatement(env: Env): D1PreparedStatement {
+  return env.DB.prepare("SELECT * FROM monitors ORDER BY sort_order, created_at");
+}
+
+/** Decode (and decrypt) the rows of {@link listMonitorsStatement}. */
+export function monitorsFromRows(env: Env, rows: MonitorRow[]): Promise<MonitorRecord[]> {
+  return Promise.all(rows.map((r) => decryptRecord(env, rowToMonitor(r))));
+}
+
 export async function listMonitors(env: Env): Promise<MonitorRecord[]> {
-  const res = await env.DB.prepare(
-    "SELECT * FROM monitors ORDER BY sort_order, created_at",
-  ).all<MonitorRow>();
-  return Promise.all((res.results ?? []).map((r) => decryptRecord(env, rowToMonitor(r))));
+  const res = await listMonitorsStatement(env).all<MonitorRow>();
+  return monitorsFromRows(env, res.results ?? []);
 }
 
 export async function getMonitor(

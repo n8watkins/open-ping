@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv, Env, SessionRow } from "../types";
 import { randomToken, sha256hex } from "./ids";
+import type { LabeledStatement } from "./batch";
 
 /**
  * Session management (PRD §13): secure HTTP-only cookies, SameSite protection,
@@ -107,21 +108,22 @@ export async function revokeAllSessions(env: Env, identity: string): Promise<voi
   await env.DB.prepare(`DELETE FROM sessions WHERE identity = ?`).bind(identity).run();
 }
 
-/** Remove expired sessions (called from scheduled cleanup). */
-export async function cleanupExpiredSessions(env: Env): Promise<void> {
-  await env.DB.prepare(`DELETE FROM sessions WHERE expires_at <= ?`)
-    .bind(Date.now())
-    .run();
-}
-
 /**
- * Remove expired auth_tokens (oauth_state / magic_link). These rows are only
- * deleted on a matching callback/verify, so abandoned flows (or scripted hits
- * to /auth/github/start) would otherwise accumulate without bound. Index-backed
- * by idx_auth_tokens_expires. Called from scheduled cleanup.
+ * Purge expired sessions and auth_tokens (oauth_state / magic_link), as
+ * statements the scheduler batches with its other end-of-run work. Auth tokens
+ * are otherwise only deleted on a matching callback/verify, so abandoned flows
+ * (or scripted hits to /auth/github/start) would accumulate without bound. Both
+ * are index-backed (idx_sessions_expires, idx_auth_tokens_expires).
  */
-export async function cleanupExpiredAuthTokens(env: Env): Promise<void> {
-  await env.DB.prepare(`DELETE FROM auth_tokens WHERE expires_at <= ?`)
-    .bind(Date.now())
-    .run();
+export function expiredAuthCleanupStatements(env: Env, now: number = Date.now()): LabeledStatement[] {
+  return [
+    {
+      label: "expired-session cleanup",
+      stmt: env.DB.prepare(`DELETE FROM sessions WHERE expires_at <= ?`).bind(now),
+    },
+    {
+      label: "expired-auth-token cleanup",
+      stmt: env.DB.prepare(`DELETE FROM auth_tokens WHERE expires_at <= ?`).bind(now),
+    },
+  ];
 }

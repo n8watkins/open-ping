@@ -43,7 +43,7 @@ export interface MaintenanceWindow {
 }
 
 /** Raw shape of a `maintenance_windows` row as returned by D1. */
-interface MaintenanceRow {
+export interface MaintenanceRow {
   id: string;
   title: string | null;
   scope: string;
@@ -181,12 +181,20 @@ export function nextRecurringOccurrence(
   return { startsAt, endsAt: startsAt + r.durationMinutes * 60_000 };
 }
 
+/** Every maintenance window (for a caller that batches its reads). */
+export function listMaintenanceStatement(env: Env): D1PreparedStatement {
+  return env.DB.prepare("SELECT * FROM maintenance_windows ORDER BY starts_at");
+}
+
+/** The windows in the rows of {@link listMaintenanceStatement} that are active at `now`. */
+export function activeWindowsFromRows(rows: MaintenanceRow[], now: number): MaintenanceWindow[] {
+  return rows.map(rowToMaintenance).filter((w) => isWindowActiveAt(w, now));
+}
+
 export async function listMaintenanceWindows(
   env: Env,
 ): Promise<MaintenanceWindow[]> {
-  const res = await env.DB.prepare(
-    "SELECT * FROM maintenance_windows ORDER BY starts_at",
-  ).all<MaintenanceRow>();
+  const res = await listMaintenanceStatement(env).all<MaintenanceRow>();
   return (res.results ?? []).map(rowToMaintenance);
 }
 

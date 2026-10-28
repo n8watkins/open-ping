@@ -84,11 +84,17 @@ describe("scheduler budget", () => {
   it("stays inside the Free budget when every check fails and opens an incident", async () => {
     // A warm-up grace cycle, then real failures that open incidents and queue alerts.
     await env.DB.prepare("UPDATE monitor_state SET next_check_at = 0, state = 'up'").run();
+    const perRun: number[] = [];
     for (let run = 0; run < 4; run++) {
       const used = await countedRun({}, 500);
       expect(used.d1).toBeLessThanOrEqual(50);
       expect(used.fetches).toBeLessThanOrEqual(50);
+      const latest = await env.DB.prepare(
+        "SELECT monitors_checked AS n FROM scheduler_runs ORDER BY started_at DESC LIMIT 1",
+      ).first<{ n: number }>();
+      perRun.push(latest?.n ?? 0);
     }
+    console.log(`[budget] Free plan, failing checks: checks per run ${perRun.join(", ")}`);
     const open = await env.DB.prepare("SELECT COUNT(*) AS n FROM incidents WHERE status = 'open'").first<{
       n: number;
     }>();

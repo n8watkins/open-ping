@@ -1095,7 +1095,7 @@ function Comparison() {
 
       <p className="mt-4 text-center text-xs text-ink-faint">
         OpenPing sets no monitor cap; Cloudflare's per-run limits do. On the free
-        plan about 7 monitors fit at once, checked every 12 minutes (see below).
+        plan about 8 monitors fit at once, checked every 12 minutes (see below).
       </p>
     </Section>
   );
@@ -1113,7 +1113,7 @@ const STEPS: { n: string; title: string; body: string }[] = [
 
 /* ------------------------------------------------------------------ *
  * What the Cloudflare Free plan covers (docs/FREE_TIER.md, lib/budget.ts):
- * each cron run may make 50 D1 queries and 50 fetches, which fits about 7
+ * each cron run may make 50 D1 queries and 50 fetches, which fits about 8
  * passing checks; the rest wait for the next run.
  * ------------------------------------------------------------------ */
 
@@ -1124,7 +1124,7 @@ const PLAN_FACTS: { value: string; label: string; body: string }[] = [
     body: "A Cron Trigger runs the checks that are due, most overdue first.",
   },
   {
-    value: "About 7",
+    value: "About 8",
     label: "Monitors on at once, Free plan",
     body: "Cloudflare allows 50 database queries per run on Free. Anything that doesn't fit waits one run.",
   },

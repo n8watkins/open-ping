@@ -42,7 +42,7 @@ export interface OutboxEntry {
 }
 
 /** Raw shape of a `notification_outbox` row as returned by D1. */
-interface OutboxRow {
+export interface OutboxRow {
   id: string;
   event_key: string;
   monitor_id: string | null;
@@ -176,20 +176,28 @@ export async function enqueue(
  * Oldest-due first so retries don't starve. Note this reads but does not lock —
  * single-drain serialization is the caller's concern (the scheduler lock).
  */
+/** The due-deliveries query (for a caller that batches it with other work). */
+export function claimDueStatement(env: Env, now: number, limit: number): D1PreparedStatement {
+  return env.DB.prepare(
+    `SELECT * FROM notification_outbox
+      WHERE status IN ('pending', 'failed') AND next_attempt_at <= ?
+      ORDER BY next_attempt_at
+      LIMIT ?`,
+  ).bind(now, limit);
+}
+
+/** Decode the rows of {@link claimDueStatement}. */
+export function outboxEntriesFromRows(env: Env, rows: OutboxRow[]): Promise<OutboxEntry[]> {
+  return Promise.all(rows.map((row) => rowToEntry(env, row)));
+}
+
 export async function claimDue(
   env: Env,
   now: number,
   limit: number,
 ): Promise<OutboxEntry[]> {
-  const { results } = await env.DB.prepare(
-    `SELECT * FROM notification_outbox
-      WHERE status IN ('pending', 'failed') AND next_attempt_at <= ?
-      ORDER BY next_attempt_at
-      LIMIT ?`,
-  )
-    .bind(now, limit)
-    .all<OutboxRow>();
-  return Promise.all((results ?? []).map((row) => rowToEntry(env, row)));
+  const { results } = await claimDueStatement(env, now, limit).all<OutboxRow>();
+  return outboxEntriesFromRows(env, results ?? []);
 }
 
 /** Mark a record as successfully delivered. */

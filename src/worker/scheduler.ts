@@ -1,5 +1,10 @@
 import type { Env } from "./types";
-import { listMonitors, type MonitorRecord } from "./db/monitors";
+import {
+  listMonitorsStatement,
+  monitorsFromRows,
+  type MonitorRecord,
+  type MonitorRow,
+} from "./db/monitors";
 import { isActiveAt } from "./lib/schedule";
 import { runMonitorCheck } from "./checks/runner";
 import {
@@ -11,18 +16,25 @@ import {
   STATE_COLUMNS,
   type StateRow as CheckStateRow,
 } from "./checks/state";
-import { activeWindowsAt } from "./db/maintenance";
-import { rollupAndCompact } from "./history/rollups";
-import { processOutbox } from "./notifications/dispatcher";
-import { sendWeeklySummary } from "./notifications/weekly";
+import { activeWindowsFromRows, listMaintenanceStatement, type MaintenanceRow } from "./db/maintenance";
+import { compactionStatements, resolveRetention, type RetentionConfig } from "./history/rollups";
+import { outboxTake, processOutbox } from "./notifications/dispatcher";
+import { sendWeeklySummary, WEEKLY_GATE_SETTINGS } from "./notifications/weekly";
 import {
-  acquireLease,
+  acquireLeaseStatement,
+  leaseHolderStatement,
+  recordRunStartStatement,
+  recordRunFinishStatement,
   releaseLease,
-  recordRunStart,
-  recordRunFinish,
+  releaseLeaseStatement,
+  type RunStats,
 } from "./lib/lease";
-import { cleanupExpiredSessions, cleanupExpiredAuthTokens } from "./lib/sessions";
+import { expiredAuthCleanupStatements } from "./lib/sessions";
 import { countingD1, planBudget, RunBudget, type UsageCounter } from "./lib/budget";
+import { batchEach } from "./lib/batch";
+import { claimDueStatement, outboxEntriesFromRows, type OutboxRow } from "./db/outbox";
+import { parseJSONSetting, settingsFromRows, settingsStatement, type SettingRow } from "./db/settings";
+import { newId } from "./lib/ids";
 
 const LEASE_NAME = "scheduler";
 const LEASE_TTL_MS = 5 * 60 * 1000; // shorter than the 12-min cadence
@@ -60,6 +72,9 @@ async function mapLimit<T>(
   await Promise.all(workers);
 }
 
+/** Settings a run reads up front, in its first round trip. */
+const RUN_SETTINGS = ["retention", ...WEEKLY_GATE_SETTINGS] as const;
+
 /**
  * Every-12-minute check cycle (PRD §9). Acquires an execution lease, evaluates
  * each enabled monitor against its schedule, runs due polled checks
@@ -67,41 +82,61 @@ async function mapLimit<T>(
  * detects missed heartbeats, applies
  * the incident lifecycle, flushes queued notifications, runs history rollups +
  * retention/cleanup, and records run diagnostics.
+ *
+ * Round trips, not queries, set how long a run takes. Cron Triggers run on
+ * whichever Cloudflare machine has spare capacity, often far from the database,
+ * and a D1 round trip from there measured about 160 ms in production (about 12
+ * ms on a good tick). So a run sends its work in as few round trips as it can:
+ * one to take the lease, open its run record and read everything it needs, one
+ * for the end-of-run work (the outbox claim, rollups, retention, auth cleanup),
+ * and one to record the finish and release the lease. A run that checks nothing
+ * makes exactly those three. Each check adds its own (lib/budget.ts counts
+ * them), and the run record keeps the total as `d1_queries` next to its
+ * wall-clock `duration_ms`.
  */
 export async function runScheduled(controller: ScheduledController, baseEnv: Env): Promise<void> {
   // Every D1 query this run makes is counted against the plan's budget.
   const usage: UsageCounter = { d1: 0 };
   const env: Env = { ...baseEnv, DB: countingD1(baseEnv.DB, usage) };
   const budget = new RunBudget(planBudget(baseEnv), usage);
-  const lease = await acquireLease(env, LEASE_NAME, LEASE_TTL_MS);
-  if (!lease) {
+  const lease = { name: LEASE_NAME, holder: newId("lease") };
+  const run = { id: newId("run"), startedAt: Date.now() };
+  const now = run.startedAt;
+
+  // Round trip 1: take the lease, open the run record (only if the lease was
+  // won), and read what the run needs. A batch is one transaction, so the run
+  // record can never exist without the lease. Losing the lease wastes only the
+  // reads; nothing is written.
+  const [, holderRes, , monitorsRes, statesRes, maintenanceRes, settingsRes] = await env.DB.batch([
+    acquireLeaseStatement(env, lease.name, lease.holder, now, LEASE_TTL_MS),
+    leaseHolderStatement(env, lease.name),
+    recordRunStartStatement(env, run, controller.cron ?? null, lease),
+    listMonitorsStatement(env),
+    env.DB.prepare(`SELECT monitor_id, next_check_at, ${STATE_COLUMNS} FROM monitor_state`),
+    listMaintenanceStatement(env),
+    settingsStatement(env, RUN_SETTINGS),
+  ]);
+  const holder = (holderRes?.results?.[0] as { holder?: string } | undefined)?.holder;
+  if (holder !== lease.holder) {
     console.log("[scheduler] another run holds the lease; skipping");
     return;
   }
 
-  let checked = 0;
-  let skipped = 0;
-  let failures = 0;
-  // Recorded INSIDE the try so that if it throws, the finally still releases the
-  // lease (otherwise the lease would be held until its TTL expires, stalling the
-  // next cron tick). `run` stays null until the start row is written.
-  let run: { id: string; startedAt: number } | null = null;
-
+  const tally = { checked: 0, skipped: 0, failures: 0 };
+  let stats: RunStats;
   try {
-    run = await recordRunStart(env, controller.cron ?? null);
-    const monitors = await listMonitors(env);
-    const now = Date.now();
-
-    // Loaded once, with everything a check reads, so checks don't re-read it.
-    const stateRes = await env.DB.prepare(
-      `SELECT monitor_id, next_check_at, ${STATE_COLUMNS} FROM monitor_state`,
-    ).all<SchedulerStateRow>();
+    const monitors = await monitorsFromRows(env, (monitorsRes?.results ?? []) as MonitorRow[]);
+    const settings = await settingsFromRows(
+      env,
+      RUN_SETTINGS,
+      (settingsRes?.results ?? []) as (SettingRow & { key: string })[],
+    );
     const states = new Map<string, SchedulerStateRow>(
-      (stateRes.results ?? []).map((s) => [s.monitor_id, s]),
+      ((statesRes?.results ?? []) as SchedulerStateRow[]).map((st) => [st.monitor_id, st]),
     );
 
-    // Active maintenance windows (loaded once; checked in-memory per monitor).
-    const windows = await activeWindowsAt(env, now);
+    // Active maintenance windows (checked in-memory per monitor).
+    const windows = activeWindowsFromRows((maintenanceRes?.results ?? []) as MaintenanceRow[], now);
     const globalMaintenance = windows.some((w) => w.scope === "global");
     const maintenanceMonitorIds = new Set(
       windows.filter((w) => w.scope === "monitors").flatMap((w) => w.monitorIds ?? []),
@@ -111,23 +146,23 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
 
     for (const m of monitors) {
       if (!m.enabled || m.paused) {
-        skipped++;
+        tally.skipped++;
         continue;
       }
       if (globalMaintenance || maintenanceMonitorIds.has(m.id)) {
         // Already in maintenance: nothing to write until the window ends (its
         // past next_check_at then makes it due at once).
         if (states.get(m.id)?.state === "maintenance") {
-          skipped++;
+          tally.skipped++;
           continue;
         }
         // Wrapped so one monitor's DB error can't abort the whole cycle and
         // starve every monitor after it.
         try {
           await setMaintenanceState(env, m, now);
-          skipped++;
+          tally.skipped++;
         } catch (e) {
-          failures++;
+          tally.failures++;
           console.error(`[scheduler] maintenance ${m.id} failed`, e);
         }
         continue;
@@ -138,14 +173,14 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
         // every run several D1 queries each).
         const off = states.get(m.id);
         if (off?.state === "scheduled_off" && (off.next_check_at ?? 0) > now) {
-          skipped++;
+          tally.skipped++;
           continue;
         }
         try {
           await setScheduledOff(env, m, now);
-          skipped++;
+          tally.skipped++;
         } catch (e) {
-          failures++;
+          tally.failures++;
           console.error(`[scheduler] scheduled-off ${m.id} failed`, e);
         }
         continue;
@@ -162,9 +197,9 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
         if (!st || st.state === "scheduled_off" || st.state === "unknown") {
           try {
             await warmHeartbeat(env, m, now);
-            skipped++;
+            tally.skipped++;
           } catch (e) {
-            failures++;
+            tally.failures++;
             console.error(`[scheduler] heartbeat warm-up ${m.id} failed`, e);
           }
           continue;
@@ -181,14 +216,14 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
           // the incident + the notification, so this does not spam alerts.
           try {
             await markHeartbeatMissed(env, m, now);
-            checked++;
-            failures++;
+            tally.checked++;
+            tally.failures++;
           } catch (e) {
-            failures++;
+            tally.failures++;
             console.error(`[scheduler] heartbeat ${m.id} failed`, e);
           }
         } else {
-          skipped++;
+          tally.skipped++;
         }
         continue;
       }
@@ -196,7 +231,7 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
       // Polled monitor (http/dns/tcp/domain): due if next_check_at lands within
       // this cycle (+slack).
       if ((st?.next_check_at ?? 0) > now + DUE_SLACK_MS) {
-        skipped++;
+        tally.skipped++;
         continue;
       }
       duePolled.push(m);
@@ -232,78 +267,93 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
       try {
         const outcome = await runMonitorCheck(m, { warmup, now: Date.now() });
         await applyCheckResult(env, m, outcome, st ?? null);
-        checked++;
-        if (!outcome.ok) failures++;
+        tally.checked++;
+        if (!outcome.ok) tally.failures++;
       } catch (e) {
-        failures++;
+        tally.failures++;
         console.error(`[scheduler] check ${m.id} failed`, e);
       } finally {
         budget.endCheck();
       }
     });
     if (deferred > 0) {
-      skipped += deferred;
+      tally.skipped += deferred;
       console.log(
         `[scheduler] ${duePolled.length} polled checks due; ran ${duePolled.length - deferred} within the ${budget.limits.plan} plan's budget, deferring ${deferred} to the next tick`,
       );
     }
 
-    // Flush queued notifications (independent; never fails the run).
+    // Round trip 2: the end-of-run work, independent statements in one batch
+    // (lib/batch.ts retries them one by one if the batch fails, so a bad one
+    // can't take the others down). The outbox is claimed here, after the checks
+    // above queued their alerts, and delivered below.
+    const take = outboxTake(budget.notificationAllowance(25));
+    const retention = resolveRetention(
+      parseJSONSetting<Partial<RetentionConfig>>(settings.get("retention")),
+    );
+    const claim = take > 0 ? [{ label: "outbox claim", stmt: claimDueStatement(env, Date.now(), take) }] : [];
+    const results = await batchEach(env, "scheduler", [
+      ...claim,
+      ...compactionStatements(env, now, retention),
+      ...expiredAuthCleanupStatements(env),
+    ]);
+
+    // Deliver what was claimed (independent; never fails the run).
     let notificationFailures = 0;
-    try {
-      const r = await processOutbox(env, Date.now(), budget.notificationAllowance(25));
-      notificationFailures = r.failed;
-    } catch (e) {
-      console.error("[scheduler] notification dispatch failed", e);
+    const claimed = claim.length > 0 ? results[0] : null;
+    if (claimed) {
+      try {
+        const entries = await outboxEntriesFromRows(env, (claimed.results ?? []) as OutboxRow[]);
+        const r = await processOutbox(env, Date.now(), take, entries);
+        notificationFailures = r.failed;
+      } catch (e) {
+        console.error("[scheduler] notification dispatch failed", e);
+      }
     }
 
-    // Compaction/retention runs after checks and must never fail the run.
+    // Weekly summary (self-guards on enabled/recipient/due, from the settings
+    // read up front, so a run where it isn't due costs no queries).
     try {
-      await rollupAndCompact(env, now);
-    } catch (e) {
-      console.error("[scheduler] compaction failed", e);
-    }
-
-    // Weekly summary (self-guards on enabled/recipient/due).
-    try {
-      await sendWeeklySummary(env, Date.now());
+      await sendWeeklySummary(env, Date.now(), settings);
     } catch (e) {
       console.error("[scheduler] weekly summary failed", e);
     }
 
-    // Purge expired sessions + auth tokens so abandoned OAuth/magic flows and
-    // rotated sessions can't grow D1 without bound (both index-backed).
-    try {
-      await cleanupExpiredSessions(env);
-      await cleanupExpiredAuthTokens(env);
-    } catch (e) {
-      console.error("[scheduler] auth cleanup failed", e);
-    }
-
-    await recordRunFinish(env, run.id, run.startedAt, {
+    stats = {
       ok: true,
-      monitorsChecked: checked,
-      monitorsSkipped: skipped,
-      checkFailures: failures,
+      monitorsChecked: tally.checked,
+      monitorsSkipped: tally.skipped,
+      checkFailures: tally.failures,
       notificationFailures,
-    });
-    console.log(
-      `[scheduler] cron=${controller.cron} checked=${checked} skipped=${skipped} failures=${failures}`,
-    );
+    };
   } catch (err) {
     console.error("[scheduler] run failed", err);
-    // Only record a finish if the start row was actually written.
-    if (run) {
-      await recordRunFinish(env, run.id, run.startedAt, {
-        ok: false,
-        monitorsChecked: checked,
-        monitorsSkipped: skipped,
-        checkFailures: failures,
-        notificationFailures: 0,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  } finally {
-    await releaseLease(env, LEASE_NAME, lease);
+    stats = {
+      ok: false,
+      monitorsChecked: tally.checked,
+      monitorsSkipped: tally.skipped,
+      checkFailures: tally.failures,
+      notificationFailures: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
+
+  // Round trip 3: record the finish and release the lease together. The count
+  // includes this last batch, so it is the run's total.
+  stats.d1Queries = usage.d1 + 1;
+  try {
+    await env.DB.batch([
+      recordRunFinishStatement(env, run.id, run.startedAt, stats),
+      releaseLeaseStatement(env, lease.name, lease.holder),
+    ]);
+  } catch (e) {
+    console.error("[scheduler] could not record the run's finish", e);
+    // Still release the lease, or the next tick stalls until its TTL expires.
+    await releaseLease(env, lease.name, lease.holder).catch((err: unknown) =>
+      console.error("[scheduler] lease release failed", err),
+    );
+  }
+  console.log(
+    `[scheduler] cron=${controller.cron} checked=${stats.monitorsChecked} skipped=${stats.monitorsSkipped} failures=${stats.checkFailures} d1=${stats.d1Queries} ms=${Date.now() - run.startedAt}`,
+  );
 }

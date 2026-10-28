@@ -2,7 +2,7 @@ import type { Env } from "../types";
 import type { ChannelRecord } from "../db/channels";
 import { getChannel, recordChannelResult } from "../db/channels";
 import { getSubscription, recordPushResult } from "../db/push";
-import { claimDue, markSent, markFailed } from "../db/outbox";
+import { claimDue, markSent, markFailed, type OutboxEntry } from "../db/outbox";
 import { getSetting } from "../db/settings";
 import { sendResendEmail } from "./channels/resend";
 import { sendDiscordMessage } from "./channels/discord";
@@ -69,6 +69,11 @@ export async function deliverToChannel(
   }
 }
 
+/** How many deliveries one pass takes for a requested limit (0 to BATCH). */
+export function outboxTake(limit: number = BATCH): number {
+  return Math.min(BATCH, Math.max(0, Math.floor(limit)));
+}
+
 /**
  * Process due outbox entries (PRD §12 outbox): deliver each independently,
  * record success/failure, retry transient failures with backoff, stop at max.
@@ -79,15 +84,25 @@ export async function processOutbox(
   now: number = Date.now(),
   /** At most this many deliveries this time (the cron run's budget); the rest wait. */
   limit: number = BATCH,
+  /**
+   * Entries the caller already claimed (the scheduler reads them in the same D1
+   * batch as its other end-of-run work, to save a round trip). Omitted, this
+   * claims them itself.
+   */
+  claimed?: OutboxEntry[],
 ): Promise<{ processed: number; sent: number; failed: number }> {
-  const take = Math.min(BATCH, Math.max(0, Math.floor(limit)));
+  const take = outboxTake(limit);
   if (take === 0) return { processed: 0, sent: 0, failed: 0 };
-  let due;
-  try {
-    due = await claimDue(env, now, take);
-  } catch (e) {
-    console.error("[dispatcher] claimDue failed", e);
-    return { processed: 0, sent: 0, failed: 0 };
+  let due: OutboxEntry[];
+  if (claimed) {
+    due = claimed.slice(0, take);
+  } else {
+    try {
+      due = await claimDue(env, now, take);
+    } catch (e) {
+      console.error("[dispatcher] claimDue failed", e);
+      return { processed: 0, sent: 0, failed: 0 };
+    }
   }
 
   let sent = 0;
