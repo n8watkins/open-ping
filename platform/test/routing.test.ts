@@ -88,7 +88,10 @@ describe("the platform database", () => {
       "account_identities",
       "accounts",
       "audit_events",
+      "auth_ceremonies",
+      "email_logins",
       "escrowed_keys",
+      "platform_sessions",
       "rate_limits",
       "slug_holds",
       "subscriptions",
@@ -123,7 +126,7 @@ describe("app.<domain>", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
-    expect(await res.text()).toContain("OpenPing Hosted is coming soon");
+    expect(await res.text()).toContain("OpenPing Hosted isn't open for sign-ups yet");
     expect(dispatcher.calls).toHaveLength(0);
   });
 

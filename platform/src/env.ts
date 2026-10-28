@@ -24,4 +24,17 @@ export interface PlatformEnv {
   PLATFORM_KEY?: string;
   /** Var: base64url of the raw 32-byte Ed25519 hand-off public key, set on every tenant (contract, section 7). */
   HANDOFF_PUBLIC_KEY?: string;
+
+  // --- Accounts and sign-in (B2, src/account-routes.ts) ---
+  /** Var: "open" lets new accounts be created; anything else (the default) lets only existing ones sign in. */
+  SIGN_UPS?: string;
+  /** Secret: base64url PKCS#8 Ed25519 private key that signs hand-off tokens (contract, section 7; O6). */
+  HANDOFF_SIGNING_KEY?: string;
+  /** Secret: the platform's Resend API key, for sign-in codes. */
+  RESEND_API_KEY?: string;
+  /** Var: the From of the platform's mail, on a domain verified in Resend, e.g. "OpenPing Hosted <signin@<domain>>". */
+  MAIL_FROM?: string;
+  /** Var and secret: the platform's GitHub OAuth app (callback https://app.<domain>/auth/github/callback). */
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
 }

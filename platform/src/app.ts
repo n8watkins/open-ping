@@ -10,12 +10,13 @@
 
 import { Hono } from "hono";
 
+import { accountRoutes, type AccountDeps } from "./account-routes";
 import { HOSTED_ERRORS, isInternalPath, type PlatformCapability } from "../../src/shared/hosted-contract";
 import { DISPATCH_LIMITS, buildTenantProps, newCallId, publicRequest, type TenantDispatcher } from "./dispatch";
 import type { PlatformEnv } from "./env";
 import { appOrigin, classifyHost } from "./hosts";
+import { mailerFromEnv } from "./mail";
 import {
-  appHomePage,
   appNotFoundPage,
   tenantNotFoundPage,
   tenantProvisioningPage,
@@ -31,19 +32,24 @@ export interface AppDeps {
   dispatcher(env: PlatformEnv): TenantDispatcher;
   /** The capability stub a call to `tenant` gets as `props.platform`. */
   capability(env: PlatformEnv, ctx: ExecutionContext, tenant: TenantRecord): PlatformCapability;
+  /** Sign-in and the account pages; by default mail from the env and provisioning off. */
+  accounts?: AccountDeps;
   /** Tests only: a fixed call id. */
   newCallId?: () => string;
 }
+
+const DEFAULT_ACCOUNT_DEPS: AccountDeps = {
+  mailer: (env) => mailerFromEnv(env),
+  provisioning: () => ({ ok: false, missing: ["provisioning is not wired in this app"] }),
+};
 
 type Platform = { Bindings: PlatformEnv };
 
 const NO_STORE = { "cache-control": "no-store" };
 
-/** The platform's own pages on app.<domain>. Sign-up, sign-in and billing arrive with B2 and B5. */
-function appHost(): Hono<Platform> {
+/** The platform's own pages on app.<domain>: sign-up, sign-in and the account (billing arrives with B5). */
+function appHost(deps: AppDeps): Hono<Platform> {
   const app = new Hono<Platform>();
-
-  app.get("/", () => appHomePage());
 
   // For uptime monitors of the platform itself (C4): the Worker runs and its database answers.
   app.get("/healthz", async (c) => {
@@ -56,6 +62,7 @@ function appHost(): Hono<Platform> {
     }
   });
 
+  app.route("/", accountRoutes(deps.accounts ?? DEFAULT_ACCOUNT_DEPS));
   app.notFound((c) => appNotFoundPage(appOrigin(c.env.HOSTED_DOMAIN)));
   return app;
 }
@@ -106,7 +113,7 @@ async function tenantHost(
 
 export function createApp(deps: AppDeps): Hono<Platform> {
   const app = new Hono<Platform>();
-  const platformPages = appHost();
+  const platformPages = appHost(deps);
 
   app.all("*", async (c) => {
     const url = new URL(c.req.url);

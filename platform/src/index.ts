@@ -17,9 +17,14 @@ import type {
   UsageCounts,
 } from "../../src/shared/hosted-contract";
 import { createApp } from "./app";
+import { ceremonyCleanup } from "./auth/ceremonies";
+import { emailSignInCleanup } from "./auth/email-sign-in";
+import { rateLimitCleanup } from "./auth/rate-limit";
+import { sessionCleanup } from "./auth/sessions";
 import { TenantCapability } from "./capability";
 import { NamespaceDispatcher } from "./dispatch";
 import type { PlatformEnv } from "./env";
+import { mailerFromEnv } from "./mail";
 import { provisionDue } from "./provisioning";
 import { handleProvisionBatch, type ProvisionMessage } from "./provisioning-queue";
 import { provisioningSetup } from "./provisioning-env";
@@ -64,13 +69,23 @@ function capabilityFor(ctx: ExecutionContext, tenant: TenantRecord): PlatformCap
 const app = createApp({
   dispatcher: (env) => new NamespaceDispatcher(env.TENANTS),
   capability: (_env, ctx, tenant) => capabilityFor(ctx, tenant),
+  accounts: {
+    mailer: (env) => mailerFromEnv(env),
+    provisioning: (env, ctx) => provisioningSetup(env, (tenant) => capabilityFor(ctx, tenant)),
+  },
 });
 
 /**
- * Every minute: the safety net for provisioning, picking up any tenant a
- * queue message missed (B4 adds the scheduler here).
+ * Every minute: clear expired sign-in state, and the safety net for
+ * provisioning, picking up any tenant a queue message missed (B4 adds the
+ * scheduler here).
  */
 async function scheduled(env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
+  const now = Date.now();
+  const db = env.PLATFORM_DB;
+  await db
+    .batch([sessionCleanup(db, now), emailSignInCleanup(db, now), ceremonyCleanup(db, now), rateLimitCleanup(db, now)])
+    .catch((error) => console.error("[cleanup] failed", error));
   const setup = provisioningSetup(env, (tenant) => capabilityFor(ctx, tenant));
   if (!setup.ok) {
     console.warn("[provision] off until these are set:", setup.missing.join(", "));

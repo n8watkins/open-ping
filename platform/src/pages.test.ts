@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   PAGE_HEADERS,
-  appHomePage,
   escapeHtml,
   tenantNotFoundPage,
   tenantProvisioningPage,
@@ -29,7 +28,6 @@ describe("platform pages", () => {
       tenantProvisioningPage(),
       tenantUnavailablePage(),
       unknownHostPage(),
-      appHomePage(),
     ]) {
       for (const [name, value] of Object.entries(PAGE_HEADERS)) expect(res.headers.get(name)).toBe(value);
       const html = await res.text();

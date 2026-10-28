@@ -151,7 +151,8 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
 ### B. The platform Worker (`platform/`)
 
 - [x] **B1 Skeleton (M), done in #40.** Workspace layout, its own `wrangler.jsonc`, Hono app, platform D1 schema and migrations, host-based routing (`app.` versus `<slug>.`), dispatch with custom limits, 404 and suspended pages, tests with a fake namespace. Needs: C0.
-- **B2 Accounts and sign-in (L).** Email link plus code (reusing the magic-link code), passkeys (reusing `src/worker/lib/webauthn.ts`), GitHub OAuth, sessions, rate limits, the account page, issuing hand-off tokens. Needs: B1.
+- [x] **B2 Accounts and sign-in (L), done.** Email link plus code (reusing the magic-link code), passkeys (reusing `src/worker/lib/webauthn.ts`), GitHub OAuth, sessions, rate limits, the account page, issuing hand-off tokens. Needs: B1.
+  Sign-ups stay closed (`SIGN_UPS`) until launch; the owner still needs a Resend sending domain and a GitHub OAuth app for the Hosted domain.
 - [x] **B3 Provisioning (L), done.** A Cloudflare API client (create and delete D1, upload a user Worker with assets, bindings, secrets and tags, delete it), the provisioning state machine (`requested`, `db_created`, `uploaded`, `migrated`, `ready`, with retry and clean rollback), slug rules and reserved names, and a fake API for tests. Needs: B1 for wiring; the client itself can start with C0.
   The tenant's migrations run through the contract's `POST /__platform/scheduled` (A3); the bundle comes from an R2 bucket the release runner (C1) fills.
   Runs are driven by a Queue with the cron as a net; a permanent failure, or too many in a row, pauses the tenant for the owner instead of rolling it back, and `removeTenant` is the clean teardown.
