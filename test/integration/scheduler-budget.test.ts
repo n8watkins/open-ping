@@ -89,8 +89,11 @@ describe("scheduler budget", () => {
       expect(perRun.at(-1)).toBeGreaterThan(0);
     }
     expect(await checkedCount()).toBe(MONITORS);
-    // The first run can't fit all 30 on Free, so some waited for a later tick.
+    // The first run can't fit all 30 on Free, so some waited for a later tick,
+    // but checks share the run's D1 batches, so most fit (8 when each check
+    // wrote on its own).
     expect(perRun[0]).toBeLessThan(MONITORS);
+    expect(perRun[0]).toBeGreaterThanOrEqual(20);
     console.log(`[budget] Free plan: checks per run ${perRun.join(", ")}`);
   });
 
@@ -109,6 +112,14 @@ describe("scheduler budget", () => {
       perRun.push(latest?.n ?? 0);
     }
     console.log(`[budget] Free plan, failing checks: checks per run ${perRun.join(", ")}`);
+    // Each failing check holds its re-check's fetches, so many fit (3 when each
+    // check wrote on its own) and only a run's last check, started without the
+    // hold to use the end of the budget, may have to defer its re-check.
+    expect(perRun[0]).toBeGreaterThanOrEqual(10);
+    const deferred = await env.DB.prepare(
+      "SELECT COALESCE(SUM(confirmations_deferred), 0) AS n FROM scheduler_runs WHERE monitors_checked > 0",
+    ).first<{ n: number }>();
+    expect(deferred?.n).toBeLessThanOrEqual(perRun.filter((n) => n > 0).length + 2);
     const open = await env.DB.prepare("SELECT COUNT(*) AS n FROM incidents WHERE status = 'open'").first<{
       n: number;
     }>();

@@ -83,8 +83,8 @@ A failed check on a monitor that was up is checked once more about 5 seconds lat
 The re-check costs another probe's fetches (one, plus any redirects it follows) and no D1 queries.
 A check that may need one holds room for it from the start, so a failure a run finds can always be confirmed in that run; a passing check gives the room back and is charged only its own fetches.
 Holding that room means fewer checks run at the same moment, not fewer checks per run: D1 queries, not fetches, decide how many checks fit on Free.
-Only the last check of a run that is nearly out of fetches starts without the hold.
-If it then fails with no fetch left for its re-check, the run does not record the failure at all: the monitor keeps its state, no incident opens, and it stays due, so the next run checks it first and confirms it then.
+Only the last few checks of a run that is nearly out of fetches start without the hold, one at a time, so the end of the budget isn't wasted.
+If one of those fails with no fetch left for its re-check, the run does not record the failure at all: the monitor keeps its state, no incident opens, and it stays due, so the next run checks it first and confirms it then.
 OpenPing chooses a 12-minute delay over an alert that wasn't confirmed; Settings > Diagnostics counts these as deferred re-checks.
 A domain monitor whose RDAP lookup was rate limited (HTTP 429), with no recent read to fall back on, is handled the same way: a re-check 5 seconds later would only be refused again, so the failure isn't recorded and the next run asks first; it counts as a deferred re-check too.
 A monitor that is already down gets no re-check, so a long outage costs one fetch per run, and heartbeats are never re-checked.
