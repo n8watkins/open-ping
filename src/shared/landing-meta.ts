@@ -1,14 +1,14 @@
-/**
- * The marketing landing page's title and description. The Worker writes them
- * into the HTML it serves at `/` on a HOME_PAGE="landing" install
- * (src/worker/lib/home-page.ts), and the page sets the same values once it
- * renders, so crawlers and link previews read the same thing either way.
- */
-export const LANDING_TITLE = "OpenPing: uptime monitoring on your own Cloudflare";
+import { landingMeta } from "./hosted-offer";
 
-export const LANDING_DESCRIPTION =
-  "Open-source uptime checks, status pages and alerts with schedules that know when an app is meant to be asleep. " +
-  "Free in your own Cloudflare account, or join the waitlist for OpenPing Hosted.";
+/**
+ * The marketing landing page's title and description while Hosted is a
+ * waitlist. The Worker writes the right pair into the HTML it serves at `/` on
+ * a HOME_PAGE="landing" install (src/worker/lib/home-page.ts), and the page sets
+ * the same values once it renders, so crawlers and link previews read the same
+ * thing either way. Once Hosted opens (HOSTED_SIGNUP_URL), both use
+ * `landingMeta(true)` from ./hosted-offer instead.
+ */
+export const { title: LANDING_TITLE, description: LANDING_DESCRIPTION } = landingMeta(false);
 
 /** The generic description in index.html, for every page that sets no other. */
 export const DEFAULT_DESCRIPTION =

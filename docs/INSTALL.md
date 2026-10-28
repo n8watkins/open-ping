@@ -290,6 +290,9 @@ Leave it at `"status"`.
 Only the canonical install, openping.n8builds.dev, sets `"landing"`, in its `deploy.local.json`.
 The `ratelimits` entry named `EVENT_LIMITER` in `wrangler.jsonc` caps that page's click counter and does nothing on a `"status"` install; its `namespace_id` only has to be an integer no other Worker in your account uses for a rate limiter.
 
+Leave `HOSTED_SIGNUP_URL` empty too.
+On the canonical install it switches the marketing page from the OpenPing Hosted waitlist to the free trial, linking to the Hosted sign-up page; it must be an `https` address, and anything else leaves the waitlist in place.
+
 ---
 
 ## 7. (Optional) Add a custom domain

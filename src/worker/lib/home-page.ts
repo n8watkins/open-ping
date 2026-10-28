@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { LANDING_DESCRIPTION, LANDING_TITLE } from "../../shared/landing-meta";
+import { landingMeta, parseHostedSignupUrl } from "../../shared/hosted-offer";
 
 /**
  * What a signed-out visitor sees at `/` (the HOME_PAGE wrangler var).
@@ -19,6 +19,14 @@ export function homePage(env: Pick<Env, "HOME_PAGE">): HomePage {
   return env.HOME_PAGE?.trim().toLowerCase() === "landing" ? "landing" : "status";
 }
 
+/**
+ * The OpenPing Hosted sign-up page (the HOSTED_SIGNUP_URL var), or null while
+ * Hosted is a waitlist: unset, blank or not a usable https URL.
+ */
+export function hostedSignupUrl(env: Pick<Env, "HOSTED_SIGNUP_URL">): string | null {
+  return parseHostedSignupUrl(env.HOSTED_SIGNUP_URL);
+}
+
 function escapeAttr(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -31,12 +39,14 @@ function escapeAttr(value: string): string {
  * The app shell served at `/` on a landing install, with the landing page's
  * title, description and link-preview tags written in, so a crawler or a chat
  * app's link preview doesn't need to run the app to read them. `origin` is the
- * install's own origin (from the request), so previews point back at it.
+ * install's own origin (from the request), so previews point back at it, and
+ * `hostedOpen` picks the launch wording once Hosted takes sign-ups.
  * Pure string work on the small Vite-built index.html.
  */
-export function withLandingHead(html: string, origin: string): string {
-  const title = escapeAttr(LANDING_TITLE);
-  const description = escapeAttr(LANDING_DESCRIPTION);
+export function withLandingHead(html: string, origin: string, hostedOpen = false): string {
+  const meta = landingMeta(hostedOpen);
+  const title = escapeAttr(meta.title);
+  const description = escapeAttr(meta.description);
   const url = escapeAttr(`${origin}/`);
   const image = escapeAttr(`${origin}/landing/app-overview.webp`);
   const tags = [

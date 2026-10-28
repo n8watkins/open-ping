@@ -6,7 +6,7 @@ import { getAdminGithubLogin, getAdminEmail } from "../lib/admin";
 import { getSetting } from "../db/settings";
 import { timingSafeEqual } from "../lib/timing";
 import { isValidMasterKey } from "../lib/crypto";
-import { homePage } from "../lib/home-page";
+import { homePage, hostedSignupUrl } from "../lib/home-page";
 import { waitlistEnabled } from "./waitlist";
 import { countPasskeys, getPasskey } from "../db/passkeys";
 import { relyingParty } from "../lib/passkey-ceremony";
@@ -75,8 +75,16 @@ apiAuth.get("/status", async (c) => {
     passkeyOrigin: rp.origin,
     homePage: homePage(c.env),
     waitlistEnabled: waitlistEnabled(c.env),
+    // Only once Hosted opens, so the answer is unchanged until then.
+    ...hostedOffer(c.env),
   });
 });
+
+/** `hostedSignupUrl` for the landing page's trial buttons, present only when the var is set and valid. */
+function hostedOffer(env: AppEnv["Bindings"]): { hostedSignupUrl?: string } {
+  const url = hostedSignupUrl(env);
+  return url ? { hostedSignupUrl: url } : {};
+}
 
 /** Explicit logout. Requires a valid session + matching CSRF token. */
 apiAuth.post("/logout", async (c) => {

@@ -49,6 +49,9 @@
       "HOME_PAGE": {
         "description": "Leave `status`, so visitors see your status page at `/`. Only the OpenPing project's own site uses `landing`."
       },
+      "HOSTED_SIGNUP_URL": {
+        "description": "Leave empty. Only the OpenPing project's own site sets it, once OpenPing Hosted takes sign-ups."
+      },
       "CONFIRM_REGIONS": {
         "description": "Leave `enam,weur`. Before a failure opens an incident, OpenPing re-checks it from one of these Cloudflare regions, away from where the first check ran, so one location's network trouble doesn't page you. `off` re-checks from the same place. [More](https://github.com/n8watkins/open-ping/blob/main/docs/SECOND_REGION.md)"
       },
