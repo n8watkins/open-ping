@@ -36,6 +36,88 @@
   --color-warming: #f0b429;
 
   --radius-card: 0.875rem;
+
+  /* Motion: one easing and three durations for the whole app, so every
+     transition feels the same. Utilities: ease-out-quart, duration-* stay
+     Tailwind's own; animate-enter, animate-fade and animate-shimmer below. */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+
+  --animate-enter: op-enter var(--duration-slow) var(--ease-out-quart) both;
+  --animate-fade: op-fade var(--duration-base) var(--ease-out-quart) both;
+  --animate-shimmer: op-shimmer 1.4s linear infinite;
+
+  @keyframes op-enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes op-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes op-shimmer {
+    from {
+      background-position: -200% 0;
+    }
+    to {
+      background-position: 200% 0;
+    }
+  }
+}
+
+/*
+ * Stagger children that use animate-enter: put `stagger` on the parent and
+ * each child waits a little longer than the one before (first 8 children).
+ */
+@layer utilities {
+  .stagger > * {
+    animation-delay: calc(var(--stagger-index, 0) * 40ms);
+  }
+  .stagger > :nth-child(1) { --stagger-index: 0; }
+  .stagger > :nth-child(2) { --stagger-index: 1; }
+  .stagger > :nth-child(3) { --stagger-index: 2; }
+  .stagger > :nth-child(4) { --stagger-index: 3; }
+  .stagger > :nth-child(5) { --stagger-index: 4; }
+  .stagger > :nth-child(6) { --stagger-index: 5; }
+  .stagger > :nth-child(7) { --stagger-index: 6; }
+  .stagger > :nth-child(n + 8) { --stagger-index: 7; }
+
+  /* Loading placeholder: a surface-coloured block with a moving sheen. */
+  .skeleton {
+    border-radius: 0.5rem;
+    background: linear-gradient(
+        90deg,
+        var(--color-surface-2) 25%,
+        color-mix(in oklab, var(--color-surface-2), white 6%) 50%,
+        var(--color-surface-2) 75%
+      )
+      0 0 / 200% 100%;
+    animation: var(--animate-shimmer);
+  }
+}
+
+/* Anyone who asks for less motion gets none: no entrances, no shimmer. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /*
