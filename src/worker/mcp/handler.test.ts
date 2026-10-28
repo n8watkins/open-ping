@@ -238,6 +238,7 @@ describe("tools/list", () => {
         "create_monitor", "update_monitor", "pause_monitor", "resume_monitor",
         "create_maintenance_window", "end_maintenance_window", "update_status_page",
         "delete_monitor", "delete_maintenance_window", "rotate_heartbeat_token",
+        "post_incident_update", "get_monthly_report",
       ].sort(),
     );
     for (const t of tools.values()) {
