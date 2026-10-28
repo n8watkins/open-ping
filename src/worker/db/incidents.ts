@@ -267,16 +267,27 @@ export function resolveIncidentStatements(
  * Resolve an open incident by id without reading it first (its duration comes
  * from its own started_at), for a caller that only knows the pointer, such as
  * a monitor entering maintenance or leaving its schedule window. Same guards as
- * resolveIncidentStatements.
+ * resolveIncidentStatements. With `onlyIf`, it resolves only while the
+ * monitor's state still matches the snapshot the caller planned from (a write
+ * sent later in a batch must not undo one that happened in between).
  */
-export function resolveIncidentByIdStatements(env: Env, incidentId: string, at: number): D1PreparedStatement[] {
+export function resolveIncidentByIdStatements(
+  env: Env,
+  incidentId: string,
+  at: number,
+  /** A condition on the monitor's monitor_state row (`ms`), with its values. */
+  onlyIf?: { monitorId: string; sql: string; binds: (string | number | null)[] },
+): D1PreparedStatement[] {
+  const update = env.DB.prepare(
+    `UPDATE incidents
+       SET status = 'resolved', resolved_at = ?,
+           duration_seconds = CAST(ROUND((? - started_at) / 1000.0) AS INTEGER), updated_at = ?
+     WHERE id = ? AND status = 'open'${
+       onlyIf ? " AND EXISTS (SELECT 1 FROM monitor_state ms WHERE ms.monitor_id = ? AND " + onlyIf.sql + ")" : ""
+     }`,
+  ).bind(at, at, at, incidentId, ...(onlyIf ? [onlyIf.monitorId, ...onlyIf.binds] : []));
   return [
-    env.DB.prepare(
-      `UPDATE incidents
-         SET status = 'resolved', resolved_at = ?1,
-             duration_seconds = CAST(ROUND((?1 - started_at) / 1000.0) AS INTEGER), updated_at = ?1
-       WHERE id = ?2 AND status = 'open'`,
-    ).bind(at, incidentId),
+    update,
     env.DB.prepare(
       `INSERT INTO incident_events (id, incident_id, at, kind, message)
        SELECT ?1, ?2, ?3, 'recovered', 'Recovered'

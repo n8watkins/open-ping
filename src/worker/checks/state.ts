@@ -528,20 +528,32 @@ function planPausedState(
   target: "scheduled_off" | "maintenance",
   nextAt: number,
 ): WriteGroup {
-  const resolve = cur?.active_incident_id ? resolveIncidentByIdStatements(env, cur.active_incident_id, now) : [];
+  // The scheduler sends this at the end of its run, planned from the state it
+  // read at the start. A heartbeat recorded in between (routes/heartbeats.ts)
+  // must not be undone: every statement applies only while the state still
+  // matches that snapshot, or the beat itself already put the monitor in this
+  // state with the same incident pointer (the beat agrees, so resolving that
+  // incident and clearing the pointer is still right). The interval follows
+  // only when this state write landed.
+  const snap = snapshotGuard(cur, "ms.");
+  const guard = {
+    sql: `((${snap.sql}) OR (ms.state = ? AND ms.active_incident_id IS ?))`,
+    binds: [...snap.binds, target, cur?.active_incident_id ?? null],
+  };
+  const resolve = cur?.active_incident_id
+    ? resolveIncidentByIdStatements(env, cur.active_incident_id, now, { monitorId: monitor.id, ...guard })
+    : [];
   const label = `${target === "maintenance" ? "maintenance" : "scheduled-off"} ${monitor.id}`;
   const state = (withIncident: boolean) =>
     cur?.state === target
-      ? env.DB.prepare(`UPDATE monitor_state SET next_check_at = ?, updated_at = ? WHERE monitor_id = ?`).bind(
-          nextAt,
-          now,
-          monitor.id,
-        )
+      ? env.DB.prepare(
+          `UPDATE monitor_state AS ms SET next_check_at = ?, updated_at = ? WHERE monitor_id = ? AND ${guard.sql}`,
+        ).bind(nextAt, now, monitor.id, ...guard.binds)
       : env.DB.prepare(
-          `UPDATE monitor_state SET state = ?, state_since = ?, next_check_at = ?,
+          `UPDATE monitor_state AS ms SET state = ?, state_since = ?, next_check_at = ?,
              ${withIncident ? "active_incident_id = NULL, is_flapping = 0," : ""} updated_at = ?
-           WHERE monitor_id = ?`,
-        ).bind(target, now, nextAt, now, monitor.id);
+           WHERE monitor_id = ? AND ${guard.sql}`,
+        ).bind(target, now, nextAt, now, monitor.id, ...guard.binds);
   return {
     label,
     core: unit(`${label}: state`, [...resolve, state(true)]),
@@ -551,9 +563,22 @@ function planPausedState(
         `${label}: interval`,
         intervalStatements(env, monitor.id, target, now, {
           reason: target === "maintenance" ? "maintenance" : "schedule_window",
+          onlyIf: { state: target, updatedAt: now },
         }),
       ),
     ],
+  };
+}
+
+/**
+ * A WHERE fragment that matches only while monitor_state still holds what the
+ * plan was made from: its state, last beat and incident pointer (a heartbeat
+ * recorded meanwhile changes at least the beat).
+ */
+function snapshotGuard(cur: StateRow | null, alias = ""): { sql: string; binds: (string | number | null)[] } {
+  return {
+    sql: `${alias}state IS ? AND ${alias}last_beat_at IS ? AND ${alias}active_incident_id IS ?`,
+    binds: [cur?.state ?? null, cur?.last_beat_at ?? null, cur?.active_incident_id ?? null],
   };
 }
 
@@ -587,9 +612,12 @@ export function planMaintenanceState(env: Env, monitor: MonitorRecord, now: numb
  * next tick - it resumes ordinary overdue detection from the fresh base, so a
  * genuinely missed beat is still caught.
  */
-export function planWarmHeartbeat(env: Env, monitor: MonitorRecord, now: number): WriteGroup {
+export function planWarmHeartbeat(env: Env, monitor: MonitorRecord, now: number, cur: StateRow | null): WriteGroup {
   const deadline = now + (monitor.intervalSeconds + (monitor.graceSeconds ?? 0)) * 1000;
   const label = `heartbeat warm-up ${monitor.id}`;
+  // Planned from the run's snapshot and sent at its end: a beat recorded in
+  // between (its state, last_beat_at and any incident it opened) must stand.
+  const snap = snapshotGuard(cur);
   return {
     label,
     core: unit(label, [
@@ -597,8 +625,8 @@ export function planWarmHeartbeat(env: Env, monitor: MonitorRecord, now: number)
         `UPDATE monitor_state SET
            state = 'warming_up', state_since = ?, last_beat_at = ?, next_check_at = ?,
            warmup = 1, active_incident_id = NULL, is_flapping = 0, updated_at = ?
-         WHERE monitor_id = ?`,
-      ).bind(now, now, deadline, now, monitor.id),
+         WHERE monitor_id = ? AND ${snap.sql}`,
+      ).bind(now, now, deadline, now, monitor.id, ...snap.binds),
     ]),
   };
 }
@@ -862,7 +890,7 @@ export async function recordHeartbeat(
 
 /** Grant one grace cycle to a heartbeat monitor re-entering its schedule window (planWarmHeartbeat). */
 export async function warmHeartbeat(env: Env, monitor: MonitorRecord, now: number): Promise<void> {
-  await writeOne(env, planWarmHeartbeat(env, monitor, now));
+  await writeOne(env, planWarmHeartbeat(env, monitor, now, await readState(env, monitor.id)));
 }
 
 /** Mark a heartbeat monitor down because no call arrived before the deadline. */

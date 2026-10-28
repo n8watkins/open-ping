@@ -232,7 +232,7 @@ export async function runScheduled(
         // deadline on `now`; genuine misses are detected from the next tick on.
         if (!st || st.state === "scheduled_off" || st.state === "unknown") {
           writes.push({
-            group: planWarmHeartbeat(env, m, now),
+            group: planWarmHeartbeat(env, m, now, st ?? null),
             done: skippedOnceWritten(`heartbeat warm-up ${m.id}`),
           });
           continue;

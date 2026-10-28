@@ -86,14 +86,32 @@ export function mergeLatency(
  * The SQL does what decideIntervalAction and mergeLatency describe without
  * reading the row first, so a check's interval costs no round trip of its own.
  * Latency is folded in only when `latencyMs` is a finite number.
+ *
+ * With `onlyIf`, each statement applies only while monitor_state holds that
+ * state with that updated_at, i.e. only when the guarded state write it
+ * accompanies really landed (a skipped one leaves the timeline alone too).
  */
 export function intervalStatements(
   env: Env,
   monitorId: string,
   state: MonitorState,
   at: number,
-  opts: { latencyMs?: number | null; ok?: boolean; reason?: string } = {},
+  opts: {
+    latencyMs?: number | null;
+    ok?: boolean;
+    reason?: string;
+    onlyIf?: { state: MonitorState; updatedAt: number };
+  } = {},
 ): D1PreparedStatement[] {
+  const g = opts.onlyIf;
+  // The guard's placeholders follow each statement's own (?1 is the monitor in
+  // the first two, ?2 in the insert).
+  const guard = (monitorParam: number, first: number) =>
+    g
+      ? ` AND EXISTS (SELECT 1 FROM monitor_state WHERE monitor_id = ?${monitorParam}
+            AND state = ?${first} AND updated_at = ?${first + 1})`
+      : "";
+  const guardBinds = g ? [g.state, g.updatedAt] : [];
   const l = typeof opts.latencyMs === "number" && Number.isFinite(opts.latencyMs) ? opts.latencyMs : null;
   const ok = opts.ok ? 1 : 0;
   const first = mergeLatency(ZERO_AGG, { ...(l != null ? { latencyMs: l } : {}), ok: opts.ok ?? false });
@@ -107,12 +125,12 @@ export function intervalStatements(
                                     ELSE MIN(COALESCE(min_latency_ms, ?4), ?4) END,
               max_latency_ms = CASE WHEN ?4 IS NULL THEN max_latency_ms
                                     ELSE MAX(COALESCE(max_latency_ms, ?4), ?4) END
-        WHERE monitor_id = ?1 AND ended_at IS NULL AND state = ?2`,
-    ).bind(monitorId, state, ok, l),
+        WHERE monitor_id = ?1 AND ended_at IS NULL AND state = ?2${guard(1, 5)}`,
+    ).bind(monitorId, state, ok, l, ...guardBinds),
     env.DB.prepare(
       `UPDATE status_intervals SET ended_at = ?3
-        WHERE monitor_id = ?1 AND ended_at IS NULL AND state <> ?2`,
-    ).bind(monitorId, state, at),
+        WHERE monitor_id = ?1 AND ended_at IS NULL AND state <> ?2${guard(1, 4)}`,
+    ).bind(monitorId, state, at, ...guardBinds),
     env.DB.prepare(
       `INSERT INTO status_intervals (
           id, monitor_id, state, started_at, ended_at,
@@ -124,7 +142,7 @@ export function intervalStatements(
                ) THEN 'state_change' END)
          WHERE NOT EXISTS (
            SELECT 1 FROM status_intervals WHERE monitor_id = ?2 AND ended_at IS NULL
-         )`,
+         )${guard(2, 11)}`,
     ).bind(
       newId("ivl"),
       monitorId,
@@ -136,6 +154,7 @@ export function intervalStatements(
       first.minLatencyMs,
       first.maxLatencyMs,
       opts.reason ?? null,
+      ...guardBinds,
     ),
   ];
 }
