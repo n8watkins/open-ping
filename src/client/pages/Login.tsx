@@ -38,7 +38,13 @@ export default function Login() {
   // ADMIN_GITHUB_LOGIN env secret), the anonymous wizard is unnecessary (and is
   // locked server-side), so let the operator sign in here instead of trapping
   // them on /setup.
-  if (status && !status.setupComplete && !status.githubAdminConfigured && !status.emailAdminConfigured)
+  if (
+    status &&
+    !status.setupComplete &&
+    !status.githubAdminConfigured &&
+    !status.emailAdminConfigured &&
+    !status.passkeyConfigured
+  )
     return <Navigate to="/setup" replace />;
   if (me?.authenticated) return <Navigate to="/" replace />;
 

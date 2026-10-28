@@ -14,6 +14,12 @@ export interface AuthStatus {
   githubEnabled: boolean;
   githubAdminConfigured: boolean;
   emailAdminConfigured: boolean;
+  /** Whether at least one passkey exists (optional for an older Worker). */
+  passkeyConfigured?: boolean;
+  /** The hostname passkeys are bound to (the install's configured address). */
+  passkeyRpId?: string;
+  /** The install's address, where passkeys work. */
+  passkeyOrigin?: string;
   /**
    * What `/` shows a signed-out visitor (the HOME_PAGE var): "landing" only on
    * the canonical install. Optional so an older Worker without it still works.
@@ -26,7 +32,7 @@ export interface AuthStatus {
 export interface Me {
   authenticated: boolean;
   identity?: string;
-  identityKind?: "github" | "email";
+  identityKind?: "github" | "email" | "passkey";
   csrf?: string;
   expiresAt?: number;
 }

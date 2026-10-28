@@ -8,6 +8,7 @@ import { statusPages } from "./status-pages";
 import { channels } from "./channels";
 import { push } from "./push";
 import { magicApi } from "./magic";
+import { passkeyAuth, passkeysAdmin } from "./passkeys";
 import { overview } from "./overview";
 import { incidents } from "./incidents";
 import { diagnostics } from "./diagnostics";
@@ -25,6 +26,8 @@ export const api = new Hono<AppEnv>();
 
 api.route("/auth", apiAuth);
 api.route("/auth/magic", magicApi);
+api.route("/auth/passkeys", passkeyAuth);
+api.route("/passkeys", passkeysAdmin);
 api.route("/setup", setup);
 api.route("/overview", overview);
 api.route("/monitors", monitors);

@@ -8,7 +8,17 @@ import {
   saveSetupStep,
   isSetupComplete,
   markSetupComplete,
+  spendSetupToken,
 } from "../db/setup";
+import { countPasskeys, summarize } from "../db/passkeys";
+import { configuredOrigin } from "../lib/app-origin";
+import {
+  ceremonyErrorResponse,
+  finishRegistration,
+  passkeyNameSchema,
+  registrationCredentialSchema,
+  startRegistration,
+} from "../lib/passkey-ceremony";
 import { getAdminGithubLogin, getAdminEmail } from "../lib/admin";
 import { getSetting } from "../db/settings";
 import { CSRF_HEADER, getSession } from "../lib/sessions";
@@ -94,8 +104,17 @@ export async function checkSetupToken(
  */
 export const setup = new Hono<AppEnv>();
 
+async function configuredRpId(env: Env): Promise<string | null> {
+  const origin = await configuredOrigin(env);
+  return origin ? new URL(origin).hostname : null;
+}
+
 async function setupStatus(env: Env) {
   return {
+    passkeyCount: await countPasskeys(env),
+    // The hostname a passkey made now is bound to; null until an address is
+    // configured, when it is the address the wizard is open at.
+    passkeyRpId: await configuredRpId(env),
     setupComplete: await isSetupComplete(env),
     encryptionConfigured: isValidMasterKey(env.MASTER_KEY),
     githubEnabled: !!env.GITHUB_CLIENT_ID,
@@ -169,7 +188,7 @@ setup.post("/complete", async (c) => {
   if (!status.encryptionConfigured) {
     return c.json({ error: "master_key_required" }, 400);
   }
-  if (!status.githubAdminConfigured && !status.emailAdminConfigured) {
+  if (!status.githubAdminConfigured && !status.emailAdminConfigured && status.passkeyCount === 0) {
     return c.json({ error: "no_admin_configured" }, 400);
   }
   if (!status.timezone) {
@@ -184,5 +203,38 @@ setup.post("/complete", async (c) => {
     return c.json({ error: "app_url_required" }, 400);
   }
   await markSetupComplete(c.env);
+  // The token that set the install up never works again, not even for
+  // passkey recovery (db/setup.ts).
+  await spendSetupToken(c.env);
   return c.json({ ok: true, status: await setupStatus(c.env) });
+});
+
+// --- Passkeys during setup ----------------------------------------------------
+// The wizard's Administrator step can create the admin's first passkey, with
+// the same SETUP_TOKEN (or session) guard as every other setup call. No
+// session is created: after finishing, the admin signs in with it.
+
+setup.post("/passkeys/options", async (c) => {
+  const blocked = await guardSetup(c);
+  if (blocked) return blocked;
+  const parsed = z
+    .object({ name: passkeyNameSchema.optional() })
+    .safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: "validation", issues: parsed.error.issues }, 400);
+  return c.json({ options: await startRegistration(c, "setup", parsed.data.name ?? "Passkey", null) });
+});
+
+setup.post("/passkeys/verify", async (c) => {
+  const blocked = await guardSetup(c);
+  if (blocked) return blocked;
+  const parsed = z
+    .object({ credential: registrationCredentialSchema })
+    .safeParse(await c.req.json().catch(() => undefined));
+  if (!parsed.success) return c.json({ error: "validation", issues: parsed.error.issues }, 400);
+  try {
+    const row = await finishRegistration(c, "setup", parsed.data.credential, null);
+    return c.json({ passkey: summarize(row), status: await setupStatus(c.env) }, 201);
+  } catch (e) {
+    return ceremonyErrorResponse(c, e);
+  }
 });

@@ -1,9 +1,17 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Github, Loader2, Mail, MailCheck } from "lucide-react";
+import { ArrowRight, Fingerprint, Github, Loader2, Mail, MailCheck } from "lucide-react";
 import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { isLandingInstall } from "../lib/home";
+import {
+  conditionalMediationAvailable,
+  getPasskey,
+  hostMatchesRpId,
+  passkeyErrorMessage,
+  passkeysSupported,
+  type RequestOptionsJSON,
+} from "../lib/webauthn";
 
 /**
  * The admin sign-in, shared by /login and the landing page's owner sign-in
@@ -69,6 +77,59 @@ function errorMessage(error: string, landing: boolean): ReactNode {
   }
 }
 
+/**
+ * Passkey sign-in: a button, plus the browser's autofill on the email field
+ * where it supports conditional mediation. One request at a time: the button
+ * aborts a pending autofill request before it starts its own.
+ */
+function usePasskeySignIn(enabled: boolean, autofill: boolean) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pending = useRef<AbortController | null>(null);
+
+  const run = useCallback(async (conditional: boolean) => {
+    pending.current?.abort();
+    const controller = new AbortController();
+    pending.current = controller;
+    if (!conditional) {
+      setBusy(true);
+      setError(null);
+    }
+    try {
+      const { options } = await api<{ options: RequestOptionsJSON }>("/api/auth/passkeys/login/options", {
+        method: "POST",
+        json: {},
+        signal: controller.signal,
+      });
+      const credential = await getPasskey(options, { conditional, signal: controller.signal });
+      await api("/api/auth/passkeys/login/verify", { method: "POST", json: { credential } });
+      // Same landing as the GitHub and email flows: a fresh load of the dashboard.
+      window.location.assign("/");
+    } catch (err) {
+      // A superseded or unmounted request is not an error worth showing.
+      if (controller.signal.aborted) return;
+      if (!conditional || !(err instanceof DOMException)) setError(passkeyErrorMessage(err));
+    } finally {
+      if (pending.current === controller) pending.current = null;
+      if (!conditional) setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enabled || !autofill) return;
+    let cancelled = false;
+    void conditionalMediationAvailable().then((ok) => {
+      if (ok && !cancelled) void run(true);
+    });
+    return () => {
+      cancelled = true;
+      pending.current?.abort();
+    };
+  }, [enabled, autofill, run]);
+
+  return { busy, error, signIn: () => void run(false) };
+}
+
 export function SignInPanel({
   titleId,
   titleAs: Title = "h1",
@@ -88,6 +149,13 @@ export function SignInPanel({
   const emailEnabled = status?.emailAdminConfigured ?? false;
   const landing = isLandingInstall(status);
   const host = typeof window === "undefined" ? "" : window.location.host;
+  // Passkeys are bound to one hostname (the install's address), so they are
+  // offered only there; elsewhere (say, the workers.dev address of an install
+  // on its own domain) a note points to it.
+  const passkeyConfigured = !!status?.passkeyConfigured && passkeysSupported();
+  const passkeyHere = passkeyConfigured && hostMatchesRpId(status?.passkeyRpId);
+  const passkeyElsewhere = passkeyConfigured && !passkeyHere && !!status?.passkeyRpId;
+  const passkey = usePasskeySignIn(passkeyHere, emailEnabled);
 
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -149,10 +217,55 @@ export function SignInPanel({
       )}
 
       <div className="mt-6 space-y-3">
+        {passkeyHere && (
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={passkey.signIn}
+              disabled={passkey.busy}
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-semibold text-canvas transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              {passkey.busy ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <Fingerprint className="size-4" aria-hidden />
+              )}
+              Sign in with a passkey
+            </button>
+            {passkey.error && (
+              <p role="alert" className="text-center text-sm text-down">
+                {passkey.error}
+              </p>
+            )}
+          </div>
+        )}
+
+        {passkeyElsewhere && (
+          <p className="rounded-lg border border-line bg-surface-2/60 px-3 py-2.5 text-center text-sm leading-relaxed text-ink-muted">
+            Passkeys for this OpenPing work at{" "}
+            <a href={`${status?.passkeyOrigin ?? `https://${status?.passkeyRpId}`}/login`} className={linkClass}>
+              {status?.passkeyRpId}
+            </a>
+            .
+          </p>
+        )}
+
+        {passkeyHere && (githubEnabled || emailEnabled) && (
+          <div className="flex items-center gap-3 text-xs text-ink-faint" aria-hidden="true">
+            <span className="h-px flex-1 bg-line" />
+            or
+            <span className="h-px flex-1 bg-line" />
+          </div>
+        )}
+
         {githubEnabled && (
           <a
             href="/auth/github/start"
-            className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-semibold text-canvas transition-opacity hover:opacity-90"
+            className={
+              passkeyHere
+                ? "flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-4 text-sm font-semibold text-ink transition-colors hover:bg-line"
+                : "flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-semibold text-canvas transition-opacity hover:opacity-90"
+            }
           >
             <Github className="size-4" aria-hidden />
             Continue with GitHub
@@ -187,7 +300,8 @@ export function SignInPanel({
               <input
                 id="signin-email"
                 type="email"
-                autoComplete="email"
+                // "webauthn" lets the browser offer passkeys in this field's autofill.
+                autoComplete={passkeyHere ? "email webauthn" : "email"}
                 inputMode="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -212,10 +326,19 @@ export function SignInPanel({
             </form>
           ))}
 
-        {status && !githubEnabled && !emailEnabled && (
+        {status && !githubEnabled && !emailEnabled && !passkeyConfigured && (
           <p className="rounded-lg border border-line bg-surface-2/60 px-3 py-2.5 text-center text-sm text-ink-muted">
-            No sign-in method is set up on this OpenPing yet. Its owner adds GitHub or an email address in the setup
-            wizard.
+            No sign-in method is set up on this OpenPing yet. Its owner adds a passkey, GitHub or an email address in
+            the setup wizard.
+          </p>
+        )}
+
+        {passkeyHere && (
+          <p className="text-center text-xs text-ink-faint">
+            Lost your passkey?{" "}
+            <Link to="/recover" onClick={onNavigate} className="underline underline-offset-4 hover:text-ink">
+              Recover access
+            </Link>
           </p>
         )}
       </div>

@@ -80,6 +80,7 @@ const API_BODY_LIMIT = 5 * 1024 * 1024;
 const payloadTooLarge = (c: Context) =>
   c.json({ error: "payload_too_large" }, 413);
 app.use("/api/auth/magic/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
+app.use("/api/auth/passkeys/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/api/tools/is-it-down", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/api/events", bodyLimit({ maxSize: 1024, onError: payloadTooLarge }));
 app.use("/api/waitlist", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));

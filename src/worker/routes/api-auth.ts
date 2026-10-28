@@ -8,6 +8,8 @@ import { timingSafeEqual } from "../lib/timing";
 import { isValidMasterKey } from "../lib/crypto";
 import { homePage } from "../lib/home-page";
 import { waitlistEnabled } from "./waitlist";
+import { countPasskeys, getPasskey } from "../db/passkeys";
+import { relyingParty } from "../lib/passkey-ceremony";
 
 /** Session/identity endpoints mounted at /api/auth. */
 export const apiAuth = new Hono<AppEnv>();
@@ -16,9 +18,14 @@ export const apiAuth = new Hono<AppEnv>();
 apiAuth.get("/me", async (c) => {
   const session = await getSession(c);
   if (!session) return c.json({ authenticated: false });
+  // A passkey session's identity is the passkey's row id; show its name.
+  const identity =
+    session.identity_kind === "passkey"
+      ? ((await getPasskey(c.env, session.identity))?.name ?? "Passkey")
+      : session.identity;
   return c.json({
     authenticated: true,
-    identity: session.identity,
+    identity,
     identityKind: session.identity_kind,
     csrf: session.csrf_secret,
     expiresAt: session.expires_at,
@@ -31,12 +38,18 @@ apiAuth.get("/me", async (c) => {
  * renders anything at `/`, so no visitor sees the wrong page first.
  */
 apiAuth.get("/status", async (c) => {
+  const rp = await relyingParty(c);
   return c.json({
     setupComplete: (await getSetting(c.env, "setup_complete")) === "true",
     encryptionConfigured: isValidMasterKey(c.env.MASTER_KEY),
     githubEnabled: !!c.env.GITHUB_CLIENT_ID,
     githubAdminConfigured: !!(await getAdminGithubLogin(c.env)),
     emailAdminConfigured: !!(await getAdminEmail(c.env)),
+    // Passkey sign-in is offered only on installs that have one, and only on
+    // the hostname passkeys are bound to (lib/passkey-ceremony.ts).
+    passkeyConfigured: (await countPasskeys(c.env)) > 0,
+    passkeyRpId: rp.rpId,
+    passkeyOrigin: rp.origin,
     homePage: homePage(c.env),
     waitlistEnabled: waitlistEnabled(c.env),
   });
