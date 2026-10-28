@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0 - 2026-10-28
+
+### New
+
+- A failure is confirmed from a second Cloudflare region before it alerts ([#50](https://github.com/n8watkins/open-ping/pull/50))
+
 ## 0.10.1 - 2026-10-28
 
 Checks run much leaner: a free Cloudflare plan now covers about 24 monitors instead of 8.
