@@ -106,7 +106,7 @@ export function PasskeysCard({ csrf }: { csrf: string | undefined }) {
 
   return (
     <section id="sign-in" className="scroll-mt-6">
-      <Card>
+      <Card className="p-5">
         <CardHeader>
           <CardTitle>Passkeys</CardTitle>
         </CardHeader>
@@ -200,7 +200,7 @@ export function PasskeysCard({ csrf }: { csrf: string | undefined }) {
             ) : !here ? (
               <p className="rounded-lg border border-degraded/40 bg-degraded/10 px-3 py-2 text-sm text-ink">
                 To add a passkey, open OpenPing at{" "}
-                <a href={`${data.origin}/settings#sign-in`} className="font-semibold underline underline-offset-4">
+                <a href={`${data.origin}/settings/security`} className="font-semibold underline underline-offset-4">
                   {data.rpId}
                 </a>
                 .

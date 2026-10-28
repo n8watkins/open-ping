@@ -60,7 +60,7 @@ export default function Recover() {
       await registerPasskey("/api/auth/passkeys/recover", name.trim() || "Passkey", {
         headers: { "x-setup-token": token.trim() },
       });
-      window.location.assign("/settings?recovered=1#sign-in");
+      window.location.assign("/settings/security?recovered=1");
     } catch (err) {
       setError(recoveryError(err));
     } finally {

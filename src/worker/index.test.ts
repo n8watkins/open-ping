@@ -128,7 +128,7 @@ describe("worker fetch - SPA fallback + secureHeaders", () => {
     // wildcard never matches the bare domain, so it is listed too); the rest of
     // the CSP (script-src 'self', etc.) is preserved.
     const csp = res.headers.get("content-security-policy") ?? "";
-    expect(csp).toContain("frame-ancestors https://n8builds.dev https://*.n8builds.dev;");
+    expect(csp).toContain("frame-ancestors 'self' https://n8builds.dev https://*.n8builds.dev;");
     expect(csp).not.toContain("frame-ancestors 'none'");
     expect(csp).toContain("script-src 'self'");
     expect(csp).toBe(widgetCsp);

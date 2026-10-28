@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
-import { NavLink, Outlet, Navigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, Outlet, Navigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   Activity,
   AlertTriangle,
   Wrench,
-  Plug,
+  Bell,
+  Code2,
   Settings,
   Globe,
   Loader2,
@@ -21,6 +22,7 @@ import { Logo } from "./Logo";
 import { useBootstrap } from "../lib/bootstrap";
 import { useFetch } from "../lib/useFetch";
 import type { OverviewResponse } from "../lib/types";
+import { shellTransitionKey } from "../lib/section-routes";
 
 interface NavItem {
   to: string;
@@ -58,17 +60,26 @@ function deriveStatus(counts: OverviewResponse["counts"] | undefined) {
   return STATUS_PILL.operational;
 }
 
-const NAV: NavItem[] = [
+const MONITORING_NAV: NavItem[] = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/monitors", label: "Monitors", icon: Activity },
   { to: "/incidents", label: "Incidents", icon: AlertTriangle },
   { to: "/status-page", label: "Status pages", icon: Globe },
   { to: "/maintenance", label: "Maintenance", icon: Wrench },
-  { to: "/integrations", label: "Integrations & API", icon: Plug },
+];
+// Where alerts go, how code reaches OpenPing, and the install itself.
+const CONFIGURE_NAV: NavItem[] = [
+  { to: "/alerts", label: "Alerts", icon: Bell },
+  { to: "/developers", label: "Developers", icon: Code2 },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
+const NAV: NavItem[] = [...MONITORING_NAV, ...CONFIGURE_NAV];
 const MOBILE_NAV = NAV.slice(0, 4);
 const MOBILE_MORE_NAV = NAV.slice(4);
+
+function isActivePath(pathname: string, to: string): boolean {
+  return to === "/" ? pathname === "/" : pathname === to || pathname.startsWith(`${to}/`);
+}
 
 export function AppLayout() {
   const { loading, status, me, csrf } = useBootstrap();
@@ -94,6 +105,34 @@ export function AppLayout() {
     typeof navigator === "undefined" ? true : navigator.onLine,
   );
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { pathname } = useLocation();
+  const moreRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+
+  // The phone "More" menu closes on navigation, Escape, or a tap outside it.
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [pathname]);
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMobileMenuOpen(false);
+        moreButtonRef.current?.focus();
+      }
+    };
+    const onPointer = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!moreRef.current?.contains(t) && !moreButtonRef.current?.contains(t)) setMobileMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [mobileMenuOpen]);
+
   useEffect(() => {
     const goOnline = () => setOnline(true);
     const goOffline = () => setOnline(false);
@@ -118,6 +157,9 @@ export function AppLayout() {
   // preconfigure the admin identity as a Worker secret.
   if (status && !status.setupComplete) return <Navigate to="/setup" replace />;
 
+  const moreActive = MOBILE_MORE_NAV.some((item) => isActivePath(pathname, item.to));
+  const summary = statusSummary(overview?.counts);
+
   return (
     <div className="flex min-h-full">
       {/* Skip link: first focusable element, jumps keyboard/SR users past the
@@ -128,26 +170,50 @@ export function AppLayout() {
       >
         Skip to content
       </a>
-      {/* Desktop sidebar */}
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-surface/55 px-3 py-4 md:flex">
+      {/* Desktop sidebar: stays put while the page scrolls. */}
+      <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col border-r border-line bg-surface/55 px-3 py-4 md:flex">
         <div className="px-2 pb-5">
           <Logo />
         </div>
-        <nav aria-label="Primary" className="flex flex-1 flex-col gap-1">
-          {NAV.map((item) => (
-            <SidebarLink key={item.to} item={item} />
-          ))}
-        </nav>
-        <div className="border-t border-line px-2 pt-4">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <span className={cn("inline-flex min-w-0 items-center gap-1.5 text-xs", pill.text)}>
-              <span className={cn("size-1.5 shrink-0 rounded-full", pill.dot)} />
-              <span className="truncate">{statusSummary(overview?.counts)}</span>
-            </span>
-            <span className="text-[10px] text-ink-faint">v{__OP_VERSION__}</span>
+        <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto">
+          <ul className="flex flex-col gap-0.5">
+            {MONITORING_NAV.map((item) => (
+              <li key={item.to}>
+                <SidebarLink item={item} />
+              </li>
+            ))}
+          </ul>
+          <div>
+            <div className="mb-1.5 px-3 text-[11px] font-semibold tracking-wider text-ink-faint uppercase">Configure</div>
+            <ul className="flex flex-col gap-0.5">
+              {CONFIGURE_NAV.map((item) => (
+                <li key={item.to}>
+                  <SidebarLink item={item} />
+                </li>
+              ))}
+            </ul>
           </div>
+        </nav>
+        <div className="mt-3 space-y-3 border-t border-line pt-3">
+          <NavLink
+            to="/"
+            end
+            title={summary}
+            className={cn(
+              "flex items-start gap-2 rounded-lg px-2.5 py-2 text-xs leading-snug transition-colors duration-150 hover:bg-surface-2/70",
+              pill.text,
+            )}
+          >
+            <span className="relative mt-[3px] grid size-2 shrink-0 place-items-center" aria-hidden>
+              {pill !== STATUS_PILL.operational && (
+                <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", pill.dot)} />
+              )}
+              <span className={cn("relative size-2 rounded-full", pill.dot)} />
+            </span>
+            <span className="min-w-0 font-medium">{summary}</span>
+          </NavLink>
           {me?.identity && (
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 px-2.5">
               <span
                 className="flex min-w-0 items-center gap-1.5 text-xs text-ink-muted"
                 title={`Signed in (${me.identityKind ?? "session"}) as ${me.identity}`}
@@ -160,18 +226,19 @@ export function AppLayout() {
                 onClick={logout}
                 title="Sign out"
                 aria-label="Sign out"
-                className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+                className="-mr-1.5 rounded-md p-1.5 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
               >
                 <LogOut className="size-3.5" />
               </button>
             </div>
           )}
+          <div className="px-2.5 font-mono text-[10px] text-ink-faint">OpenPing v{__OP_VERSION__}</div>
         </div>
       </aside>
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center justify-between border-b border-line px-4 md:hidden">
+        <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-canvas/90 px-4 backdrop-blur md:hidden">
           <div>
             <Logo compact />
           </div>
@@ -181,6 +248,7 @@ export function AppLayout() {
                 "inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1 text-xs",
                 pill.text,
               )}
+              title={summary}
             >
               <span className={cn("size-2 rounded-full", pill.dot)} />
               {pill.label}
@@ -218,32 +286,45 @@ export function AppLayout() {
           id="main-content"
           className="flex-1 px-4 py-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-8 md:py-7 md:pb-8"
         >
-          <Outlet />
+          {/* Each page eases in when you arrive (reduced motion: no movement). */}
+          <div key={shellTransitionKey(pathname)} className="animate-enter">
+            <Outlet />
+          </div>
         </main>
       </div>
 
       {/* Mobile bottom nav */}
       {mobileMenuOpen && (
-        <div className="fixed right-3 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 w-52 rounded-card border border-line bg-surface p-2 shadow-2xl md:hidden">
-          {MOBILE_MORE_NAV.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                onClick={() => setMobileMenuOpen(false)}
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium",
-                    isActive ? "bg-accent-soft text-ink" : "text-ink-muted hover:bg-surface-2",
-                  )
-                }
-              >
-                <Icon className="size-[18px]" />
-                {item.label}
-              </NavLink>
-            );
-          })}
+        <div
+          ref={moreRef}
+          id="mobile-more-menu"
+          className="fixed right-3 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 w-52 origin-bottom-right animate-enter rounded-card border border-line bg-surface p-1.5 shadow-2xl md:hidden"
+        >
+          <ul>
+            {MOBILE_MORE_NAV.map((item) => {
+              const Icon = item.icon;
+              return (
+                <li key={item.to}>
+                  <NavLink
+                    to={item.to}
+                    className={({ isActive }) =>
+                      cn(
+                        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                        isActive ? "bg-accent-soft text-ink" : "text-ink-muted hover:bg-surface-2 hover:text-ink",
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <Icon className={cn("size-[18px]", isActive && "text-accent")} />
+                        {item.label}
+                      </>
+                    )}
+                  </NavLink>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
       <nav
@@ -254,15 +335,18 @@ export function AppLayout() {
           <BottomLink key={item.to} item={item} />
         ))}
         <button
+          ref={moreButtonRef}
           type="button"
           onClick={() => setMobileMenuOpen((open) => !open)}
           aria-expanded={mobileMenuOpen}
+          aria-controls="mobile-more-menu"
           aria-label="More navigation"
           className={cn(
-            "flex min-w-0 flex-1 flex-col items-center gap-1 px-0.5 py-2 text-[10px] font-medium transition-colors",
-            mobileMenuOpen ? "text-accent" : "text-ink-muted",
+            "relative flex min-w-0 flex-1 flex-col items-center gap-1 px-0.5 py-2 text-[10px] font-medium transition-colors",
+            mobileMenuOpen || moreActive ? "text-accent" : "text-ink-muted",
           )}
         >
+          <BottomIndicator active={moreActive} />
           <MoreHorizontal className="size-5 shrink-0" />
           <span>More</span>
         </button>
@@ -279,16 +363,43 @@ function SidebarLink({ item }: { item: NavItem }) {
       end={item.to === "/"}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-          isActive
-            ? "bg-accent-soft text-ink"
-            : "text-ink-muted hover:bg-surface-2 hover:text-ink",
+          "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-150",
+          isActive ? "bg-accent-soft text-ink" : "text-ink-muted hover:bg-surface-2/70 hover:text-ink",
         )
       }
     >
-      <Icon className="size-[18px]" />
-      {item.label}
+      {({ isActive }) => (
+        <>
+          <span
+            aria-hidden
+            className={cn(
+              "absolute top-1.5 bottom-1.5 left-0 w-0.5 rounded-full bg-accent transition-all duration-200",
+              isActive ? "opacity-100" : "scale-y-50 opacity-0",
+            )}
+          />
+          <Icon
+            className={cn(
+              "size-[18px] shrink-0 transition-colors duration-150",
+              isActive ? "text-accent" : "text-ink-faint group-hover:text-ink-muted",
+            )}
+          />
+          {item.label}
+        </>
+      )}
     </NavLink>
+  );
+}
+
+/** The accent line over the active bottom-nav item. */
+function BottomIndicator({ active }: { active: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "absolute inset-x-4 top-0 h-0.5 rounded-full bg-accent transition-opacity duration-200",
+        active ? "opacity-100" : "opacity-0",
+      )}
+    />
   );
 }
 
@@ -300,13 +411,18 @@ function BottomLink({ item }: { item: NavItem }) {
       end={item.to === "/"}
       className={({ isActive }) =>
         cn(
-          "flex min-w-0 flex-1 flex-col items-center gap-1 px-0.5 py-2 text-[10px] font-medium transition-colors",
-          isActive ? "text-accent" : "text-ink-muted",
+          "relative flex min-w-0 flex-1 flex-col items-center gap-1 px-0.5 py-2 text-[10px] font-medium transition-colors",
+          isActive ? "text-accent" : "text-ink-muted hover:text-ink",
         )
       }
     >
-      <Icon className="size-5 shrink-0" />
-      <span className="w-full truncate text-center leading-tight">{item.label}</span>
+      {({ isActive }) => (
+        <>
+          <BottomIndicator active={isActive} />
+          <Icon className="size-5 shrink-0" />
+          <span className="w-full truncate text-center leading-tight">{item.label}</span>
+        </>
+      )}
     </NavLink>
   );
 }

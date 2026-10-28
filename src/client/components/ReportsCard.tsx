@@ -100,7 +100,7 @@ export function ReportsCard({
 
   return (
     <section id="reports" className="scroll-mt-6">
-      <Card>
+      <Card className="p-5">
         <CardHeader>
           <CardTitle>Monthly uptime report</CardTitle>
         </CardHeader>

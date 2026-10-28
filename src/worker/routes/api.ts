@@ -21,6 +21,7 @@ import { waitlist } from "./waitlist";
 import { rekey } from "./rekey";
 import { reports } from "./reports";
 import { events } from "./events";
+import { apiTokens } from "./api-tokens";
 
 export const api = new Hono<AppEnv>();
 
@@ -42,6 +43,7 @@ api.route("/data", data);
 api.route("/push", push);
 api.route("/admin/rekey", rekey);
 api.route("/reports", reports);
+api.route("/api-tokens", apiTokens);
 
 // Public, UNAUTHENTICATED status-page data (redacted).
 api.route("/public", publicStatus);

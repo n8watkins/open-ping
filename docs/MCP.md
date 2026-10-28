@@ -17,8 +17,10 @@ It runs inside the same Worker as the rest of OpenPing, needs no extra Cloudflar
 
 ## Turn it on
 
-The MCP server uses the admin API token, the same one the [CLI](./CLI.md) uses.
-Until `API_TOKEN` is set, `/mcp` answers `404` with a message saying so.
+The MCP server uses an admin API token, like the [CLI](./CLI.md).
+Create one under **Developers** in the app (it is shown once; give each client its own so you can revoke one without the others), or set the `API_TOKEN` Worker secret.
+Until one of them exists, `/mcp` answers `404` with a message saying so.
+The **Developers** page also shows the commands below with your install's URL filled in.
 
 ```sh
 openssl rand -base64 32 | npx wrangler secret put API_TOKEN
@@ -27,6 +29,7 @@ openssl rand -base64 32 | npx wrangler secret put API_TOKEN
 Keep the value in a password manager.
 It grants full admin access to your install, through the REST API and through MCP.
 To revoke it, set a new value with the same command; old clients then get `401`.
+A token from **Developers** is revoked there, and only the clients using it are cut off.
 
 ## Connect Claude Code
 

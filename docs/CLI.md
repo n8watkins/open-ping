@@ -7,7 +7,10 @@ The same operations are available to AI clients through the [MCP server](./MCP.m
 ## Authentication
 
 The CLI authenticates with a Bearer API token instead of a login session.
-Set a high-entropy token as the `API_TOKEN` Worker secret:
+The simplest way to get one is **Developers** in the app: **Create token** names it (for example "Laptop CLI") and shows it once.
+Only a hash is stored, and **Revoke** stops it working right away.
+
+Or set a high-entropy token as the `API_TOKEN` Worker secret:
 
 ```sh
 openssl rand -base64 32 | npx wrangler secret put API_TOKEN
@@ -25,7 +28,7 @@ The token grants full admin access: treat it like a password, keep it out of ver
 The CLI reads two settings:
 
 - `OPENPING_URL`: your install's base URL, for example `https://open-ping.<subdomain>.workers.dev`.
-- `OPENPING_TOKEN`: the `API_TOKEN` value.
+- `OPENPING_TOKEN`: a token from **Developers**, or the `API_TOKEN` value.
 
 Environment variables win.
 Otherwise the CLI reads a `.op.env` file in the current directory, or else in the repository root:
