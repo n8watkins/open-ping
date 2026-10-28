@@ -152,13 +152,36 @@ describe("computeOverall", () => {
   });
 });
 
+describe("computeOverall with never-checked (unknown) services", () => {
+  it("waits for the first checks when every service is unknown", () => {
+    expect(computeOverall([svc("unknown")], false)).toBe("awaiting_data");
+    expect(computeOverall([svc("unknown"), svc("unknown")], false)).toBe("awaiting_data");
+  });
+
+  it("does not count unknown services toward operational or outage size", () => {
+    expect(computeOverall([svc("operational"), svc("unknown")], false)).toBe("operational");
+    // The only service with a state is down: that is the whole known page.
+    expect(computeOverall([svc("down"), svc("unknown")], false)).toBe("major_outage");
+    expect(computeOverall([svc("down"), svc("operational"), svc("unknown")], false)).toBe(
+      "partial_outage",
+    );
+    expect(computeOverall([svc("scheduled_off"), svc("unknown")], false)).toBe("all_off");
+  });
+
+  it("still lets maintenance and degraded win over a page of unknowns", () => {
+    expect(computeOverall([svc("unknown")], true)).toBe("maintenance");
+    expect(computeOverall([svc("degraded"), svc("unknown")], false)).toBe("degraded");
+  });
+});
+
 describe("computeUptimeAndBars", () => {
   const DAY = 24 * 60 * 60 * 1000;
   const now = Date.UTC(2026, 5, 29, 12, 0, 0); // 2026-06-29T12:00:00Z
 
-  it("reports 100% and 90 empty bars when there is no data", () => {
+  it("reports no uptime figure and 90 empty bars when there is no data", () => {
     const { uptime90d, bars } = computeUptimeAndBars([], now);
-    expect(uptime90d).toBe(100);
+    // A never-checked service has earned no uptime: null, never 100%.
+    expect(uptime90d).toBeNull();
     expect(bars).toHaveLength(90);
     expect(bars.every((b) => b.uptimePct === null && b.state === "none")).toBe(
       true,

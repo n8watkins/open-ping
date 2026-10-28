@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   CircleSlash,
   ExternalLink,
+  Hourglass,
   History,
   Loader2,
   MoonStar,
@@ -38,7 +39,8 @@ type Overall =
   | "partial_outage"
   | "major_outage"
   | "maintenance"
-  | "all_off";
+  | "all_off"
+  | "awaiting_data";
 
 type ServiceState =
   | "operational"
@@ -175,6 +177,15 @@ const OVERALL_META: Record<Overall, OverallMeta> = {
     icon: <CircleSlash className="size-6" />,
     label: "No public services",
   },
+  // Every service on the page has yet to be checked: say so instead of
+  // claiming anything is operational.
+  awaiting_data: {
+    card: "border-line bg-surface-2/40",
+    iconWrap: "bg-surface-2",
+    text: "text-ink-muted",
+    icon: <Hourglass className="size-6" />,
+    label: "Waiting for the first checks",
+  },
 };
 
 // `all_off` with services on the page means every one of them is outside its
@@ -191,7 +202,8 @@ const ALL_SCHEDULED_OFF_META: OverallMeta = {
 function overallMetaFor(overall: Overall, serviceCount: number): OverallMeta {
   return overall === "all_off" && serviceCount > 0
     ? ALL_SCHEDULED_OFF_META
-    : OVERALL_META[overall];
+    : // A newer server may send a state this build doesn't know yet.
+      (OVERALL_META[overall] ?? OVERALL_META.all_off);
 }
 
 interface StateMeta {
@@ -604,9 +616,12 @@ function ServiceRow({ service }: { service: PublicService }) {
           </div>
           <div className="mt-1.5 flex items-center justify-between text-[11px] text-ink-faint">
             <span>90 days ago</span>
-            {service.uptime90d != null && (
-              <span>{formatPct(service.uptime90d)} uptime</span>
-            )}
+            {/* A service that was never checked has earned no uptime yet. */}
+            <span>
+              {service.uptime90d != null
+                ? `${formatPct(service.uptime90d)} uptime`
+                : "No data yet"}
+            </span>
             <span>Today</span>
           </div>
         </div>

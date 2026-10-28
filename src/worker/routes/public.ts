@@ -57,7 +57,8 @@ export type OverallStatus =
   | "partial_outage"
   | "major_outage"
   | "maintenance"
-  | "all_off";
+  | "all_off"
+  | "awaiting_data";
 
 /** One day in the 90-day uptime bar strip. */
 interface PublicBar {
@@ -124,6 +125,14 @@ interface PublicMaint {
  *
  * `all_off` covers two cases the caller tells apart by the service count: a
  * page with no public services, and a page whose services are all off-hours.
+ *
+ * `unknown` services (never checked yet, warming up or paused) carry no
+ * information, so they never count either way: they cannot make the page
+ * "operational", and a page where every service is unknown reads
+ * `awaiting_data` ("Waiting for the first checks") instead of claiming all
+ * systems are operational. Outage size is measured against the services that
+ * do have a state, so one down service next to a never-checked one is a major
+ * outage, not a partial one.
  */
 export function computeOverall(
   services: { state: PublicServiceState }[],
@@ -134,16 +143,20 @@ export function computeOverall(
   let down = 0;
   let degraded = 0;
   let off = 0;
+  let unknown = 0;
   for (const s of services) {
     if (s.state === "down" || s.state === "suspended") down += 1;
     else if (s.state === "degraded") degraded += 1;
     else if (s.state === "scheduled_off") off += 1;
+    else if (s.state === "unknown") unknown += 1;
   }
+  const known = services.length - unknown;
 
-  if (down > 0) return down === services.length ? "major_outage" : "partial_outage";
+  if (down > 0) return down === known ? "major_outage" : "partial_outage";
   if (hasActiveMaintenance) return "maintenance";
   if (degraded > 0) return "degraded";
-  if (off === services.length) return "all_off";
+  if (known === 0) return "awaiting_data";
+  if (off === known) return "all_off";
   return "operational";
 }
 
@@ -196,13 +209,14 @@ interface DaySummaryRow {
 /**
  * Pure reducer: turn daily summary rows into the 90-day uptime % and the bar
  * strip (one entry per UTC day, oldest first). Days with no data are emitted as
- * `{ uptimePct: null, state: "none" }`; the headline figure is 100 when there
- * is no data at all (nothing was observed, so nothing was down).
+ * `{ uptimePct: null, state: "none" }`; the headline figure is null when there
+ * is no data at all, so a service that was never checked shows "No data yet"
+ * rather than a 100% it never earned.
  */
 export function computeUptimeAndBars(
   rows: DaySummaryRow[],
   now: number,
-): { uptime90d: number; bars: PublicBar[] } {
+): { uptime90d: number | null; bars: PublicBar[] } {
   const byDate = new Map<string, { checks: number; ok: number }>();
   let totalChecks = 0;
   let totalOk = 0;
@@ -231,7 +245,7 @@ export function computeUptimeAndBars(
     bars.push({ date, uptimePct: roundPct(pct), state });
   }
 
-  const uptime90d = totalChecks > 0 ? roundPct((totalOk / totalChecks) * 100) : 100;
+  const uptime90d = totalChecks > 0 ? roundPct((totalOk / totalChecks) * 100) : null;
   return { uptime90d, bars };
 }
 
@@ -664,6 +678,7 @@ const BADGE_META: Record<OverallStatus | "unknown", { label: string; color: stri
   maintenance: { label: "maintenance", color: "#8b8bf5" },
   // Overridden to "off hours" when the page has services and all are off.
   all_off: { label: "no services", color: "#64748b" },
+  awaiting_data: { label: "no data yet", color: "#64748b" },
   unknown: { label: "unknown", color: "#64748b" },
 };
 
