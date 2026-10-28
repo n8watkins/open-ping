@@ -2,16 +2,19 @@
 
 This document is the current zero-context handoff for continuing work on OpenPing.
 
-Last updated: 2026-10-27.
-## Current state (2026-10-27): start here
+Last updated: 2026-10-28.
+
+## Current state (2026-10-28): start here
 
 - `main` has round 2 (rebuilt landing page, signed-in app UI, a scheduler that stays inside Cloudflare's free-plan limits, Cloudflare Web Analytics allowed in the CSP, no em dashes) and Hosted stage 1 (PR #12: "Runs in your own Cloudflare account" wording, a pricing section, a waitlist at `/api/waitlist`, the `/install` guide, the waitlist count and CSV in Settings).
-- **Not live yet.** Production still runs the older version, until the owner does the steps below.
+- **Live:** v0.2.0 was deployed to https://openping.n8builds.dev on 2026-10-28, with migrations through 0011 applied and the waitlist on.
+  It adds the off-hours fix (#15), one strict security header policy for every page and the widget on the bare n8builds.dev (#16), idle scheduler runs of 3 database calls instead of about 160 (#17), and the `deploy:prod` flow (#14).
+  A D1 export taken just before the deploy is in `~/backups/open-ping/` on the owner's machine.
 - The paid hosted version is planned in [the Hosted plan](./HOSTED_PLAN.md): stages 0 to 7, each with a go/no-go gate.
   Chosen pricing: $24 a year (20 monitors, 12-minute checks, 2 status pages), plus $12 a year for 1-minute checks; no free hosted plan.
   Gate after stage 1: about 20 waitlist sign-ups within 8 weeks.
 - Tagline everywhere: "Uptime monitoring on your own Cloudflare".
-- Off-hours status bug fixed on branch `fix/off-hours-status` (known gap 0 below); not deployed yet.
+- `v0.1.0` is a baseline tag at `5ff032c`; releases since then are cut with release-kit.
 
 ### How production is deployed
 
@@ -27,7 +30,7 @@ Production's own values live in a gitignored `deploy.local.json` in the main che
 
 ### Next
 
-1. Merge the off-hours status fix (`fix/off-hours-status`), release, deploy, and check the live feed outside operating hours: off-hours services read `scheduled_off` and an all-off page reads `all_off`.
+1. During operating hours (weekdays 08:00 to 17:00 Los Angeles), check that the three Render monitors return to `operational` within one cron run, and that `GET /api/diagnostics` shows `d1Queries` per run.
 2. Watch the waitlist; start stage 2 (batched writes, second-region confirmation) and stage 3 (a Workers for Platforms prototype) only when the owner says so.
 
 The sections below describe the July pass and are still accurate for architecture, verification and conventions.
@@ -162,7 +165,7 @@ Commit future work on a feature branch, then run `no-mistakes axi run --intent "
 
 ## Known gaps and recommended next work
 
-0. Ship the off-hours status fix (fixed 2026-10-27 on `fix/off-hours-status`, not deployed yet).
+0. The off-hours status fix is live (v0.2.0).
    The public feed, status page, widget and badge used to report off-hours monitors as "operational".
    They now report `scheduled_off` with a `since` time, an all-off page reads "All services are scheduled off" (`all_off`, badge "off hours"), and the `showScheduledOff` option is removed (still accepted and ignored on input).
    The stored `showScheduledOff` key is left in each monitor's `public` JSON and dropped on read; no migration.
@@ -201,7 +204,9 @@ Do not add an automated agent as a co-author.
 Do not push or deploy unless the user authorizes that external change.
 Do not edit generated changelogs.
 Keep every full sentence on its own physical line when substantially editing long Markdown documents.
-Use `npm run db:migrate:local` for local D1 migrations and `npm run db:migrate` for remote migrations.
+Use `npm run db:migrate:local` for local D1 migrations and `npm run db:migrate:prod` for the production D1.
+Squash-merge PRs with a body you write (`gh pr merge --squash --body "..."`): the default body lists every commit, and one `Release-note: skip` line in it hides the whole PR from the release notes.
+release-kit ignores flags it doesn't know, so `npm run release -- --help` cuts a real release; read node_modules/release-kit/README.md instead.
 
 ## File map
 

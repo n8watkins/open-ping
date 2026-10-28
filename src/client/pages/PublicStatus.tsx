@@ -324,7 +324,9 @@ export default function PublicStatus() {
                 {page.name}
               </h1>
               {page.description && (
-                <p className="truncate text-sm text-ink-muted">{page.description}</p>
+                <p className="text-sm text-pretty break-words text-ink-muted">
+                  {page.description}
+                </p>
               )}
             </div>
           </div>
