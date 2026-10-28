@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { STATE_META, type MonitorState } from "../../../shared/states";
 
@@ -27,8 +28,20 @@ const TEXT: Record<MonitorState, string> = {
   unknown: "text-paused",
 };
 
-/** Small rounded pill: colored status dot + label, tinted by the state token. */
-export function StatusPill({ state, label }: { state: MonitorState; label?: string }) {
+/**
+ * Small rounded pill: colored status dot + label, tinted by the state token.
+ * An optional `detail` follows the label in a quieter weight (for example
+ * "since Fri 4:48 PM" after "Scheduled off").
+ */
+export function StatusPill({
+  state,
+  label,
+  detail,
+}: {
+  state: MonitorState;
+  label?: string;
+  detail?: ReactNode;
+}) {
   return (
     <span
       className={cn(
@@ -37,7 +50,12 @@ export function StatusPill({ state, label }: { state: MonitorState; label?: stri
       )}
     >
       <span className={cn("size-1.5 rounded-full", DOT[state])} />
-      {label ?? STATE_META[state].label}
+      <span>
+        {label ?? STATE_META[state].label}
+        {detail != null && (
+          <span className="font-normal text-ink-muted"> {detail}</span>
+        )}
+      </span>
     </span>
   );
 }

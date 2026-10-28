@@ -6,12 +6,13 @@ import {
   CheckCircle2,
   CircleSlash,
   Loader2,
+  MoonStar,
   Wrench,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
 import { StatusPill } from "../components/ui/StatusPill";
 import { cn } from "../lib/cn";
-import { formatRelativeTime } from "../lib/format";
+import { formatDateTime, formatRelativeTime, formatSince } from "../lib/format";
 import type { MonitorState } from "../../shared/states";
 
 /* ------------------------------------------------------------------ *
@@ -47,6 +48,8 @@ interface PublicService {
   id: string;
   name: string;
   state: ServiceState;
+  /** When an off-hours service went off (epoch ms); null or absent otherwise. */
+  since?: number | null;
 }
 
 interface ServiceGroup {
@@ -121,6 +124,23 @@ const OVERALL_META: Record<Overall, OverallMeta> = {
     label: "No public services",
   },
 };
+
+// `all_off` with services on the page means every one of them is outside its
+// operating schedule (an empty page is the "No public services" case above).
+const ALL_SCHEDULED_OFF_META: OverallMeta = {
+  card: "border-scheduled/30 bg-scheduled/5",
+  iconWrap: "bg-scheduled/15",
+  text: "text-scheduled",
+  icon: <MoonStar className="size-5" />,
+  label: "All services are scheduled off",
+};
+
+/** Banner copy for the overall status, telling the two all_off cases apart. */
+function overallMetaFor(overall: Overall, serviceCount: number): OverallMeta {
+  return overall === "all_off" && serviceCount > 0
+    ? ALL_SCHEDULED_OFF_META
+    : OVERALL_META[overall];
+}
 
 // Public service states map onto the shared MonitorState palette so the widget
 // can reuse the existing <StatusPill>; labels mirror the public status page.
@@ -225,8 +245,8 @@ export default function Embed() {
     body = <Message text="Status page not enabled." />;
   } else {
     const overall = data.overall ?? "all_off";
-    const meta = OVERALL_META[overall];
     const services = (data.groups ?? []).flatMap((g) => g.services ?? []);
+    const meta = overallMetaFor(overall, services.length);
 
     body = (
       <>
@@ -250,8 +270,10 @@ export default function Embed() {
               {meta.label}
             </div>
             {data.updatedAt != null && (
-              <div className="text-xs text-ink-faint">
-                Updated {formatRelativeTime(data.updatedAt)}
+              <div className="text-xs text-ink-faint" title={formatDateTime(data.updatedAt)}>
+                {meta === ALL_SCHEDULED_OFF_META
+                  ? `Last check ${formatSince(data.updatedAt)}`
+                  : `Updated ${formatRelativeTime(data.updatedAt)}`}
               </div>
             )}
           </div>
@@ -267,10 +289,24 @@ export default function Embed() {
                 <span className="min-w-0 truncate text-sm text-ink">
                   {s.name}
                 </span>
-                <StatusPill
-                  state={STATE_TO_MONITOR[s.state]}
-                  label={STATE_LABEL[s.state]}
-                />
+                <span
+                  className="shrink-0"
+                  title={
+                    s.state === "scheduled_off" && s.since != null
+                      ? `Scheduled off since ${formatDateTime(s.since)}`
+                      : undefined
+                  }
+                >
+                  <StatusPill
+                    state={STATE_TO_MONITOR[s.state]}
+                    label={STATE_LABEL[s.state]}
+                    detail={
+                      s.state === "scheduled_off" && s.since != null
+                        ? `since ${formatSince(s.since)}`
+                        : undefined
+                    }
+                  />
+                </span>
               </li>
             ))}
           </ul>

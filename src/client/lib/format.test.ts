@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { formatRelativeTime, formatDuration, formatMs, formatPct } from "./format";
+import {
+  formatRelativeTime,
+  formatDuration,
+  formatMs,
+  formatPct,
+  formatSince,
+} from "./format";
 
 // Fixed reference instant (epoch ms) so relative-time math is deterministic.
 const NOW = 1_700_000_000_000;
@@ -53,7 +59,7 @@ describe("formatMs", () => {
     expect(formatMs(1200)).toBe("1.20 s");
   });
 
-  it("renders an em dash for nullish input", () => {
+  it("renders a plain dash for nullish input", () => {
     expect(formatMs(null)).toBe("-");
     expect(formatMs(undefined)).toBe("-");
   });
@@ -66,5 +72,35 @@ describe("formatPct", () => {
 
   it("respects an explicit digits argument", () => {
     expect(formatPct(100, 0)).toBe("100%");
+  });
+});
+
+describe("formatSince", () => {
+  const opts = { locale: "en-US", timeZone: "America/Los_Angeles" };
+  // Friday 2026-10-23 16:48 in Los Angeles.
+  const friday = Date.UTC(2026, 9, 23, 23, 48);
+  const HOUR_MS = 3600 * 1000;
+
+  it("shows only the time for earlier today", () => {
+    expect(formatSince(friday, friday + 2 * HOUR_MS, opts)).toBe("4:48 PM");
+  });
+
+  it("shows the weekday and time within the last week", () => {
+    // Sunday morning, two days later.
+    expect(formatSince(friday, friday + 40 * HOUR_MS, opts)).toBe("Fri 4:48 PM");
+  });
+
+  it("uses the timezone's calendar day, not UTC's", () => {
+    // 23:48 UTC is already Saturday in UTC, but still Friday in Los Angeles;
+    // one hour later is still the same Los Angeles day.
+    expect(formatSince(friday, friday + HOUR_MS, opts)).toBe("4:48 PM");
+  });
+
+  it("shows the month and day for older instants", () => {
+    expect(formatSince(friday, friday + 10 * 24 * HOUR_MS, opts)).toBe("Oct 23");
+  });
+
+  it("adds the year when it differs", () => {
+    expect(formatSince(friday, Date.UTC(2027, 1, 1), opts)).toBe("Oct 23, 2026");
   });
 });
