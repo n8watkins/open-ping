@@ -16,6 +16,16 @@ describe("planBudget", () => {
     expect(planBudget({ WORKERS_PLAN: "paid" }).plan).toBe("paid");
   });
 
+  it("uses the hosted budget in hosted mode, whatever WORKERS_PLAN says", () => {
+    expect(planBudget({ HOSTED_MODE: "1" }).plan).toBe("hosted");
+    expect(planBudget({ HOSTED_MODE: "1", WORKERS_PLAN: "free" }).plan).toBe("hosted");
+    expect(planBudget({ HOSTED_MODE: "true", WORKERS_PLAN: "paid" }).plan).toBe("paid");
+  });
+
+  it("keeps the hosted budget, D1 and fetches together, under the platform's 1,000 subrequests a run", () => {
+    expect(PLAN_BUDGETS.hosted.d1Queries + PLAN_BUDGETS.hosted.subrequests).toBeLessThan(1_000);
+  });
+
   it("keeps the Free budget under Cloudflare's 50 per invocation", () => {
     expect(PLAN_BUDGETS.free.d1Queries).toBeLessThan(50);
     expect(PLAN_BUDGETS.free.subrequests).toBeLessThan(50);

@@ -226,6 +226,14 @@ export async function rotateHeartbeatToken(
   return result.meta.changes > 0 ? rawToken : null;
 }
 
+/** Polled monitors (http, dns, tcp, domain) are checked on every 12-minute run. */
+export const POLLED_INTERVAL_SECONDS = 720;
+
+/** A monitor's interval: how often a polled one is checked, or how often a heartbeat's job pings. */
+export function intervalSecondsOf(input: CreateMonitorInput): number {
+  return input.type === "heartbeat" ? input.config.intervalSeconds : POLLED_INTERVAL_SECONDS;
+}
+
 export async function createMonitor(
   env: Env,
   input: CreateMonitorInput,
@@ -236,8 +244,7 @@ export async function createMonitor(
   const heartbeatTokenHash = heartbeatToken
     ? await sha256hex(heartbeatToken)
     : null;
-  const intervalSeconds =
-    input.type === "heartbeat" ? input.config.intervalSeconds : 720;
+  const intervalSeconds = intervalSecondsOf(input);
   const graceSeconds =
     input.type === "heartbeat" ? input.config.graceSeconds : null;
   const assertions = input.type === "http" ? input.assertions : null;
@@ -304,8 +311,7 @@ export async function updateMonitor(
   if (!existing) return null;
 
   const now = Date.now();
-  const intervalSeconds =
-    input.type === "heartbeat" ? input.config.intervalSeconds : 720;
+  const intervalSeconds = intervalSecondsOf(input);
   const graceSeconds =
     input.type === "heartbeat" ? input.config.graceSeconds : null;
   const assertions = input.type === "http" ? input.assertions : null;

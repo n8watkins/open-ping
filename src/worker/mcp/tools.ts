@@ -39,6 +39,7 @@ import { redactChannel } from "../routes/channels";
 import { maintenanceCreateSchema } from "../routes/maintenance";
 import type { FirstCheckResult } from "../checks/first-check";
 import { patchStatusPage } from "../routes/status-pages";
+import type { HostedPlan } from "../lib/plan-limits";
 import {
   createMonitorAndCheck,
   listMonitorUptime,
@@ -72,6 +73,10 @@ export interface ToolContext {
   origin: string;
   /** The request's waitUntil, so a slow first check of a new monitor can finish. */
   waitUntil?: (p: Promise<unknown>) => void;
+  /** The tenant's plan in hosted mode (lib/plan-limits.ts); absent on a plain install. */
+  plan?: HostedPlan;
+  /** Hosted mode: tell the platform the monitor count changed (a create or delete). */
+  usageChanged?: () => void;
 }
 
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -194,6 +199,9 @@ export function firstCheckText(r: FirstCheckResult | undefined): string {
 }
 
 function writeFailure(r: Extract<MonitorWriteResult, { ok: false }>): ToolResult {
+  if (r.error === "plan_limit") {
+    return fail(`${r.body.message} Upgrade: ${r.body.upgradeUrl}`, { planLimit: r.body });
+  }
   if (r.error === "not_found") return fail("No monitor has that id. Call list_monitors to find it.");
   if (r.error === "type_immutable") return fail("A monitor's type cannot change; create a new monitor instead.");
   return fail(`Invalid monitor: ${describeIssues(r.issues ?? [])}`, { issues: r.issues ?? [] });
@@ -622,8 +630,9 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       annotations: { ...WRITE, idempotentHint: false },
     },
     async (args) => {
-      const r = await createMonitorAndCheck(env, args, ctx.waitUntil);
+      const r = await createMonitorAndCheck(env, args, ctx.waitUntil, ctx.plan);
       if (!r.ok) return writeFailure(r);
+      ctx.usageChanged?.();
       const tz = await zone();
       const created = presentCreatedMonitor(r.monitor);
       const monitor = { ...redactMonitorForMcp(r.monitor), heartbeatToken: created.heartbeatToken };
@@ -656,7 +665,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       annotations: { ...WRITE, idempotentHint: true },
     },
     async ({ id, ...patch }) => {
-      const r = await patchMonitor(env, id, patch);
+      const r = await patchMonitor(env, id, patch, ctx.plan);
       if (!r.ok) return writeFailure(r);
       const tz = await zone();
       return ok(`Updated "${r.monitor.name}" [${r.monitor.id}].`, { monitor: redactMonitorForMcp(r.monitor) }, tz);
@@ -863,6 +872,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       const m = await getMonitor(env, id);
       if (!m) return fail("No monitor has that id. Call list_monitors to find it.");
       await deleteMonitor(env, id);
+      ctx.usageChanged?.();
       return ok(`Deleted monitor "${m.name}" [${id}] and its history.`, { deleted: { id, name: m.name } }, await zone());
     },
   );

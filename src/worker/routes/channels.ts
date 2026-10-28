@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { NOTIFY_EVENTS } from "../../shared/notifications";
 import { requireAuth } from "../middleware/auth";
+import { channelKindLimit, hostedPlan } from "../lib/plan-limits";
 import {
   createChannel,
   deleteChannel,
@@ -182,6 +183,8 @@ channels.post("/", async (c) => {
   if (!parsed.success) {
     return c.json({ error: "validation", issues: parsed.error.issues }, 400);
   }
+  const refused = channelKindLimit(hostedPlan(c), parsed.data.type);
+  if (refused) return c.json(refused.body, refused.status);
   const channel = await createChannel(c.env, parsed.data);
   return c.json({ channel: redactChannel(channel) }, 201);
 });

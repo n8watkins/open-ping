@@ -14,6 +14,7 @@ import {
   listMaintenanceWindows,
 } from "../db/maintenance";
 import { getExportableSettings } from "../db/settings";
+import { hostedPlan, intervalLimit, monitorLimit } from "../lib/plan-limits";
 
 /**
  * Data import/export API mounted at /api/data (PRD §23).
@@ -381,6 +382,25 @@ data.post("/import", async (c) => {
 
   // Default to skipping name collisions so a restore can't silently overwrite.
   const skipExisting = options.skipExisting !== false;
+
+  // In hosted mode the restore must fit the plan as a whole: count the monitors
+  // it would create and refuse before creating any (lib/plan-limits.ts).
+  const plan = hostedPlan(c);
+  if (plan) {
+    // The same rule as the loop below: with skipExisting, a name that exists
+    // (or came earlier in the backup) is skipped.
+    const seen = new Set(existingNames);
+    let creating = 0;
+    for (const { input } of validMonitors) {
+      if (skipExisting && seen.has(input.name)) continue;
+      seen.add(input.name);
+      creating++;
+    }
+    const refused =
+      validMonitors.map(({ input }) => intervalLimit(plan, input)).find((r) => r !== null) ??
+      (await monitorLimit(c.env, plan, creating));
+    if (refused) return c.json(refused.body, refused.status);
+  }
 
   let importedMonitors = 0;
   let skippedMonitors = 0;

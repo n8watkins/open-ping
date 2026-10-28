@@ -230,5 +230,7 @@ export function hostedAccount(props: TenantProps) {
     billingUrl: tenant.urls.billing,
     upgradeUrl: tenant.urls.upgrade,
     signOutUrl: tenant.urls.signOut,
+    // What the plan includes, so the app can show how much is left (lib/plan-limits.ts enforces it).
+    limits: tenant.limits,
   };
 }
