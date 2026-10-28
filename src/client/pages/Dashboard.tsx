@@ -420,7 +420,7 @@ function HistoryCard({
   return (
     <Card className="mt-6 animate-enter p-5">
       <CardHeader>
-        <CardTitle>Availability and response time</CardTitle>
+        <CardTitle as="h2">Availability and response time</CardTitle>
         <span className="text-xs text-ink-faint">{spec.long}, all monitors</span>
       </CardHeader>
 
@@ -661,7 +661,7 @@ function IncidentsCard({
   return (
     <Card className={cn("animate-enter p-5", className)}>
       <CardHeader>
-        <CardTitle>Incidents</CardTitle>
+        <CardTitle as="h2">Incidents</CardTitle>
         <Link
           to="/incidents"
           className="inline-flex items-center gap-1 rounded text-sm text-ink-muted transition-colors hover:text-ink"
@@ -769,7 +769,7 @@ function MaintenanceCard({
   return (
     <Card className="animate-enter p-5">
       <CardHeader>
-        <CardTitle>Maintenance</CardTitle>
+        <CardTitle as="h2">Maintenance</CardTitle>
         <Link
           to="/maintenance"
           className="inline-flex items-center gap-1 rounded text-sm text-ink-muted transition-colors hover:text-ink"
