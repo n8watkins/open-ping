@@ -9,7 +9,7 @@ Last updated: 2026-10-28.
 - `main` has round 2 (rebuilt landing page, signed-in app UI, a scheduler that stays inside Cloudflare's free-plan limits, Cloudflare Web Analytics allowed in the CSP, no em dashes) and Hosted stage 1 (PR #12: "Runs in your own Cloudflare account" wording, a pricing section, a waitlist at `/api/waitlist`, the `/install` guide, the waitlist count and CSV in Settings).
 - **Live:** v0.2.0 was deployed to https://openping.n8builds.dev on 2026-10-28, with migrations through 0011 applied and the waitlist on.
   It adds the off-hours fix (#15), one strict security header policy for every page and the widget on the bare n8builds.dev (#16), idle scheduler runs of 3 database calls instead of about 160 (#17), and the `deploy:prod` flow (#14).
-  A D1 export taken just before the deploy is in `~/backups/open-ping/` on the owner's machine.
+  A D1 export taken just before the deploy is in `../open-ping-backups/` on the owner's machine.
 - The paid hosted version is planned in [the Hosted plan](./HOSTED_PLAN.md): stages 0 to 7, each with a go/no-go gate.
   Chosen pricing: $24 a year (20 monitors, 12-minute checks, 2 status pages), plus $12 a year for 1-minute checks; no free hosted plan.
   Gate after stage 1: about 20 waitlist sign-ups within 8 weeks.
