@@ -28,6 +28,7 @@ The commands have these effects:
 - `npm run db:migrate` runs `wrangler d1 migrations apply open-ping --remote` and applies only pending migrations.
 - `npm run db:migrate:local` performs the equivalent operation for the local development database.
 - `npm run deploy` runs `vite build && wrangler deploy` and reapplies the Cron Trigger from `wrangler.jsonc`.
+- If you keep your ids in `deploy.local.json` ([Install, "Keep your own ids out of git"](./INSTALL.md#keep-your-own-ids-out-of-git)), run `npm run db:migrate:prod` and `npm run deploy:prod` instead.
 
 ## Security migrations in `0008` and `0009`
 

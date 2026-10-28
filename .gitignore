@@ -6,6 +6,10 @@ dist/
 !.dev.vars.example
 .op-token
 .op.env
+# Your install's own ids and settings (scripts/prod-config.mjs), and the
+# production config generated from them.
+deploy.local.json
+.wrangler.prod.jsonc
 *.local
 .env
 .env.*
