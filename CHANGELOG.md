@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 - 2026-10-28
+
+Status pages now show a timeline of incident updates, can be followed by RSS or Atom, and say No data yet for monitors that have never been checked. A monthly uptime report is available as a table, CSV, MCP tool, CLI command and opt-in email. The offline page and Settings are tidier.
+
+### New
+
+- Send alerts to Slack, Microsoft Teams and Telegram ([#29](https://github.com/n8watkins/open-ping/pull/29))
+- Failures are re-checked before alerting, and new monitors are checked at once ([#31](https://github.com/n8watkins/open-ping/pull/31))
+
 ## 0.4.0 - 2026-10-28
 
 ### New
