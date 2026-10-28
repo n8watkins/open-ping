@@ -29,7 +29,7 @@ const ROWS: Row[] = [
   },
   {
     label: "Monitors",
-    own: "No cap of its own; about 8 at once on the free plan, up to 200 a run on Workers Paid",
+    own: "No cap of its own; about 24 at once on the free plan, up to 200 a run on Workers Paid",
     hosted: "20",
   },
   {

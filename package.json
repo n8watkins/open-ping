@@ -41,7 +41,7 @@
         "description": "Unlocks the first-run setup page until you finish it, so nobody else can claim your new install. Generate another value the same way (`openssl rand -base64 32`) and keep it: the setup page asks for it."
       },
       "WORKERS_PLAN": {
-        "description": "Your Cloudflare Workers plan, `free` or `paid`. On Free each 12-minute run checks about 8 monitors and leaves the rest for the next run. [More](https://github.com/n8watkins/open-ping/blob/main/docs/FREE_TIER.md)"
+        "description": "Your Cloudflare Workers plan, `free` or `paid`. On Free each 12-minute run checks about 24 monitors and leaves the rest for the next run. [More](https://github.com/n8watkins/open-ping/blob/main/docs/FREE_TIER.md)"
       },
       "WAITLIST_ENABLED": {
         "description": "Leave `false`. Only the OpenPing project's own site collects the Hosted waitlist."

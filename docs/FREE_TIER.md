@@ -25,7 +25,7 @@ OpenPing's footprint has three parts:
    near expiry) and judges the checks in between from the date it last read,
    with no fetch at all ([MONITOR_TYPES.md](./MONITOR_TYPES.md#how-often-rdap-is-asked)).
    Each still counts as roughly one check, and each run checks only as
-   many monitors as fit its plan's per-run budget (about 25 on Free, up to 200 on
+   many monitors as fit its plan's per-run budget (about 24 on Free, up to 200 on
    Paid; see below), most overdue first, with the rest deferred to the next tick.
 3. **D1 reads/writes.** Each run does light database work.
    It reads which monitors are due and their state, then writes samples, state updates, interval and summary rollups, and any queued notifications.
@@ -94,13 +94,14 @@ A run with a re-check takes about 5 seconds longer (it waits before the second c
 
 Measured in `test/integration/scheduler-budget.test.ts` (30 HTTP monitors):
 
-- **Free plan: about 25 checks per run** when checks pass, and about 16 per run while checks are failing, confirming and opening incidents.
-  Polled monitors are checked every 12 minutes, so the Free plan comfortably runs **about 25 monitors that are on at the same time**.
+- **Free plan: about 24 checks per run** when checks pass, and about 17 per run while checks are failing, confirming and opening incidents.
+  Polled monitors are checked every 12 minutes, so the Free plan comfortably runs **about 24 monitors that are on at the same time**.
 - Monitors outside their operating hours cost nothing, so a set of business-hours monitors that don't all overlap goes further, and a monitor that misses a tick is simply checked on the next one.
 - **Workers Paid** (`"WORKERS_PLAN": "paid"` in `wrangler.jsonc`): up to 200 checks per run.
 
 Each check keeps one D1 query back for the whole run, though it normally spends none: if the run's batch of writes fails, that query pays for retrying the check's writes on their own.
-That margin, the room kept for the end of the run, and room for three alert deliveries (three queries each) are what limit a Free run to about 25 checks.
+That margin, the room kept for the end of the run (including the weekly summary, about 9 queries when it is due), and room for three alert deliveries are what limit a Free run to about 24 checks.
+If a failed batch's retries use up the room kept for the weekly summary or the monthly report, the run skips it; it is still due, so a later run sends it.
 
 ### D1 round trips per run, before and after batching
 
@@ -110,14 +111,18 @@ Builds before this change wrote each check on its own, about 3 round trips per p
 | Due monitors | Passing, before | Passing, now | Opening incidents, before | Opening incidents, now |
 | --- | --- | --- | --- | --- |
 | 1 | 6 | 3 | 17 | 7 |
-| 3 | 12 | 3 | 45 | 13 |
-| 10 | 33 | 3 | 143 | 34 |
-| 30 | 93 | 3 | 408 | 79 |
+| 3 | 12 | 3 | 45 | 11 |
+| 10 | 33 | 3 | 143 | 25 |
+| 30 | 93 | 3 | 408 | 55 |
 
 A run of passing checks now costs the same three round trips as a run that checks nothing, however many monitors it checks.
 A run that opens or resolves incidents adds one shared read batch, so its checks cost four round trips together.
-What remains in the "opening incidents" column is alert delivery: each alert sent costs three queries (the channel, marking it sent or failed, and the channel's result), and a run delivers at most 25.
-The checks per Free run went from about 8 to about 25 while passing, and from about 3 to about 16 while failing.
+What remains in the "opening incidents" column is alert delivery, and a run delivers at most 25.
+Each channel is read once per run, then each alert to it costs two queries (marking it sent or failed, and the channel's result).
+A Web Push alert also reads its device (three queries), and the VAPID keys are read once per run.
+Before an alert goes, the run checks that its worst case still fits; one that doesn't waits for the next run.
+If an incident opens but the write that queues its alert doesn't land, a later run queues it, with the same event keys, so it is never sent twice.
+The checks per Free run went from about 8 to about 24 while passing, and from about 3 to about 17 while failing.
 
 The CPU limit (10 ms per cron run on Free) counts only time spent computing, not
 waiting on the network or D1, so it isn't usually the constraint for a few
@@ -166,4 +171,4 @@ authoritative limits.
 - Lean on **schedule-aware monitoring**: outside operating hours a monitor is
   `Scheduled off` and isn't checked.
 - Pause monitors you don't currently need.
-- Keep the monitor count modest on the Free plan (about 25 on at once); each added monitor adds up to 120 checks a day.
+- Keep the monitor count modest on the Free plan (about 24 on at once); each added monitor adds up to 120 checks a day.
