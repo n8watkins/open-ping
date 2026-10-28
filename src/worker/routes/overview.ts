@@ -312,6 +312,7 @@ export async function buildOverview(env: Env, now: number = Date.now()) {
       lastStatusCode: st?.last_status_code ?? null,
       nextCheckAt: st?.next_check_at ?? null,
       stateSince: st?.state_since ?? null,
+      activeIncidentId: st?.active_incident_id ?? null,
       uptime24h: uptimeByMonitor.get(m.id) ?? 100,
       recentChecks: recentChecksByMonitor.get(m.id) ?? [],
       publicVisible: m.public?.visible ?? false,

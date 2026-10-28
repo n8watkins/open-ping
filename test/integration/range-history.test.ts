@@ -163,10 +163,12 @@ describe("GET /api/overview/history", () => {
     const d30 = await (await apiRequest("/api/overview/history?range=30d")).json<OverviewHistoryResponse>();
     expect(d30.bucketMs).toBe(DAY);
     expect(d30.overall.buckets).toHaveLength(30);
-    expect(d30.overall.latency.basis).toBe("daily");
+    // Hourly summaries still cover 30 days, so percentiles use hourly averages.
+    expect(d30.overall.latency).toMatchObject({ basis: "hourly", count: 3 });
     expect(d30.incidentCount).toBe(2);
     const d90 = await (await apiRequest("/api/overview/history?range=90d")).json<OverviewHistoryResponse>();
     expect(d90.overall.buckets).toHaveLength(90);
+    expect(d90.overall.latency.basis).toBe("daily");
     const bad = await (await apiRequest("/api/overview/history?range=forever")).json<OverviewHistoryResponse>();
     expect(bad.range).toBe("7d");
   });
@@ -175,8 +177,11 @@ describe("GET /api/overview/history", () => {
 describe("GET /api/overview maintenance", () => {
   it("lists upcoming maintenance and leaves out windows that ended", async () => {
     const body = await (await apiRequest("/api/overview")).json<{
+      monitors: { activeIncidentId: string | null }[];
       maintenance: { active: unknown[]; upcoming: { id: string; title: string }[] };
     }>();
+    // Each monitor names its open incident (none here), so the page can link to it.
+    expect(body.monitors.every((m) => m.activeIncidentId === null)).toBe(true);
     expect(body.maintenance.active).toEqual([]);
     expect(body.maintenance.upcoming.map((w) => w.id)).toEqual(["mw_soon"]);
   });

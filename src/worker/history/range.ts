@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import {
+  DAY_MS,
   RANGE_SPEC,
   rangeBounds,
   type BucketState,
@@ -24,7 +25,7 @@ import {
  *    state, which is what tells an off-hours bucket (neutral gray, no checks by
  *    design) from a gap in the data, and a suspension from an outage.
  *
- * Whatever the monitor count, a load is at most six D1 reads, run in parallel,
+ * Whatever the monitor count, a load is at most seven D1 reads, run in parallel,
  * well inside the Free plan's 50 queries per invocation.
  */
 
@@ -361,6 +362,9 @@ interface IncidentRow {
   error: string | null;
 }
 
+/** Ranges up to this long take latency percentiles from hourly summaries (kept 64 days). */
+const HOURLY_LATENCY_MAX_MS = 60 * DAY_MS;
+
 /** How many incidents a range response lists (the count covers them all). */
 export const RANGE_INCIDENT_LIMIT = 100;
 
@@ -382,9 +386,10 @@ export interface RangeHistory {
 
 /**
  * Load the range history of every monitor, or of one (`monitorId`). At most
- * six D1 reads in parallel whatever the monitor count: monitor ids, the
+ * seven D1 reads in parallel whatever the monitor count: monitor ids, the
  * summaries in range, the overlapping status intervals, the OK samples (24h
- * only), and the incidents overlapping the range with their count.
+ * only), the hourly latencies (30d only), and the incidents overlapping the
+ * range with their count.
  */
 export async function loadRangeHistory(
   env: Env,
@@ -397,7 +402,12 @@ export async function loadRangeHistory(
   const one = monitorId != null;
   const useSamples = range === "24h";
 
-  const [idsRes, summaryRes, intervalRes, sampleRes, incidentRes, countRow] = await Promise.all([
+  // Percentiles want the finest data still kept: raw samples for 24h, hourly
+  // averages while hourly summaries cover the range (64 days by default), and
+  // the day buckets themselves beyond that.
+  const hourlyLatency = !useSamples && spec.period === "day" && spec.buckets * DAY_MS <= HOURLY_LATENCY_MAX_MS;
+
+  const [idsRes, summaryRes, intervalRes, sampleRes, hourlyRes, incidentRes, countRow] = await Promise.all([
     (one
       ? env.DB.prepare("SELECT id FROM monitors WHERE id = ?").bind(monitorId)
       : env.DB.prepare("SELECT id FROM monitors ORDER BY created_at")
@@ -430,6 +440,17 @@ export async function loadRangeHistory(
           .bind(...[from, now, ...(one ? [monitorId] : [])])
           .all<SampleRow>()
       : Promise.resolve({ results: [] as SampleRow[] }),
+    hourlyLatency
+      ? env.DB.prepare(
+          `SELECT monitor_id, sum_latency_ms, ok_checks
+             FROM summaries
+            WHERE period = 'hour' AND bucket_start >= ? AND bucket_start < ?
+              AND ok_checks > 0 AND max_latency_ms IS NOT NULL
+              ${one ? "AND monitor_id = ?" : ""}`,
+        )
+          .bind(...[from, to, ...(one ? [monitorId] : [])])
+          .all<{ monitor_id: string; sum_latency_ms: number; ok_checks: number }>()
+      : Promise.resolve({ results: [] as { monitor_id: string; sum_latency_ms: number; ok_checks: number }[] }),
     env.DB.prepare(
       `SELECT i.id, i.monitor_id, m.name AS monitor_name, i.status, i.title,
               i.started_at, i.resolved_at, i.duration_seconds, i.error
@@ -458,24 +479,33 @@ export async function loadRangeHistory(
     list.push({ t: Number(s.at), ms: Number(s.duration_ms) });
     samplesBy.set(s.monitor_id, list);
   }
+  const hourlyBy = new Map<string, number[]>();
+  for (const r of hourlyRes.results ?? []) {
+    const list = hourlyBy.get(r.monitor_id) ?? [];
+    list.push(Number(r.sum_latency_ms) / Number(r.ok_checks));
+    hourlyBy.set(r.monitor_id, list);
+  }
   const basis: LatencyStats["basis"] = useSamples
     ? "checks"
-    : spec.period === "hour"
+    : spec.period === "hour" || hourlyLatency
       ? "hourly"
       : "daily";
+  const latencyValues = (id: string, buckets: RangeBucket[]): number[] =>
+    useSamples
+      ? (samplesBy.get(id) ?? []).map((p) => p.ms)
+      : hourlyLatency
+        ? (hourlyBy.get(id) ?? [])
+        : bucketAverages(buckets);
 
   const monitors: MonitorRangeHistory[] = (idsRes.results ?? []).map(({ id }) => {
     const spans = (intervalsBy.get(id) ?? []).map(toSpan);
     const seconds = distributeIntervals(spans, from, bucketMs, starts.length, now);
     const buckets = buildBuckets(starts, summariesBy.get(id) ?? [], seconds);
-    const latencyValues = useSamples
-      ? (samplesBy.get(id) ?? []).map((p) => p.ms)
-      : bucketAverages(buckets);
     const { suspensions } = downtimeBreakdown(spans, from, now);
     return {
       id,
       buckets,
-      ...totalsFromBuckets(buckets, suspensions, latencyStats(latencyValues, basis)),
+      ...totalsFromBuckets(buckets, suspensions, latencyStats(latencyValues(id, buckets), basis)),
     };
   });
 
@@ -483,12 +513,10 @@ export async function loadRangeHistory(
     starts,
     monitors.map((m) => m.buckets),
   );
-  const overallLatency = useSamples
-    ? latencyStats(
-        [...samplesBy.values()].flatMap((list) => list.map((p) => p.ms)),
-        basis,
-      )
-    : latencyStats(monitors.flatMap((m) => bucketAverages(m.buckets)), basis);
+  const overallLatency = latencyStats(
+    monitors.flatMap((m) => latencyValues(m.id, m.buckets)),
+    basis,
+  );
   const overall = {
     ...totalsFromBuckets(
       overallBuckets,
