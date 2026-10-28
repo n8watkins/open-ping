@@ -5,6 +5,7 @@ import { api } from "../../lib/api";
 import { useBootstrap } from "../../lib/bootstrap";
 import { Card, CardHeader, CardTitle } from "../../components/ui/Card";
 import { HostedManagedCard } from "../../components/HostedManaged";
+import { InstallCard } from "../../components/InstallApp";
 import {
   ErrorBanner,
   Field,
@@ -33,7 +34,7 @@ function timezones(): string[] {
   return ["UTC", "America/New_York", "America/Los_Angeles", "Europe/London"];
 }
 
-/** Settings > General: timezone, the install's address, and the email sender. */
+/** Settings > General: timezone, address and email sender, then installing the app. */
 export default function GeneralSettings() {
   const { me } = useBootstrap();
   // On OpenPing Hosted the platform runs the install and gives it its address.
@@ -110,92 +111,95 @@ function GeneralCard({ hosted }: { hosted: boolean }) {
   }
 
   return (
-    <Card className="p-5">
-      <CardHeader>
-        <CardTitle>General</CardTitle>
-      </CardHeader>
-      <p className="-mt-1 mb-5 text-sm text-ink-muted">
-        {hosted
-          ? "How this OpenPing tells time, and where it lives."
-          : "How this install tells time, where it lives, and who its email comes from."}
-      </p>
+    <div className="stagger space-y-6 [&>*]:animate-enter">
+      <Card className="p-5">
+        <CardHeader>
+          <CardTitle>General</CardTitle>
+        </CardHeader>
+        <p className="-mt-1 mb-5 text-sm text-ink-muted">
+          {hosted
+            ? "How this OpenPing tells time, and where it lives."
+            : "How this install tells time, where it lives, and who its email comes from."}
+        </p>
 
-      {loading && !data ? (
-        <SectionSkeleton rows={3} />
-      ) : error && !data ? (
-        <ErrorBanner>Could not load settings: {error}</ErrorBanner>
-      ) : (
-        <form onSubmit={(e) => void save(e)} className="space-y-5">
-          <Field label="Timezone" hint="Used for schedules, maintenance windows and reports.">
-            <select
-              name="timezone"
-              value={timezone}
-              onChange={(e) => edited(setTimezone)(e.target.value)}
-              className="input sm:max-w-sm"
-            >
-              {!tzList.includes(timezone) && timezone && <option value={timezone}>{timezone}</option>}
-              {tzList.map((tz) => (
-                <option key={tz} value={tz}>
-                  {tz}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          {hosted ? (
-            <div>
-              <span className="mb-1.5 block text-xs font-medium text-ink-muted">Address</span>
-              <p className="truncate rounded-lg border border-line bg-surface-2/40 px-3 py-2 font-mono text-sm text-ink">
-                {window.location.host}
-              </p>
-              <span className="mt-1 block text-xs leading-relaxed text-ink-faint">
-                OpenPing Hosted gives this OpenPing its address. Passkeys work only here.
-              </span>
-            </div>
-          ) : (
-            <Field
-              label="Installation URL"
-              hint={
-                passkeyData?.appUrlFromEnv
-                  ? `The APP_URL Worker variable sets this address (${passkeyData.origin}) and takes precedence, so this setting has no effect while it is set.`
-                  : "The public address, used for links in alerts, OAuth redirects and passkeys. Passkeys work only at this address, so changing it means adding new ones."
-              }
-            >
-              <input
-                name="app_url"
-                value={appUrl}
-                onChange={(e) => edited(setAppUrl)(e.target.value)}
-                placeholder="https://status.example.com"
-                type="url"
-                className="input"
-              />
-            </Field>
-          )}
-
-          {/* Hosted mode: the platform sends every email from its own address. */}
-          {!hosted && (
-            <Field label="Email from address" hint="The sender of email alerts and reports.">
-              <input
-                name="email_from"
-                value={emailFrom}
-                onChange={(e) => edited(setEmailFrom)(e.target.value)}
-                placeholder="openping@example.com"
-                type="email"
+        {loading && !data ? (
+          <SectionSkeleton rows={3} />
+        ) : error && !data ? (
+          <ErrorBanner>Could not load settings: {error}</ErrorBanner>
+        ) : (
+          <form onSubmit={(e) => void save(e)} className="space-y-5">
+            <Field label="Timezone" hint="Used for schedules, maintenance windows and reports.">
+              <select
+                name="timezone"
+                value={timezone}
+                onChange={(e) => edited(setTimezone)(e.target.value)}
                 className="input sm:max-w-sm"
-              />
+              >
+                {!tzList.includes(timezone) && timezone && <option value={timezone}>{timezone}</option>}
+                {tzList.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz}
+                  </option>
+                ))}
+              </select>
             </Field>
-          )}
 
-          {saveError && <ErrorBanner>{saveError}</ErrorBanner>}
+            {hosted ? (
+              <div>
+                <span className="mb-1.5 block text-xs font-medium text-ink-muted">Address</span>
+                <p className="truncate rounded-lg border border-line bg-surface-2/40 px-3 py-2 font-mono text-sm text-ink">
+                  {window.location.host}
+                </p>
+                <span className="mt-1 block text-xs leading-relaxed text-ink-faint">
+                  OpenPing Hosted gives this OpenPing its address. Passkeys work only here.
+                </span>
+              </div>
+            ) : (
+              <Field
+                label="Installation URL"
+                hint={
+                  passkeyData?.appUrlFromEnv
+                    ? `The APP_URL Worker variable sets this address (${passkeyData.origin}) and takes precedence, so this setting has no effect while it is set.`
+                    : "The public address, used for links in alerts, OAuth redirects and passkeys. Passkeys work only at this address, so changing it means adding new ones."
+                }
+              >
+                <input
+                  name="app_url"
+                  value={appUrl}
+                  onChange={(e) => edited(setAppUrl)(e.target.value)}
+                  placeholder="https://status.example.com"
+                  type="url"
+                  className="input"
+                />
+              </Field>
+            )}
 
-          <div className="flex items-center gap-3 border-t border-line pt-4">
-            <PrimaryButton type="submit" busy={saving} disabled={!dirty}>
-              Save changes
-            </PrimaryButton>
-            <SavedNote show={saved && !saving && !dirty} />
-          </div>
-        </form>
-      )}
-    </Card>
+            {/* Hosted mode: the platform sends every email from its own address. */}
+            {!hosted && (
+              <Field label="Email from address" hint="The sender of email alerts and reports.">
+                <input
+                  name="email_from"
+                  value={emailFrom}
+                  onChange={(e) => edited(setEmailFrom)(e.target.value)}
+                  placeholder="openping@example.com"
+                  type="email"
+                  className="input sm:max-w-sm"
+                />
+              </Field>
+            )}
+
+            {saveError && <ErrorBanner>{saveError}</ErrorBanner>}
+
+            <div className="flex items-center gap-3 border-t border-line pt-4">
+              <PrimaryButton type="submit" busy={saving} disabled={!dirty}>
+                Save changes
+              </PrimaryButton>
+              <SavedNote show={saved && !saving && !dirty} />
+            </div>
+          </form>
+        )}
+      </Card>
+      <InstallCard />
+    </div>
   );
 }

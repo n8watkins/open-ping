@@ -17,6 +17,7 @@ import type { OverviewResponse } from "../lib/types";
 import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { PageTitle } from "../components/ui/PageTitle";
+import { PullToRefresh } from "../components/PullToRefresh";
 import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import type { Schedule } from "../../shared/schemas";
@@ -167,9 +168,12 @@ export default function Monitors() {
     />
   );
 
+  const refresh = () => Promise.all([reload(), reloadStats()]);
+
   if (error && !data) {
     return (
       <div className="mx-auto max-w-6xl">
+        <PullToRefresh onRefresh={refresh} />
         <PageTitle>Monitors</PageTitle>
         <p className="mt-6 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
           Could not load monitors: {error}
@@ -182,6 +186,7 @@ export default function Monitors() {
 
   return (
     <div className="mx-auto max-w-6xl">
+      <PullToRefresh onRefresh={refresh} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <PageTitle>Monitors</PageTitle>
         <NewMonitorControl />

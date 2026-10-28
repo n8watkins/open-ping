@@ -30,6 +30,7 @@ import {
   registerServiceWorker,
   subscribeToPush,
 } from "../lib/push";
+import { NotificationHelp } from "../components/NotificationHelp";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { PageTitle } from "../components/ui/PageTitle";
@@ -1022,20 +1023,7 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
           {notice}
         </p>
       )}
-      {!supported && (
-        <p className="mb-3 rounded-lg border border-degraded/40 bg-degraded/10 px-3 py-2 text-sm text-degraded">
-          This browser doesn't support web push. On Android, open OpenPing in
-          Chrome, use the menu to "Add to Home screen", then enable push from the
-          installed app for reliable delivery.
-        </p>
-      )}
-      {supported && (
-        <p className="mb-3 text-xs text-ink-faint">
-          On Android Chrome, install OpenPing ("Add to Home screen") and grant the
-          notification permission when prompted so alerts arrive even when the tab
-          is closed.
-        </p>
-      )}
+      <NotificationHelp />
 
       {devLoading && !devData ? (
         <ListSkeleton />

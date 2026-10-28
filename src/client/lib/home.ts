@@ -6,7 +6,8 @@ export type RootView = "loading" | "dashboard" | "landing" | "status";
 /**
  * Decide what `/` shows, from the bootstrap fetch:
  *  - nothing until it's back, so nobody sees one page and then another;
- *  - the dashboard for a signed-in admin, on every install;
+ *  - the dashboard for a signed-in admin, on every install, and offline on a
+ *    device that keeps a signed-in admin's saved Overview (savedSession);
  *  - for anyone else, the HOME_PAGE choice the server reports: OpenPing's
  *    marketing page only where it's "landing" (the canonical install), and
  *    this install's own status page everywhere else, including when the
@@ -16,13 +17,15 @@ export function rootView({
   loading,
   me,
   status,
+  savedSession = false,
 }: {
   loading: boolean;
   me: Me | null;
   status: AuthStatus | null;
+  savedSession?: boolean;
 }): RootView {
   if (loading) return "loading";
-  if (me?.authenticated) return "dashboard";
+  if (me?.authenticated || savedSession) return "dashboard";
   return status?.homePage === "landing" ? "landing" : "status";
 }
 
