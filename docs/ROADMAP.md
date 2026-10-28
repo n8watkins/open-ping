@@ -1,0 +1,80 @@
+# OpenPing roadmap
+
+One checklist for everything still to do, in stages.
+Tick items as they land and link the PR.
+The owner's own to-dos (accounts, devices, decisions) live in [Deferred operator inputs](./DEFERRED_INPUTS.md); this list links to them instead of repeating them.
+The paid hosted version has its own detailed plan with go/no-go gates in [the Hosted plan](./HOSTED_PLAN.md); stage 4 below follows it.
+Last updated: 2026-10-28.
+
+## How installs relate to each other
+
+Every OpenPing install is its owner's own, independent setup: its own Cloudflare account, Worker, database, monitors and status pages.
+Installs never talk to each other, and nobody, including us, can see anyone else's install.
+openping.n8builds.dev is simply the owner's install, which also hosts the project's marketing page.
+The only shared things are the source code on GitHub and, if an install chooses to link to it, the OpenPing website.
+
+## Stage 1: solid and honest (now)
+
+- [x] Off-hours monitors show "Scheduled off", never "operational" (#15).
+- [x] One strict security header policy on every page; the widget embeds on n8builds.dev (#16).
+- [x] Idle scheduler runs take 3 database calls instead of about 160 (#17).
+- [x] Repeatable releases and production deploys (`deploy:prod`, release-kit, CI on every PR) (#14, #16).
+- [x] Missing files return 404, a real robots.txt, readable widget footer, wide-screen header (#21).
+- [x] Plan for the landing page, Hosted and sign-in ([LANDING_AND_LOGIN_PLAN.md](./LANDING_AND_LOGIN_PLAN.md)) (#22).
+- [ ] MCP server at `/mcp` and a full admin CLI, so Claude and scripts can run OpenPing.
+- [ ] Safe `MASTER_KEY` rotation (two keys during a re-encryption pass, then a verified switch).
+- [ ] Back up the production `MASTER_KEY` or set a fresh one ([owner to-do 1](./DEFERRED_INPUTS.md)).
+- [ ] Landing page shows both paths (free in your own Cloudflare, or Hosted), honest waitlist, owner-only sign-in in the footer, click counts (plan section 6, items 1.0 to 1.8).
+- [ ] Other people's installs show their own status page at `/`, not OpenPing's marketing page (plan item 1.9, `HOME_PAGE` setting).
+- [ ] Sweep the remaining em dashes out of code comments.
+- [ ] Dependency upkeep: release-kit 2.0.1, `@cloudflare/vitest-pool-workers` renamed to `@cloudflare/vitest-plugin`.
+
+## Stage 2: close the feature gaps that matter
+
+Competitors checked on 2026-10-28 (see section 5 of the landing plan).
+OpenPing already has HTTP with keyword and JSON assertions, heartbeat (cron), DNS, TCP port and domain-expiry monitors, slow-response "degraded" thresholds, maintenance windows, incidents with public notes and CSV export, many status pages, an embeddable widget and badge, email, Discord, signed webhooks and web push alerts, a weekly summary email, and free tools.
+These are the gaps a buyer is likely to notice, most valuable first:
+
+- [ ] **Slack, Telegram and Microsoft Teams alerts** (S each).
+  Nearly every competitor has them; today they need the generic webhook and some glue.
+- [ ] **Confirm before alerting** (M, overlaps Hosted stage 2).
+  Re-check a failure once, ideally from a second Cloudflare location, before opening an incident, so one bad request doesn't page anyone.
+- [ ] **SSL certificate expiry monitor** (M, needs a spike).
+  UptimeRobot, StatusCake and HetrixTools warn before a certificate expires.
+  A Worker's `fetch()` doesn't expose the certificate, so this needs another source, such as Certificate Transparency logs; confirm it works before promising it.
+- [ ] **Incident updates on the status page** (M).
+  A timeline of posts ("Investigating", "Identified", "Fixed") instead of a single message, as Instatus and Better Stack show.
+- [ ] **Status page feeds** (S): RSS and Atom for incidents, so people can follow a page without an account.
+- [ ] **Status page email subscribers** (M, double opt-in, unsubscribe links, sending limits).
+  Do this after the feeds, and only if people ask.
+- [ ] **Monthly uptime report** (S): a CSV and an email per monitor, for SLAs and clients.
+- [ ] **Passkeys for the admin sign-in** (M, landing plan item 2.1), which makes the GitHub OAuth app optional (2.2).
+- [ ] **"Deploy to Cloudflare" button** (M spike, plan items 2.3 and 2.4), to cut the 20-minute install.
+- [ ] **First check right away** when the first monitor is added (S, plan item 2.5).
+
+Deliberately not on the list, because others do them better and they don't fit a $24-a-year product: free hosted tiers, 30-second checks from dozens of regions, on-call rotations and phone calls, browser (Playwright) monitoring, white-label status pages as the main product, SOC 2 and SAML.
+ICMP ping isn't possible from Workers; TCP and HTTP checks cover the same need.
+
+## Stage 3: run the stage 1 waitlist test
+
+- [ ] Watch click counts and waitlist sign-ups for 8 weeks after the landing page ships.
+- [ ] Gate: about 20 sign-ups.
+  Under that, keep OpenPing a free self-hosted project and skip stage 4.
+
+## Stage 4: OpenPing Hosted (only if the gate passes)
+
+Follow [the Hosted plan](./HOSTED_PLAN.md) stages 2 to 7; summary:
+
+- [ ] Cheap fast checks and fewer false alarms (Hosted stage 2).
+- [ ] One customer's OpenPing on Workers for Platforms, prototype (Hosted stage 3).
+- [ ] Sign-up, provisioning and sign-in at `app.openping.n8builds.dev`: email link plus code, GitHub, then Google before launch (Hosted stage 4, landing plan section 3).
+- [ ] Billing and plan limits (Hosted stage 5).
+- [ ] Support, backups, export to self-host, terms and privacy (Hosted stage 6).
+- [ ] Launch: the hero switches to Hosted first, self-host second (Hosted stage 7, landing plan items 7.1 to 7.4).
+
+## Stage 5: a name and a domain of its own (owner, when OpenPing is solid)
+
+- [ ] Pick a name; check it isn't taken by another monitoring product or trademark, and that the npm name, GitHub name and a domain are free.
+- [ ] Buy the domain and add it to Cloudflare.
+- [ ] Move the marketing site and, if it exists by then, Hosted to the new domain; keep openping.n8builds.dev redirecting.
+- [ ] Rename the repository and the Worker, and update the README, docs and the widget's "Powered by" link.
