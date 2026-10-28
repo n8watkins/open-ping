@@ -215,6 +215,7 @@ Keep every full sentence on its own physical line when substantially editing lon
 Use `npm run db:migrate:local` for local D1 migrations and `npm run db:migrate:prod` for the production D1.
 Squash-merge PRs with a subject and body you write (`gh pr merge --squash --subject "feat(x): ... (#N)" --body "..."`).
 Without `--subject` the PR title becomes the commit subject, and a title that isn't a Conventional Commit fails the commit check on `main` and drops the PR from the release notes (#30 hit this).
+Keep that subject, including the `(#N)`, at 100 characters or fewer: the commit check rejects longer headers (#37 hit this).
 Without `--body` the default body lists every commit, and one `Release-note: skip` line in it hides the whole PR from the release notes.
 release-kit ignores flags it doesn't know, so `npm run release -- --help` cuts a real release; read node_modules/release-kit/README.md instead.
 
