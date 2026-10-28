@@ -27,7 +27,7 @@ import {
 } from "../lib/format";
 
 /* ------------------------------------------------------------------ *
- * Response shape (GET /api/public/status). Defined locally — the
+ * Response shape (GET /api/public/status). Defined locally - the
  * public status page is a standalone, unauthenticated surface.
  * ------------------------------------------------------------------ */
 

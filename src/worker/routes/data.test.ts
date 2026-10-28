@@ -17,7 +17,7 @@ import {
  * collect errors without throwing.
  */
 
-/** Build a minimal MonitorRecord with the given config (cast — fixtures stay small). */
+/** Build a minimal MonitorRecord with the given config (cast - fixtures stay small). */
 function makeMonitor(
   type: "http" | "heartbeat",
   config: Record<string, unknown>,

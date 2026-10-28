@@ -340,7 +340,7 @@ interface FakeState {
  * Minimal D1 stub. Answers the three queries the route issues directly:
  * monitor_state, summaries, and the two per-page incident selects. For
  * incidents it honours the `monitor_id IN (...)` scoping by filtering on the
- * bound ids — so if the route ever dropped that clause, off-page rows would leak
+ * bound ids - so if the route ever dropped that clause, off-page rows would leak
  * through here and the redaction-scope test would fail (as intended).
  */
 function makeDb(fixture: {

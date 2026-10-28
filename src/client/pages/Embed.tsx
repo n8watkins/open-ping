@@ -19,7 +19,7 @@ import type { MonitorState } from "../../shared/states";
  * Embeddable status widget (mounted at /embed). Renders inside an
  * <iframe> on an EXTERNAL host page, so it reuses ONLY the already
  * public, redacted payload from GET /api/public/status (same endpoint
- * the public status page uses) — it never reaches for monitor config,
+ * the public status page uses) - it never reaches for monitor config,
  * tokens, headers, or internal errors. The framing headers for this
  * route are widened in src/worker/index.ts so the iframe can load
  * cross-origin; everything else stays SAMEORIGIN.

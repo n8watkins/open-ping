@@ -95,7 +95,7 @@ interface PublicIncident {
 }
 
 interface PublicMaint {
-  // NB: the window's internal `title` is deliberately NOT exposed — operators
+  // NB: the window's internal `title` is deliberately NOT exposed - operators
   // treat it as an internal label (it has no "shown publicly" hint in the admin
   // UI), and the sibling incident projection anonymizes its title for the same
   // reason. Only the admin-authored public message is surfaced.
@@ -105,7 +105,7 @@ interface PublicMaint {
 }
 
 // ---------------------------------------------------------------------------
-// Pure helpers (unit-tested) — no DB, no request context.
+// Pure helpers (unit-tested) - no DB, no request context.
 // ---------------------------------------------------------------------------
 
 /**
@@ -167,7 +167,7 @@ function mapPublicState(state: MonitorState): PublicServiceState {
       // operational. computeOverall keeps it out of the outage count.
       return "scheduled_off";
     default:
-      // unknown / warming_up / paused — nothing meaningful to show publicly.
+      // unknown / warming_up / paused - nothing meaningful to show publicly.
       return "unknown";
   }
 }
@@ -381,7 +381,7 @@ async function loadPublicIncidents(
 }
 
 // ---------------------------------------------------------------------------
-// Page resolution (PRD §16 — multiple per-category status pages).
+// Page resolution (PRD §16 - multiple per-category status pages).
 //
 // A request may target a specific published page via `?slug=`; otherwise it gets
 // the single default page. Either way we normalize to a `ResolvedPage`: the
@@ -478,7 +478,7 @@ async function fromSettings(env: Env): Promise<ResolvedPage> {
 /**
  * Resolve the page for this request. Returns "not_found" only when an explicit
  * `?slug=` was given that matches no page (so a bad slug is a hard 404, never a
- * silent fallthrough to the default page — that would leak the wrong page's
+ * silent fallthrough to the default page - that would leak the wrong page's
  * monitors).
  */
 async function resolvePage(
@@ -494,7 +494,7 @@ async function resolvePage(
 }
 
 // ---------------------------------------------------------------------------
-// GET /status — the entire public status page payload.
+// GET /status - the entire public status page payload.
 // ---------------------------------------------------------------------------
 
 publicStatus.get("/status", async (c) => {
@@ -536,7 +536,7 @@ publicStatus.get("/status", async (c) => {
   );
 
   // Public display name per on-page monitor (for incident attribution). Scoped
-  // to this page's monitors — incidents are queried against the same set.
+  // to this page's monitors - incidents are queried against the same set.
   const publicNames = new Map<string, string>();
   for (const m of pageMonitors) {
     publicNames.set(m.id, m.public.name || m.name);
@@ -647,10 +647,10 @@ publicStatus.get("/status", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /badge.svg — a shields.io-style status badge (bonus).
+// GET /badge.svg - a shields.io-style status badge (bonus).
 //
 // Emits ONLY the aggregate banner state (the same `overall` value the status
-// page derives) — no service names, config, tokens, or errors. Honours the
+// page derives) - no service names, config, tokens, or errors. Honours the
 // `status_page_enabled` kill switch (renders a neutral "unknown" badge when the
 // status page is off). Safe to embed with a plain <img>, which is not subject to
 // frame-ancestors/X-Frame-Options.
@@ -733,8 +733,8 @@ publicStatus.get("/badge.svg", async (c) => {
   // status-colored (green/amber/red) since that carries meaning. Default gray.
   const labelColor = sanitizeHexColor(c.req.query("labelColor")) ?? "#555";
 
-  // Same page resolution as /status. A disabled page — or a `?slug=` that matches
-  // no page — renders the neutral "unknown" badge rather than breaking the <img>.
+  // Same page resolution as /status. A disabled page - or a `?slug=` that matches
+  // no page - renders the neutral "unknown" badge rather than breaking the <img>.
   const resolved = await resolvePage(env, c.req.query("slug"));
   if (resolved === "not_found" || !resolved.enabled) {
     const m = BADGE_META.unknown;

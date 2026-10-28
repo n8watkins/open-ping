@@ -31,7 +31,7 @@ import type {
 
 /**
  * Create / edit a monitor (PRD §6, §7). Mirrors `createMonitorSchema`: an HTTP
- * or heartbeat monitor with a schedule and — for HTTP — request config and
+ * or heartbeat monitor with a schedule and - for HTTP - request config and
  * content assertions. The form holds a flattened local state and assembles the
  * discriminated-union payload on submit; the worker re-validates with zod and
  * returns `{ issues }` on 400 which we surface inline.

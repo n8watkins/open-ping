@@ -1,6 +1,6 @@
 /**
  * Pure presentational formatting helpers shared across dashboard pages.
- * No data fetching, no side effects — safe to unit test and reuse anywhere.
+ * No data fetching, no side effects - safe to unit test and reuse anywhere.
  */
 
 const MINUTE = 60;
