@@ -115,7 +115,7 @@ export function ResponseChart({
       area,
       base,
       outliers: coords.filter((c) => c.outlier).length,
-      xTicks: timeTicks(from, to, bucketMs, Math.max(3, Math.floor(innerW / 72))),
+      xTicks: fitTicks(from, to, bucketMs, innerW, x),
     };
   }, [points, width, height, from, to, bucketMs, kind, gapMs]);
 
@@ -344,10 +344,43 @@ function timeTicks(from: number, to: number, bucketMs: number, maxTicks: number)
     d.setHours(24, 0, 0, 0);
     t = d.getTime();
   }
-  // Keep labels clear of the edges so they are not clipped.
-  const margin = span * 0.04;
-  for (; t <= to; t += step) {
-    if (t >= from + margin && t <= to - margin) out.push(t);
+  for (; t <= to; t += step) out.push(t);
+  return out;
+}
+
+/** Rough width of an axis label in px (10px tabular text), on the safe side. */
+const LABEL_CHAR_PX = 6.2;
+const LABEL_GAP_PX = 14;
+
+/**
+ * Axis ticks that fit the drawn width: the step is chosen from the widest
+ * label, then any label that would overlap the one before it or run past the
+ * plot's edges is dropped, so labels never collide at any width.
+ */
+function fitTicks(
+  from: number,
+  to: number,
+  bucketMs: number,
+  innerW: number,
+  x: (t: number) => number,
+): number[] {
+  if (innerW <= 0) return [];
+  const span = to - from;
+  const sample = axisLabel(from, bucketMs, span);
+  const labelW = Math.max(sample.length, 6) * LABEL_CHAR_PX;
+  const spacing = labelW + LABEL_GAP_PX;
+  const maxTicks = Math.max(2, Math.floor(innerW / spacing));
+  const left = PAD.left + labelW / 2 - 4;
+  const right = PAD.left + innerW - labelW / 2;
+  const out: number[] = [];
+  let lastX = -Infinity;
+  for (const t of timeTicks(from, to, bucketMs, maxTicks)) {
+    const px = x(t);
+    const w = axisLabel(t, bucketMs, span).length * LABEL_CHAR_PX;
+    if (px < left || px > right) continue;
+    if (px - lastX < Math.max(spacing, w + LABEL_GAP_PX)) continue;
+    out.push(t);
+    lastX = px;
   }
   return out;
 }
