@@ -70,7 +70,10 @@ ICMP ping isn't possible from Workers; TCP and HTTP checks cover the same need.
 - [ ] Gate: about 20 sign-ups.
   Under that, keep OpenPing a free self-hosted project and skip stage 4.
 
-## Stage 4: OpenPing Hosted (only if the gate passes)
+## Stage 4: OpenPing Hosted (started 2026-10-28)
+
+The owner decided on 2026-10-28 to build Hosted now rather than wait for the stage 3 gate; the waitlist becomes the launch list.
+The detailed, parallelized build plan is [HOSTED_BUILD_PLAN.md](./HOSTED_BUILD_PLAN.md).
 
 Follow [the Hosted plan](./HOSTED_PLAN.md) stages 2 to 7; summary:
 
