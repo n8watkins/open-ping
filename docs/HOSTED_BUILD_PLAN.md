@@ -171,7 +171,9 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
 
 ### D. Product, content and launch
 
-- **D1 Landing and pricing (M).** The hero's Hosted card becomes "Start a free trial"; pricing, FAQ and comparison updated; sign-up and sign-in pages styled like the app. Needs: B2 for the live links; copy can start at once.
+- [x] **D1 Landing and pricing (M), copy done; live links at launch.** The hero's Hosted card becomes "Start a free trial"; pricing, FAQ and comparison updated; sign-up and sign-in pages styled like the app. Needs: B2 for the live links; copy can start at once.
+  Built behind one switch, the `HOSTED_SIGNUP_URL` var (`src/shared/hosted-offer.ts`): unset, the landing page is the waitlist exactly as before; set on the canonical install to the platform's sign-up page, it offers the 14-day trial everywhere the waitlist was.
+  At launch the owner sets it in `deploy.local.json` and deploys; nothing else changes.
 - **D2 Emails (S).** Welcome, sign-in code, trial ending (3 days and 1 day), receipt (Stripe), payment failed, suspended, deletion warning. Needs: nothing for the templates.
 - **D3 Terms and privacy (M).** Plain-English drafts, the acceptable-use rule, data retention, sub-processors (Cloudflare, Stripe, Resend). Needs: nothing; owner review before launch.
 - **D4 Docs (S).** Hosted FAQ, "move from Hosted to self-hosted" and back. Needs: B7.

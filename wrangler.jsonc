@@ -32,6 +32,10 @@
     // default status page. Leave it. Only the canonical install sets "landing"
     // (the OpenPing marketing page and its click counts); docs/INSTALL.md.
     "HOME_PAGE": "status",
+    // Leave empty. Only the canonical install sets it, to the OpenPing Hosted
+    // sign-up page, once Hosted opens: its landing page then offers the free
+    // trial instead of the waitlist (src/shared/hosted-offer.ts).
+    "HOSTED_SIGNUP_URL": "",
     // Where a failed check is confirmed from before it opens an incident: these
     // Durable Object regions, in order (docs/SECOND_REGION.md). The run asks one
     // whose data center isn't its own, so one location's network trouble

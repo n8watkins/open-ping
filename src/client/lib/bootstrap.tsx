@@ -31,6 +31,12 @@ export interface AuthStatus {
   /** Whether this install collects the Hosted waitlist (WAITLIST_ENABLED). */
   waitlistEnabled?: boolean;
   /**
+   * The OpenPing Hosted sign-up page (HOSTED_SIGNUP_URL), present only once
+   * Hosted opens; the landing page then offers the trial instead of the
+   * waitlist (lib/hosted-offer.ts).
+   */
+  hostedSignupUrl?: string;
+  /**
    * Present only when this OpenPing runs on OpenPing Hosted, which sets it up
    * and signs its customer in (docs/hosted/CONTRACT.md).
    */

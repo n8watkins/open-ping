@@ -1,6 +1,17 @@
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { Link } from "react-router-dom";
 import {
+  ArrowLeftRight,
   ArrowRight,
   ArrowUpRight,
   Bell,
@@ -19,7 +30,9 @@ import {
   PauseCircle,
   Plug,
   Server,
+  ShieldCheck,
   Smartphone,
+  Sparkles,
   Star,
   Terminal,
   Webhook,
@@ -35,9 +48,20 @@ import { SignInModal } from "../components/landing/SignInModal";
 import { WaitlistForm } from "../components/landing/WaitlistForm";
 import { HostingTable } from "../components/landing/HostingTable";
 import { prefersReducedMotion, useCountUp, useReveal } from "../components/landing/useReveal";
-import { LANDING_DESCRIPTION, LANDING_TITLE } from "../../shared/landing-meta";
+import {
+  HOSTED_FAST_CHECKS_YEARLY,
+  HOSTED_PLAN_LIMITS,
+  HOSTED_PRICE_YEARLY,
+  HOSTED_SUPPORT_EMAIL,
+  HOSTED_TRIAL_DAYS,
+  HOSTED_TRIAL_LIMITS,
+  landingMeta,
+} from "../../shared/hosted-offer";
+import { CHANNEL_KINDS } from "../../shared/notifications";
+import { useBootstrap } from "../lib/bootstrap";
+import { HOSTED_CLOSED, hostedOffer, type HostedOffer } from "../lib/hosted-offer";
 import { setPageMeta } from "../lib/meta";
-import { track } from "../lib/track";
+import { track, type TrackedEvent } from "../lib/track";
 
 const GITHUB_URL = "https://github.com/n8watkins/open-ping";
 const GITHUB_ISSUES_URL = "https://github.com/n8watkins/open-ping/issues";
@@ -268,6 +292,44 @@ function SectionHeading({
 }
 
 /* ------------------------------------------------------------------ *
+ * The Hosted offer: a waitlist until HOSTED_SIGNUP_URL is set, then a free
+ * trial (lib/hosted-offer.ts). Every section that mentions Hosted reads it
+ * here, so the page never mixes "join the waitlist" with "start a trial".
+ * ------------------------------------------------------------------ */
+
+const OfferContext = createContext<HostedOffer>(HOSTED_CLOSED);
+
+function useOffer(): HostedOffer {
+  return useContext(OfferContext);
+}
+
+const TRIAL = HOSTED_TRIAL_LIMITS;
+const PLAN = HOSTED_PLAN_LIMITS;
+/** "14 days with 5 monitors, 1 status page and email alerts" */
+const TRIAL_INCLUDES = `${HOSTED_TRIAL_DAYS} days with ${TRIAL.monitors} monitors, ${TRIAL.statusPages} status page and email alerts`;
+
+/** A "Start a free trial" button: the platform's sign-up page, in this tab. Renders nothing while Hosted is closed. */
+function TrialLink({ event, className, children }: { event: TrackedEvent; className: string; children: ReactNode }) {
+  const offer = useOffer();
+  if (!offer.open) return null;
+  return (
+    <a href={offer.signupUrl} onClick={() => track(event)} className={className}>
+      {children}
+    </a>
+  );
+}
+
+/** Reveal a row of cards one after another (the shared animate-enter and stagger tokens in index.css). */
+function StaggerReveal({ children, className = "" }: { children: ReactNode; className?: string }) {
+  const { ref, visible } = useReveal<HTMLDivElement>();
+  return (
+    <div ref={ref} className={`${visible ? "stagger [&>*]:animate-enter" : "[&>*]:opacity-0"} ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * Page
  * ------------------------------------------------------------------ */
 
@@ -285,6 +347,12 @@ function goToWaitlist() {
 }
 
 export default function Landing() {
+  const { status } = useBootstrap();
+  return <LandingPage offer={hostedOffer(status)} />;
+}
+
+/** The page itself, for a given Hosted offer (Landing reads it from the server). */
+export function LandingPage({ offer }: { offer: HostedOffer }) {
   const [signInOpen, setSignInOpen] = useState(false);
   const openSignIn = useCallback(() => {
     track("signin_open");
@@ -293,7 +361,10 @@ export default function Landing() {
   const closeSignIn = useCallback(() => setSignInOpen(false), []);
 
   useEffect(() => {
-    setPageMeta({ title: LANDING_TITLE, description: LANDING_DESCRIPTION });
+    setPageMeta(landingMeta(offer.open));
+  }, [offer.open]);
+
+  useEffect(() => {
     track("landing_view");
     // The page renders after the app shell loads, too late for the browser's
     // own jump to a link like /#pricing, so make it here.
@@ -302,28 +373,49 @@ export default function Landing() {
   }, []);
 
   return (
-    <div className="min-h-full scroll-smooth bg-canvas text-ink">
-      <LandingStyles />
-      <Nav />
+    <OfferContext.Provider value={offer}>
+      <div className="min-h-full scroll-smooth bg-canvas text-ink">
+        <LandingStyles />
+        <Nav />
 
-      <main>
-        <Hero />
-        <ScheduleAware />
-        <HowItWorks />
-        <Pricing />
-        <Features />
-        <FreePlan />
-        <Comparison />
-        <QuickStart />
-        <FreeTools />
-        <FaqSection />
-        <BottomCta />
-      </main>
+        {/* Once Hosted opens, the two ways to run it come straight after the
+            hero, and How it works moves into the self-host half of the page
+            (docs/LANDING_AND_LOGIN_PLAN.md, section order). */}
+        {offer.open ? (
+          <main>
+            <Hero />
+            <Pricing />
+            <ScheduleAware />
+            <Features />
+            <HowItWorks />
+            <FreePlan />
+            <Comparison />
+            <QuickStart />
+            <FreeTools />
+            <FaqSection />
+            <BottomCta />
+          </main>
+        ) : (
+          <main>
+            <Hero />
+            <ScheduleAware />
+            <HowItWorks />
+            <Pricing />
+            <Features />
+            <FreePlan />
+            <Comparison />
+            <QuickStart />
+            <FreeTools />
+            <FaqSection />
+            <BottomCta />
+          </main>
+        )}
 
-      <Footer onSignIn={openSignIn} />
+        <Footer onSignIn={openSignIn} />
 
-      <SignInModal open={signInOpen} onClose={closeSignIn} />
-    </div>
+        <SignInModal open={signInOpen} onClose={closeSignIn} />
+      </div>
+    </OfferContext.Provider>
   );
 }
 
@@ -339,6 +431,7 @@ const NAV_LINKS = [
 ];
 
 function Nav() {
+  const offer = useOffer();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -379,31 +472,66 @@ function Nav() {
               {l.label}
             </a>
           ))}
+          {offer.open && (
+            <Link to={DEPLOY_PATH} onClick={() => track("nav_deploy")} className="hidden transition-colors hover:text-ink lg:inline">
+              Self-host
+            </Link>
+          )}
         </nav>
 
-        <div className="hidden items-center gap-2 whitespace-nowrap md:flex">
-          <span className="hidden lg:inline-flex">
-            <StarButton />
-          </span>
-          <Link
-            to={DEPLOY_PATH}
-            onClick={() => track("nav_deploy")}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
-          >
-            Deploy free
-            <ArrowRight className="size-4" aria-hidden />
-          </Link>
-        </div>
+        {offer.open ? (
+          <div className="hidden items-center gap-2 whitespace-nowrap md:flex">
+            <span className="hidden xl:inline-flex">
+              <StarButton />
+            </span>
+            <a
+              href={offer.signInUrl}
+              className="inline-flex h-9 items-center rounded-lg px-3 text-sm font-semibold text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              Log in
+            </a>
+            <TrialLink
+              event="nav_trial"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
+            >
+              Start free trial
+              <ArrowRight className="size-4" aria-hidden />
+            </TrialLink>
+          </div>
+        ) : (
+          <div className="hidden items-center gap-2 whitespace-nowrap md:flex">
+            <span className="hidden lg:inline-flex">
+              <StarButton />
+            </span>
+            <Link
+              to={DEPLOY_PATH}
+              onClick={() => track("nav_deploy")}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
+            >
+              Deploy free
+              <ArrowRight className="size-4" aria-hidden />
+            </Link>
+          </div>
+        )}
 
         {/* Phones: the one header button is the main call to action. */}
         <div className="ml-auto flex items-center gap-1 md:hidden">
-          <Link
-            to={DEPLOY_PATH}
-            onClick={() => track("nav_deploy")}
-            className="inline-flex h-9 items-center rounded-lg bg-accent px-3 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
-          >
-            Deploy free
-          </Link>
+          {offer.open ? (
+            <TrialLink
+              event="nav_trial"
+              className="inline-flex h-9 items-center rounded-lg bg-accent px-3 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
+            >
+              Start free trial
+            </TrialLink>
+          ) : (
+            <Link
+              to={DEPLOY_PATH}
+              onClick={() => track("nav_deploy")}
+              className="inline-flex h-9 items-center rounded-lg bg-accent px-3 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
+            >
+              Deploy free
+            </Link>
+          )}
           <button
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
@@ -431,17 +559,26 @@ function Nav() {
               </a>
             ))}
             <div className="my-2 h-px bg-line" />
-            <a
-              href="#pricing"
-              onClick={(e) => {
-                e.preventDefault();
-                setMenuOpen(false);
-                goToWaitlist();
-              }}
-              className="rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
-            >
-              Join the Hosted waitlist
-            </a>
+            {offer.open ? (
+              <a
+                href={offer.signInUrl}
+                className="rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                Log in to OpenPing Hosted
+              </a>
+            ) : (
+              <a
+                href="#pricing"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setMenuOpen(false);
+                  goToWaitlist();
+                }}
+                className="rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                Join the Hosted waitlist
+              </a>
+            )}
             <a
               href={GITHUB_URL}
               target="_blank"
@@ -465,7 +602,11 @@ function Nav() {
             <Link
               to={DEPLOY_PATH}
               onClick={() => track("nav_deploy")}
-              className="mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-accent px-3.5 font-semibold text-canvas transition-colors hover:bg-accent-hover"
+              className={
+                offer.open
+                  ? "mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-3.5 font-semibold text-ink transition-colors hover:border-accent/50"
+                  : "mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-accent px-3.5 font-semibold text-canvas transition-colors hover:bg-accent-hover"
+              }
             >
               Deploy free to your Cloudflare
               <ArrowRight className="size-4" aria-hidden />
@@ -490,6 +631,79 @@ const HERO_POINTS = [
 
 /** The two ways to run OpenPing, side by side, so the hero answers "which one, and what does it cost?". */
 function PathCards() {
+  return useOffer().open ? <TrialPathCards /> : <WaitlistPathCards />;
+}
+
+/**
+ * Once Hosted opens: the trial leads, because the Hosted visitor needs the
+ * least persuading to start and a developer finds the free path anyway
+ * (docs/LANDING_AND_LOGIN_PLAN.md, "Copy: after Hosted launches").
+ */
+function TrialPathCards() {
+  return (
+    <div className="mx-auto mt-9 grid max-w-3xl gap-3 text-left sm:grid-cols-2">
+      <div className="relative flex flex-col rounded-card border border-accent/60 bg-surface p-4 shadow-xl shadow-accent/10 min-[400px]:p-5">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-card"
+          style={{ background: "radial-gradient(90% 70% at 0% 0%, rgba(109,139,255,0.14), transparent 70%)" }}
+        />
+        <div className="relative flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-accent">Let me run it</h2>
+          <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-accent/40 bg-accent-soft px-2 py-0.5 text-xs font-semibold text-accent">
+            <span className="op-live-dot size-1.5 rounded-full bg-accent" aria-hidden />
+            {HOSTED_TRIAL_DAYS}-day free trial
+          </span>
+        </div>
+        <p className="relative mt-2 flex items-baseline gap-2">
+          <span className="text-3xl font-semibold tracking-tight text-ink">${HOSTED_PRICE_YEARLY}</span>
+          <span className="text-sm text-ink-muted">a year, OpenPing Hosted</span>
+        </p>
+        <p className="relative mt-2 text-sm leading-relaxed text-ink-muted">
+          Nothing to set up. Sign up, add your sites, take your data with you any time.
+        </p>
+        <TrialLink
+          event="hero_trial"
+          className="op-lift relative mt-4 inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover"
+        >
+          Start a free trial
+          <ArrowRight className="size-4" aria-hidden />
+        </TrialLink>
+        <p className="relative mt-2.5 text-center text-xs text-ink-faint">
+          {TRIAL.monitors} monitors for {HOSTED_TRIAL_DAYS} days. No card needed.
+        </p>
+      </div>
+
+      <div className="flex flex-col rounded-card border border-line bg-surface/80 p-4 min-[400px]:p-5">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-ink-muted">Run it yourself</h2>
+          <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-up/30 bg-up/10 px-2 py-0.5 text-xs font-semibold text-up">
+            Always free
+          </span>
+        </div>
+        <p className="mt-2 flex items-baseline gap-2">
+          <span className="text-3xl font-semibold tracking-tight text-ink">Free</span>
+          <span className="text-sm text-ink-muted">in your own Cloudflare</span>
+        </p>
+        <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+          Every feature, your data in your account. About 5 minutes with the Deploy to Cloudflare button.
+        </p>
+        <Link
+          to={DEPLOY_PATH}
+          onClick={() => track("hero_deploy")}
+          className="op-lift mt-4 inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface-2 px-3 text-sm font-semibold text-ink hover:border-accent/50"
+        >
+          Deploy free to your Cloudflare
+          <ArrowRight className="size-4" aria-hidden />
+        </Link>
+        <p className="mt-2.5 text-center text-xs text-ink-faint">MIT licensed. Nothing to sign up for.</p>
+      </div>
+    </div>
+  );
+}
+
+/** While Hosted is a waitlist: the free path leads, and Hosted is clearly the secondary choice. */
+function WaitlistPathCards() {
   return (
     <div className="mx-auto mt-9 grid max-w-3xl gap-3 text-left sm:grid-cols-2">
       <div className="relative flex flex-col rounded-card border border-accent/60 bg-surface p-4 shadow-xl shadow-accent/10 min-[400px]:p-5">
@@ -553,6 +767,7 @@ function PathCards() {
 }
 
 function Hero() {
+  const open = useOffer().open;
   return (
     <div className="relative overflow-hidden">
       {/* Glow and a faint grid behind the headline. */}
@@ -588,14 +803,29 @@ function Hero() {
             Open source, MIT licensed
           </a>
 
-          <h1 className="mx-auto mt-6 max-w-3xl text-balance text-[2rem] font-semibold leading-[1.05] tracking-tight text-ink sm:text-6xl">
-            Uptime monitoring on <span className="whitespace-nowrap text-accent">your own</span> Cloudflare
-          </h1>
+          {open ? (
+            <>
+              <h1 className="mx-auto mt-6 max-w-3xl text-balance text-[2rem] font-semibold leading-[1.05] tracking-tight text-ink sm:text-6xl">
+                Uptime monitoring that <span className="whitespace-nowrap text-accent">knows your hours</span>
+              </h1>
 
-          <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-relaxed text-ink-muted sm:text-lg">
-            Checks, status pages and alerts for your sites and APIs, with schedules that know when an app is meant to
-            be asleep. Run it free in your own Cloudflare account. A hosted version is coming.
-          </p>
+              <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-relaxed text-ink-muted sm:text-lg">
+                Checks, status pages and alerts that only count the hours an app is meant to be up. Let me host it for
+                ${HOSTED_PRICE_YEARLY} a year, or run it free in your own Cloudflare account.
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="mx-auto mt-6 max-w-3xl text-balance text-[2rem] font-semibold leading-[1.05] tracking-tight text-ink sm:text-6xl">
+                Uptime monitoring on <span className="whitespace-nowrap text-accent">your own</span> Cloudflare
+              </h1>
+
+              <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-relaxed text-ink-muted sm:text-lg">
+                Checks, status pages and alerts for your sites and APIs, with schedules that know when an app is meant
+                to be asleep. Run it free in your own Cloudflare account. A hosted version is coming.
+              </p>
+            </>
+          )}
 
           <ul className="mx-auto mt-6 grid max-w-md grid-cols-2 gap-x-5 gap-y-2 text-left sm:max-w-lg lg:flex lg:max-w-none lg:justify-center lg:gap-x-6">
             {HERO_POINTS.map((b) => (
@@ -695,11 +925,12 @@ function FlowArrow({ delay }: { delay: string }) {
 }
 
 function HowItWorks() {
+  const open = useOffer().open;
   return (
     <Section id="how-it-works" className="py-14 sm:py-20">
       <Reveal>
         <SectionHeading
-          eyebrow="How it works"
+          eyebrow={open ? "How self-hosting works" : "How it works"}
           title={
             <>
               It all runs in <span className="text-accent">your</span> Cloudflare account
@@ -1164,19 +1395,32 @@ const COMPARISON_STATS: { value: ReactNode; label: string; aria?: string }[] = [
   { value: <StatNumber value={4} />, label: "Alert channels" },
 ];
 
+/** Once Hosted opens: both prices up front, then the same history and channels. */
+const COMPARISON_STATS_OPEN: { value: ReactNode; label: string; aria?: string }[] = [
+  { value: "$0", label: "Self-hosted" },
+  { value: <StatNumber value={HOSTED_PRICE_YEARLY} prefix="$" />, label: "A year, Hosted" },
+  { value: <StatNumber value={90} suffix="-day" />, label: "Uptime history" },
+  { value: <StatNumber value={CHANNEL_KINDS.length} />, label: "Alert channels" },
+];
+
 function Comparison() {
+  const open = useOffer().open;
   return (
     <Section id="comparison" className="py-14 sm:py-20">
       <Reveal>
         <SectionHeading
           eyebrow="OpenPing vs hosted SaaS"
           title="No tiers, no seat prices, no vendor"
-          subtitle="Hosted uptime tools cap your monitors, charge more for faster checks and keep your data. With OpenPing the limits, the bill and the data are yours."
+          subtitle={
+            open
+              ? `Hosted uptime tools cap your monitors, charge more for faster checks and keep your data. OpenPing is free in your own account, or one flat $${HOSTED_PRICE_YEARLY} a year hosted, and your data can always leave with you.`
+              : "Hosted uptime tools cap your monitors, charge more for faster checks and keep your data. With OpenPing the limits, the bill and the data are yours."
+          }
         />
       </Reveal>
 
       <Reveal delay={100} className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {COMPARISON_STATS.map((s, i) => (
+        {(open ? COMPARISON_STATS_OPEN : COMPARISON_STATS).map((s, i) => (
           <div key={i} className="rounded-card border border-line bg-surface px-4 py-5 text-center">
             <div className="text-2xl font-semibold text-accent sm:text-3xl" aria-label={s.aria}>
               {s.value}
@@ -1187,7 +1431,7 @@ function Comparison() {
       </Reveal>
 
       <Reveal delay={140} className="mt-8">
-        <ComparisonTable />
+        <ComparisonTable open={open} />
       </Reveal>
 
       <p className="mt-4 text-center text-xs text-ink-faint">
@@ -1272,101 +1516,259 @@ function usePricingView() {
   return ref;
 }
 
+/** The free card beside the trial: the quick Deploy to Cloudflare path, as /install describes it. */
+const OWN_ACCOUNT_POINTS_OPEN = [
+  ...OWN_ACCOUNT_POINTS.slice(0, -1),
+  "About 5 minutes with the Deploy to Cloudflare button, no terminal needed",
+];
+
+/** Once Hosted opens: what the paid plan includes (docs/HOSTED_PLAN.md, "The offer"). */
+const HOSTED_POINTS_OPEN = [
+  "Nothing to set up: sign up and add your sites",
+  `${PLAN.monitors} monitors, checked every 12 minutes`,
+  `${PLAN.statusPages} status pages and every alert channel`,
+  "A failure confirmed from a second region before it alerts",
+  `Optional 1-minute checks for $${HOSTED_FAST_CHECKS_YEARLY} a year more`,
+  "Updates and the servers are on me",
+];
+
+/** The two paths in one glance, once both are open: cost, where it runs, and that they never mix. */
+const TWO_PATHS: { icon: LucideIcon; title: string; body: string }[] = [
+  {
+    icon: Cloud,
+    title: "Self-hosted: free",
+    body: "Runs in your own Cloudflare account. You pay Cloudflare only if you outgrow its free plan (Workers Paid is $5 a month).",
+  },
+  {
+    icon: Sparkles,
+    title: `Hosted: $${HOSTED_PRICE_YEARLY} a year`,
+    body: "Your own OpenPing with a database of its own, run in my Cloudflare account. No Cloudflare account needed.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Independent and private",
+    body: "Every install stands alone. OpenPing never sees a self-hosted one, and no Hosted customer shares a database with another.",
+  },
+  {
+    icon: ArrowLeftRight,
+    title: "Move either way",
+    body: "Export from one and import into the other, whenever you like. Nothing locks you to either path.",
+  },
+];
+
+/** The free card. `featured` while Hosted is a waitlist (the one complete offer); plain beside the trial. */
+function OwnAccountCard({ featured }: { featured: boolean }) {
+  return (
+    <div
+      className={`op-lift relative flex flex-col rounded-card border bg-surface p-5 sm:p-7 ${
+        featured ? "border-accent/60" : "border-line"
+      }`}
+    >
+      {featured && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 -z-10 rounded-card"
+          style={{ background: "radial-gradient(80% 60% at 50% 0%, rgba(109,139,255,0.16), transparent 70%)" }}
+        />
+      )}
+      <div className="flex items-center justify-between gap-3">
+        <h3 className={`text-sm font-semibold ${featured ? "text-accent" : "text-ink"}`}>In your own Cloudflare account</h3>
+        <span className="shrink-0 whitespace-nowrap rounded-full border border-up/30 bg-up/10 px-2.5 py-0.5 text-xs font-semibold text-up">
+          {featured ? "Available now" : "Always free"}
+        </span>
+      </div>
+      <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">Free</p>
+      <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
+        {(featured ? OWN_ACCOUNT_POINTS : OWN_ACCOUNT_POINTS_OPEN).map((p) => (
+          <li key={p} className="flex gap-2.5">
+            <Check className="mt-0.5 size-4 shrink-0 text-up" aria-hidden />
+            {p}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-auto pt-6">
+        <Link
+          to={DEPLOY_PATH}
+          onClick={() => track("pricing_deploy")}
+          className={
+            featured
+              ? "op-lift inline-flex h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover"
+              : "op-lift inline-flex h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface-2 px-3 text-sm font-semibold text-ink hover:border-accent/50"
+          }
+        >
+          Deploy free to your Cloudflare
+          <ArrowRight className="size-4" aria-hidden />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/** The Hosted card while it's a waitlist: the price, what it will include and the email form. */
+function HostedWaitlistCard() {
+  return (
+    <div id="hosted-card" className="op-lift relative flex scroll-mt-28 flex-col rounded-card border border-line bg-surface p-5 sm:p-7">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-ink">OpenPing Hosted</h3>
+        <span className="shrink-0 whitespace-nowrap rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-ink-muted">
+          Not open yet
+        </span>
+      </div>
+      <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">
+        $24<span className="text-lg font-medium text-ink-muted"> a year</span>
+      </p>
+      <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
+        {HOSTED_POINTS.map((p) => (
+          <li key={p} className="flex gap-2.5">
+            <Check className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
+            {p}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-auto pt-6">
+        <WaitlistForm onJoined={() => track("waitlist_join")} />
+        <a
+          href={HOSTED_PLAN_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-ink-muted underline decoration-line underline-offset-4 hover:text-ink hover:decoration-accent"
+        >
+          Where Hosted is up to
+          <ArrowUpRight className="size-3.5" aria-hidden />
+        </a>
+      </div>
+    </div>
+  );
+}
+
+/** The Hosted card once it's open: the trial leads, the price follows it. */
+function HostedTrialCard() {
+  return (
+    <div
+      id="hosted-card"
+      className="op-lift relative flex scroll-mt-28 flex-col rounded-card border border-accent/60 bg-surface p-5 shadow-xl shadow-accent/10 sm:p-7"
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 rounded-card"
+        style={{ background: "radial-gradient(80% 60% at 50% 0%, rgba(109,139,255,0.16), transparent 70%)" }}
+      />
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-accent">OpenPing Hosted</h3>
+        <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-accent/40 bg-accent-soft px-2.5 py-0.5 text-xs font-semibold text-accent">
+          <span className="op-live-dot size-1.5 rounded-full bg-accent" aria-hidden />
+          {HOSTED_TRIAL_DAYS}-day free trial
+        </span>
+      </div>
+      <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">
+        ${HOSTED_PRICE_YEARLY}
+        <span className="text-lg font-medium text-ink-muted"> a year</span>
+      </p>
+      <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
+        {HOSTED_POINTS_OPEN.map((p) => (
+          <li key={p} className="flex gap-2.5">
+            <Check className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
+            {p}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-auto pt-6">
+        <TrialLink
+          event="pricing_trial"
+          className="op-lift inline-flex h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover"
+        >
+          Start a free trial
+          <ArrowRight className="size-4" aria-hidden />
+        </TrialLink>
+        <p className="mt-3 text-xs leading-relaxed text-ink-faint">
+          Free for {TRIAL_INCLUDES}. No card needed, cancel any time, and your monitors can move to your own Cloudflare
+          whenever you like.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function Pricing() {
   const cardsRef = usePricingView();
+  const offer = useOffer();
   return (
     <Section id="pricing" className="py-14 sm:py-20">
       <Reveal>
         <SectionHeading
           eyebrow="Pricing"
           title="Run it yourself for free, or let me run it"
-          subtitle="The software is the same either way. One path is free in your own Cloudflare account; the other is a hosted plan for people who'd rather not touch Cloudflare."
+          subtitle={
+            offer.open
+              ? `The software is the same either way. Run it free in your own Cloudflare account, or let me run it for you on OpenPing Hosted, starting with a ${HOSTED_TRIAL_DAYS}\u2011day free trial.`
+              : "The software is the same either way. One path is free in your own Cloudflare account; the other is a hosted plan for people who'd rather not touch Cloudflare."
+          }
         />
       </Reveal>
       <Reveal delay={100} className="mx-auto mt-10 max-w-5xl">
         <div ref={cardsRef} className="grid items-stretch gap-4 md:grid-cols-2">
-          <div className="op-lift relative flex flex-col rounded-card border border-accent/60 bg-surface p-5 sm:p-7">
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-0 -z-10 rounded-card"
-              style={{ background: "radial-gradient(80% 60% at 50% 0%, rgba(109,139,255,0.16), transparent 70%)" }}
-            />
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold text-accent">In your own Cloudflare account</h3>
-              <span className="shrink-0 whitespace-nowrap rounded-full border border-up/30 bg-up/10 px-2.5 py-0.5 text-xs font-semibold text-up">Available now</span>
-            </div>
-            <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">Free</p>
-            <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
-              {OWN_ACCOUNT_POINTS.map((p) => (
-                <li key={p} className="flex gap-2.5">
-                  <Check className="mt-0.5 size-4 shrink-0 text-up" aria-hidden />
-                  {p}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-auto pt-6">
-              <Link
-                to={DEPLOY_PATH}
-                onClick={() => track("pricing_deploy")}
-                className="op-lift inline-flex h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover"
-              >
-                Deploy free to your Cloudflare
-                <ArrowRight className="size-4" aria-hidden />
-              </Link>
-            </div>
-          </div>
-
-          <div id="hosted-card" className="op-lift relative flex scroll-mt-28 flex-col rounded-card border border-line bg-surface p-5 sm:p-7">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold text-ink">OpenPing Hosted</h3>
-              <span className="shrink-0 whitespace-nowrap rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-ink-muted">
-                Not open yet
-              </span>
-            </div>
-            <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">
-              $24<span className="text-lg font-medium text-ink-muted"> a year</span>
-            </p>
-            <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
-              {HOSTED_POINTS.map((p) => (
-                <li key={p} className="flex gap-2.5">
-                  <Check className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
-                  {p}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-auto pt-6">
-              <WaitlistForm onJoined={() => track("waitlist_join")} />
-              <a
-                href={HOSTED_PLAN_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-ink-muted underline decoration-line underline-offset-4 hover:text-ink hover:decoration-accent"
-              >
-                Where Hosted is up to
-                <ArrowUpRight className="size-3.5" aria-hidden />
-              </a>
-            </div>
-          </div>
+          {offer.open ? (
+            <>
+              <HostedTrialCard />
+              <OwnAccountCard featured={false} />
+            </>
+          ) : (
+            <>
+              <OwnAccountCard featured />
+              <HostedWaitlistCard />
+            </>
+          )}
         </div>
+
+        {offer.open && (
+          <StaggerReveal className="mt-4 grid gap-3 sm:grid-cols-2">
+            {TWO_PATHS.map(({ icon: Icon, title, body }) => (
+              <div key={title} className="flex gap-3.5 rounded-card border border-line bg-surface/60 p-4 sm:p-5">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
+                  <Icon className="size-[1.125rem]" aria-hidden />
+                </span>
+                <div className="min-w-0">
+                  <h4 className="text-sm font-semibold text-ink">{title}</h4>
+                  <p className="mt-1 text-sm leading-relaxed text-ink-muted">{body}</p>
+                </div>
+              </div>
+            ))}
+          </StaggerReveal>
+        )}
 
         <div className="mx-auto mt-6 flex max-w-3xl items-start gap-3 rounded-card border border-line bg-surface/60 px-4 py-4 sm:items-center sm:px-5">
           <img src="/n8builds-icon.png" alt="" width={36} height={36} className="mt-0.5 shrink-0 rounded-lg ring-1 ring-white/10 sm:mt-0" />
-          <p className="text-sm leading-relaxed text-ink-muted">
-            Hosted is run by{" "}
-            <a href={N8BUILDS_URL} target="_blank" rel="noreferrer" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
-              Nathan Watkins (n8builds)
-            </a>
-            , the person who writes OpenPing. Hosted accounts will live at{" "}
-            <span className="font-mono text-xs text-ink">app.openping.n8builds.dev</span>, separate from any install
-            you run yourself.
-          </p>
+          {offer.open ? (
+            <p className="text-sm leading-relaxed text-ink-muted">
+              Hosted is run by{" "}
+              <a href={N8BUILDS_URL} target="_blank" rel="noreferrer" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
+                Nathan Watkins (n8builds)
+              </a>
+              , the person who writes OpenPing. Hosted accounts live at{" "}
+              <span className="font-mono text-xs text-ink">{offer.host}</span>, separate from any install you run
+              yourself. Questions?{" "}
+              <a href={`mailto:${HOSTED_SUPPORT_EMAIL}`} className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
+                {HOSTED_SUPPORT_EMAIL}
+              </a>
+            </p>
+          ) : (
+            <p className="text-sm leading-relaxed text-ink-muted">
+              Hosted is run by{" "}
+              <a href={N8BUILDS_URL} target="_blank" rel="noreferrer" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
+                Nathan Watkins (n8builds)
+              </a>
+              , the person who writes OpenPing. Hosted accounts will live at{" "}
+              <span className="font-mono text-xs text-ink">app.openping.n8builds.dev</span>, separate from any install
+              you run yourself.
+            </p>
+          )}
         </div>
       </Reveal>
 
       <Reveal delay={140} className="mx-auto mt-12 max-w-5xl">
         <h3 className="text-center text-xl font-semibold tracking-tight text-ink sm:text-2xl">Self-host or Hosted, side by side</h3>
         <div className="mt-6">
-          <HostingTable />
+          <HostingTable open={offer.open} />
         </div>
       </Reveal>
     </Section>
@@ -1528,14 +1930,92 @@ const FAQS: FaqItem[] = [
   },
 ];
 
+const BACKUP_DOC_URL = `${GITHUB_URL}/blob/main/docs/BACKUP.md`;
+
+/** One of the FAQ answers both states share, by its question. */
+function sharedFaq(q: string): FaqItem {
+  const item = FAQS.find((f) => f.q === q);
+  if (!item) throw new Error(`No FAQ "${q}"`);
+  return item;
+}
+
+/** The FAQ once Hosted opens: Hosted's questions first, then the ones both paths share. */
+const FAQS_OPEN: FaqItem[] = [
+  {
+    q: "What is OpenPing Hosted?",
+    a: (
+      <>
+        The same OpenPing, run for you by me: ${HOSTED_PRICE_YEARLY} a year for {PLAN.monitors} monitors checked every 12
+        minutes, {PLAN.statusPages} status pages and every alert channel, with 1-minute checks for{" "}
+        {`$${HOSTED_FAST_CHECKS_YEARLY}`} a year more. Each customer gets their own OpenPing with a database of its own.{" "}
+        <TrialLink event="pricing_trial" className="text-accent underline">
+          Start a free trial
+        </TrialLink>
+        , no card needed.
+      </>
+    ),
+  },
+  {
+    q: "How does the free trial work?",
+    a: `For ${HOSTED_TRIAL_DAYS} days you get ${TRIAL.monitors} monitors checked every 12 minutes, ${TRIAL.statusPages} status page and email alerts, with no card. Add a card any time to keep going at $${HOSTED_PRICE_YEARLY} a year. If you don't, checks stop when the trial ends and your data is deleted 30 days later, with an email before each step.`,
+  },
+  sharedFaq("Is OpenPing really free?"),
+  {
+    q: "Can I move between Hosted and self-hosted?",
+    a: (
+      <>
+        Yes, both ways, because each install stands alone. Export your data from one and import it into the other: from
+        Hosted, deploy OpenPing free to your own Cloudflare and import the file; from your own install, import it into
+        your Hosted account, up to its {PLAN.monitors} monitors. Monitors, maintenance windows and incident history come
+        across; alert channels, credentials and status pages are set up again, so no secret travels in the file.{" "}
+        <a href={BACKUP_DOC_URL} target="_blank" rel="noreferrer" className="text-accent underline">
+          How export and import work
+        </a>
+        .
+      </>
+    ),
+  },
+  {
+    q: "Where does my data live?",
+    a: "Self-hosted, in your own Cloudflare account: monitor settings, check results, incidents and history are stored in your D1 database, and the OpenPing project never sees them. On Hosted, in a database used only by your OpenPing, in my Cloudflare account. I can read it because I run the service, and I only look when you ask for help or to fix the service.",
+  },
+  {
+    q: "How often does it check?",
+    a: "Every 12 minutes, each monitor that's due, most overdue first. On Hosted, the 1-minute add-on checks every minute. In your own account, the schedule is one line in wrangler.jsonc if your Cloudflare plan allows more runs.",
+  },
+  sharedFaq("How do I deploy it?"),
+  {
+    q: "Who can sign in?",
+    a: "In your own Cloudflare account, only you: OpenPing has one administrator, who signs in with a passkey, GitHub or an email link, and the OpenPing project never sees that install. On OpenPing Hosted you have your own account, signed in with an email link or code, a passkey or GitHub, kept separate from any install you run yourself.",
+  },
+  {
+    q: "Where do I get help?",
+    a: (
+      <>
+        On Hosted, email{" "}
+        <a href={`mailto:${HOSTED_SUPPORT_EMAIL}`} className="text-accent underline">
+          {HOSTED_SUPPORT_EMAIL}
+        </a>{" "}
+        and you'll hear back from me. Self-hosted, open an{" "}
+        <a href={GITHUB_ISSUES_URL} target="_blank" rel="noreferrer" className="text-accent underline">
+          issue on GitHub
+        </a>
+        .
+      </>
+    ),
+  },
+  sharedFaq("Can I automate it?"),
+];
+
 function FaqSection() {
+  const open = useOffer().open;
   return (
     <Section id="faq" className="py-14 sm:py-20">
       <Reveal>
         <SectionHeading eyebrow="FAQ" title="Questions, answered" />
       </Reveal>
       <Reveal delay={100} className="mx-auto mt-10 max-w-3xl">
-        <FaqAccordion items={FAQS} />
+        <FaqAccordion items={open ? FAQS_OPEN : FAQS} />
       </Reveal>
     </Section>
   );
@@ -1546,6 +2026,7 @@ function FaqSection() {
  * ------------------------------------------------------------------ */
 
 function BottomCta() {
+  const open = useOffer().open;
   return (
     <Section className="py-14 sm:py-24">
       <Reveal>
@@ -1559,8 +2040,28 @@ function BottomCta() {
             Own your uptime monitoring
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-pretty text-base leading-relaxed text-ink-muted">
-            Run it free in your own Cloudflare account today, or get on the list for the hosted version.
+            {open
+              ? `Start a ${HOSTED_TRIAL_DAYS}-day free trial of OpenPing Hosted, or run it free in your own Cloudflare account.`
+              : "Run it free in your own Cloudflare account today, or get on the list for the hosted version."}
           </p>
+          {open ? (
+            <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+              <TrialLink
+                event="cta_trial"
+                className="op-lift inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-5 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover"
+              >
+                Start a free trial
+                <ArrowRight className="size-4" aria-hidden />
+              </TrialLink>
+              <Link
+                to={DEPLOY_PATH}
+                onClick={() => track("cta_deploy")}
+                className="op-lift inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface-2 px-5 text-sm font-semibold text-ink hover:border-accent/50"
+              >
+                Deploy free to your Cloudflare
+              </Link>
+            </div>
+          ) : (
           <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
             <Link
               to={DEPLOY_PATH}
@@ -1582,6 +2083,7 @@ function BottomCta() {
               Join the Hosted waitlist
             </a>
           </div>
+          )}
           <p className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-ink-muted">
             <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 hover:text-ink">
               <Star className="size-4" aria-hidden />
@@ -1613,6 +2115,7 @@ const FOOTER_LINKS: { label: string; href?: string; to?: string }[] = [
 ];
 
 function Footer({ onSignIn }: { onSignIn: () => void }) {
+  const offer = useOffer();
   return (
     <footer className="border-t border-line">
       <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
@@ -1620,7 +2123,9 @@ function Footer({ onSignIn }: { onSignIn: () => void }) {
           <div>
             <Logo />
             <p className="mt-3 max-w-xs text-sm leading-relaxed text-ink-muted">
-              Uptime monitoring and status pages, free in your own Cloudflare account. A hosted version is planned.
+              {offer.open
+                ? `Uptime monitoring and status pages, free in your own Cloudflare account or hosted for $${HOSTED_PRICE_YEARLY} a year.`
+                : "Uptime monitoring and status pages, free in your own Cloudflare account. A hosted version is planned."}
             </p>
           </div>
 
@@ -1635,6 +2140,11 @@ function Footer({ onSignIn }: { onSignIn: () => void }) {
                   {l.label}
                 </a>
               ),
+            )}
+            {offer.open && (
+              <a href={offer.signInUrl} className="transition-colors hover:text-ink">
+                Hosted log in
+              </a>
             )}
             <button type="button" onClick={onSignIn} className="text-left transition-colors hover:text-ink">
               Owner sign-in

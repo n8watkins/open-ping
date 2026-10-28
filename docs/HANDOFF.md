@@ -16,6 +16,7 @@ Last updated: 2026-10-28.
   In this checkout Claude Code has it registered as `openping` (local scope); the CLI reads the gitignored `.op.env`.
 - **Landing and sign-in:** the hero shows both paths (free in your own Cloudflare, Hosted at $24 a year, "Not open yet"); sign-in is "Owner sign-in" in the footer ([the landing plan](./LANDING_AND_LOGIN_PLAN.md)).
   `HOME_PAGE` picks what signed-out visitors see at `/`: `"status"` (default, the install's own status page) or `"landing"` (only openping.n8builds.dev).
+  `HOSTED_SIGNUP_URL` (empty by default) is the launch switch for Hosted: set on the canonical install to the platform's sign-up page, the landing page swaps the waitlist for "Start a free trial" (`src/shared/hosted-offer.ts`).
 - **Encryption:** values are `v2:<kid>:<iv>:<ct>`; `MASTER_KEY_PREVIOUS` allows an online key change ([SECURITY.md](./SECURITY.md)).
   Releases before v0.4.0 cannot read v2 values, so never roll production back below v0.4.0.
 - The paid hosted version is planned in [the Hosted plan](./HOSTED_PLAN.md): $24 a year (20 monitors, 12-minute checks, 2 status pages), plus $12 a year for 1-minute checks; no free hosted plan.

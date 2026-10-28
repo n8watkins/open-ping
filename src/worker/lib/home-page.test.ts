@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homePage, withLandingHead } from "./home-page";
+import { homePage, hostedSignupUrl, withLandingHead } from "./home-page";
 import { LANDING_DESCRIPTION, LANDING_TITLE } from "../../shared/landing-meta";
 
 describe("homePage", () => {
@@ -12,6 +12,17 @@ describe("homePage", () => {
   it("shows the marketing page only when asked for by name", () => {
     expect(homePage({ HOME_PAGE: "landing" })).toBe("landing");
     expect(homePage({ HOME_PAGE: " Landing " })).toBe("landing");
+  });
+});
+
+describe("hostedSignupUrl", () => {
+  it("is null until the var holds a usable https address", () => {
+    for (const value of [undefined, "", "http://app.example.com/sign-up", "nope"]) {
+      expect(hostedSignupUrl({ HOSTED_SIGNUP_URL: value })).toBeNull();
+    }
+    expect(hostedSignupUrl({ HOSTED_SIGNUP_URL: "https://app.example.com/sign-up" })).toBe(
+      "https://app.example.com/sign-up",
+    );
   });
 });
 
@@ -35,6 +46,13 @@ describe("withLandingHead", () => {
     // Tags go inside the head, once.
     expect(html.indexOf("og:title")).toBeLessThan(html.indexOf("</head>"));
     expect(html.match(/og:title/g)).toHaveLength(1);
+  });
+
+  it("writes the launch title and description once Hosted is open", () => {
+    const html = withLandingHead(shell, "https://openping.example", true);
+    expect(html).toContain("<title>OpenPing: uptime monitoring that knows your hours</title>");
+    expect(html).toContain("with a 14-day free trial and no card.");
+    expect(html).not.toContain("waitlist");
   });
 
   it("escapes the origin it's given", () => {

@@ -16,7 +16,7 @@ import { forgetSchemaCheck, isSchemaError } from "./lib/migrate";
 import { reportUsageAfterChange } from "./lib/plan-limits";
 import { hostedGate, hostedSchemaGate, refuseWhenHosted, signOutRedirect } from "./lib/hosted";
 import { HANDOFF_PATH, INTERNAL_PATH_PREFIX } from "../shared/hosted-contract";
-import { homePage, withLandingHead } from "./lib/home-page";
+import { homePage, hostedSignupUrl, withLandingHead } from "./lib/home-page";
 import {
   BASE_SECURITY_HEADERS,
   cspDirectives,
@@ -206,7 +206,8 @@ app.all("*", async (c) => {
     const headers = new Headers(shell.headers);
     headers.delete("content-length");
     headers.delete("etag");
-    return new Response(withLandingHead(await shell.text(), siteOrigin(c.env.APP_URL, c.req.url)), {
+    const html = withLandingHead(await shell.text(), siteOrigin(c.env.APP_URL, c.req.url), hostedSignupUrl(c.env) !== null);
+    return new Response(html, {
       status: shell.status,
       headers,
     });

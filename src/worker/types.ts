@@ -66,6 +66,14 @@ export interface Env {
   HOME_PAGE?: string;
 
   /**
+   * The OpenPing Hosted sign-up page, set only on the canonical install once
+   * Hosted opens. Unset (the default), the landing page offers the Hosted
+   * waitlist; set, it offers the free trial and links here
+   * (src/shared/hosted-offer.ts). A wrangler.jsonc var.
+   */
+  HOSTED_SIGNUP_URL?: string;
+
+  /**
    * Where a failed check is confirmed from before it opens an incident: a
    * comma-separated list of Durable Object location hints, in order of
    * preference ("enam,weur"), or "off" (checks/region.ts). Unset means

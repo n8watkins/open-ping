@@ -4,6 +4,7 @@ import { ArrowLeft, Check, Copy, KeyRound } from "lucide-react";
 import { Logo } from "../components/Logo";
 import { useBootstrap } from "../lib/bootstrap";
 import { isLandingInstall } from "../lib/home";
+import { hostedOffer } from "../lib/hosted-offer";
 import { setPageMeta } from "../lib/meta";
 import { DEPLOY_BUTTON_URL, randomSecret } from "../lib/secrets";
 import { track } from "../lib/track";
@@ -99,6 +100,7 @@ const C = ({ children }: { children: ReactNode }) => (
 export default function Install() {
   const { status } = useBootstrap();
   const landing = isLandingInstall(status);
+  const offer = hostedOffer(status);
   useEffect(() => {
     setPageMeta({
       title: "Set up OpenPing in your own Cloudflare account",
@@ -262,9 +264,15 @@ export default function Install() {
             full guide
           </a>{" "}
           covers every secret and the common problems. Would rather not run it yourself?{" "}
-          <Link to="/#pricing" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
-            Join the Hosted waitlist
-          </Link>
+          {offer.open ? (
+            <a href={offer.signupUrl} className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
+              Start a free trial of OpenPing Hosted
+            </a>
+          ) : (
+            <Link to="/#pricing" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
+              Join the Hosted waitlist
+            </Link>
+          )}
           .
         </p>
       </main>
