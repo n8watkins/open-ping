@@ -324,14 +324,16 @@ export default function Embed() {
   const pageName = data?.page?.name ?? "OpenPing";
 
   return (
-    <div
+    <main
       data-theme={theme}
       className="text-ink"
       style={accent ? ({ "--color-accent": accent } as CSSProperties) : undefined}
     >
       <div className="mx-auto max-w-md p-3">
         {body}
-        <div className="mt-2 flex items-center justify-between text-[11px] text-ink-faint">
+        {/* Solid like the banner and the list: the widget can't know the host
+            page's background, so its smallest text gets its own surface. */}
+        <div className="mt-2 flex items-center justify-between rounded-card bg-surface px-2.5 py-1.5 text-[11px] text-ink-faint">
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
             <span className="truncate">{pageName}</span>
@@ -340,13 +342,13 @@ export default function Embed() {
             href={`/status${slug ? `/${encodeURIComponent(slug)}` : ""}`}
             target="_blank"
             rel="noreferrer"
-            className="shrink-0 font-medium text-accent/85 transition-colors hover:text-accent"
+            className="shrink-0 font-medium text-ink-muted transition-colors hover:text-accent"
           >
             View status →
           </a>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
 
