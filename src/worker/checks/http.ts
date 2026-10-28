@@ -172,7 +172,6 @@ export async function runHttpCheck(
     let reqBody = config.body;
     let hops = 0;
 
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const init: RequestInit = {
         method,
