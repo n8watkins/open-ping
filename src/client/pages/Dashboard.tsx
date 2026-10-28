@@ -360,7 +360,7 @@ function NeedsAttention({
         )}
         {failingChannels > 0 && (
           <Link
-            to="/integrations"
+            to="/alerts"
             className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-2/50"
           >
             <span className="w-24 shrink-0">
