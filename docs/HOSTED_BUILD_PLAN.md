@@ -228,7 +228,7 @@ With three lanes the build is about 10 working days of agent time plus the 7-day
 - **Stripe test mode** for everything until the owner's real $24 purchase in wave 4.
 - **Load test:** 200 fake tenants with 20 monitors each against staging for an hour: no missed scheduler runs, queue lag under a minute, cost per tenant measured against the 6-cent assumption.
 - **Restore drill:** delete a staging tenant's database, restore it from its export with its escrowed key, and confirm the data and encrypted settings read back.
-- **Browser checks** of sign-up, hand-off sign-in, billing and the suspended state at desktop and phone width.
+- **Browser checks** of sign-up, hand-off sign-in, billing and the suspended state at desktop and phone width, to the mobile standard in [MOBILE_PLAN.md](./MOBILE_PLAN.md); sign-up and sign-in are designed phone-first, since many customers will start on a phone and later use the Android app (stage M2).
 
 ## 10. Security and abuse
 

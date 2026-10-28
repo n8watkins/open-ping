@@ -246,3 +246,5 @@ release-kit ignores flags it doesn't know, so `npm run release -- --help` cuts a
 Continue OpenPing from `docs/HANDOFF.md`.
 First inspect `git status`, `git log origin/main..HEAD`, and the current verification state without discarding any user changes.
 Then complete the highest-priority unblocked next step, keep security boundaries intact, verify the full affected flow, and commit each logical change separately.
+
+Every UI change follows the mobile standard in [MOBILE_PLAN.md](./MOBILE_PLAN.md#the-mobile-standard-applies-to-every-ui-change-from-now-on): checked at 390x844, 360x800 and 1440x900, 44 px touch targets, nothing hover-only.
