@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { etag } from "hono/etag";
 import type { AppEnv } from "../types";
 import { loadPublicFeed } from "./public";
+import { appOrigin } from "../lib/app-origin";
 import { buildAtom, buildRss, incidentFeedItem, incidentUpdatedAt, type Feed } from "../lib/feed";
 
 /**
@@ -36,7 +37,9 @@ async function serveFeed(c: Context<AppEnv>, format: Format, slug: string | unde
     c.header("Cache-Control", `public, max-age=${FEED_CACHE_SECONDS}`);
     return c.text("Not found", 404);
   }
-  const origin = new URL(c.req.url).origin;
+  // The install's configured origin, not the request's Host: links and entry
+  // ids stay the same whichever address a reader fetched the feed from.
+  const origin = await appOrigin(c);
   const pagePath = slug == null ? "/status" : `/status/${encodeURIComponent(slug)}`;
   const pageUrl = `${origin}${pagePath}`;
   const items = data.incidents.map((i) => incidentFeedItem(i, pageUrl));
