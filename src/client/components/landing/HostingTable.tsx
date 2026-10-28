@@ -96,7 +96,8 @@ const ROWS_OPEN: Row[] = [
   {
     label: "Checks",
     own: "Every 12 minutes by default; you can change it",
-    hosted: "Every 12 minutes, or every minute with the add-on",
+    // A non-breaking hyphen, so "add-on" never splits across lines.
+    hosted: "Every 12 minutes, or every minute with the add\u2011on",
   },
   { label: "Status pages", own: "As many as you like", hosted: String(HOSTED_PLAN_LIMITS.statusPages) },
   {

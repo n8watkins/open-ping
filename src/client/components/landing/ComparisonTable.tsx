@@ -81,7 +81,7 @@ const ROWS: Row[] = [
   {
     feature: "No vendor lock-in (MIT, runs in your account)",
     op: { kind: "yes" },
-    hosted: { kind: "yes", note: "Yes, export and self-host any time" },
+    hosted: { kind: "yes", note: "Yes, export any time" },
     saas: { kind: "no" },
   },
 ];

@@ -602,7 +602,11 @@ function Nav() {
             <Link
               to={DEPLOY_PATH}
               onClick={() => track("nav_deploy")}
-              className="mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-accent px-3.5 font-semibold text-canvas transition-colors hover:bg-accent-hover"
+              className={
+                offer.open
+                  ? "mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-3.5 font-semibold text-ink transition-colors hover:border-accent/50"
+                  : "mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-accent px-3.5 font-semibold text-canvas transition-colors hover:bg-accent-hover"
+              }
             >
               Deploy free to your Cloudflare
               <ArrowRight className="size-4" aria-hidden />
@@ -682,7 +686,7 @@ function TrialPathCards() {
           <span className="text-sm text-ink-muted">in your own Cloudflare</span>
         </p>
         <p className="mt-2 text-sm leading-relaxed text-ink-muted">
-          Every feature, your data in your account. About 20 minutes, step by step.
+          Every feature, your data in your account. About 5 minutes with the Deploy to Cloudflare button.
         </p>
         <Link
           to={DEPLOY_PATH}
@@ -1512,6 +1516,12 @@ function usePricingView() {
   return ref;
 }
 
+/** The free card beside the trial: the quick Deploy to Cloudflare path, as /install describes it. */
+const OWN_ACCOUNT_POINTS_OPEN = [
+  ...OWN_ACCOUNT_POINTS.slice(0, -1),
+  "About 5 minutes with the Deploy to Cloudflare button, no terminal needed",
+];
+
 /** Once Hosted opens: what the paid plan includes (docs/HOSTED_PLAN.md, "The offer"). */
 const HOSTED_POINTS_OPEN = [
   "Nothing to set up: sign up and add your sites",
@@ -1569,7 +1579,7 @@ function OwnAccountCard({ featured }: { featured: boolean }) {
       </div>
       <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">Free</p>
       <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
-        {OWN_ACCOUNT_POINTS.map((p) => (
+        {(featured ? OWN_ACCOUNT_POINTS : OWN_ACCOUNT_POINTS_OPEN).map((p) => (
           <li key={p} className="flex gap-2.5">
             <Check className="mt-0.5 size-4 shrink-0 text-up" aria-hidden />
             {p}
@@ -1589,11 +1599,6 @@ function OwnAccountCard({ featured }: { featured: boolean }) {
           Deploy free to your Cloudflare
           <ArrowRight className="size-4" aria-hidden />
         </Link>
-        {!featured && (
-          <p className="mt-3 text-xs leading-relaxed text-ink-faint">
-            About 5 minutes with the Deploy to Cloudflare button, no terminal needed, or step by step with the guide.
-          </p>
-        )}
       </div>
     </div>
   );
@@ -1695,7 +1700,7 @@ function Pricing() {
           title="Run it yourself for free, or let me run it"
           subtitle={
             offer.open
-              ? `The software is the same either way. Run it free in your own Cloudflare account, or let me run it for you on OpenPing Hosted, starting with a ${HOSTED_TRIAL_DAYS}-day free trial.`
+              ? `The software is the same either way. Run it free in your own Cloudflare account, or let me run it for you on OpenPing Hosted, starting with a ${HOSTED_TRIAL_DAYS}\u2011day free trial.`
               : "The software is the same either way. One path is free in your own Cloudflare account; the other is a hosted plan for people who'd rather not touch Cloudflare."
           }
         />
