@@ -118,21 +118,29 @@ function toNumber(value: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Whitelisted sort columns (ORDER BY can't be bound - never interpolate). */
-const SORT_COLUMNS = {
-  started_at: "i.started_at",
-  resolved_at: "i.resolved_at",
-  created_at: "i.created_at",
-  updated_at: "i.updated_at",
-  duration_seconds: "i.duration_seconds",
+/**
+ * Whitelisted ORDER BY clauses (ORDER BY can't be bound - never interpolate).
+ * Column keys sort newest/largest first; `oldest` and `longest` are the
+ * dashboard's "Oldest first" and "Longest downtime" (ongoing incidents, whose
+ * duration is still unknown, sort after the finished ones). Every clause ends
+ * with a start-time tie-break so pages are stable.
+ */
+const SORT_ORDERS = {
+  started_at: "i.started_at DESC",
+  resolved_at: "i.resolved_at DESC, i.started_at DESC",
+  created_at: "i.created_at DESC",
+  updated_at: "i.updated_at DESC",
+  duration_seconds: "i.duration_seconds DESC, i.started_at DESC",
+  oldest: "i.started_at ASC",
+  longest: "i.duration_seconds DESC, i.started_at DESC",
 } as const;
 
-/** Resolve a safe ORDER BY column, defaulting to `started_at`. */
-function resolveSortColumn(sort: string | undefined): string {
-  if (sort && sort in SORT_COLUMNS) {
-    return SORT_COLUMNS[sort as keyof typeof SORT_COLUMNS];
+/** Resolve a safe ORDER BY clause, defaulting to newest first. */
+export function resolveOrderBy(sort: string | undefined): string {
+  if (sort && Object.hasOwn(SORT_ORDERS, sort)) {
+    return SORT_ORDERS[sort as keyof typeof SORT_ORDERS];
   }
-  return SORT_COLUMNS.started_at;
+  return SORT_ORDERS.started_at;
 }
 
 /** Clamp the list limit to [1, 500], defaulting to 100. */
@@ -234,13 +242,13 @@ async function queryIncidents(
   limit?: number,
 ): Promise<IncidentWithMonitor[]> {
   const { where, binds } = buildFilter(query);
-  const sortCol = resolveSortColumn(query.sort);
+  const orderBy = resolveOrderBy(query.sort);
   const whereSql = where ? ` WHERE ${where}` : "";
   const limitSql = limit !== undefined ? " LIMIT ?" : "";
   const sql =
     `SELECT i.*, m.name AS monitor_name FROM incidents i ` +
     `LEFT JOIN monitors m ON m.id = i.monitor_id${whereSql} ` +
-    `ORDER BY ${sortCol} DESC${limitSql}`;
+    `ORDER BY ${orderBy}${limitSql}`;
   const stmt =
     limit !== undefined
       ? env.DB.prepare(sql).bind(...binds, limit)

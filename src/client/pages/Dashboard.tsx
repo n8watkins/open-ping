@@ -25,7 +25,12 @@ import { StatusStrip, StripLegend } from "../components/charts/StatusStrip";
 import { ResponseChart } from "../components/charts/ResponseChart";
 import { TrendLine } from "../components/charts/TrendLine";
 import { offHourBands } from "../components/charts/chart-math";
-import { describeCause, groupIncidents, type IncidentGroup } from "../components/ui/incident-groups";
+import {
+  eventTitle,
+  groupIncidents,
+  monitorNames,
+  type IncidentEvent,
+} from "../components/incidents/grouping";
 import { cn } from "../lib/cn";
 import {
   formatDuration,
@@ -648,7 +653,7 @@ function IncidentsCard({
   withoutIncidentSeconds: number | null;
   className?: string;
 }) {
-  const groups = h ? groupIncidents(h.incidents, h.now) : [];
+  const groups = h ? groupIncidents(h.incidents, { now: h.now }) : [];
   return (
     <Card className={cn("animate-enter p-5", className)}>
       <CardHeader>
@@ -688,7 +693,7 @@ function IncidentsCard({
         <div className={cn("transition-opacity duration-(--duration-base)", stale && "opacity-50")}>
           <ol className="stagger relative">
             {groups.slice(0, INCIDENT_GROUPS_SHOWN).map((g, i, shown) => (
-              <IncidentRow key={g.id} group={g} last={i === shown.length - 1} now={h.now} />
+              <IncidentRow key={g.key} group={g} last={i === shown.length - 1} now={h.now} />
             ))}
           </ol>
           {groups.length > INCIDENT_GROUPS_SHOWN && (
@@ -706,11 +711,10 @@ function IncidentsCard({
   );
 }
 
-function IncidentRow({ group: g, last, now }: { group: IncidentGroup; last: boolean; now: number }) {
-  const many = g.monitors.length > 1;
-  const title = many
-    ? `${g.monitors.length} monitors went down together`
-    : `${g.monitors[0]?.name ?? "A monitor"} went down`;
+/** One event: incidents that started together (components/incidents/grouping.ts, as on the Incidents page). */
+function IncidentRow({ group: g, last, now }: { group: IncidentEvent; last: boolean; now: number }) {
+  const many = g.incidents.length > 1;
+  const title = eventTitle(g);
   return (
     <li className="relative flex animate-enter gap-3 pb-4">
       {!last && <span aria-hidden="true" className="absolute top-4 bottom-0 left-[5px] w-px bg-line" />}
@@ -722,7 +726,7 @@ function IncidentRow({ group: g, last, now }: { group: IncidentGroup; last: bool
         )}
       />
       <Link
-        to={`/incidents?incident=${encodeURIComponent(g.id)}`}
+        to={`/incidents?incident=${encodeURIComponent(g.key)}`}
         className="-mx-2 -my-1 min-w-0 flex-1 rounded-lg px-2 py-1 transition-colors hover:bg-surface-2/60"
       >
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -732,17 +736,17 @@ function IncidentRow({ group: g, last, now }: { group: IncidentGroup; last: bool
               Ongoing
             </span>
           ) : null}
-          {g.causes[0] && (
+          {g.cause && (
             <span className="rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[11px] text-ink-muted">
-              {describeCause(g.causes[0])}
+              {g.cause}
             </span>
           )}
         </div>
         <div className="mt-0.5 text-xs text-ink-faint">
           {formatShortDateTime(g.startedAt, now)}
           {" · "}
-          {g.open ? `down for ${formatDuration(g.durationSeconds)} so far` : `lasted ${formatDuration(g.durationSeconds)}`}
-          {many && ` · ${g.monitors.map((mon) => mon.name).join(", ")}`}
+          {g.open ? `down for ${formatDuration(g.downtimeSeconds)} so far` : `lasted ${formatDuration(g.downtimeSeconds)}`}
+          {many && ` · ${monitorNames(g)}`}
         </div>
       </Link>
     </li>

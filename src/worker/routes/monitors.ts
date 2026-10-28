@@ -25,6 +25,7 @@ import {
 import { redactConfig } from "../lib/secret-config";
 import { downtimeBreakdown, loadRangeHistory } from "../history/range";
 import { parseTimeRange, type MonitorHistoryResponse } from "../../shared/time-range";
+import { computeListStats } from "../history/list-stats";
 import type { MonitorRecord } from "../db/monitors";
 
 /** Strip secret config fields and ingestion credentials from normal responses. */
@@ -257,9 +258,14 @@ export const monitors = new Hono<AppEnv>();
 
 monitors.use("*", requireAuth);
 
+// `?include=stats` adds `stats`, keyed by monitor id: 7-day uptime, typical
+// response time and the latest incident, for the Monitors list (two more reads).
 monitors.get("/", async (c) => {
   const list = await listMonitors(c.env);
-  return c.json({ monitors: list.map(redactMonitor) });
+  const body = { monitors: list.map(redactMonitor) };
+  if (c.req.query("include") !== "stats") return c.json(body);
+  const stats = await computeListStats(c.env, list.map((m) => m.id));
+  return c.json({ ...body, stats });
 });
 
 monitors.post("/", async (c) => {

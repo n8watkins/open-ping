@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { csvCell } from "./incidents";
+import { csvCell, resolveOrderBy } from "./incidents";
 
 describe("csvCell", () => {
   it.each(["=1+1", "+cmd", "-2+3", "@SUM(A1:A2)", "  =HYPERLINK(\"https://example.com\")"])(
@@ -19,5 +19,18 @@ describe("csvCell", () => {
     expect(csvCell('=HYPERLINK("https://example.com")')).toBe(
       '"\'=HYPERLINK(""https://example.com"")"',
     );
+  });
+});
+
+describe("resolveOrderBy", () => {
+  it("supports the dashboard's oldest-first and longest-downtime sorts", () => {
+    expect(resolveOrderBy("oldest")).toBe("i.started_at ASC");
+    expect(resolveOrderBy("longest")).toMatch(/^i\.duration_seconds DESC/);
+  });
+
+  it("defaults to newest first for a missing or unknown sort", () => {
+    expect(resolveOrderBy(undefined)).toBe("i.started_at DESC");
+    expect(resolveOrderBy("started_at; DROP TABLE incidents")).toBe("i.started_at DESC");
+    expect(resolveOrderBy("toString")).toBe("i.started_at DESC");
   });
 });

@@ -72,3 +72,28 @@ describe("groupMonitors", () => {
     ]);
   });
 });
+
+describe("sorting by the list figures", () => {
+  const list = [
+    monitor({ id: "a", name: "Alpha" }),
+    monitor({ id: "b", name: "Beta" }),
+    monitor({ id: "c", name: "Gamma" }),
+  ];
+  const stats = {
+    a: { uptime7d: 99.5, typicalResponseMs: 120 },
+    b: { uptime7d: 97, typicalResponseMs: null },
+    c: { uptime7d: 100, typicalResponseMs: 480 },
+  };
+
+  it("puts the lowest 7-day uptime first", () => {
+    expect(filterAndSortMonitors(list, "", "all", "uptime", stats).map((m) => m.id)).toEqual(["b", "a", "c"]);
+  });
+
+  it("puts the slowest typical response first, monitors without one last", () => {
+    expect(filterAndSortMonitors(list, "", "all", "response", stats).map((m) => m.id)).toEqual(["c", "a", "b"]);
+  });
+
+  it("keeps monitors without figures in name order at the end", () => {
+    expect(filterAndSortMonitors(list, "", "all", "uptime").map((m) => m.id)).toEqual(["a", "b", "c"]);
+  });
+});

@@ -2,7 +2,13 @@ import type { MonitorSummary } from "../lib/types";
 import { monitorTypeLabel } from "../lib/types";
 import type { MonitorState } from "../../shared/states";
 
-export type MonitorSortMode = "status" | "name" | "recent";
+export type MonitorSortMode = "status" | "name" | "recent" | "uptime" | "response";
+
+/** The per-monitor figures the uptime and response sorts read. */
+export interface MonitorSortStats {
+  uptime7d: number;
+  typicalResponseMs: number | null;
+}
 
 const STATUS_PRIORITY: Record<MonitorState, number> = {
   down: 0,
@@ -21,6 +27,7 @@ export function filterAndSortMonitors(
   query: string,
   status: "all" | MonitorState,
   sort: MonitorSortMode,
+  stats: Record<string, MonitorSortStats> = {},
 ): MonitorSummary[] {
   const normalizedQuery = query.trim().toLowerCase();
   return monitors
@@ -43,6 +50,18 @@ export function filterAndSortMonitors(
       if (sort === "name") return a.name.localeCompare(b.name);
       if (sort === "recent") {
         return (b.lastCheckedAt ?? 0) - (a.lastCheckedAt ?? 0);
+      }
+      if (sort === "uptime") {
+        // Lowest 7-day uptime first; monitors without figures last.
+        const ua = stats[a.id]?.uptime7d ?? Infinity;
+        const ub = stats[b.id]?.uptime7d ?? Infinity;
+        return ua - ub || a.name.localeCompare(b.name);
+      }
+      if (sort === "response") {
+        // Slowest typical response first; monitors without one last.
+        const ra = stats[a.id]?.typicalResponseMs ?? -1;
+        const rb = stats[b.id]?.typicalResponseMs ?? -1;
+        return rb - ra || a.name.localeCompare(b.name);
       }
       return (
         STATUS_PRIORITY[a.state] - STATUS_PRIORITY[b.state] ||
