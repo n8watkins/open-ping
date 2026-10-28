@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 - 2026-10-28
+
+### New
+
+- Deploy your own OpenPing with one Deploy to Cloudflare button ([#33](https://github.com/n8watkins/open-ping/pull/33))
+
 ## 0.5.0 - 2026-10-28
 
 Status pages now show a timeline of incident updates, can be followed by RSS or Atom, and say No data yet for monitors that have never been checked. A monthly uptime report is available as a table, CSV, MCP tool, CLI command and opt-in email. The offline page and Settings are tidier.
