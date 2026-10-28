@@ -229,6 +229,17 @@ export const domainConfigSchema = z.object({
   timeoutMs: z.number().int().min(1000).max(30000).default(15000),
 });
 
+// --- Confirm before alerting ---
+/**
+ * What a polled monitor does when a check fails while it was up: "retry" checks
+ * once more a few seconds later and opens an incident only if that second check
+ * fails too (the default); "off" opens the incident on the first failure.
+ * Heartbeats ignore it: a missed ping can't be re-checked.
+ */
+export const CONFIRM_FAILURES_MODES = ["retry", "off"] as const;
+export const confirmFailuresSchema = z.enum(CONFIRM_FAILURES_MODES);
+export type ConfirmFailures = z.infer<typeof confirmFailuresSchema>;
+
 // --- Monitor create/update ---
 const baseMonitorFields = {
   name: z.string().min(1).max(120),
@@ -238,6 +249,7 @@ const baseMonitorFields = {
   notify: notifySchema.default(() => notifySchema.parse({})),
   public: publicConfigSchema.default(() => publicConfigSchema.parse({})),
   enabled: z.boolean().default(true),
+  confirmFailures: confirmFailuresSchema.default("retry"),
   // Optional primary category (a `categories` row id) for grouping + driving
   // which per-category status page a monitor appears on. Null/absent = uncategorized.
   categoryId: z.string().max(64).nullable().optional(),

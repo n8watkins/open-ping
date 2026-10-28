@@ -69,11 +69,21 @@ Sources: [Workers limits](https://developers.cloudflare.com/workers/platform/lim
 
 A run that goes past the per-invocation limits fails with "Too many API requests
 by single Worker invocation", so OpenPing budgets each run
-(`src/worker/lib/budget.ts`): it counts its D1 queries as it goes, allows two
-fetches per check (the attempt and one retry) and one per alert, keeps room for
-the work every run ends with (rollups, cleanup, the run record), and leaves any
-monitor that doesn't fit due for the next tick, most overdue first. Nothing is
-dropped; it just waits 12 minutes.
+(`src/worker/lib/budget.ts`): it counts its D1 queries as it goes, allows one
+fetch per check, one more for a failed check's confirmation re-check, and one per
+alert, keeps room for the work every run ends with (rollups, cleanup, the run
+record), and leaves any monitor that doesn't fit due for the next tick, most
+overdue first. Nothing is dropped; it just waits 12 minutes.
+
+### Confirm before alerting and the budget
+
+A failed check on a monitor that was up is checked once more about 5 seconds later before it can open an incident ([MONITOR_TYPES.md](./MONITOR_TYPES.md#confirm-before-alerting)).
+The re-check costs one outbound fetch and no D1 queries, and the run asks for that fetch only when a check has failed, so passing checks keep costing one fetch each.
+D1 queries, not fetches, decide how many checks fit on Free, so re-checks don't reduce the number of monitors a run can check.
+If a run has no fetch left for a re-check, it does not record the failure at all: the monitor keeps its state, no incident opens, and it stays due, so the next run checks it first and confirms it then.
+OpenPing chooses a 12-minute delay over an alert that wasn't confirmed; Settings > Diagnostics counts these as deferred re-checks.
+A monitor that is already down gets no re-check, so a long outage costs one fetch per run, and heartbeats are never re-checked.
+A run with a re-check takes about 5 seconds longer (it waits before the second check); that is wall-clock time, not CPU time.
 
 ### How many monitors fit
 

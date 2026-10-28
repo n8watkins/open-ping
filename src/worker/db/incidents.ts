@@ -31,6 +31,8 @@ export interface IncidentRecord {
   public: boolean;
   isFlapping: boolean;
   notified: boolean;
+  /** A second check confirmed the failure before this incident opened. */
+  confirmed: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -54,6 +56,7 @@ interface IncidentRow {
   public: number;
   is_flapping: number;
   notified: number;
+  confirmed?: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -78,6 +81,7 @@ function rowToIncident(row: IncidentRow): IncidentRecord {
     public: row.public !== 0,
     isFlapping: row.is_flapping !== 0,
     notified: row.notified !== 0,
+    confirmed: row.confirmed === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -119,6 +123,8 @@ export async function openIncident(
     error?: string | null;
     httpStatus?: number | null;
     isFlapping?: boolean;
+    /** A second check agreed before the incident opened. */
+    confirmed?: boolean;
   },
 ): Promise<IncidentRecord> {
   const id = newId("inc");
@@ -132,8 +138,8 @@ export async function openIncident(
       `INSERT INTO incidents (
          id, monitor_id, status, title, root_cause, started_at,
          last_observed_at, http_status, error, public, is_flapping,
-         notified, created_at, updated_at
-       ) VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?)`,
+         notified, confirmed, created_at, updated_at
+       ) VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)`,
     ).bind(
       id,
       monitor.id,
@@ -144,6 +150,7 @@ export async function openIncident(
       httpStatus,
       error,
       ctx.isFlapping ? 1 : 0,
+      ctx.confirmed ? 1 : 0,
       at,
       at,
     ),

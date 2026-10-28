@@ -17,6 +17,8 @@ import { IncidentUpdatesEditor, type IncidentUpdateItem } from "../components/In
 interface IncidentRow extends IncidentSummary {
   httpStatus?: number | null;
   rootCause?: string | null;
+  /** A second check agreed before the incident opened (confirm before alerting). */
+  confirmed?: boolean;
 }
 
 interface IncidentListResponse {
@@ -314,7 +316,7 @@ export default function Incidents() {
                   {data.total} incident{data.total === 1 ? "" : "s"}
                 </p>
               )}
-              <Card className="divide-y divide-line p-0">
+              <Card className="divide-y divide-line overflow-hidden p-0">
                 {incidents.map((inc) => (
                   <button
                     key={inc.id}
@@ -450,6 +452,9 @@ function DetailPanel(p: DetailPanelProps) {
         />
         <Meta label="Duration" value={durationLabel(inc)} />
         <Meta label="HTTP status" value={inc.httpStatus != null ? String(inc.httpStatus) : "-"} />
+        {inc.confirmed && (
+          <p className="col-span-2 text-xs text-ink-muted">Confirmed by a second check before alerting.</p>
+        )}
       </dl>
 
       {(inc.error || inc.rootCause) && (
@@ -570,7 +575,7 @@ function Meta({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs font-medium text-ink-muted">{label}</dt>
-      <dd className="mt-0.5 truncate text-ink">{value}</dd>
+      <dd className="mt-0.5 break-words text-ink">{value}</dd>
     </div>
   );
 }

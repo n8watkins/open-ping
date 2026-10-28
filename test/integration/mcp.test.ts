@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import "../../src/worker/index";
 
@@ -275,6 +275,27 @@ describe("/mcp over JSON-RPC against D1", () => {
 
     expect((await call("list_categories")).isError).toBeUndefined();
     expect((await call("list_incidents", { status: "open" })).isError).toBeUndefined();
+  });
+
+  it("create_monitor runs the first check and reports it", async () => {
+    const fetches = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("ok", { status: 200 }));
+    try {
+      const created = await call("create_monitor", {
+        type: "http",
+        name: "MCP first check",
+        config: { url: "https://first-mcp.example.com/" },
+        confirmFailures: "off",
+      });
+      expect(created.isError).toBeUndefined();
+      expect(fetches).toHaveBeenCalledOnce();
+      expect(created.content[0]!.text).toContain("First check: up");
+      expect(created.structuredContent).toMatchObject({
+        firstCheck: { status: "checked", state: "up", ok: true },
+        monitor: { confirmFailures: "off" },
+      });
+    } finally {
+      fetches.mockRestore();
+    }
   });
 
   it("exposes the same partial updates over REST for the CLI", async () => {

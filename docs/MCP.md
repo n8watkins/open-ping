@@ -105,7 +105,7 @@ Tools that change things:
 
 | Tool | What it does |
 | --- | --- |
-| `create_monitor` | Creates an http, heartbeat, dns, tcp or domain monitor. A heartbeat's ping URL is in the result, and only there. |
+| `create_monitor` | Creates an http, heartbeat, dns, tcp or domain monitor and runs its first check right away (the result says how it went). A heartbeat's ping URL is in the result, and only there. |
 | `update_monitor` | Changes only the fields you pass. `config` and `public` are merged key by key (a config key set to `null` is removed); `schedule`, `notify` and `assertions` are replaced whole. Stored credentials are kept unless new ones are sent. The type cannot change. |
 | `pause_monitor`, `resume_monitor` | Pauses or resumes checks and alerts. |
 | `create_maintenance_window` | Schedules maintenance from `startsAt` (ISO 8601 or `now`) with `endsAt` or `durationMinutes`, for every monitor or a list of them, optionally weekly. |

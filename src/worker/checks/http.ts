@@ -5,7 +5,7 @@ import { assertSafeUrl } from "../lib/ssrf";
 
 /**
  * HTTP/API check executor (PRD §6.1): performs a single outbound request and
- * classifies the result. Runs in the Cloudflare Workers runtime — only global
+ * classifies the result. Runs in the Cloudflare Workers runtime - only global
  * `fetch`, `AbortController` and Web Crypto are used; no Node APIs.
  *
  * SSRF guard (PRD §19): the initial URL is validated up front and every redirect
@@ -20,7 +20,7 @@ const MAX_BODY_CHARS = 1_000_000;
  * would buffer the entire (untrusted) body into memory first, so a hostile
  * endpoint could return hundreds of MB and exhaust the Worker's ~128MB isolate
  * before any cap applied. We stream chunks until `maxChars` is reached, then
- * cancel the reader so the remaining bytes are never downloaded — bounding peak
+ * cancel the reader so the remaining bytes are never downloaded - bounding peak
  * memory to ~maxChars plus one chunk.
  */
 async function readCappedText(res: Response, maxChars: number): Promise<string> {
@@ -60,8 +60,8 @@ export interface HttpCheckResult extends ProbeResult {
  * Detect a Render free-tier "Service Suspended" response. When a free instance's
  * monthly hours are exhausted, Render turns the app off entirely and serves an
  * HTTP 503 carrying an `x-render-routing: suspend…` header and a body titled
- * "Service Suspended". That is a distinct, durable state — the app is off, not
- * merely erroring — so we classify it as `suspended` rather than generic `down`.
+ * "Service Suspended". That is a distinct, durable state - the app is off, not
+ * merely erroring - so we classify it as `suspended` rather than generic `down`.
  *
  * Signature: status 503 AND (the routing header contains "suspend" OR the body
  * contains "Service Suspended"). Pure + side-effect free so it can be unit-tested
@@ -114,7 +114,7 @@ function classifyFetchError(err: unknown): {
 
 export async function runHttpCheck(
   config: HttpConfig,
-  opts?: { warmup?: boolean; skipBody?: boolean },
+  opts?: { warmup?: boolean; skipBody?: boolean; noStore?: boolean },
 ): Promise<HttpCheckResult> {
   // SSRF guard (PRD §19): reject loopback/link-local/metadata/private/credentialed
   // targets before making any outbound request.
@@ -146,8 +146,8 @@ export async function runHttpCheck(
 
   const controller = new AbortController();
   let timedOut = false;
-  // One timer governs the WHOLE exchange — all redirect hops plus the body
-  // read — so a server that stalls the body (slow-loris) still hits the timeout.
+  // One timer governs the WHOLE exchange - all redirect hops plus the body
+  // read - so a server that stalls the body (slow-loris) still hits the timeout.
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
@@ -175,6 +175,10 @@ export async function runHttpCheck(
         headers: reqHeaders,
         redirect: "manual",
         signal: controller.signal,
+        // noStore: a confirmation re-check must see the live origin, never a
+        // response Cloudflare's cache kept from an earlier request (it also
+        // sends Cache-Control: no-cache and Pragma: no-cache upstream).
+        ...(opts?.noStore ? { cache: "no-store" as const } : {}),
       };
       if (reqBody !== undefined && !BODYLESS_METHODS.has(method)) {
         init.body = reqBody;
@@ -187,7 +191,7 @@ export async function runHttpCheck(
       if (!config.followRedirects || !isRedirect) break;
 
       const location = res.headers.get("location");
-      if (!location) break; // 3xx without a target — treat as the final response.
+      if (!location) break; // 3xx without a target - treat as the final response.
 
       if (++hops > MAX_REDIRECTS) {
         clearTimeout(timer);
@@ -243,7 +247,7 @@ export async function runHttpCheck(
         reqHeaders = new Headers();
         // Drop the request body as well. On a 307/308 the method and body are
         // preserved, so without this a secret carried in the body would be
-        // re-sent to the server-chosen cross-origin target — the same leak the
+        // re-sent to the server-chosen cross-origin target - the same leak the
         // header stripping above guards against.
         reqBody = undefined;
       }

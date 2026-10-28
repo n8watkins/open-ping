@@ -115,6 +115,7 @@ export function redactMonitorForExport(monitor: MonitorRecord): ExportedMonitor 
     paused: monitor.paused,
     intervalSeconds: monitor.intervalSeconds,
     graceSeconds: monitor.graceSeconds,
+    confirmFailures: monitor.confirmFailures,
     config: redactConfig(monitor),
     schedule: monitor.schedule,
     assertions: monitor.assertions,

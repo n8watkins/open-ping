@@ -54,6 +54,12 @@ export interface RunStats {
    * duration on these, so duration divided by this is the run's D1 latency.
    */
   d1Queries?: number;
+  /** Confirmation re-checks made (checks/runner.ts). */
+  confirmations?: number;
+  /** Of those, how many passed: a blip that opened no incident. */
+  confirmationsCleared?: number;
+  /** Failed checks whose re-check waited for the next run for lack of budget. */
+  confirmationsDeferred?: number;
   error?: string;
 }
 
@@ -84,7 +90,8 @@ export function recordRunFinishStatement(
   return env.DB.prepare(
     `UPDATE scheduler_runs SET
        finished_at = ?, ok = ?, monitors_checked = ?, monitors_skipped = ?,
-       check_failures = ?, notification_failures = ?, duration_ms = ?, d1_queries = ?, error = ?
+       check_failures = ?, notification_failures = ?, duration_ms = ?, d1_queries = ?,
+       confirmations = ?, confirmations_cleared = ?, confirmations_deferred = ?, error = ?
      WHERE id = ?`,
   ).bind(
     finishedAt,
@@ -95,6 +102,9 @@ export function recordRunFinishStatement(
     stats.notificationFailures,
     finishedAt - startedAt,
     stats.d1Queries ?? null,
+    stats.confirmations ?? 0,
+    stats.confirmationsCleared ?? 0,
+    stats.confirmationsDeferred ?? 0,
     stats.error ?? null,
     id,
   );

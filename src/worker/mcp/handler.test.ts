@@ -64,6 +64,7 @@ function httpMonitor(): MonitorRecord {
     paused: false,
     intervalSeconds: 720,
     graceSeconds: null,
+    confirmFailures: "retry",
     config: {
       url: "https://api.example.com/health",
       method: "POST",

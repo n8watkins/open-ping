@@ -31,6 +31,7 @@ function makeMonitor(
     paused: false,
     intervalSeconds: 720,
     graceSeconds: null,
+    confirmFailures: "retry",
     config: config as HttpConfig | HeartbeatConfig,
     schedule: { mode: "always" },
     assertions: [],

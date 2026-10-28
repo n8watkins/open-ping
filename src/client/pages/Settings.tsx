@@ -48,6 +48,10 @@ interface SchedulerRun {
   notificationFailures: number | null;
   durationMs: number | null;
   d1Queries: number | null;
+  /** Confirmation re-checks made, passed (blips) and deferred; null before migration 0014. */
+  confirmations: number | null;
+  confirmationsCleared: number | null;
+  confirmationsDeferred: number | null;
   error: string | null;
 }
 interface DiagnosticsResponse {
@@ -607,7 +611,7 @@ function DiagnosticsSection({
                 <p className="text-sm text-ink-faint">No runs recorded yet.</p>
               ) : (
                 <div className="overflow-x-auto rounded-lg border border-line">
-                  <table className="w-full min-w-[600px] text-left text-sm">
+                  <table className="w-full min-w-[680px] text-left text-sm">
                     <thead>
                       <tr className="border-b border-line text-xs text-ink-faint">
                         <th scope="col" className="px-3 py-2 font-medium">Cron</th>
@@ -618,6 +622,13 @@ function DiagnosticsSection({
                         </th>
                         <th scope="col" className="px-3 py-2 text-right font-medium">
                           Failures
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-3 py-2 text-right font-medium"
+                          title="Second checks made before alerting; cleared ones passed, so no incident opened"
+                        >
+                          Re-checks
                         </th>
                         <th
                           scope="col"
@@ -670,6 +681,15 @@ function DiagnosticsSection({
                             )}
                           >
                             {run.checkFailures ?? 0}
+                          </td>
+                          <td
+                            className="px-3 py-2 text-right tabular-nums whitespace-nowrap"
+                            title={recheckTitle(run)}
+                          >
+                            {run.confirmations == null ? "-" : run.confirmations}
+                            {(run.confirmationsCleared ?? 0) > 0 && (
+                              <span className="text-ink-faint"> ({run.confirmationsCleared} cleared)</span>
+                            )}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             {run.d1Queries ?? "-"}
@@ -1093,6 +1113,19 @@ function AboutSection({ version }: { version: string | null }) {
 
 function fmt(n: number | undefined): string {
   return (n ?? 0).toLocaleString();
+}
+
+/** Tooltip for a run's Re-checks cell. */
+function recheckTitle(run: SchedulerRun): string | undefined {
+  if (run.confirmations == null) return undefined;
+  const parts = [
+    `${run.confirmations} second check${run.confirmations === 1 ? "" : "s"} before alerting`,
+    `${run.confirmationsCleared ?? 0} passed (no incident)`,
+  ];
+  if ((run.confirmationsDeferred ?? 0) > 0) {
+    parts.push(`${run.confirmationsDeferred} left for the next run (budget)`);
+  }
+  return parts.join(", ");
 }
 
 function SectionSpinner() {

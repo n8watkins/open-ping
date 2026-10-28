@@ -35,23 +35,25 @@ Competitors checked on 2026-10-28 (see section 5 of the landing plan).
 OpenPing already has HTTP with keyword and JSON assertions, heartbeat (cron), DNS, TCP port and domain-expiry monitors, slow-response "degraded" thresholds, maintenance windows, incidents with public notes and CSV export, many status pages, an embeddable widget and badge, email, Slack, Microsoft Teams, Discord, Telegram, signed webhooks and web push alerts, a weekly summary email, and free tools.
 These are the gaps a buyer is likely to notice, most valuable first:
 
-- [x] **Slack, Telegram and Microsoft Teams alerts** (S each) (this PR).
+- [x] **Slack, Telegram and Microsoft Teams alerts** (S each) (#29).
   Native channels with setup help, a test button, encrypted capabilities and provider rate-limit handling ([Alert channels](./ALERT_CHANNELS.md)).
-- [ ] **Confirm before alerting** (M, overlaps Hosted stage 2).
-  Re-check a failure once, ideally from a second Cloudflare location, before opening an incident, so one bad request doesn't page anyone.
-- [ ] **SSL certificate expiry monitor** (M, needs a spike).
+- [x] **Confirm before alerting** (M, overlaps Hosted stage 2) (this PR).
+  A failure is re-checked once, 5 seconds later, before it opens an incident, so one bad request doesn't page anyone; "Confirm failures" per monitor, on by default.
+  The re-check runs from the same Cloudflare location; a second-location check (a Durable Object with a location hint) stays in Hosted stage 2.
+- [ ] **SSL certificate expiry monitor** (M, spike done in this PR).
   UptimeRobot, StatusCake and HetrixTools warn before a certificate expires.
-  A Worker's `fetch()` doesn't expose the certificate, so this needs another source, such as Certificate Transparency logs; confirm it works before promising it.
-- [x] **Incident updates on the status page** (M) (this PR).
+  A Worker's `fetch()` doesn't expose the certificate; a TLS 1.2 handshake over a plain TCP socket can read it, except for Cloudflare-proxied and TLS 1.3-only hosts.
+  Next: measure that on a throwaway deployed Worker, then build the monitor type ([SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md)).
+- [x] **Incident updates on the status page** (M) (#30).
   A timeline of posts ("Investigating", "Identified", "Fixed") instead of a single message, as Instatus and Better Stack show.
-- [x] **Status page feeds** (S): RSS and Atom for incidents, so people can follow a page without an account (this PR).
+- [x] **Status page feeds** (S): RSS and Atom for incidents, so people can follow a page without an account (#30).
 - [ ] **Status page email subscribers** (M, double opt-in, unsubscribe links, sending limits).
   Do this after the feeds, and only if people ask.
-- [x] **Monthly uptime report** (S): a CSV and an email per monitor, for SLAs and clients (this PR).
+- [x] **Monthly uptime report** (S): a CSV and an email per monitor, for SLAs and clients (#30).
 - [ ] Notify channels when an incident update is posted (the outbox has no event for it yet).
 - [ ] **Passkeys for the admin sign-in** (M, landing plan item 2.1), which makes the GitHub OAuth app optional (2.2).
 - [ ] **"Deploy to Cloudflare" button** (M spike, plan items 2.3 and 2.4), to cut the 20-minute install.
-- [ ] **First check right away** when the first monitor is added (S, plan item 2.5).
+- [x] **First check right away** when a monitor is added (S, plan item 2.5) (this PR): from the editor, API, MCP and CLI, with off-hours monitors showing Scheduled off at once.
 
 Deliberately not on the list, because others do them better and they don't fit a $24-a-year product: free hosted tiers, 30-second checks from dozens of regions, on-call rotations and phone calls, browser (Playwright) monitoring, white-label status pages as the main product, SOC 2 and SAML.
 ICMP ping isn't possible from Workers; TCP and HTTP checks cover the same need.

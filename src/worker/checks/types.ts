@@ -11,7 +11,7 @@ export interface ProbeResult {
   durationMs: number;
   /** Short machine code (e.g. "timeout", "dns_nxdomain", "tcp_refused"). */
   error?: string;
-  /** Human-readable detail (safe — never contains secrets). */
+  /** Human-readable detail (safe - never contains secrets). */
   errorMessage?: string;
   /** True when the target responded but slower/closer-to-limit than desired. */
   degraded?: boolean;
@@ -32,8 +32,16 @@ export interface CheckOutcome {
   /** Attempts performed (1-based count of the deciding attempt, or max on failure). */
   attempts: number;
   warmup: boolean;
-  /** Succeeded only after a retry. */
+  /** Succeeded only after a retry (the confirmation re-check passed: a blip). */
   retryRecovered: boolean;
+  /**
+   * What the confirmation re-check did, when the first check failed:
+   * "confirmed" (it failed too), "cleared" (it passed, so no incident), or
+   * "deferred" (the run had no budget left for it; the caller must not persist
+   * this outcome and leaves the monitor due for the next run).
+   * Absent when the first check passed or no re-check applied.
+   */
+  confirmation?: "confirmed" | "cleared" | "deferred";
   assertionFailures?: string[];
   /** Type-specific structured detail (resolved records, domain expiry, …). */
   meta?: unknown;

@@ -680,8 +680,19 @@ describe("authenticated monitor lifecycle", () => {
         }),
       });
       expect(createdResponse.status).toBe(201);
-      const createdBody = await createdResponse.json<{ monitor: { id: string } }>();
+      const createdBody = await createdResponse.json<{
+        monitor: { id: string };
+        firstCheck: { status: string; state: string; ok: boolean };
+      }>();
       monitorId = createdBody.monitor.id;
+      // Created monitors are checked at once (checks/first-check.ts).
+      expect(createdBody.firstCheck).toMatchObject({ status: "checked", state: "up", ok: true });
+      expect(providerFetch).toHaveBeenCalledOnce();
+      await env.DB.prepare("DELETE FROM samples WHERE monitor_id = ?").bind(monitorId).run();
+      // Make it due again, as if its 12 minutes had passed.
+      await env.DB.prepare("UPDATE monitor_state SET next_check_at = 0 WHERE monitor_id = ?")
+        .bind(monitorId)
+        .run();
 
       const controller: ScheduledController = {
         cron: "*/12 * * * *",
@@ -689,7 +700,7 @@ describe("authenticated monitor lifecycle", () => {
         noRetry() {},
       };
       await runScheduled(controller, env);
-      expect(providerFetch).toHaveBeenCalledOnce();
+      expect(providerFetch).toHaveBeenCalledTimes(2);
 
       const state = await env.DB.prepare(
         `SELECT state, last_status_code, last_error, consecutive_successes,
@@ -709,7 +720,7 @@ describe("authenticated monitor lifecycle", () => {
         state: "up",
         last_status_code: 200,
         last_error: null,
-        consecutive_successes: 1,
+        consecutive_successes: 2,
       });
       expect(state?.last_success_at).toEqual(expect.any(Number));
       expect(state?.next_check_at).toEqual(expect.any(Number));
@@ -727,12 +738,13 @@ describe("authenticated monitor lifecycle", () => {
           warmup: number;
           error: string | null;
         }>();
+      // The scheduled check after the first one is a normal check, not a warm-up.
       expect(sample).toEqual({
         ok: 1,
         state: "up",
         status_code: 200,
         attempts: 1,
-        warmup: 1,
+        warmup: 0,
         error: null,
       });
 

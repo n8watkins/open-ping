@@ -102,6 +102,8 @@ op monitors create --type domain --name "Domain expiry" --domain example.com --w
 `--days` takes weekday numbers from 0 (Sunday) to 6 (Saturday); `--tz` defaults to your computer's timezone.
 `--public` shows the monitor on the public status page, `--channels id1,id2` picks its notification channels, and `--category <id>` files it under a category.
 `--config '{"followRedirects":false}'` sets any other type-specific field from [MONITOR_TYPES.md](./MONITOR_TYPES.md), merged over the flags.
+`--confirm off` makes the first failed check alert at once; the default, `--confirm retry`, re-checks a failure 5 seconds later before alerting ([Confirm before alerting](./MONITOR_TYPES.md#confirm-before-alerting)).
+A new monitor is checked right away and `create` prints how that first check went (for example `First check: up (42 ms)`).
 Creating a heartbeat monitor prints its ping URL once; store it, because it cannot be shown again.
 
 `op monitors update` changes only what you pass and keeps everything else, including stored credentials:

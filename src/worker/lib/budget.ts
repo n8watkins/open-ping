@@ -107,9 +107,14 @@ export function countingD1(db: D1Database, counter: UsageCounter): D1Database {
  * Most a single polled check may spend. D1: measured at about 5 queries for a
  * passing check and 9 for one that opens an incident (test/integration/
  * scheduler-budget.test.ts), plus one for an alert channel's queued delivery.
- * Fetches: the first attempt and one retry.
+ * Fetches: the check itself. A failed check's confirmation re-check
+ * (checks/runner.ts) asks for its own fetch with `tryConfirm`, so a run doesn't
+ * hold back a second fetch for every check when most of them pass.
  */
-export const CHECK_COST = { d1: 10, subrequests: 2 } as const;
+export const CHECK_COST = { d1: 10, subrequests: 1 } as const;
+
+/** What one confirmation re-check spends: a fetch, and no D1 queries. */
+export const CONFIRM_COST = { subrequests: 1 } as const;
 
 /** What a run keeps back for the work after its checks. Normally that is two
  * batches (the end-of-run work, then the run record and the lease), but if the
@@ -165,13 +170,36 @@ export class RunBudget {
     }
   }
 
-  /** Ends a started check, counting its fetches at the worst case. */
-  endCheck(): void {
+  /**
+   * Reserves the fetch for a running check's confirmation re-check. False when
+   * the run can't afford it beside the other running checks' reservations;
+   * the scheduler then leaves that monitor due for the next run instead of
+   * alerting on an unconfirmed failure.
+   */
+  tryConfirm(): boolean {
+    if (this.fetches + this.reservedFetches + CONFIRM_COST.subrequests > this.limits.subrequests) {
+      return false;
+    }
+    this.reservedFetches += CONFIRM_COST.subrequests;
+    return true;
+  }
+
+  /**
+   * Ends a started check, counting its fetches: the check itself plus the
+   * confirmation re-checks it reserved with `tryConfirm` (0 or 1).
+   */
+  endCheck(confirmations = 0): void {
+    const spent = CHECK_COST.subrequests + confirmations * CONFIRM_COST.subrequests;
     this.reservedD1 -= CHECK_COST.d1;
-    this.reservedFetches -= CHECK_COST.subrequests;
-    this.fetches += CHECK_COST.subrequests;
+    this.reservedFetches -= spent;
+    this.fetches += spent;
     this.inFlight--;
     for (const wake of this.waiters.splice(0)) wake();
+  }
+
+  /** Outbound fetches counted so far (finished checks only). */
+  get fetchesUsed(): number {
+    return this.fetches;
   }
 
   /** How many notifications fit in what's left (one fetch each). */

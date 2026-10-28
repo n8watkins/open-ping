@@ -48,6 +48,9 @@ async function checkedCount(): Promise<number> {
 
 beforeAll(async () => {
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
+  // Each create runs a first check (checks/first-check.ts); undo those below so
+  // every monitor starts never-checked and due, as the budget runs expect.
+  const created = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("ok"));
   for (let i = 0; i < MONITORS; i++) {
     const res = await apiRequest("/api/monitors", {
       method: "POST",
@@ -59,6 +62,16 @@ beforeAll(async () => {
     });
     expect(res.status).toBe(201);
   }
+  created.mockRestore();
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE monitor_state SET state = 'unknown', next_check_at = 0, last_checked_at = NULL,
+         last_success_at = NULL, consecutive_successes = 0, warmup = 0`,
+    ),
+    env.DB.prepare("DELETE FROM samples"),
+    env.DB.prepare("DELETE FROM summaries"),
+    env.DB.prepare("DELETE FROM status_intervals"),
+  ]);
 });
 
 afterEach(() => vi.restoreAllMocks());

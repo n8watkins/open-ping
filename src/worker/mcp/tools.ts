@@ -37,9 +37,10 @@ import {
 import { monthlyReportFor } from "../routes/reports";
 import { redactChannel } from "../routes/channels";
 import { maintenanceCreateSchema } from "../routes/maintenance";
+import type { FirstCheckResult } from "../checks/first-check";
 import { patchStatusPage } from "../routes/status-pages";
 import {
-  createMonitorFromBody,
+  createMonitorAndCheck,
   listMonitorUptime,
   patchMonitor,
   presentCreatedMonitor,
@@ -61,6 +62,8 @@ export interface ToolContext {
   env: Env;
   /** Origin of the MCP request, used to build heartbeat and status URLs. */
   origin: string;
+  /** The request's waitUntil, so a slow first check of a new monitor can finish. */
+  waitUntil?: (p: Promise<unknown>) => void;
 }
 
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -159,6 +162,27 @@ function maintenanceStatus(w: MaintenanceWindow, now: number): "active" | "upcom
 export function parseTime(value: string, now: number): number {
   if (value.trim().toLowerCase() === "now") return now;
   return Date.parse(value);
+}
+
+/** One sentence on a new monitor's first check (checks/first-check.ts). */
+export function firstCheckText(r: FirstCheckResult | undefined): string {
+  if (!r) return "Its first check runs within about 12 minutes.";
+  switch (r.status) {
+    case "checked":
+      return r.ok
+        ? `First check: ${r.state}${r.durationMs != null ? ` in ${r.durationMs} ms` : ""}.`
+        : `First check failed (${r.error ?? "check_failed"}${r.errorMessage ? `: ${r.errorMessage}` : ""}); it shows warming_up and is checked again on the next run, which alerts if it still fails.`;
+    case "scheduled_off":
+      return "It is outside its schedule now, so it shows scheduled_off until its hours start.";
+    case "maintenance":
+      return "A maintenance window covers it now, so it shows maintenance.";
+    case "running":
+      return "Its first check is still running; get_monitor shows the result in a few seconds.";
+    case "skipped":
+      return r.reason === "disabled"
+        ? "It is disabled, so it isn't checked."
+        : "Its first check runs within about 12 minutes.";
+  }
 }
 
 function writeFailure(r: Extract<MonitorWriteResult, { ok: false }>): ToolResult {
@@ -548,6 +572,12 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
   const monitorFields = {
     name: z.string().max(120).optional().describe("Display name, 1-120 characters."),
     enabled: z.boolean().optional(),
+    confirmFailures: z
+      .enum(["retry", "off"])
+      .optional()
+      .describe(
+        'Polled monitors: "retry" (default) re-checks a failure once, 5 seconds later, and alerts only if that fails too; "off" alerts on the first failed check.',
+      ),
     schedule: anyObject()
       .optional()
       .describe(
@@ -584,7 +614,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       annotations: { ...WRITE, idempotentHint: false },
     },
     async (args) => {
-      const r = await createMonitorFromBody(env, args);
+      const r = await createMonitorAndCheck(env, args, ctx.waitUntil);
       if (!r.ok) return writeFailure(r);
       const tz = await zone();
       const created = presentCreatedMonitor(r.monitor);
@@ -594,9 +624,13 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         `Created ${monitor.type} monitor "${monitor.name}" [${monitor.id}], ${scheduleSummary(r.monitor)}. ` +
         (monitor.type === "heartbeat"
           ? `It expects a ping every ${duration(r.monitor.intervalSeconds)} (plus ${duration(r.monitor.graceSeconds)} grace).`
-          : "Its first check runs within about 12 minutes.") +
+          : firstCheckText(r.firstCheck)) +
         (pingUrl ? `\nHeartbeat ping URL (shown only now; store it securely): ${pingUrl}` : "");
-      return ok(text, { monitor, ...(pingUrl ? { heartbeatUrl: pingUrl } : {}) }, tz);
+      return ok(
+        text,
+        { monitor, firstCheck: r.firstCheck ?? null, ...(pingUrl ? { heartbeatUrl: pingUrl } : {}) },
+        tz,
+      );
     },
   );
 

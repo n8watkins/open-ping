@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import "../../src/worker/index";
 import { WAITLIST_PER_IP_LIMIT } from "../../src/worker/routes/waitlist";
+import { RATE_LIMIT_WINDOW_MS } from "../../src/worker/db/rate-limit";
 
 const ORIGIN = "https://openping.test";
 const API_TOKEN = "integration-api-token";
@@ -68,6 +69,10 @@ describe("the Hosted waitlist", () => {
   });
 
   it("rate limits one address after a handful of tries", async () => {
+    // The limiter counts per fixed one-minute window; a burst that straddles a
+    // window boundary starts a fresh count halfway and never reaches the cap.
+    const untilNextWindow = RATE_LIMIT_WINDOW_MS - (Date.now() % RATE_LIMIT_WINDOW_MS);
+    if (untilNextWindow < 5_000) await new Promise((r) => setTimeout(r, untilNextWindow + 50));
     const ip = "10.0.0.3";
     for (let i = 0; i < WAITLIST_PER_IP_LIMIT; i++) {
       expect((await join(`burst${i}@example.com`, ip)).status).toBe(200);

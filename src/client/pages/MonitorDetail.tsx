@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -173,6 +173,24 @@ export default function MonitorDetail() {
     const state = location.state as { heartbeatToken?: unknown } | null;
     return typeof state?.heartbeatToken === "string" ? state.heartbeatToken : null;
   });
+
+  // A new monitor's first check runs as it is created (worker
+  // checks/first-check.ts); a slow one finishes a few seconds later. While a
+  // polled monitor has never been checked, refresh until its state arrives.
+  const awaitingFirstCheck =
+    !!data?.monitor &&
+    data.monitor.type !== "heartbeat" &&
+    !data.monitor.paused &&
+    (data.state?.state ?? "unknown") === "unknown";
+  const pollsLeft = useRef(20);
+  useEffect(() => {
+    if (!awaitingFirstCheck || pollsLeft.current <= 0) return;
+    const timer = setTimeout(() => {
+      pollsLeft.current--;
+      void reload();
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [awaitingFirstCheck, data, reload]);
 
   // Keep the creation token in component memory only. Clearing router history
   // state means a reload or later Back navigation cannot reveal it again.
@@ -374,6 +392,12 @@ export default function MonitorDetail() {
           <p className="mt-1 text-sm capitalize text-ink-muted">
             {monitorTypeLabel(monitor.type)} · {scheduleMode}
           </p>
+          {awaitingFirstCheck && (
+            <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-ink-faint" role="status">
+              <Loader2 className="size-3 animate-spin" />
+              First check running…
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -529,17 +553,27 @@ export default function MonitorDetail() {
         <Card>
           <CardHeader>
             <CardTitle>Uptime</CardTitle>
-            <span className="text-xs text-ink-faint">{recentSamples.length} checks · 24h</span>
+            <span className="text-xs text-ink-faint">
+              {recentSamples.length} {recentSamples.length === 1 ? "check" : "checks"} · 24h
+            </span>
           </CardHeader>
+          {/* Four values share half the page from lg up, so they step down a size there. */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Stat label="24 hours" value={formatPct(uptime.d1)} valueClass={uptimeClass(uptime.d1)} />
-            <Stat label="7 days" value={formatPct(uptime.d7)} valueClass={uptimeClass(uptime.d7)} />
-            <Stat label="30 days" value={formatPct(uptime.d30)} valueClass={uptimeClass(uptime.d30)} />
-            <Stat
-              label="365 days"
-              value={formatPct(uptime.d365)}
-              valueClass={uptimeClass(uptime.d365)}
-            />
+            {(
+              [
+                ["24 hours", uptime.d1],
+                ["7 days", uptime.d7],
+                ["30 days", uptime.d30],
+                ["365 days", uptime.d365],
+              ] as const
+            ).map(([label, pct]) => (
+              <Stat
+                key={label}
+                label={label}
+                value={formatPct(pct)}
+                valueClass={cn("lg:text-base xl:text-xl", uptimeClass(pct))}
+              />
+            ))}
           </div>
           <div className="mt-4 border-t border-line pt-4">
             {segments.length > 0 ? (

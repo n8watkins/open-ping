@@ -21,8 +21,48 @@ the honest list.
 
 Every monitor also shares the common settings - a **name**, an optional
 **operating schedule** (schedule-aware monitoring), **notification** channels,
-**public status-page** visibility, and an **enabled** toggle. This page focuses
-on the per-type `config` that makes each kind distinct.
+**public status-page** visibility, and an **enabled** toggle. Polled monitors
+also have **Confirm failures** (below). This page focuses on the per-type
+`config` that makes each kind distinct.
+
+## First check right away
+
+A new monitor is checked as soon as you create it, from the web editor, the API (`POST /api/monitors`), MCP `create_monitor` or `op monitors create`.
+The dashboard shows a real state within seconds instead of after the next cron run, up to 12 minutes later.
+It makes the same decision the scheduler would: inside a maintenance window it shows Maintenance, outside its schedule it shows Scheduled off, and a polled monitor is checked once and the result stored.
+That first check is a warm-up cycle, like the first check of any monitor: if it fails, the monitor shows Warming up, no incident opens and nothing alerts, and the next scheduled check is a normal one.
+A heartbeat monitor waits for its first ping.
+The create request waits up to 5 seconds for the check and returns it as `firstCheck` (`checked`, `scheduled_off`, `maintenance`, `skipped` or `running`); a slower check finishes in the background and the monitor page refreshes until its state arrives.
+Imported backups are not checked on import; the next cron run checks them.
+
+## Confirm before alerting
+
+One failed request shouldn't page anyone.
+When a polled check fails on a monitor that was up, OpenPing checks it once more about 5 seconds later, bypassing Cloudflare's cache (`cache: "no-store"`).
+Only if that second check fails too does the monitor go down, open an incident and send alerts; the incident then shows "Confirmed by a second check before alerting".
+If the second check passes, the monitor stays up and the sample is recorded as a blip (`retry_recovered`, and `"confirmation": "cleared"` in the sample's meta), with no incident and no alert.
+
+The setting is **Confirm failures** in the monitor editor (`confirmFailures` in the API and MCP, `--confirm` in the CLI):
+
+- **Retry once** (`retry`, the default): the behaviour above.
+- **Off** (`off`): the first failed check opens the incident and alerts, one fetch per check.
+
+Details:
+
+- **Recovery isn't delayed.**
+  A monitor that is already down gets no second check: one failure is enough to keep the incident open, and the first passing check resolves it.
+- **Heartbeats aren't confirmed.**
+  A missed heartbeat is the absence of a ping, so there is nothing to re-check; the grace period is the heartbeat's confirmation.
+- **SSRF-blocked targets** (`blocked_url`, `blocked_host`) aren't re-checked: the answer can't change.
+- **It fits the free plan.**
+  The re-check costs one more outbound fetch and no database queries.
+  If a run has no fetch left for it, the failure is not recorded at all and the monitor stays due, so the next run (12 minutes later) checks and confirms it first; an unconfirmed failure never alerts.
+  See [FREE_TIER.md](./FREE_TIER.md).
+- **Where it's counted.**
+  Settings > Diagnostics shows each scheduler run's re-checks ("Re-checks", with how many cleared and, in the tooltip, how many waited for budget); `/api/diagnostics` returns `confirmations`, `confirmationsCleared` and `confirmationsDeferred` per run.
+- **Same location.**
+  Both checks run from the same Cloudflare location, so a problem only on the path from that location still alerts.
+  A check from a second location is possible on Workers (a Durable Object created with a `locationHint` makes its fetch from where it lives) and fits the Free plan, but it needs a Durable Object binding and migration in every install and can't be tested locally, so it is left for Hosted stage 2 ([HOSTED_PLAN.md](./HOSTED_PLAN.md)).
 
 ---
 
@@ -298,12 +338,12 @@ OpenPing runs its checks inside the Cloudflare Workers runtime. That's what make
 it free and infrastructure-free - but the runtime genuinely can't do a few things
 other monitoring tools offer. We'd rather be upfront than pretend:
 
-- **SSL / TLS certificate expiry.** The Workers `fetch()` and `connect()` APIs do
-  **not** expose the peer's TLS certificate to your code, so the certificate's
-  `notAfter` (expiry) date is simply unreadable from inside the runtime. A TCP
-  check to port 443 tells you the port is *open*, but not what the cert says.
-  Real cert-expiry monitoring would require an **opt-in external certificate
-  API** - a possible future addition, not something we can fake in-runtime today.
+- **SSL / TLS certificate expiry (not yet).** The Workers `fetch()` and TLS
+  `connect()` APIs do **not** expose the peer's TLS certificate to your code. A
+  TCP check to port 443 tells you the port is *open*, but not what the cert
+  says. A hand-written TLS 1.2 handshake over a plain TCP socket can read the
+  expiry date, with gaps (Cloudflare-proxied sites, TLS 1.3-only servers); see
+  [SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md) for the research and the plan.
 
 - **ICMP ping.** Classic `ping` uses ICMP echo, which needs a **raw socket**.
   Workers can't send ICMP or open raw sockets, so there's no true ICMP ping. Use
