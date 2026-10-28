@@ -318,6 +318,9 @@ describe("the sign-in hand-off", () => {
       },
     });
     expect(me.expiresAt! - Date.now()).toBeGreaterThan(29 * 86_400_000);
+    // The account email becomes the admin email the reports go to.
+    const admin = await env.DB.prepare("SELECT value FROM settings WHERE key = 'admin_email'").first<{ value: string }>();
+    expect(admin?.value).toBe(EMAIL);
     expect(audits).toEqual([
       expect.objectContaining({
         action: "session.created",

@@ -2,7 +2,7 @@ import { DateTime } from "luxon";
 import type { Env } from "../types";
 import { setSetting, setSettingStatement, settingsFromRows, settingsStatement } from "../db/settings";
 import type { RetentionConfig } from "../history/rollups";
-import { sendResendEmail } from "./channels/resend";
+import { sendEmail } from "./mail";
 import { escapeHtml, renderEmailLayout, renderEmailText } from "./email-layout";
 import {
   monthBounds,
@@ -208,12 +208,13 @@ export async function sendMonthlyReport(
   const configuredUrl = env.APP_URL ?? sender.get("app_url");
   const appUrl = configuredUrl ? configuredUrl.replace(/\/$/, "") : undefined;
   const email = buildMonthlyEmail(report, appUrl);
-  const result = await sendResendEmail(env, {
+  const result = await sendEmail(env, {
     from: sender.get("email_from") ?? DEFAULT_FROM,
     to: recipient,
     subject: email.subject,
     html: email.html,
     text: email.text,
+    category: "report",
   });
   if (!result.ok) return { sent: false, reason: result.error ?? "send_failed" };
   await setSetting(env, "monthly_report_last_sent", month);

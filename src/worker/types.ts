@@ -103,6 +103,12 @@ export interface Env {
    */
   HOSTED_DEV_TENANT?: string;
 
+  /**
+   * Not a binding: in hosted mode the hosted gate sets it on this call's env to
+   * the platform's mail sender (notifications/mail.ts), valid for this call only.
+   */
+  MAIL_TRANSPORT?: import("./notifications/mail").MailTransport;
+
   /** Web Push VAPID keypair (set during PWA setup). */
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;

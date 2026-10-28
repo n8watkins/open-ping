@@ -63,10 +63,13 @@ function minutes(v: number): string {
 export function ReportsCard({
   emailEnabled,
   csrf,
+  hosted = false,
   onSaved,
 }: {
   emailEnabled: boolean;
   csrf: string | undefined;
+  /** On OpenPing Hosted, which sends the email to the account's address. */
+  hosted?: boolean;
   onSaved: () => void;
 }) {
   const months = useMemo(() => recentMonths(), []);
@@ -207,8 +210,9 @@ export function ReportsCard({
           <span>
             <span className="text-ink">Email me this report every month</span>
             <span className="block text-xs text-ink-faint">
-              Sent on the 1st, from 09:00 in the install&apos;s timezone, to the admin email. A
-              report that can&apos;t go out then is retried hourly. Needs RESEND_API_KEY.
+              Sent on the 1st, from 09:00 in the install&apos;s timezone, to{" "}
+              {hosted ? "your account email" : "the admin email"}. A report that can&apos;t go out
+              then is retried hourly.{hosted ? "" : " Needs RESEND_API_KEY."}
             </span>
           </span>
           {saving && <Loader2 className="size-4 animate-spin text-ink-faint" />}

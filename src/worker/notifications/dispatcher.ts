@@ -4,7 +4,7 @@ import { getChannel, recordChannelResult, secretFieldsFor } from "../db/channels
 import { getSubscription, recordPushResult } from "../db/push";
 import { claimDue, markSent, markFailed, type OutboxEntry } from "../db/outbox";
 import { getSetting } from "../db/settings";
-import { sendResendEmail } from "./channels/resend";
+import { sendEmail } from "./mail";
 import { sendDiscordMessage } from "./channels/discord";
 import { sendWebhook } from "./channels/webhook";
 import { sendSlackMessage, toSlackMessage } from "./channels/slack";
@@ -103,12 +103,13 @@ export async function deliverToChannel(
       if (!cfg.to) return { ok: false, error: "missing_recipient" };
       const from =
         cfg.from || (await (emailFrom ? emailFrom() : getSetting(env, "email_from"))) || DEFAULT_FROM;
-      return sendResendEmail(env, {
+      return sendEmail(env, {
         from,
         to: cfg.to,
         subject: payload.title,
         html: toEmailHtml(payload),
         text: toEmailText(payload),
+        category: "alert",
       });
     }
     default:

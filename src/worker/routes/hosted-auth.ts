@@ -10,6 +10,7 @@ import {
 import type { AppEnv } from "../types";
 import { hitRateLimit } from "../db/rate-limit";
 import { recordHandoffNonce } from "../db/handoff-nonces";
+import { setSetting } from "../db/settings";
 import { createSession, endCurrentSession } from "../lib/sessions";
 import { hostedProps } from "../lib/hosted";
 import { escapeHtml } from "../notifications/email-layout";
@@ -113,7 +114,13 @@ async function handOff(c: Ctx, props: TenantProps): Promise<Outcome> {
   // 4. The normal session, rotated: whatever session this browser had ends.
   await endCurrentSession(c);
   if (support) await createSession(c, claims.email, "hosted_support", SUPPORT_SESSION_TTL_MS);
-  else await createSession(c, claims.email, "hosted");
+  else {
+    await createSession(c, claims.email, "hosted");
+    // The customer's account email is this OpenPing's admin email: the weekly
+    // summary and the monthly report go there (through the platform's mail).
+    // Kept in step on every sign-in, so a change on the platform reaches it.
+    await setSetting(c.env, "admin_email", claims.email);
+  }
   return { ok: true, claims };
 }
 

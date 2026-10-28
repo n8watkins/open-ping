@@ -99,6 +99,17 @@ Each method runs inside the platform Worker, already bound to the calling tenant
 
 In the skeleton (B1) `audit` is real, `reportUsage` is accepted and dropped, and `sendEmail` answers `email_unavailable` until A5 and B2 wire the mail provider.
 
+### How OpenPing sends its email
+
+Every email OpenPing sends goes through one transport (`src/worker/notifications/mail.ts`): alerts (`category` `alert`, from the outbox and from a channel test), the weekly summary and the monthly report (`report`), and, on a plain install only, the sign-in link (`signin`) and the waitlist confirmation (`waitlist`).
+
+- A plain install sends through Resend with its own `RESEND_API_KEY`, exactly as before.
+- In hosted mode the hosted gate puts a transport over `props.platform.sendEmail` on that call's env, and nothing else is used, even when a `RESEND_API_KEY` is set.
+  It sends `to` as one address, no From (the platform's), and `text` always.
+- `email_quota_exceeded` makes the outbox wait until the next UTC midnight; `email_rejected` and `email_unavailable` retry like any failed delivery, and a thrown RPC counts as `email_unavailable`.
+- The reports go to the admin email, which in hosted mode is the customer's account email: every customer hand-off (section 7) stores the token's `email` as `admin_email`.
+- Settings doesn't offer a From address for an email channel, and says the reports go to the account email instead of asking for `RESEND_API_KEY`.
+
 ## 5. Plans and limits
 
 `PlanLimits` has `monitors`, `statusPages`, `minIntervalMinutes`, `channelKinds` (`"all"` or a list of channel kinds) and `emailsPerDay`.
