@@ -163,7 +163,7 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
 - **C0 The contract (S, first).** Section 5 as a document and as shared types, plus the decision record for D2 to D4. Needs: nothing.
 - **C1 Release runner (M).** Build the tenant bundle once per release, upload it to a canary tenant, check `/__platform/health`, then roll out in batches with stop-on-error and a one-command rollback to the previous bundle. Needs: B3, A3.
 - **C2 Batched check writes (M, Hosted stage 2). Done in #46.** One D1 write per run instead of about 3 per check; measured. Helps self-hosters too. Needs: nothing.
-- **C3 Second-region confirmation (M, Hosted stage 2).** A Durable Object per region with a location hint, used by the existing confirm step; measured on a throwaway deployment. Needs: nothing.
+- **C3 Second-region confirmation (M, Hosted stage 2).** A Durable Object per region with a location hint, used by the existing confirm step; measured on a throwaway deployment. Needs: nothing. Built; the measurement is in [SECOND_REGION.md](./SECOND_REGION.md). A Hosted tenant bundle needs the `REGION_PROBE` binding and its migration when B3 uploads it, or it confirms where the check ran.
 - **C4 Observability (M).** Workers Logs on the platform and namespace, per-tenant run metrics, an external monitor of the platform itself (a separate OpenPing install on a different account, plus one outside checker), and a public status page for OpenPing Hosted. Needs: B1, B4.
 
 ### D. Product, content and launch
