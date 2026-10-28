@@ -1,0 +1,129 @@
+/**
+ * Reading tenants from the platform database, and turning a row into what the
+ * contract hands a customer's OpenPing (TenantInfo).
+ */
+
+import {
+  PLAN_IDS,
+  PLAN_LIMITS,
+  TENANT_STATUSES,
+  type HostedUrls,
+  type PlanId,
+  type PlanLimits,
+  type TenantInfo,
+  type TenantStatus,
+} from "../../src/shared/hosted-contract";
+import { CHANNEL_KINDS } from "../../src/shared/notifications";
+import { appOrigin } from "./hosts";
+
+export const PROVISION_STATES = ["requested", "db_created", "uploaded", "migrated", "ready", "deleting"] as const;
+export type ProvisionState = (typeof PROVISION_STATES)[number];
+
+export interface TenantRecord {
+  id: string;
+  accountId: string;
+  slug: string;
+  scriptName: string;
+  status: TenantStatus;
+  plan: PlanId;
+  provisionState: ProvisionState;
+  version: string | null;
+  limitOverrides: Partial<PlanLimits> | null;
+  trialEndsAt: number | null;
+}
+
+interface TenantRow {
+  id: string;
+  account_id: string;
+  slug: string;
+  script_name: string;
+  status: string;
+  plan: string;
+  provision_state: string;
+  version: string | null;
+  limit_overrides: string | null;
+  trial_ends_at: number | null;
+}
+
+const TENANT_COLUMNS =
+  "id, account_id, slug, script_name, status, plan, provision_state, version, limit_overrides, trial_ends_at";
+
+function oneOf<T extends string>(values: readonly T[], value: string, fallback: T): T {
+  return (values as readonly string[]).includes(value) ? (value as T) : fallback;
+}
+
+/** Only the known PlanLimits keys with the right types; anything else in the JSON is ignored. */
+export function parseLimitOverrides(json: string | null): Partial<PlanLimits> | null {
+  if (!json) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const out: Partial<PlanLimits> = {};
+  const count = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+  if (count(r.monitors)) out.monitors = r.monitors as number;
+  if (count(r.statusPages)) out.statusPages = r.statusPages as number;
+  if (count(r.emailsPerDay)) out.emailsPerDay = r.emailsPerDay as number;
+  if (count(r.minIntervalMinutes) && (r.minIntervalMinutes as number) >= 1) {
+    out.minIntervalMinutes = r.minIntervalMinutes as number;
+  }
+  if (r.channelKinds === "all" || (Array.isArray(r.channelKinds) && r.channelKinds.every((k) => (CHANNEL_KINDS as readonly unknown[]).includes(k)))) {
+    out.channelKinds = r.channelKinds as PlanLimits["channelKinds"];
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+export function tenantFromRow(row: TenantRow): TenantRecord {
+  return {
+    id: row.id,
+    accountId: row.account_id,
+    slug: row.slug,
+    scriptName: row.script_name,
+    // The CHECK constraints make these exact; the fallbacks are the safe side.
+    status: oneOf(TENANT_STATUSES, row.status, "suspended"),
+    plan: oneOf(PLAN_IDS, row.plan, "trial"),
+    provisionState: oneOf(PROVISION_STATES, row.provision_state, "requested"),
+    version: row.version,
+    limitOverrides: parseLimitOverrides(row.limit_overrides),
+    trialEndsAt: row.trial_ends_at,
+  };
+}
+
+export async function findTenantBySlug(db: D1Database, slug: string): Promise<TenantRecord | null> {
+  const row = await db.prepare(`SELECT ${TENANT_COLUMNS} FROM tenants WHERE slug = ?`).bind(slug).first<TenantRow>();
+  return row ? tenantFromRow(row) : null;
+}
+
+/** The plan's limits with any per-tenant overrides on top. */
+export function effectiveLimits(tenant: Pick<TenantRecord, "plan" | "limitOverrides">): PlanLimits {
+  return { ...PLAN_LIMITS[tenant.plan], ...(tenant.limitOverrides ?? {}) };
+}
+
+/** Where the tenant's OpenPing links back to on the platform. */
+export function hostedUrls(slug: string, hostedDomain: string): HostedUrls {
+  const app = appOrigin(hostedDomain);
+  const tenant = encodeURIComponent(slug);
+  return {
+    account: `${app}/account`,
+    billing: `${app}/billing`,
+    upgrade: `${app}/billing/upgrade`,
+    signIn: `${app}/sign-in?tenant=${tenant}`,
+    signOut: `${app}/sign-out`,
+  };
+}
+
+export function tenantInfo(tenant: TenantRecord, hostedDomain: string): TenantInfo {
+  return {
+    id: tenant.id,
+    slug: tenant.slug,
+    status: tenant.status,
+    plan: tenant.plan,
+    limits: effectiveLimits(tenant),
+    trialEndsAt: tenant.status === "trial" ? tenant.trialEndsAt : null,
+    urls: hostedUrls(tenant.slug, hostedDomain),
+  };
+}
