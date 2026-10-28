@@ -34,7 +34,10 @@ describe("slugs", () => {
   });
 
   it("refuses reserved names", () => {
-    for (const slug of ["app", "www", "api", "admin", "status", "support", "billing", "staging", "mail", "stripe"]) {
+    for (const slug of [
+      "app", "www", "api", "admin", "status", "support", "billing", "staging", "mail", "stripe",
+      "webhooks", "mta-sts", "autodiscover", "paypal", "google", "undefined",
+    ]) {
       expect(slugProblem(slug), slug).toBe("reserved");
     }
   });

@@ -24,7 +24,7 @@ import {
   unknownHostPage,
 } from "./pages";
 import { slugProblem } from "./slugs";
-import { findTenantBySlug, hostedUrls, type TenantRecord } from "./tenants";
+import { cachedTenantBySlug, hostedUrls, type TenantRecord } from "./tenants";
 
 export interface AppDeps {
   /** The dispatcher for this request's env. */
@@ -77,7 +77,7 @@ async function tenantHost(
   }
 
   if (slugProblem(slug)) return tenantNotFoundPage(url.hostname, home);
-  const tenant = await findTenantBySlug(env.PLATFORM_DB, slug);
+  const tenant = await cachedTenantBySlug(env.PLATFORM_DB, slug);
   if (!tenant || tenant.provisionState === "deleting") return tenantNotFoundPage(url.hostname, home);
   if (tenant.provisionState !== "ready") return tenantProvisioningPage();
   if (tenant.status === "suspended") return tenantSuspendedPage(hostedUrls(tenant.slug, env.HOSTED_DOMAIN).account);

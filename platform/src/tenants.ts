@@ -93,6 +93,45 @@ export function tenantFromRow(row: TenantRow): TenantRecord {
   };
 }
 
+/**
+ * Each public request to <slug>.<domain> needs its tenant row. A short
+ * per-isolate cache saves the D1 round trip on busy status pages:
+ *   - a ready tenant is kept TENANT_CACHE_MS, so a suspension or plan change
+ *     reaches every isolate within that time (forgetTenant clears this
+ *     isolate's copy at once, for changes made here);
+ *   - an unknown slug is kept UNKNOWN_SLUG_CACHE_MS, short, so a new sign-up
+ *     shows up almost at once;
+ *   - a tenant still being provisioned is never kept: its "almost ready"
+ *     page must turn into the OpenPing as soon as it is ready.
+ */
+export const TENANT_CACHE_MS = 30_000;
+export const UNKNOWN_SLUG_CACHE_MS = 5_000;
+const TENANT_CACHE_MAX = 1_000;
+const tenantCache = new Map<string, { tenant: TenantRecord | null; until: number }>();
+
+export async function cachedTenantBySlug(db: D1Database, slug: string, now: number = Date.now()): Promise<TenantRecord | null> {
+  const hit = tenantCache.get(slug);
+  if (hit && hit.until > now) return hit.tenant;
+  const tenant = await findTenantBySlug(db, slug);
+  if (tenant === null || tenant.provisionState === "ready") {
+    if (tenantCache.size >= TENANT_CACHE_MAX) tenantCache.delete(tenantCache.keys().next().value!);
+    tenantCache.set(slug, { tenant, until: now + (tenant ? TENANT_CACHE_MS : UNKNOWN_SLUG_CACHE_MS) });
+  } else {
+    tenantCache.delete(slug);
+  }
+  return tenant;
+}
+
+/** Drops this isolate's cached row for `slug` (after a suspension, a plan change, a removal). */
+export function forgetTenant(slug: string): void {
+  tenantCache.delete(slug);
+}
+
+/** Tests only: start from an empty cache. */
+export function clearTenantCache(): void {
+  tenantCache.clear();
+}
+
 export async function findTenantBySlug(db: D1Database, slug: string): Promise<TenantRecord | null> {
   const row = await db.prepare(`SELECT ${TENANT_COLUMNS} FROM tenants WHERE slug = ?`).bind(slug).first<TenantRow>();
   return row ? tenantFromRow(row) : null;
