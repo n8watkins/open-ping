@@ -49,7 +49,7 @@ describe("buildWeeklyEmail (pure)", () => {
     expect(html).not.toContain("API <prod>");
   });
 
-  it("shows an em dash for a null average response time", () => {
+  it("shows a dash for a null average response time", () => {
     const { text } = buildWeeklyEmail(
       { ...baseStats, avgResponseMs: null },
       "period",

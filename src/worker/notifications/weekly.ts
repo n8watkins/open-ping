@@ -27,6 +27,8 @@ export interface WeeklyStats {
 /** Default minimum gap between sends: 6.5 days, so a weekly cron never doubles up. */
 const DEFAULT_MIN_INTERVAL_MS = 6.5 * 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long a failed send waits before the next try. */
+export const RETRY_AFTER_MS = 60 * 60 * 1000;
 const DEFAULT_FROM = "OpenPing <onboarding@resend.dev>";
 
 // ---------------------------------------------------------------------------
@@ -290,12 +292,14 @@ export const WEEKLY_GATE_SETTINGS = [
   "weekly_summary_day",
   "weekly_summary_hour",
   "weekly_summary_last_sent",
+  "weekly_summary_last_attempt",
 ] as const;
 
 /**
  * Send the weekly summary if it is enabled, has a recipient and is due. Safe to
  * call once per scheduled run: it self-guards and records the send timestamp so
- * a weekly cron never sends more than one summary per window.
+ * a weekly cron never sends more than one summary per window, and records each
+ * try so a failed send waits RETRY_AFTER_MS before the next.
  *
  * Returns `{ sent: true }` on success, otherwise `{ sent: false, reason }` with
  * one of: "disabled", "no_recipient", "not_due", or a delivery error string.
@@ -342,6 +346,13 @@ export async function sendWeeklySummary(
   // De-dup within the open day/hour window so it sends at most once per week.
   const lastSentAt = Number(await read("weekly_summary_last_sent")) || null;
   if (!isWeeklyDue(now, lastSentAt)) return { sent: false, reason: "not_due" };
+  // A failed send (or a run that died mid-send) waits RETRY_AFTER_MS, so a
+  // broken email setup costs one try an hour rather than one every run.
+  const lastAttemptAt = Number(await read("weekly_summary_last_attempt")) || null;
+  if (lastAttemptAt != null && now - lastAttemptAt < RETRY_AFTER_MS) {
+    return { sent: false, reason: "not_due" };
+  }
+  await setSetting(env, "weekly_summary_last_attempt", String(now));
 
   const sinceMs = now - WEEK_MS;
   const stats = await gatherWeeklyStats(env, sinceMs, now);
