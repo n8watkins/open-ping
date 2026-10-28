@@ -4,6 +4,7 @@ import { ArrowRight, Fingerprint, Github, Loader2, Mail, MailCheck } from "lucid
 import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { isLandingInstall } from "../lib/home";
+import { hostedOffer } from "../lib/hosted-offer";
 import {
   conditionalMediationAvailable,
   getPasskey,
@@ -24,17 +25,26 @@ const OPENPING_SITE = "https://openping.n8builds.dev";
 
 const linkClass = "font-semibold text-ink underline decoration-ink-faint underline-offset-4 hover:decoration-accent";
 
-/** The next step for someone who wanted their own OpenPing, not this one. */
-function OwnOpenPingLinks({ landing }: { landing: boolean }) {
+/**
+ * The next step for someone who wanted their own OpenPing, not this one.
+ * `trialUrl` is the Hosted sign-up page once Hosted opens (HOSTED_SIGNUP_URL).
+ */
+function OwnOpenPingLinks({ landing, trialUrl }: { landing: boolean; trialUrl: string | null }) {
   return landing ? (
     <>
       <Link to="/install" className={linkClass}>
         deploy it free
       </Link>{" "}
       or{" "}
-      <a href="/#pricing" className={linkClass}>
-        join the Hosted waitlist
-      </a>
+      {trialUrl ? (
+        <a href={trialUrl} className={linkClass}>
+          start a free trial of OpenPing Hosted
+        </a>
+      ) : (
+        <a href="/#pricing" className={linkClass}>
+          join the Hosted waitlist
+        </a>
+      )}
     </>
   ) : (
     <a href={OPENPING_SITE} className={linkClass}>
@@ -46,13 +56,13 @@ function OwnOpenPingLinks({ landing }: { landing: boolean }) {
 const RETRYABLE = new Set(["state_invalid", "state_missing", "state_expired", "invalid_callback"]);
 
 /** What went wrong on the way back from a sign-in, and what to do next. */
-function errorMessage(error: string, landing: boolean): ReactNode {
+function errorMessage(error: string, landing: boolean, trialUrl: string | null): ReactNode {
   switch (error) {
     case "not_authorized":
       return (
         <>
           That account isn't this OpenPing's administrator, so it can't sign in here. If you wanted your own
-          OpenPing, <OwnOpenPingLinks landing={landing} />.
+          OpenPing, <OwnOpenPingLinks landing={landing} trialUrl={trialUrl} />.
         </>
       );
     case "github_not_configured":
@@ -148,6 +158,8 @@ export function SignInPanel({
   const githubEnabled = status?.githubEnabled ?? false;
   const emailEnabled = status?.emailAdminConfigured ?? false;
   const landing = isLandingInstall(status);
+  const offer = hostedOffer(status);
+  const trialUrl = landing && offer.open ? offer.signupUrl : null;
   const host = typeof window === "undefined" ? "" : window.location.host;
   // Passkeys are bound to one hostname (the install's address), so they are
   // offered only there; elsewhere (say, the workers.dev address of an install
@@ -204,7 +216,7 @@ export function SignInPanel({
 
       {error && (
         <p role="alert" className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2.5 text-sm leading-relaxed text-ink">
-          {errorMessage(error, landing)}
+          {errorMessage(error, landing, trialUrl)}
           {githubEnabled && RETRYABLE.has(error) && (
             <>
               {" "}
@@ -352,10 +364,17 @@ export function SignInPanel({
                 Deploy free to your Cloudflare
                 <ArrowRight className="size-3.5" aria-hidden />
               </Link>
-              <a href="/#pricing" onClick={onNavigate} className="inline-flex items-center gap-1 font-semibold text-accent hover:text-accent-hover">
-                Join the Hosted waitlist
-                <ArrowRight className="size-3.5" aria-hidden />
-              </a>
+              {trialUrl ? (
+                <a href={trialUrl} className="inline-flex items-center gap-1 font-semibold text-accent hover:text-accent-hover">
+                  Start a Hosted free trial
+                  <ArrowRight className="size-3.5" aria-hidden />
+                </a>
+              ) : (
+                <a href="/#pricing" onClick={onNavigate} className="inline-flex items-center gap-1 font-semibold text-accent hover:text-accent-hover">
+                  Join the Hosted waitlist
+                  <ArrowRight className="size-3.5" aria-hidden />
+                </a>
+              )}
             </>
           ) : (
             <>
