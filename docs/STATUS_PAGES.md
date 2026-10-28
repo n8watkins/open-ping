@@ -97,6 +97,26 @@ See [`WIDGET.md`](./WIDGET.md) for the full embedding guide.
 
 ---
 
+## Off-hours (scheduled off)
+
+A monitor with an operating schedule is not checked outside its hours, and its public page says so.
+Visitors see each off-hours service as **Scheduled off since Fri 4:48 PM**, the time it went off, shown in the visitor's own timezone.
+Off-hours never count as an outage and never count against uptime.
+
+- **Some services off, the rest up:** the banner stays **All systems operational**.
+- **Every service off:** the banner reads **All services are scheduled off**, with the time of the last check instead of "Updated 2d ago".
+- **An outage, an active maintenance window or a degraded service** still takes precedence over the off-hours banner.
+- **A page with no public services** keeps its own banner, **No public services**.
+
+The public feed (`GET /api/public/status`) reports such a service with `"state": "scheduled_off"` and a `since` timestamp (epoch milliseconds).
+`since` is set only for `scheduled_off`, and is `null` for every other state.
+A page whose services are all off has `"overall": "all_off"`; a page with no services has the same value and an empty `groups` list.
+
+There is no setting to hide off-hours or to show them as operational.
+The older `public.showScheduledOff` field is no longer used: OpenPing still accepts it from the API and from older backups, and ignores it.
+
+---
+
 ## What a public page never exposes
 
 Public pages (and their widget/badge) are built from a strictly redacted payload.

@@ -1,5 +1,8 @@
 # Bug: the public status feed reports "operational" during scheduled off-hours
 
+**Status: fixed** on 2026-10-27 (branch `fix/off-hours-status`); live after the next release and deploy.
+Off-hours services now read `scheduled_off` everywhere, an all-off page reads `all_off`, and `showScheduledOff` is gone; see [Off-hours in the status pages guide](./STATUS_PAGES.md#off-hours-scheduled-off).
+
 Reported 2026-10-25, from the developer portfolio (portfolio.n8builds.dev), which reads this feed.
 
 ## Summary

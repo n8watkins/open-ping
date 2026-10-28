@@ -5,7 +5,11 @@ import {
   validateImport,
 } from "./data";
 import type { MonitorRecord } from "../db/monitors";
-import type { HttpConfig, HeartbeatConfig } from "../../shared/schemas";
+import {
+  createMonitorSchema,
+  type HttpConfig,
+  type HeartbeatConfig,
+} from "../../shared/schemas";
 
 /**
  * Unit tests for the PURE export/import helpers (no D1 binding required):
@@ -13,7 +17,7 @@ import type { HttpConfig, HeartbeatConfig } from "../../shared/schemas";
  * collect errors without throwing.
  */
 
-/** Build a minimal MonitorRecord with the given config (cast — fixtures stay small). */
+/** Build a minimal MonitorRecord with the given config (cast - fixtures stay small). */
 function makeMonitor(
   type: "http" | "heartbeat",
   config: Record<string, unknown>,
@@ -37,7 +41,6 @@ function makeMonitor(
       showUptime: true,
       showResponseTime: false,
       showIncidentDetails: true,
-      showScheduledOff: false,
     },
     categoryId: null,
     heartbeatToken: "hb-token-SECRET",
@@ -155,6 +158,27 @@ describe("validateImport", () => {
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
     expect(result.counts).toEqual({ monitors: 1, maintenance: 1, incidents: 2 });
+  });
+
+  it("still accepts a backup that carries the removed showScheduledOff setting", () => {
+    // Exports made before the option was removed include it on every monitor.
+    const legacy = {
+      ...validHttpMonitor,
+      public: { visible: true, showScheduledOff: false },
+    };
+    const result = validateImport({
+      version: 1,
+      monitors: [legacy],
+      maintenance: [],
+      incidents: [],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.counts.monitors).toBe(1);
+
+    // The value is dropped on parse, so it is never stored again.
+    const parsed = createMonitorSchema.parse(legacy);
+    expect(parsed.public.visible).toBe(true);
+    expect(parsed.public).not.toHaveProperty("showScheduledOff");
   });
 
   it("rejects a non-object backup without throwing", () => {

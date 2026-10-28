@@ -31,7 +31,7 @@ import type {
 
 /**
  * Create / edit a monitor (PRD §6, §7). Mirrors `createMonitorSchema`: an HTTP
- * or heartbeat monitor with a schedule and — for HTTP — request config and
+ * or heartbeat monitor with a schedule and - for HTTP - request config and
  * content assertions. The form holds a flattened local state and assembles the
  * discriminated-union payload on submit; the worker re-validates with zod and
  * returns `{ issues }` on 400 which we surface inline.
@@ -563,9 +563,11 @@ export default function MonitorEditor() {
     const schedule = buildSchedule();
     // Set public.visible from the toggle while preserving the other public.*
     // fields (sortOrder, showUptime, showResponseTime, showIncidentDetails,
-    // showScheduledOff, name/description/group) round-tripped from the load. On
-    // create there's nothing to preserve, so zod fills the rest from defaults.
-    const publicBase =
+    // name/description/group) round-tripped from the load. On create there's
+    // nothing to preserve, so zod fills the rest from defaults. The removed
+    // showScheduledOff setting is never sent back: off-hours always show as
+    // "Scheduled off" on the public page.
+    const { showScheduledOff: _removed, ...publicBase } =
       preserved.public && typeof preserved.public === "object"
         ? (preserved.public as Record<string, unknown>)
         : {};

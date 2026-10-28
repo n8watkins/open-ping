@@ -8,6 +8,7 @@ import {
   ExternalLink,
   History,
   Loader2,
+  MoonStar,
   Wrench,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
@@ -22,10 +23,11 @@ import {
   formatMs,
   formatPct,
   formatRelativeTime,
+  formatSince,
 } from "../lib/format";
 
 /* ------------------------------------------------------------------ *
- * Response shape (GET /api/public/status). Defined locally — the
+ * Response shape (GET /api/public/status). Defined locally - the
  * public status page is a standalone, unauthenticated surface.
  * ------------------------------------------------------------------ */
 
@@ -62,6 +64,9 @@ interface PublicService {
   showUptime: boolean;
   uptime90d: number | null;
   latestMs: number | null;
+  /** When an off-hours service went off (epoch ms); null otherwise. Optional
+   *  so a feed from an older OpenPing without the field still renders. */
+  since?: number | null;
   bars: UptimeBarPoint[];
 }
 
@@ -171,6 +176,23 @@ const OVERALL_META: Record<Overall, OverallMeta> = {
   },
 };
 
+// `all_off` with services on the page means every one of them is outside its
+// operating schedule (an empty page is the "No public services" case above).
+const ALL_SCHEDULED_OFF_META: OverallMeta = {
+  card: "border-scheduled/30 bg-scheduled/5",
+  iconWrap: "bg-scheduled/15",
+  text: "text-scheduled",
+  icon: <MoonStar className="size-6" />,
+  label: "All services are scheduled off",
+};
+
+/** Banner copy for the overall status, telling the two all_off cases apart. */
+function overallMetaFor(overall: Overall, serviceCount: number): OverallMeta {
+  return overall === "all_off" && serviceCount > 0
+    ? ALL_SCHEDULED_OFF_META
+    : OVERALL_META[overall];
+}
+
 interface StateMeta {
   dot: string;
   text: string;
@@ -267,7 +289,8 @@ export default function PublicStatus() {
   }
 
   const { page, overall, updatedAt, groups, activeIncidents, recentIncidents } = data;
-  const overallMeta = OVERALL_META[overall];
+  const serviceCount = groups.reduce((n, g) => n + g.services.length, 0);
+  const overallMeta = overallMetaFor(overall, serviceCount);
   const activeMaintenance = data.maintenance.active;
   const hasCallouts = activeMaintenance.length > 0 || activeIncidents.length > 0;
 
@@ -339,7 +362,11 @@ export default function PublicStatus() {
                 className="mt-0.5 text-sm text-ink-muted"
                 title={formatDateTime(updatedAt)}
               >
-                Updated {formatRelativeTime(updatedAt)}
+                {/* Off-hours means no recent checks, so "Updated 2d ago" would
+                    read like a dead monitor: name the last check instead. */}
+                {overallMeta === ALL_SCHEDULED_OFF_META
+                  ? `Last check ${formatSince(updatedAt)}`
+                  : `Updated ${formatRelativeTime(updatedAt)}`}
               </p>
             </div>
           </div>
@@ -479,6 +506,10 @@ function barsSummary(service: PublicService, bars: UptimeBarPoint[]): string {
 function ServiceRow({ service }: { service: PublicService }) {
   const meta = SERVICE_STATE_META[service.state];
   const bars = service.bars.slice(-90);
+  const offSince =
+    service.state === "scheduled_off" && service.since != null
+      ? service.since
+      : null;
 
   return (
     <div className="px-4 py-3.5">
@@ -507,7 +538,14 @@ function ServiceRow({ service }: { service: PublicService }) {
             )}
           >
             <span className={cn("size-1.5 rounded-full", meta.dot)} />
-            {meta.label}
+            <span>
+              {meta.label}
+              {offSince != null && (
+                <span className="font-normal text-ink-muted" title={formatDateTime(offSince)}>
+                  {" "}since {formatSince(offSince)}
+                </span>
+              )}
+            </span>
           </span>
         </div>
       </div>

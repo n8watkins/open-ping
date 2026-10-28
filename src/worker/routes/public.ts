@@ -74,6 +74,13 @@ interface PublicService {
   showUptime: boolean;
   uptime90d: number | null;
   latestMs: number | null;
+  /**
+   * When the service went off-hours (epoch ms), set only while `state` is
+   * `scheduled_off` so the page can say "Scheduled off since Fri 4:48 PM".
+   * Null for every other state: a "down since" time would reveal an outage the
+   * operator has not made public as an incident.
+   */
+  since: number | null;
   bars: PublicBar[];
 }
 
@@ -88,7 +95,7 @@ interface PublicIncident {
 }
 
 interface PublicMaint {
-  // NB: the window's internal `title` is deliberately NOT exposed — operators
+  // NB: the window's internal `title` is deliberately NOT exposed - operators
   // treat it as an internal label (it has no "shown publicly" hint in the admin
   // UI), and the sibling incident projection anonymizes its title for the same
   // reason. Only the admin-authored public message is surfaced.
@@ -98,7 +105,7 @@ interface PublicMaint {
 }
 
 // ---------------------------------------------------------------------------
-// Pure helpers (unit-tested) — no DB, no request context.
+// Pure helpers (unit-tested) - no DB, no request context.
 // ---------------------------------------------------------------------------
 
 /**
@@ -106,12 +113,17 @@ interface PublicMaint {
  * maintenance window is currently active.
  *
  * Precedence (PRD §15): an *outage* (any service `down` or `suspended`) always
- * wins, then an active maintenance window, then a `degraded` service, otherwise
- * operational. "No outages" for the maintenance clause means no down/suspended
- * services — a degraded service does not block the maintenance banner.
- * `scheduled_off`, `maintenance` and `unknown` service states never count toward
- * an outage. `suspended` (a turned-off Render app) IS an outage and counts with
- * `down` toward partial/major outage.
+ * wins, then an active maintenance window, then a `degraded` service. After
+ * that, a page whose services are ALL `scheduled_off` reads `all_off`, and
+ * anything else is operational. "No outages" for the maintenance clause means
+ * no down/suspended services - a degraded service does not block the
+ * maintenance banner. `scheduled_off`, `maintenance` and `unknown` service
+ * states never count toward an outage, so a page with some services off-hours
+ * and the rest up stays operational. `suspended` (a turned-off Render app) IS an
+ * outage and counts with `down` toward partial/major outage.
+ *
+ * `all_off` covers two cases the caller tells apart by the service count: a
+ * page with no public services, and a page whose services are all off-hours.
  */
 export function computeOverall(
   services: { state: PublicServiceState }[],
@@ -121,22 +133,22 @@ export function computeOverall(
 
   let down = 0;
   let degraded = 0;
+  let off = 0;
   for (const s of services) {
     if (s.state === "down" || s.state === "suspended") down += 1;
     else if (s.state === "degraded") degraded += 1;
+    else if (s.state === "scheduled_off") off += 1;
   }
 
   if (down > 0) return down === services.length ? "major_outage" : "partial_outage";
   if (hasActiveMaintenance) return "maintenance";
   if (degraded > 0) return "degraded";
+  if (off === services.length) return "all_off";
   return "operational";
 }
 
 /** Map a raw monitor lifecycle state to its safe public projection. */
-function mapPublicState(
-  state: MonitorState,
-  showScheduledOff: boolean,
-): PublicServiceState {
+function mapPublicState(state: MonitorState): PublicServiceState {
   switch (state) {
     case "up":
       return "operational";
@@ -151,11 +163,11 @@ function mapPublicState(
     case "maintenance":
       return "maintenance";
     case "scheduled_off":
-      // Hidden from the page (and from the outage calc) unless the operator
-      // opts in; treat as operational when hidden.
-      return showScheduledOff ? "scheduled_off" : "operational";
+      // Outside the operating schedule: reported as such, never as
+      // operational. computeOverall keeps it out of the outage count.
+      return "scheduled_off";
     default:
-      // unknown / warming_up / paused — nothing meaningful to show publicly.
+      // unknown / warming_up / paused - nothing meaningful to show publicly.
       return "unknown";
   }
 }
@@ -230,6 +242,7 @@ export function computeUptimeAndBars(
 interface PublicStateRow {
   monitor_id: string;
   state: MonitorState;
+  state_since: number | null;
   last_duration_ms: number | null;
   last_checked_at: number | null;
 }
@@ -368,7 +381,7 @@ async function loadPublicIncidents(
 }
 
 // ---------------------------------------------------------------------------
-// Page resolution (PRD §16 — multiple per-category status pages).
+// Page resolution (PRD §16 - multiple per-category status pages).
 //
 // A request may target a specific published page via `?slug=`; otherwise it gets
 // the single default page. Either way we normalize to a `ResolvedPage`: the
@@ -465,7 +478,7 @@ async function fromSettings(env: Env): Promise<ResolvedPage> {
 /**
  * Resolve the page for this request. Returns "not_found" only when an explicit
  * `?slug=` was given that matches no page (so a bad slug is a hard 404, never a
- * silent fallthrough to the default page — that would leak the wrong page's
+ * silent fallthrough to the default page - that would leak the wrong page's
  * monitors).
  */
 async function resolvePage(
@@ -481,7 +494,7 @@ async function resolvePage(
 }
 
 // ---------------------------------------------------------------------------
-// GET /status — the entire public status page payload.
+// GET /status - the entire public status page payload.
 // ---------------------------------------------------------------------------
 
 publicStatus.get("/status", async (c) => {
@@ -516,14 +529,14 @@ publicStatus.get("/status", async (c) => {
 
   // Current state per monitor (no last_error / no last_status_code).
   const stateRes = await env.DB.prepare(
-    `SELECT monitor_id, state, last_duration_ms, last_checked_at FROM monitor_state`,
+    `SELECT monitor_id, state, state_since, last_duration_ms, last_checked_at FROM monitor_state`,
   ).all<PublicStateRow>();
   const stateMap = new Map<string, PublicStateRow>(
     (stateRes.results ?? []).map((s) => [s.monitor_id, s]),
   );
 
   // Public display name per on-page monitor (for incident attribution). Scoped
-  // to this page's monitors — incidents are queried against the same set.
+  // to this page's monitors - incidents are queried against the same set.
   const publicNames = new Map<string, string>();
   for (const m of pageMonitors) {
     publicNames.set(m.id, m.public.name || m.name);
@@ -538,7 +551,7 @@ publicStatus.get("/status", async (c) => {
         updatedAt = st.last_checked_at;
       }
       const pub = m.public;
-      const state = mapPublicState(st?.state ?? "unknown", pub.showScheduledOff);
+      const state = mapPublicState(st?.state ?? "unknown");
 
       let uptime90d: number | null = null;
       let bars: PublicBar[] = [];
@@ -562,6 +575,10 @@ publicStatus.get("/status", async (c) => {
         showUptime: pub.showUptime,
         uptime90d,
         latestMs: pub.showResponseTime ? (st?.last_duration_ms ?? null) : null,
+        since:
+          state === "scheduled_off"
+            ? (st?.state_since ?? st?.last_checked_at ?? null)
+            : null,
         bars,
       };
 
@@ -630,10 +647,10 @@ publicStatus.get("/status", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /badge.svg — a shields.io-style status badge (bonus).
+// GET /badge.svg - a shields.io-style status badge (bonus).
 //
 // Emits ONLY the aggregate banner state (the same `overall` value the status
-// page derives) — no service names, config, tokens, or errors. Honours the
+// page derives) - no service names, config, tokens, or errors. Honours the
 // `status_page_enabled` kill switch (renders a neutral "unknown" badge when the
 // status page is off). Safe to embed with a plain <img>, which is not subject to
 // frame-ancestors/X-Frame-Options.
@@ -645,6 +662,7 @@ const BADGE_META: Record<OverallStatus | "unknown", { label: string; color: stri
   partial_outage: { label: "partial outage", color: "#f0b429" },
   major_outage: { label: "major outage", color: "#ef4757" },
   maintenance: { label: "maintenance", color: "#8b8bf5" },
+  // Overridden to "off hours" when the page has services and all are off.
   all_off: { label: "no services", color: "#64748b" },
   unknown: { label: "unknown", color: "#64748b" },
 };
@@ -715,8 +733,8 @@ publicStatus.get("/badge.svg", async (c) => {
   // status-colored (green/amber/red) since that carries meaning. Default gray.
   const labelColor = sanitizeHexColor(c.req.query("labelColor")) ?? "#555";
 
-  // Same page resolution as /status. A disabled page — or a `?slug=` that matches
-  // no page — renders the neutral "unknown" badge rather than breaking the <img>.
+  // Same page resolution as /status. A disabled page - or a `?slug=` that matches
+  // no page - renders the neutral "unknown" badge rather than breaking the <img>.
   const resolved = await resolvePage(env, c.req.query("slug"));
   if (resolved === "not_found" || !resolved.enabled) {
     const m = BADGE_META.unknown;
@@ -737,14 +755,12 @@ publicStatus.get("/badge.svg", async (c) => {
   );
 
   const services = pageMonitors.map((mon) => ({
-    state: mapPublicState(
-      stateMap.get(mon.id) ?? "unknown",
-      mon.public.showScheduledOff,
-    ),
+    state: mapPublicState(stateMap.get(mon.id) ?? "unknown"),
   }));
   const maintenance = await loadMaintenance(env, now, pageMonitorIdSet);
   const overall = computeOverall(services, maintenance.active.length > 0);
 
   const m = BADGE_META[overall];
-  return c.body(renderBadge(label, m.label, m.color, labelColor));
+  const value = overall === "all_off" && services.length > 0 ? "off hours" : m.label;
+  return c.body(renderBadge(label, value, m.color, labelColor));
 });

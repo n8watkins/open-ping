@@ -91,8 +91,22 @@ const DEFAULT_PUBLIC: PublicConfig = {
   showUptime: true,
   showResponseTime: false,
   showIncidentDetails: true,
-  showScheduledOff: false,
 };
+
+/**
+ * Parse the stored public config. Monitors saved before `showScheduledOff` was
+ * removed still carry it in their JSON; drop it so the API never returns a
+ * setting that no longer does anything (and the editor can't round-trip it).
+ */
+function readPublic(raw: string | null): PublicConfig {
+  const parsed = parseJson<PublicConfig & { showScheduledOff?: unknown }>(
+    raw,
+    DEFAULT_PUBLIC,
+  );
+  if (parsed === null || typeof parsed !== "object") return DEFAULT_PUBLIC;
+  const { showScheduledOff: _removed, ...rest } = parsed;
+  return rest;
+}
 
 /** Map a raw row to a typed record, parsing JSON and coercing 0/1 to booleans. */
 function rowToMonitor(row: MonitorRow): MonitorRecord {
@@ -112,7 +126,7 @@ function rowToMonitor(row: MonitorRow): MonitorRecord {
     schedule: parseJson<Schedule>(row.schedule, { mode: "always" }),
     assertions: parseJson<Assertion[]>(row.assertions, []),
     notify: parseJson<NotifyPrefs>(row.notify, DEFAULT_NOTIFY),
-    public: parseJson<PublicConfig>(row.public, DEFAULT_PUBLIC),
+    public: readPublic(row.public),
     categoryId: row.category_id ?? null,
     heartbeatToken: row.heartbeat_token,
     sortOrder: row.sort_order,
@@ -221,7 +235,7 @@ export async function createMonitor(
 
   // Both inserts run as one transaction (like deleteMonitor): a failure of
   // either rolls back both, so a monitor can never exist without its
-  // monitor_state row. An orphaned monitor would be permanently un-checkable —
+  // monitor_state row. An orphaned monitor would be permanently un-checkable -
   // every other code path only UPDATEs monitor_state (0 rows when absent).
   await env.DB.batch([
     env.DB.prepare(

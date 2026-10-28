@@ -112,7 +112,7 @@ export const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
 /**
  * A schedule timezone: an IANA zone name. Defaults to UTC and is refined so an
- * invalid zone is rejected at validation time — otherwise a bad zone would make
+ * invalid zone is rejected at validation time - otherwise a bad zone would make
  * the monitor permanently `scheduled_off` and never be checked.
  */
 export const timezoneSchema = z
@@ -171,7 +171,11 @@ export const publicConfigSchema = z.object({
   showUptime: z.boolean().default(true),
   showResponseTime: z.boolean().default(false),
   showIncidentDetails: z.boolean().default(true),
-  showScheduledOff: z.boolean().default(false),
+  // `showScheduledOff` was removed: off-hours services are always shown as
+  // "Scheduled off". Older backups and API clients may still send it; z.object
+  // strips unknown keys, so those payloads still validate and the value is
+  // dropped (public.test.ts and data.test.ts pin this). Do not make this schema
+  // .strict() without keeping that compatibility.
 });
 
 export const heartbeatConfigSchema = z.object({
@@ -213,7 +217,7 @@ export const tcpConfigSchema = z.object({
     .min(1)
     .max(65535)
     // Port 25 (SMTP) outbound is blocked by the Cloudflare Workers runtime, so a
-    // TCP check against it can never succeed — reject it at validation time.
+    // TCP check against it can never succeed - reject it at validation time.
     .refine((p) => p !== 25, "port 25 is blocked by the runtime"),
   timeoutMs: z.number().int().min(1000).max(30000).default(10000),
 });

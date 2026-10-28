@@ -11,7 +11,7 @@ Last updated: 2026-10-27.
   Chosen pricing: $24 a year (20 monitors, 12-minute checks, 2 status pages), plus $12 a year for 1-minute checks; no free hosted plan.
   Gate after stage 1: about 20 waitlist sign-ups within 8 weeks.
 - Tagline everywhere: "Uptime monitoring on your own Cloudflare".
-- Open bug: off-hours monitors show as "operational" (known gap 0 below).
+- Off-hours status bug fixed on branch `fix/off-hours-status` (known gap 0 below); not deployed yet.
 
 ### How production is deployed
 
@@ -27,7 +27,7 @@ Production's own values live in a gitignored `deploy.local.json` in the main che
 
 ### Next
 
-1. Fix the off-hours status bug: reproduce it end to end, fix, add a test, open a PR.
+1. Merge the off-hours status fix (`fix/off-hours-status`), release, deploy, and check the live feed outside operating hours: off-hours services read `scheduled_off` and an all-off page reads `all_off`.
 2. Watch the waitlist; start stage 2 (batched writes, second-region confirmation) and stage 3 (a Workers for Platforms prototype) only when the owner says so.
 
 The sections below describe the July pass and are still accurate for architecture, verification and conventions.
@@ -162,10 +162,11 @@ Commit future work on a feature branch, then run `no-mistakes axi run --intent "
 
 ## Known gaps and recommended next work
 
-0. Fix the off-hours status bug (open, found 2026-10-25).
-   During scheduled off-hours the public feed, status page and widget report a monitor as "operational", because `mapPublicState` in `src/worker/routes/public.ts` hides `scheduled_off` unless `showScheduledOff` is on, which defaults to off and has no control in the monitor editor.
-   The landing page promises the opposite, and the developer portfolio, which reads the feed, shows sleeping Render apps as up.
-   Repro, cause and fix direction: [docs/BUG-public-scheduled-off.md](./BUG-public-scheduled-off.md).
+0. Ship the off-hours status fix (fixed 2026-10-27 on `fix/off-hours-status`, not deployed yet).
+   The public feed, status page, widget and badge used to report off-hours monitors as "operational".
+   They now report `scheduled_off` with a `since` time, an all-off page reads "All services are scheduled off" (`all_off`, badge "off hours"), and the `showScheduledOff` option is removed (still accepted and ignored on input).
+   The stored `showScheduledOff` key is left in each monitor's `public` JSON and dropped on read; no migration.
+   Details: [docs/BUG-public-scheduled-off.md](./BUG-public-scheduled-off.md) and [docs/STATUS_PAGES.md](./STATUS_PAGES.md#off-hours-scheduled-off).
 
 1. Implement dual-key `MASTER_KEY` rotation.
    The storage inventory and safety requirements are documented, but an online rotation still needs dual-key reads, an idempotent re-encryption pass over every protected storage class, and a proof that the previous key is no longer required.

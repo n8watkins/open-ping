@@ -1,6 +1,6 @@
 /**
  * Pure presentational formatting helpers shared across dashboard pages.
- * No data fetching, no side effects — safe to unit test and reuse anywhere.
+ * No data fetching, no side effects - safe to unit test and reuse anywhere.
  */
 
 const MINUTE = 60;
@@ -54,7 +54,7 @@ export function formatDuration(seconds: number): string {
 
 /**
  * Latency in milliseconds: "182 ms" under a second, "1.20 s" at/above it.
- * Nullish input renders an em dash placeholder.
+ * Nullish input renders a plain dash placeholder.
  */
 export function formatMs(ms: number | null | undefined): string {
   if (ms == null) return "-";
@@ -70,4 +70,44 @@ export function formatPct(value: number, digits: number = 2): string {
 /** Locale-aware absolute date + time for a given epoch-ms timestamp. */
 export function formatDateTime(ts: number): string {
   return new Date(ts).toLocaleString();
+}
+
+/** Calendar date (YYYY-MM-DD) of an instant in a timezone (default: local). */
+function calendarKey(ts: number, timeZone: string | undefined): string {
+  // en-CA formats dates as YYYY-MM-DD.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(ts);
+}
+
+/**
+ * Short "when" for a recent past instant, for copy like "Scheduled off since
+ * Fri 4:48 PM": the time alone today, weekday and time within the last six
+ * days, month and day (plus the year when it differs) before that. Rendered in
+ * the visitor's timezone and locale unless `opts` pins them (tests do).
+ */
+export function formatSince(
+  ts: number,
+  now: number = Date.now(),
+  opts: { locale?: string; timeZone?: string } = {},
+): string {
+  const { locale, timeZone } = opts;
+  const time: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
+  const thenKey = calendarKey(ts, timeZone);
+  const nowKey = calendarKey(now, timeZone);
+  const days = Math.round(
+    (Date.parse(nowKey) - Date.parse(thenKey)) / (DAY * 1000),
+  );
+
+  const fmt = (o: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat(locale, { timeZone, ...o }).format(ts);
+  if (days <= 0) return fmt(time);
+  if (days < 7) return fmt({ weekday: "short", ...time });
+  if (thenKey.slice(0, 4) === nowKey.slice(0, 4)) {
+    return fmt({ month: "short", day: "numeric" });
+  }
+  return fmt({ month: "short", day: "numeric", year: "numeric" });
 }
