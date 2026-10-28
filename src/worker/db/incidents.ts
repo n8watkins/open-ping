@@ -38,7 +38,7 @@ export interface IncidentRecord {
 }
 
 /** Raw shape of an `incidents` row as returned by D1. */
-interface IncidentRow {
+export interface IncidentRow {
   id: string;
   monitor_id: string;
   status: string;
@@ -62,7 +62,7 @@ interface IncidentRow {
 }
 
 /** Map a raw row to a typed record, coercing 0/1 to booleans. */
-function rowToIncident(row: IncidentRow): IncidentRecord {
+export function rowToIncident(row: IncidentRow): IncidentRecord {
   return {
     id: row.id,
     monitorId: row.monitor_id,
@@ -103,12 +103,15 @@ export async function getActiveIncident(
   env: Env,
   monitorId: string,
 ): Promise<IncidentRecord | null> {
-  const row = await env.DB.prepare(
-    "SELECT * FROM incidents WHERE monitor_id = ? AND status = 'open' ORDER BY started_at DESC LIMIT 1",
-  )
-    .bind(monitorId)
-    .first<IncidentRow>();
+  const row = await activeIncidentStatement(env, monitorId).first<IncidentRow>();
   return row ? rowToIncident(row) : null;
+}
+
+/** The getActiveIncident query, for a caller that batches its reads (rows: IncidentRow). */
+export function activeIncidentStatement(env: Env, monitorId: string): D1PreparedStatement {
+  return env.DB.prepare(
+    "SELECT * FROM incidents WHERE monitor_id = ? AND status = 'open' ORDER BY started_at DESC LIMIT 1",
+  ).bind(monitorId);
 }
 
 /**
@@ -127,42 +130,113 @@ export async function openIncident(
     confirmed?: boolean;
   },
 ): Promise<IncidentRecord> {
+  const { record, statements } = openIncidentStatements(env, monitor, ctx);
+  await env.DB.batch(statements);
+  const created = await getIncidentById(env, record.id);
+  if (!created) throw new Error("openIncident: failed to read back inserted row");
+  return created;
+}
+
+/**
+ * The writes that open an incident (the row and its `opened` timeline event),
+ * and the record they create, so a caller can batch them with the monitor's
+ * state change and build the alert without reading the row back.
+ */
+export function openIncidentStatements(
+  env: Env,
+  monitor: Pick<MonitorRecord, "id" | "name">,
+  ctx: {
+    at: number;
+    error?: string | null;
+    httpStatus?: number | null;
+    isFlapping?: boolean;
+    confirmed?: boolean;
+    /**
+     * Whether its alert is settled already (none is due, as in a cooldown).
+     * When false, the caller queues the alert and marks it with
+     * {@link markNotifiedStatement}; one never queued is caught up later.
+     */
+    notified?: boolean;
+  },
+): { record: IncidentRecord; statements: D1PreparedStatement[] } {
   const id = newId("inc");
   const at = ctx.at;
   const error = ctx.error ?? null;
   const httpStatus = ctx.httpStatus ?? null;
   const title = `${monitor.name} is down`;
+  const record: IncidentRecord = {
+    id,
+    monitorId: monitor.id,
+    status: "open",
+    title,
+    rootCause: error,
+    startedAt: at,
+    lastObservedAt: at,
+    resolvedAt: null,
+    durationSeconds: null,
+    httpStatus,
+    error,
+    privateNotes: null,
+    publicMessage: null,
+    resolution: null,
+    public: false,
+    isFlapping: ctx.isFlapping ?? false,
+    notified: ctx.notified ?? false,
+    confirmed: ctx.confirmed ?? false,
+    createdAt: at,
+    updatedAt: at,
+  };
+  return {
+    record,
+    statements: [
+      env.DB.prepare(
+        `INSERT INTO incidents (
+           id, monitor_id, status, title, root_cause, started_at,
+           last_observed_at, http_status, error, public, is_flapping,
+           notified, confirmed, created_at, updated_at
+         ) VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+      ).bind(
+        id,
+        monitor.id,
+        title,
+        error,
+        at,
+        at,
+        httpStatus,
+        error,
+        ctx.isFlapping ? 1 : 0,
+        ctx.notified ? 1 : 0,
+        ctx.confirmed ? 1 : 0,
+        at,
+        at,
+      ),
+      env.DB.prepare(
+        `INSERT INTO incident_events (id, incident_id, at, kind, message)
+         VALUES (?, ?, ?, 'opened', ?)`,
+      ).bind(newId("iev"), id, at, title),
+    ],
+  };
+}
 
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO incidents (
-         id, monitor_id, status, title, root_cause, started_at,
-         last_observed_at, http_status, error, public, is_flapping,
-         notified, confirmed, created_at, updated_at
-       ) VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)`,
-    ).bind(
-      id,
-      monitor.id,
-      title,
-      error,
-      at,
-      at,
-      httpStatus,
-      error,
-      ctx.isFlapping ? 1 : 0,
-      ctx.confirmed ? 1 : 0,
-      at,
-      at,
-    ),
-    env.DB.prepare(
-      `INSERT INTO incident_events (id, incident_id, at, kind, message)
-       VALUES (?, ?, ?, 'opened', ?)`,
-    ).bind(newId("iev"), id, at, title),
-  ]);
+/** Record that an incident's opening alert was queued (with the queueing, in one batch). */
+export function markNotifiedStatement(env: Env, incidentId: string): D1PreparedStatement {
+  return env.DB.prepare("UPDATE incidents SET notified = 1 WHERE id = ? AND notified = 0").bind(incidentId);
+}
 
-  const created = await getIncidentById(env, id);
-  if (!created) throw new Error("openIncident: failed to read back inserted row");
-  return created;
+/** How far back a run looks for an open incident whose alert was never queued. */
+export const ALERT_REPAIR_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Open incidents whose opening alert was never queued (the write that queues
+ * it failed after the incident itself landed), newest first, within
+ * {@link ALERT_REPAIR_WINDOW_MS}. Rows: IncidentRow.
+ */
+export function unnotifiedIncidentsStatement(env: Env, now: number): D1PreparedStatement {
+  return env.DB.prepare(
+    `SELECT * FROM incidents
+      WHERE notified = 0 AND started_at >= ? AND status = 'open'
+      ORDER BY started_at DESC LIMIT 10`,
+  ).bind(now - ALERT_REPAIR_WINDOW_MS);
 }
 
 /**
@@ -175,13 +249,79 @@ export async function recordObservation(
   incidentId: string,
   ctx: { at: number; error?: string | null; httpStatus?: number | null },
 ): Promise<void> {
-  await env.DB.prepare(
+  await observationStatement(env, incidentId, ctx).run();
+}
+
+/** The recordObservation write, for a caller that batches it. */
+export function observationStatement(
+  env: Env,
+  incidentId: string,
+  ctx: { at: number; error?: string | null; httpStatus?: number | null },
+): D1PreparedStatement {
+  return env.DB.prepare(
     `UPDATE incidents
        SET last_observed_at = ?, error = ?, http_status = ?, updated_at = ?
      WHERE id = ?`,
-  )
-    .bind(ctx.at, ctx.error ?? null, ctx.httpStatus ?? null, ctx.at, incidentId)
-    .run();
+  ).bind(ctx.at, ctx.error ?? null, ctx.httpStatus ?? null, ctx.at, incidentId);
+}
+
+/**
+ * The writes that resolve an incident, for a caller that batches them, with the
+ * record as it will read afterwards. The same contract as resolveIncident: the
+ * update is guarded on `status = 'open'`, so a repeat (or a race with another
+ * path) changes nothing, and the `recovered` event is written only when this
+ * resolve is the one that closed it (the row now carries this resolve's
+ * timestamp, which no earlier resolve can have).
+ */
+export function resolveIncidentStatements(
+  env: Env,
+  incident: IncidentRecord,
+  ctx: { at: number },
+): { record: IncidentRecord; statements: D1PreparedStatement[] } {
+  const durationSeconds = Math.round((ctx.at - incident.startedAt) / 1000);
+  return {
+    record: {
+      ...incident,
+      status: "resolved",
+      resolvedAt: ctx.at,
+      durationSeconds,
+      updatedAt: ctx.at,
+    },
+    statements: resolveIncidentByIdStatements(env, incident.id, ctx.at),
+  };
+}
+
+/**
+ * Resolve an open incident by id without reading it first (its duration comes
+ * from its own started_at), for a caller that only knows the pointer, such as
+ * a monitor entering maintenance or leaving its schedule window. Same guards as
+ * resolveIncidentStatements. With `onlyIf`, it resolves only while the
+ * monitor's state still matches the snapshot the caller planned from (a write
+ * sent later in a batch must not undo one that happened in between).
+ */
+export function resolveIncidentByIdStatements(
+  env: Env,
+  incidentId: string,
+  at: number,
+  /** A condition on the monitor's monitor_state row (`ms`), with its values. */
+  onlyIf?: { monitorId: string; sql: string; binds: (string | number | null)[] },
+): D1PreparedStatement[] {
+  const update = env.DB.prepare(
+    `UPDATE incidents
+       SET status = 'resolved', resolved_at = ?,
+           duration_seconds = CAST(ROUND((? - started_at) / 1000.0) AS INTEGER), updated_at = ?
+     WHERE id = ? AND status = 'open'${
+       onlyIf ? " AND EXISTS (SELECT 1 FROM monitor_state ms WHERE ms.monitor_id = ? AND " + onlyIf.sql + ")" : ""
+     }`,
+  ).bind(at, at, at, incidentId, ...(onlyIf ? [onlyIf.monitorId, ...onlyIf.binds] : []));
+  return [
+    update,
+    env.DB.prepare(
+      `INSERT INTO incident_events (id, incident_id, at, kind, message)
+       SELECT ?1, ?2, ?3, 'recovered', 'Recovered'
+        WHERE EXISTS (SELECT 1 FROM incidents WHERE id = ?2 AND status = 'resolved' AND resolved_at = ?3)`,
+    ).bind(newId("iev"), incidentId, at),
+  ];
 }
 
 /**
@@ -233,10 +373,13 @@ export async function countRecentIncidents(
   monitorId: string,
   sinceMs: number,
 ): Promise<number> {
-  const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS c FROM incidents WHERE monitor_id = ? AND started_at >= ?",
-  )
-    .bind(monitorId, sinceMs)
-    .first<{ c: number }>();
+  const row = await recentIncidentCountStatement(env, monitorId, sinceMs).first<{ c: number }>();
   return row?.c ?? 0;
+}
+
+/** The countRecentIncidents query, for a caller that batches its reads (row: `{ c }`). */
+export function recentIncidentCountStatement(env: Env, monitorId: string, sinceMs: number): D1PreparedStatement {
+  return env.DB.prepare(
+    "SELECT COUNT(*) AS c FROM incidents WHERE monitor_id = ? AND started_at >= ?",
+  ).bind(monitorId, sinceMs);
 }

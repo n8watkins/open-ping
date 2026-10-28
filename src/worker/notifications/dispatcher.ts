@@ -18,7 +18,7 @@ import {
   checkTelegramChatId,
   type TargetCheck,
 } from "../../shared/channel-targets";
-import { sendWebPush } from "./push/webpush";
+import { sendWebPush, type VapidKeys } from "./push/webpush";
 import { getVapid } from "./push/vapid";
 import {
   isNotificationPayload,
@@ -44,6 +44,8 @@ export async function deliverToChannel(
   env: Env,
   channel: ChannelRecord,
   payload: NotificationPayload,
+  /** The `email_from` setting, when the caller already read it (null: unset). */
+  emailFrom?: () => Promise<string | null>,
 ): Promise<SendResult> {
   const cfg = channel.config as Record<string, string | undefined>;
   // A secret that is still ciphertext here could not be decrypted (for example
@@ -100,7 +102,7 @@ export async function deliverToChannel(
     case "email": {
       if (!cfg.to) return { ok: false, error: "missing_recipient" };
       const from =
-        cfg.from || (await getSetting(env, "email_from")) || DEFAULT_FROM;
+        cfg.from || (await (emailFrom ? emailFrom() : getSetting(env, "email_from"))) || DEFAULT_FROM;
       return sendResendEmail(env, {
         from,
         to: cfg.to,
@@ -120,9 +122,46 @@ export function outboxTake(limit: number = BATCH): number {
 }
 
 /**
+ * What one pass reads once and reuses for every entry: each channel, the VAPID
+ * keys and the `email_from` setting. Undefined means not read yet.
+ */
+export interface DeliveryCache {
+  channels: Map<string, ChannelRecord | null>;
+  vapid: VapidKeys | null | undefined;
+  emailFrom: string | null | undefined;
+}
+
+export function newDeliveryCache(): DeliveryCache {
+  return { channels: new Map(), vapid: undefined, emailFrom: undefined };
+}
+
+/**
+ * The most D1 queries delivering `entry` can make, given what the pass has
+ * already read (lib/budget.ts uses it so a run never overruns its plan):
+ *
+ * - a Web Push device: the subscription, the VAPID keys (once per pass),
+ *   marking the entry sent or failed, and the device's result;
+ * - a channel: the channel (once per channel per pass), `email_from` (once per
+ *   pass, email only), marking the entry, and the channel's result;
+ * - a payload that can't be read: only marking it failed;
+ * - plus one in every case for marking it failed if delivery throws.
+ */
+export function deliveryD1Cost(entry: OutboxEntry, cache: DeliveryCache): number {
+  if (entry.payloadError || !isNotificationPayload(entry.payload)) return 1;
+  if (entry.channelType === "push") return 3 + (cache.vapid === undefined ? 1 : 0) + 1;
+  const channelRead = entry.channelId && !cache.channels.has(entry.channelId) ? 1 : 0;
+  const fromRead = entry.channelType === "email" && cache.emailFrom === undefined ? 1 : 0;
+  return 2 + channelRead + fromRead + 1;
+}
+
+/**
  * Process due outbox entries (PRD §12 outbox): deliver each independently,
  * record success/failure, retry transient failures with backoff, stop at max.
  * Never throws - a provider failure must not break the monitoring cycle.
+ *
+ * With `canSpend`, each entry is delivered only if its worst-case D1 cost
+ * (deliveryD1Cost) still fits the caller's budget; the rest stay due for the
+ * next pass, untouched.
  */
 export async function processOutbox(
   env: Env,
@@ -135,6 +174,7 @@ export async function processOutbox(
    * claims them itself.
    */
   claimed?: OutboxEntry[],
+  opts: { canSpend?: (d1: number) => boolean } = {},
 ): Promise<{ processed: number; sent: number; failed: number }> {
   const take = outboxTake(limit);
   if (take === 0) return { processed: 0, sent: 0, failed: 0 };
@@ -152,8 +192,27 @@ export async function processOutbox(
 
   let sent = 0;
   let failed = 0;
+  let processed = 0;
+  const cache = newDeliveryCache();
+  const emailFrom = async () => {
+    if (cache.emailFrom === undefined) cache.emailFrom = await getSetting(env, "email_from");
+    return cache.emailFrom;
+  };
+  const vapid = async () => {
+    if (cache.vapid === undefined) cache.vapid = await getVapid(env);
+    return cache.vapid;
+  };
+  const channelById = async (id: string) => {
+    if (!cache.channels.has(id)) cache.channels.set(id, await getChannel(env, id));
+    return cache.channels.get(id) ?? null;
+  };
 
   for (const entry of due) {
+    if (opts.canSpend && !opts.canSpend(deliveryD1Cost(entry, cache))) {
+      console.log(`[dispatcher] out of budget; ${due.length - processed} deliveries wait for the next run`);
+      break;
+    }
+    processed++;
     try {
       // Never send ciphertext or malformed legacy data to an external provider.
       // Keep the row in the normal bounded retry flow so operators can see the
@@ -189,6 +248,7 @@ export async function processOutbox(
           entry.target,
           entry.attempts,
           entry.payload,
+          vapid,
         );
         if (r === "sent") sent++;
         else if (r === "failed") failed++;
@@ -196,14 +256,14 @@ export async function processOutbox(
         continue;
       }
 
-      const channel = entry.channelId ? await getChannel(env, entry.channelId) : null;
+      const channel = entry.channelId ? await channelById(entry.channelId) : null;
       if (!channel || !channel.enabled) {
         // Channel removed/disabled - drop the entry as dead.
         await markFailed(env, entry.id, MAX_ATTEMPTS, "channel_unavailable", MAX_ATTEMPTS);
         failed++;
         continue;
       }
-      const result = await deliverToChannel(env, channel, entry.payload);
+      const result = await deliverToChannel(env, channel, entry.payload, emailFrom);
       if (result.ok) {
         await markSent(env, entry.id);
         // Bookkeeping only - must never reach the outer catch (which would
@@ -238,7 +298,7 @@ export async function processOutbox(
     }
   }
 
-  return { processed: due.length, sent, failed };
+  return { processed, sent, failed };
 }
 
 type PushOutcome = "sent" | "failed" | "pruned";
@@ -250,6 +310,7 @@ async function deliverPush(
   subscriptionId: string | null,
   attempts: number,
   payload: NotificationPayload,
+  loadVapid: () => Promise<VapidKeys | null>,
 ): Promise<PushOutcome> {
   let sub: Awaited<ReturnType<typeof getSubscription>>;
   try {
@@ -265,7 +326,7 @@ async function deliverPush(
     await markFailed(env, entryId, MAX_ATTEMPTS, "subscription_gone", MAX_ATTEMPTS);
     return "pruned";
   }
-  const vapid = await getVapid(env);
+  const vapid = await loadVapid();
   if (!vapid) {
     await markFailed(env, entryId, MAX_ATTEMPTS, "vapid_not_configured", MAX_ATTEMPTS);
     return "failed";

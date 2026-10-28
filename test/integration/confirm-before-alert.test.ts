@@ -4,7 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import "../../src/worker/index";
 import { MAX_REDIRECTS } from "../../src/worker/checks/http";
-import { PLAN_BUDGETS } from "../../src/worker/lib/budget";
+import { NOTIFICATION_RESERVE, PLAN_BUDGETS } from "../../src/worker/lib/budget";
 import { runScheduled } from "../../src/worker/scheduler";
 
 // Confirm before alerting, end to end against D1: a failed check re-checks once
@@ -203,8 +203,9 @@ describe("confirm before alerting", () => {
     const url = "https://confirm-budget.example.com/";
     const id = await createMonitor("Confirm budget", url);
     await dueAndUp(id);
-    // Room for the check's own fetches (it may follow redirects) and nothing more.
-    const tight = { ...PLAN_BUDGETS.free, subrequests: 1 + MAX_REDIRECTS };
+    // Room for the check's own fetches (it may follow redirects) beside the
+    // room every run keeps for alerts, and nothing more.
+    const tight = { ...PLAN_BUDGETS.free, subrequests: 1 + MAX_REDIRECTS + NOTIFICATION_RESERVE };
     let calls = stubTargets({ [url]: [503] });
 
     await runScheduled(controller, env, { ...FAST, budget: tight });

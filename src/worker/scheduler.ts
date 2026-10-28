@@ -10,14 +10,19 @@ import { probeFetchLimit, runMonitorCheck } from "./checks/runner";
 import { parseDomainCache } from "./checks/domain";
 import { pacer } from "./lib/pace";
 import {
-  applyCheckResult,
-  setScheduledOff,
-  setMaintenanceState,
-  markHeartbeatMissed,
-  warmHeartbeat,
+  checkNeedsIncident,
+  planAlertRepair,
+  planCheckResult,
+  planHeartbeatMissed,
+  planMaintenanceState,
+  planScheduledOff,
+  planWarmHeartbeat,
+  readWriteContext,
   STATE_COLUMNS,
   type StateRow as CheckStateRow,
 } from "./checks/state";
+import type { CheckOutcome } from "./checks/types";
+import { rowToIncident, unnotifiedIncidentsStatement, type IncidentRow } from "./db/incidents";
 import { activeWindowsFromRows, listMaintenanceStatement, type MaintenanceRow } from "./db/maintenance";
 import { compactionStatements, resolveRetention, type RetentionConfig } from "./history/rollups";
 import { outboxTake, processOutbox } from "./notifications/dispatcher";
@@ -33,9 +38,18 @@ import {
   type RunStats,
 } from "./lib/lease";
 import { expiredAuthCleanupStatements } from "./lib/sessions";
-import { countingD1, planBudget, RunBudget, type PlanBudget, type UsageCounter } from "./lib/budget";
+import {
+  countingD1,
+  MONTHLY_REPORT_D1,
+  NOTIFICATION_D1_COST,
+  WEEKLY_SUMMARY_D1,
+  planBudget,
+  RunBudget,
+  type PlanBudget,
+  type UsageCounter,
+} from "./lib/budget";
 import { DOWNTIME_STATES } from "../shared/states";
-import { batchEach } from "./lib/batch";
+import { runWritePlan, type GroupOutcome, type WriteGroup } from "./lib/batch";
 import { claimDueStatement, outboxEntriesFromRows, type OutboxRow } from "./db/outbox";
 import { parseJSONSetting, settingsFromRows, settingsStatement, type SettingRow } from "./db/settings";
 import { newId } from "./lib/ids";
@@ -96,13 +110,15 @@ const RUN_SETTINGS = [
  * Round trips, not queries, set how long a run takes. Cron Triggers run on
  * whichever Cloudflare machine has spare capacity, often far from the database,
  * and a D1 round trip from there measured about 160 ms in production (about 12
- * ms on a good tick). So a run sends its work in as few round trips as it can:
- * one to take the lease, open its run record and read everything it needs, one
- * for the end-of-run work (the outbox claim, rollups, retention, auth cleanup),
- * and one to record the finish and release the lease. A run that checks nothing
- * makes exactly those three. Each check adds its own (lib/budget.ts counts
- * them), and the run record keeps the total as `d1_queries` next to its
- * wall-clock `duration_ms`.
+ * ms on a good tick). So a run sends its work in as few round trips as it can,
+ * however many monitors it checks: one to take the lease, open its run record
+ * and read everything it needs; one, only when a check may open or resolve an
+ * incident, for the reads that depends on; one for every monitor's writes and
+ * the end-of-run work (the outbox claim, rollups, retention, auth cleanup); and
+ * one to record the finish and release the lease. A run that checks nothing
+ * makes exactly three, and so does a run whose checks all pass. Each delivered
+ * alert adds its own queries (lib/budget.ts counts them), and the run record
+ * keeps the total as `d1_queries` next to its wall-clock `duration_ms`.
  */
 export async function runScheduled(
   controller: ScheduledController,
@@ -122,7 +138,7 @@ export async function runScheduled(
   // won), and read what the run needs. A batch is one transaction, so the run
   // record can never exist without the lease. Losing the lease wastes only the
   // reads; nothing is written.
-  const [, holderRes, , monitorsRes, statesRes, maintenanceRes, settingsRes] = await env.DB.batch([
+  const [, holderRes, , monitorsRes, statesRes, maintenanceRes, settingsRes, unnotifiedRes] = await env.DB.batch([
     acquireLeaseStatement(env, lease.name, lease.holder, now, LEASE_TTL_MS),
     leaseHolderStatement(env, lease.name),
     recordRunStartStatement(env, run, controller.cron ?? null, lease),
@@ -130,6 +146,7 @@ export async function runScheduled(
     env.DB.prepare(`SELECT monitor_id, next_check_at, ${STATE_COLUMNS} FROM monitor_state`),
     listMaintenanceStatement(env),
     settingsStatement(env, RUN_SETTINGS),
+    unnotifiedIncidentsStatement(env, now),
   ]);
   const holder = (holderRes?.results?.[0] as { holder?: string } | undefined)?.holder;
   if (holder !== lease.holder) {
@@ -165,6 +182,16 @@ export async function runScheduled(
     );
 
     const duePolled: MonitorRecord[] = [];
+    // Every write this run makes, collected and sent at the end in one batch
+    // with the end-of-run work (checks/state.ts plans them). `done` tallies a
+    // monitor once its writes landed, or counts the failure when they couldn't.
+    const writes: { group: WriteGroup; done: (o: GroupOutcome) => void }[] = [];
+    const skippedOnceWritten = (what: string) => (o: GroupOutcome) => {
+      if (o === "none") tally.failures++;
+      else tally.skipped++;
+      if (o === "none") console.error(`[scheduler] ${what} could not be written`);
+    };
+    const missedHeartbeats: MonitorRecord[] = [];
 
     for (const m of monitors) {
       if (!m.enabled || m.paused) {
@@ -178,15 +205,10 @@ export async function runScheduled(
           tally.skipped++;
           continue;
         }
-        // Wrapped so one monitor's DB error can't abort the whole cycle and
-        // starve every monitor after it.
-        try {
-          await setMaintenanceState(env, m, now);
-          tally.skipped++;
-        } catch (e) {
-          tally.failures++;
-          console.error(`[scheduler] maintenance ${m.id} failed`, e);
-        }
+        writes.push({
+          group: planMaintenanceState(env, m, now, states.get(m.id) ?? null),
+          done: skippedOnceWritten(`maintenance ${m.id}`),
+        });
         continue;
       }
       if (!isActiveAt(m.schedule, new Date(now))) {
@@ -198,13 +220,10 @@ export async function runScheduled(
           tally.skipped++;
           continue;
         }
-        try {
-          await setScheduledOff(env, m, now);
-          tally.skipped++;
-        } catch (e) {
-          tally.failures++;
-          console.error(`[scheduler] scheduled-off ${m.id} failed`, e);
-        }
+        writes.push({
+          group: planScheduledOff(env, m, now, off ?? null),
+          done: skippedOnceWritten(`scheduled-off ${m.id}`),
+        });
         continue;
       }
 
@@ -217,13 +236,10 @@ export async function runScheduled(
         // moment monitoring resumes. Grant one warm-up cycle that re-bases the
         // deadline on `now`; genuine misses are detected from the next tick on.
         if (!st || st.state === "scheduled_off" || st.state === "unknown") {
-          try {
-            await warmHeartbeat(env, m, now);
-            tally.skipped++;
-          } catch (e) {
-            tally.failures++;
-            console.error(`[scheduler] heartbeat warm-up ${m.id} failed`, e);
-          }
+          writes.push({
+            group: planWarmHeartbeat(env, m, now, st ?? null),
+            done: skippedOnceWritten(`heartbeat warm-up ${m.id}`),
+          });
           continue;
         }
         // Base the deadline on the last beat ACTUALLY RECEIVED (success OR
@@ -234,16 +250,10 @@ export async function runScheduled(
         const deadline = base + (m.intervalSeconds + (m.graceSeconds ?? 0)) * 1000;
         if (now > deadline) {
           // Overdue: (re)mark missed every cycle while it stays overdue so the
-          // ongoing downtime accrues in the rollups. markHeartbeatMissed dedupes
-          // the incident + the notification, so this does not spam alerts.
-          try {
-            await markHeartbeatMissed(env, m, now);
-            tally.checked++;
-            tally.failures++;
-          } catch (e) {
-            tally.failures++;
-            console.error(`[scheduler] heartbeat ${m.id} failed`, e);
-          }
+          // ongoing downtime accrues in the rollups. planHeartbeatMissed dedupes
+          // the incident + the notification, so this does not spam alerts. It
+          // re-reads the monitor's state first (below, with the other reads).
+          missedHeartbeats.push(m);
         } else {
           tally.skipped++;
         }
@@ -269,6 +279,7 @@ export async function runScheduled(
         (states.get(a.id)?.next_check_at ?? 0) - (states.get(b.id)?.next_check_at ?? 0),
     );
     let deferred = 0;
+    const results: { m: MonitorRecord; outcome: CheckOutcome; st: SchedulerStateRow | null }[] = [];
     const paceLookup = pacer(opts.rdapSpacingMs ?? RDAP_SPACING_MS);
     await mapLimit(duePolled, CONCURRENCY, async (m) => {
       const st = states.get(m.id);
@@ -277,14 +288,6 @@ export async function runScheduled(
       // check's own the same.
       const plannedAt = Date.now();
       const domainCache = m.type === "domain" ? parseDomainCache(st?.domain_cache) : null;
-      // Out of budget for this run: leave it due for the next tick.
-      const ticket = await budget.startCheck(
-        probeFetchLimit(m, m.type === "domain" ? { cache: domainCache, now: plannedAt } : undefined),
-      );
-      if (!ticket) {
-        deferred++;
-        return;
-      }
       // Warm-up applies on a cold start (never checked) or the first check after
       // the monitor comes back on schedule or out of maintenance. A monitor
       // already in `warming_up` is NOT warmed up again: the next check is a
@@ -301,6 +304,17 @@ export async function runScheduled(
       // is open), and a recovery counts on the first passing check.
       const alreadyDown = !!st && (DOWNTIME_STATES.has(st.state) || !!st.active_incident_id);
       const confirm = m.confirmFailures !== "off" && !alreadyDown;
+      // Out of budget for this run: leave it due for the next tick. A check
+      // that may confirm holds its re-check's fetches too (a fresh probe, so no
+      // cached read), so a failure it finds can always be confirmed.
+      const ticket = await budget.startCheck(
+        probeFetchLimit(m, m.type === "domain" ? { cache: domainCache, now: plannedAt } : undefined),
+        confirm ? probeFetchLimit(m) : 0,
+      );
+      if (!ticket) {
+        deferred++;
+        return;
+      }
       let fetchesSpent: number | undefined;
       try {
         const outcome = await runMonitorCheck(m, {
@@ -326,9 +340,8 @@ export async function runScheduled(
         }
         if (outcome.confirmation) tally.confirmations++;
         if (outcome.confirmation === "cleared") tally.confirmationsCleared++;
-        await applyCheckResult(env, m, outcome, st ?? null);
-        tally.checked++;
-        if (!outcome.ok) tally.failures++;
+        // Written with the rest at the end of the run.
+        results.push({ m, outcome, st: st ?? null });
       } catch (e) {
         tally.failures++;
         console.error(`[scheduler] check ${m.id} failed`, e);
@@ -343,28 +356,133 @@ export async function runScheduled(
       );
     }
 
-    // Round trip 2: the end-of-run work, independent statements in one batch
-    // (lib/batch.ts retries them one by one if the batch fails, so a bad one
-    // can't take the others down). The outbox is claimed here, after the checks
-    // above queued their alerts, and delivered below.
+    // The reads the writes depend on, in one round trip, only when some check
+    // may open or resolve an incident or a heartbeat is overdue: each such
+    // monitor's open incident, recent incidents (flap detection) and recent
+    // alerts (cooldown), the alert channels, and a fresh state row for each
+    // overdue heartbeat (a beat may have arrived since the run started).
+    // Retries after a failed batch are paid from what the budget has left.
+    const retryRoom = () => budget.canSpendD1(2);
+    // Open incidents whose alert a failed write left out (planAlertRepair).
+    const unnotified = ((unnotifiedRes?.results ?? []) as IncidentRow[]).map(rowToIncident);
+    const ctx = await readWriteContext(
+      env,
+      {
+        notify: unnotified.length > 0,
+        incidents: [
+          ...results
+            .filter((r) => checkNeedsIncident(r.outcome, r.st))
+            .map((r) => ({ monitorId: r.m.id, at: r.outcome.at })),
+          ...missedHeartbeats.map((m) => ({ monitorId: m.id, at: now })),
+        ],
+        states: missedHeartbeats.map((m) => m.id),
+      },
+      { canSpend: retryRoom },
+    );
+
+    for (const { m, outcome, st } of results) {
+      try {
+        const planned = await planCheckResult(env, m, outcome, st, ctx);
+        writes.push({
+          group: planned.group,
+          done: (o) => {
+            if (o === "none") {
+              tally.failures++;
+              console.error(`[scheduler] check ${m.id} could not be written`);
+              return;
+            }
+            tally.checked++;
+            if (!outcome.ok) tally.failures++;
+          },
+        });
+      } catch (e) {
+        tally.failures++;
+        console.error(`[scheduler] check ${m.id} failed`, e);
+      }
+    }
+    const byId = new Map(monitors.map((m) => [m.id, m]));
+    // A monitor that recovers in this very run gets its recovery alert, not a
+    // late down alert first.
+    const recovering = new Set(results.filter((r) => r.outcome.ok).map((r) => r.m.id));
+    for (const incident of unnotified) {
+      try {
+        const monitor = recovering.has(incident.monitorId) ? null : (byId.get(incident.monitorId) ?? null);
+        const group = await planAlertRepair(env, monitor, incident, ctx);
+        if (group) {
+          writes.push({
+            group,
+            done: (o) => {
+              if (o === "none") console.error(`[scheduler] alert for ${incident.id} still not queued`);
+            },
+          });
+        }
+      } catch (e) {
+        console.error(`[scheduler] alert repair ${incident.id} failed`, e);
+      }
+    }
+    for (const m of missedHeartbeats) {
+      if (!ctx.states.has(m.id)) {
+        tally.failures++;
+        console.error(`[scheduler] heartbeat ${m.id}: its state could not be read`);
+        continue;
+      }
+      try {
+        const planned = await planHeartbeatMissed(env, m, now, ctx.states.get(m.id) ?? null, ctx);
+        const counted = () => {
+          tally.checked++;
+          tally.failures++;
+        };
+        // A beat arrived after the snapshot: nothing to write.
+        if (!planned) counted();
+        else {
+          writes.push({
+            group: planned.group,
+            done: (o) => {
+              if (o === "none") {
+                tally.failures++;
+                console.error(`[scheduler] heartbeat ${m.id} could not be written`);
+              } else counted();
+            },
+          });
+        }
+      } catch (e) {
+        tally.failures++;
+        console.error(`[scheduler] heartbeat ${m.id} failed`, e);
+      }
+    }
+
+    // Round trip 2 (3 when the reads above ran): every monitor's writes, then
+    // the end-of-run work, in one batch (lib/batch.ts runWritePlan, which
+    // retries in smaller parts if it fails, so a bad statement only costs its
+    // own monitor's unit). The outbox is claimed after the writes queued their
+    // alerts, in the same batch, and delivered below.
     const take = outboxTake(budget.notificationAllowance(25));
     const retention = resolveRetention(
       parseJSONSetting<Partial<RetentionConfig>>(settings.get("retention")),
     );
     const claim = take > 0 ? [{ label: "outbox claim", stmt: claimDueStatement(env, Date.now(), take) }] : [];
-    const results = await batchEach(env, "scheduler", [
-      ...claim,
-      ...compactionStatements(env, now, retention),
-      ...expiredAuthCleanupStatements(env),
-    ]);
+    const plan = await runWritePlan(
+      env,
+      "scheduler",
+      writes.map((w) => w.group),
+      [...claim, ...compactionStatements(env, now, retention), ...expiredAuthCleanupStatements(env)],
+      // Keep room for the run record and the deliveries just claimed.
+      { canSpend: () => budget.canSpendD1(1 + take * NOTIFICATION_D1_COST) },
+    );
+    writes.forEach((w, i) => w.done(plan.groups[i]!));
+    const tailResults = plan.tail;
 
     // Deliver what was claimed (independent; never fails the run).
     let notificationFailures = 0;
-    const claimed = claim.length > 0 ? results[0] : null;
+    const claimed = claim.length > 0 ? tailResults[0] : null;
     if (claimed) {
       try {
         const entries = await outboxEntriesFromRows(env, (claimed.results ?? []) as OutboxRow[]);
-        const r = await processOutbox(env, Date.now(), take, entries);
+        // Each delivery goes only if its worst case still fits (it never
+        // pushes the run past its plan); the rest wait for the next run.
+        const r = await processOutbox(env, Date.now(), take, entries, {
+          canSpend: (d1) => budget.canSpendD1(d1),
+        });
         notificationFailures = r.failed;
       } catch (e) {
         console.error("[scheduler] notification dispatch failed", e);
@@ -372,15 +490,23 @@ export async function runScheduled(
     }
 
     // Weekly summary (self-guards on enabled/recipient/due, from the settings
-    // read up front, so a run where it isn't due costs no queries).
+    // read up front, so a run where it isn't due costs no queries). When
+    // retries above left too little of the budget for it, it waits for a later
+    // run: it stays due until it is sent.
     let weeklyAttempted = false;
-    try {
-      const weekly = await sendWeeklySummary(env, Date.now(), settings);
-      weeklyAttempted =
-        weekly.sent || !["disabled", "no_recipient", "not_due"].includes(weekly.reason ?? "");
-    } catch (e) {
+    if (budget.canSpendD1(WEEKLY_SUMMARY_D1)) {
+      try {
+        const weekly = await sendWeeklySummary(env, Date.now(), settings);
+        weeklyAttempted =
+          weekly.sent || !["disabled", "no_recipient", "not_due"].includes(weekly.reason ?? "");
+      } catch (e) {
+        weeklyAttempted = true;
+        console.error("[scheduler] weekly summary failed", e);
+      }
+    } else {
+      // Counted as tried, so the monthly report doesn't take its place either.
       weeklyAttempted = true;
-      console.error("[scheduler] weekly summary failed", e);
+      console.log("[scheduler] out of D1 budget; the weekly summary and monthly report wait for a later run");
     }
 
     // Monthly report (opt-in, from the 1st; notifications/monthly.ts). It costs
@@ -388,7 +514,7 @@ export async function runScheduled(
     // the weekly summary already tried this run, the report waits for a later
     // one (it catches up any day until last month's report is sent), so the
     // tail reserve never has to hold both.
-    if (!weeklyAttempted) {
+    if (!weeklyAttempted && budget.canSpendD1(MONTHLY_REPORT_D1)) {
       try {
         await sendMonthlyReport(env, Date.now(), settings, retention);
       } catch (e) {

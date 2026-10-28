@@ -214,13 +214,19 @@ async function decryptRecord(
 }
 
 export async function listChannels(env: Env): Promise<ChannelRecord[]> {
-  const res = await env.DB.prepare(
-    "SELECT * FROM notification_channels ORDER BY created_at",
-  ).all<ChannelRow>();
+  const res = await listChannelsStatement(env).all<ChannelRow>();
+  return channelsFromRows(env, res.results ?? []);
+}
+
+/** The listChannels query, for a caller that batches its reads. */
+export function listChannelsStatement(env: Env): D1PreparedStatement {
+  return env.DB.prepare("SELECT * FROM notification_channels ORDER BY created_at");
+}
+
+/** Decode (and decrypt) the rows of {@link listChannelsStatement}. */
+export function channelsFromRows(env: Env, rows: unknown[]): Promise<ChannelRecord[]> {
   return Promise.all(
-    (res.results ?? []).map((r) =>
-      decryptRecord(env, rowToChannel(r), r.config),
-    ),
+    (rows as ChannelRow[]).map((r) => decryptRecord(env, rowToChannel(r), r.config)),
   );
 }
 

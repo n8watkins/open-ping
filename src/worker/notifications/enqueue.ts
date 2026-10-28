@@ -10,9 +10,9 @@ import {
   type postUpdateSchema,
 } from "../db/incident-updates";
 import type { z } from "zod";
-import { listChannels } from "../db/channels";
+import { listChannels, type ChannelRecord } from "../db/channels";
 import { listActiveSubscriptionIds } from "../db/push";
-import { enqueue } from "../db/outbox";
+import { enqueue, type NewOutboxEntry } from "../db/outbox";
 import { getSetting } from "../db/settings";
 import { isVapidConfigured } from "./push/vapid";
 import { channelWantsEvent, type ChannelKind, type NotifyEvent } from "../../shared/notifications";
@@ -23,14 +23,36 @@ import { buildIncidentPayload, buildIncidentUpdatePayload, type NotificationPayl
  * checks/state.ts: repeated down/flapping/heartbeat_missed alerts for the same
  * monitor inside this window are coalesced into the first one of that type.
  */
-const ALERT_COOLDOWN_MS = 60 * 60 * 1000;
+export const ALERT_COOLDOWN_MS = 60 * 60 * 1000;
 
 /** Down-family events subject to coalescing. `recovered` is never suppressed. */
-const COOLDOWN_EVENTS: ReadonlySet<NotifyEvent> = new Set([
+export const COOLDOWN_EVENTS: ReadonlySet<NotifyEvent> = new Set([
   "down",
   "flapping",
   "heartbeat_missed",
 ]);
+
+/**
+ * The down-family events already queued for this monitor since `since` (rows:
+ * `{ event_type }`), so a caller that batches its reads can apply the cooldown
+ * (the same rule as recentlyAlerted) for whichever event it ends up sending.
+ */
+export function recentAlertsStatement(env: Env, monitorId: string, since: number): D1PreparedStatement {
+  return env.DB.prepare(
+    `SELECT DISTINCT event_type FROM notification_outbox
+      WHERE monitor_id = ? AND created_at >= ?
+        AND event_type IN (SELECT value FROM json_each(?))`,
+  ).bind(monitorId, since, JSON.stringify([...COOLDOWN_EVENTS]));
+}
+
+/** What fanning an alert out needs: the channels, the app URL and the Web Push devices. */
+export interface NotifyContext {
+  /** Every channel, as listChannels returns them. */
+  channels: ChannelRecord[];
+  appUrl: string | undefined;
+  /** Active Web Push device ids; empty when Web Push isn't configured. */
+  pushIds: string[];
+}
 
 /**
  * True when an alert of this exact event type for this monitor was already
@@ -127,15 +149,36 @@ async function fanOut(
   subjectId: string,
   buildPayload: (appUrl: string | undefined) => NotificationPayload,
 ): Promise<number> {
-  const channels = (await listChannels(env)).filter((c) => c.enabled && c.type !== "push");
-  if (!channels.length) return 0;
-
+  const channels = await listChannels(env);
+  if (!channels.some((c) => c.enabled && c.type !== "push")) return 0;
   const appUrl = env.APP_URL ?? (await getSetting(env, "app_url")) ?? undefined;
-  const payload = buildPayload(appUrl);
+  const pushIds = (await isVapidConfigured(env)) ? await listActiveSubscriptionIds(env) : [];
+  const entries = deliveriesFor(monitor, event, subjectId, buildPayload, { channels, appUrl, pushIds });
+  if (entries.length) await enqueue(env, entries);
+  return entries.length;
+}
+
+/**
+ * The outbox entries for `event` on this monitor (see fanOut), from an already
+ * read {@link NotifyContext}: one per enabled channel that wants the event and
+ * that the monitor's channel restriction allows, plus one per Web Push device.
+ * Pure, so a caller can batch the inserts with its other writes.
+ */
+export function deliveriesFor(
+  monitor: MonitorRecord,
+  event: NotifyEvent,
+  subjectId: string,
+  buildPayload: (appUrl: string | undefined) => NotificationPayload,
+  ctx: NotifyContext,
+): NewOutboxEntry[] {
+  const channels = ctx.channels.filter((c) => c.enabled && c.type !== "push");
+  if (!channels.length) return [];
+
+  const payload = buildPayload(ctx.appUrl);
 
   const restrict = monitor.notify?.channels ?? [];
 
-  const entries: Parameters<typeof enqueue>[1] = channels
+  const entries: NewOutboxEntry[] = channels
     .filter((ch) => channelWantsEvent(ch.type as ChannelKind, event, ch.events))
     .filter((ch) => restrict.length === 0 || restrict.includes(ch.id))
     .map((ch) => ({
@@ -154,8 +197,8 @@ async function fanOut(
   // user explicitly opts it back in with a "push" sentinel in notify.channels.
   // (Least-surprising: a restricted monitor fires ONLY what is listed.)
   const pushAllowed = restrict.length === 0 || restrict.includes("push");
-  if (pushAllowed && channelWantsEvent("push", event, null) && (await isVapidConfigured(env))) {
-    for (const id of await listActiveSubscriptionIds(env)) {
+  if (pushAllowed && channelWantsEvent("push", event, null)) {
+    for (const id of ctx.pushIds) {
       entries.push({
         eventKey: `${event}:${subjectId}:push:${id}`,
         monitorId: monitor.id,
@@ -167,9 +210,22 @@ async function fanOut(
       });
     }
   }
+  return entries;
+}
 
-  if (entries.length) await enqueue(env, entries);
-  return entries.length;
+/**
+ * The deliveries for an incident event (enqueueIncidentEvent without the
+ * cooldown, which a batching caller applies from recentAlertsStatement).
+ */
+export function incidentDeliveries(
+  monitor: MonitorRecord,
+  incident: IncidentRecord,
+  event: NotifyEvent,
+  ctx: NotifyContext,
+): NewOutboxEntry[] {
+  return deliveriesFor(monitor, event, incident.id, (appUrl) =>
+    buildIncidentPayload(monitor, incident, event, appUrl),
+  ctx);
 }
 
 /** What posting an update did: the update, and how many alerts were queued. */

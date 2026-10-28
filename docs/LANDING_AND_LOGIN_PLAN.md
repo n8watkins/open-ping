@@ -122,7 +122,7 @@ People buying a $24 product from a solo developer want to know there is a person
 
 - Label: In your own Cloudflare account
 - Price: Free
-- Points: Every feature, MIT licensed / Your data never leaves your account / Fits Cloudflare's free plan for about 8 monitors at once; Workers Paid for more / About 20 minutes, step by step
+- Points: Every feature, MIT licensed / Your data never leaves your account / Fits Cloudflare's free plan for about 24 monitors at once; Workers Paid for more / About 20 minutes, step by step
 - Button: `Deploy free to your Cloudflare`
 
 **Hosted card (now)**
@@ -150,7 +150,7 @@ Put this directly under the two pricing cards, and use the same table in `/insta
 |---|---|---|
 | Price | Free (Cloudflare's free plan; Workers Paid is $5 a month if you outgrow it) | $24 a year; 1-minute checks $12 a year more |
 | Set-up | About 20 minutes: a Cloudflare account, a terminal and a few commands | About a minute: sign in and add a site |
-| Monitors | No cap of its own; about 8 at once on Cloudflare's free plan, up to 200 per run on Workers Paid | 20 |
+| Monitors | No cap of its own; about 24 at once on Cloudflare's free plan, up to 200 per run on Workers Paid | 20 |
 | Check interval | Every 12 minutes by default; you can change it | Every 12 minutes, or 1 minute with the add-on |
 | Status pages | As many as you like | 2 |
 | Second-region confirmation | Once stage 2 ships, yes | Yes |
