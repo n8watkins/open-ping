@@ -13,6 +13,11 @@ export default defineConfig({
       "cloudflare:sockets": fileURLToPath(
         new URL("./test/stubs/cloudflare-sockets.ts", import.meta.url),
       ),
+      // Likewise `cloudflare:workers`, for the Durable Object base class the
+      // worker entry exports (src/worker/region-probe.ts).
+      "cloudflare:workers": fileURLToPath(
+        new URL("./test/stubs/cloudflare-workers.ts", import.meta.url),
+      ),
     },
   },
   test: {

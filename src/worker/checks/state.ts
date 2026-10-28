@@ -294,6 +294,8 @@ function planIncidentTransition(
     httpStatus?: number | null;
     /** A second check agreed before this failure was reported. */
     confirmed?: boolean;
+    /** Where that second check ran, when elsewhere (checks/region.ts). */
+    confirmedFrom?: string;
   },
   ctx: WriteContext,
   downEvent: NotifyEvent = "down",
@@ -323,6 +325,7 @@ function planIncidentTransition(
       httpStatus: p.httpStatus,
       isFlapping: flapping,
       confirmed: p.confirmed ?? false,
+      confirmedFrom: p.confirmed ? (p.confirmedFrom ?? null) : null,
     });
     const deliveries =
       ctx.notify && !coolingDown ? incidentDeliveries(monitor, opened.record, event, ctx.notify) : [];
@@ -441,6 +444,7 @@ export async function planCheckResult(
           error: outcome.error,
           httpStatus: outcome.statusCode,
           confirmed: outcome.confirmation === "confirmed",
+          ...(outcome.confirmedFrom ? { confirmedFrom: outcome.confirmedFrom } : {}),
         },
         ctx,
       );
@@ -486,6 +490,8 @@ export async function planCheckResult(
   // passed, so no incident opened).
   if (outcome.confirmation === "confirmed" || outcome.confirmation === "cleared") {
     sampleMeta.confirmation = outcome.confirmation;
+    // Where the re-check ran, when that was another Cloudflare location.
+    if (outcome.confirmedFrom) sampleMeta.confirmedFrom = outcome.confirmedFrom;
   }
 
   const sample = sampleStatement(env, monitor.id, {

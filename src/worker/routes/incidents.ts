@@ -57,6 +57,7 @@ interface IncidentRow {
   is_flapping: number;
   notified: number;
   confirmed?: number | null;
+  confirmed_from?: string | null;
   created_at: number;
   updated_at: number;
   monitor_name?: string | null;
@@ -94,6 +95,7 @@ function mapRow(row: IncidentRow): IncidentWithMonitor {
     isFlapping: row.is_flapping !== 0,
     notified: row.notified !== 0,
     confirmed: row.confirmed === 1,
+    confirmedFrom: row.confirmed_from ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

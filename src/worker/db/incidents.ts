@@ -33,6 +33,11 @@ export interface IncidentRecord {
   notified: boolean;
   /** A second check confirmed the failure before this incident opened. */
   confirmed: boolean;
+  /**
+   * The Cloudflare data center (IATA code, such as "FRA") that second check
+   * ran in, when it ran from another location than the first (checks/region.ts).
+   */
+  confirmedFrom: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -57,6 +62,7 @@ export interface IncidentRow {
   is_flapping: number;
   notified: number;
   confirmed?: number | null;
+  confirmed_from?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -82,6 +88,7 @@ export function rowToIncident(row: IncidentRow): IncidentRecord {
     isFlapping: row.is_flapping !== 0,
     notified: row.notified !== 0,
     confirmed: row.confirmed === 1,
+    confirmedFrom: row.confirmed_from ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -128,6 +135,8 @@ export async function openIncident(
     isFlapping?: boolean;
     /** A second check agreed before the incident opened. */
     confirmed?: boolean;
+    /** Where that second check ran, when elsewhere. */
+    confirmedFrom?: string | null;
   },
 ): Promise<IncidentRecord> {
   const { record, statements } = openIncidentStatements(env, monitor, ctx);
@@ -151,6 +160,7 @@ export function openIncidentStatements(
     httpStatus?: number | null;
     isFlapping?: boolean;
     confirmed?: boolean;
+    confirmedFrom?: string | null;
     /**
      * Whether its alert is settled already (none is due, as in a cooldown).
      * When false, the caller queues the alert and marks it with
@@ -183,6 +193,7 @@ export function openIncidentStatements(
     isFlapping: ctx.isFlapping ?? false,
     notified: ctx.notified ?? false,
     confirmed: ctx.confirmed ?? false,
+    confirmedFrom: ctx.confirmedFrom ?? null,
     createdAt: at,
     updatedAt: at,
   };
@@ -193,8 +204,8 @@ export function openIncidentStatements(
         `INSERT INTO incidents (
            id, monitor_id, status, title, root_cause, started_at,
            last_observed_at, http_status, error, public, is_flapping,
-           notified, confirmed, created_at, updated_at
-         ) VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+           notified, confirmed, confirmed_from, created_at, updated_at
+         ) VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
         monitor.id,
@@ -207,6 +218,7 @@ export function openIncidentStatements(
         ctx.isFlapping ? 1 : 0,
         ctx.notified ? 1 : 0,
         ctx.confirmed ? 1 : 0,
+        ctx.confirmedFrom ?? null,
         at,
         at,
       ),

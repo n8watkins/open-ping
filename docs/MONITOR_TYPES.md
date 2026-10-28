@@ -40,6 +40,7 @@ Imported backups are not checked on import; the next cron run checks them.
 One failed request shouldn't page anyone.
 When a polled check fails on a monitor that was up, OpenPing checks it once more about 5 seconds later, bypassing Cloudflare's cache (`cache: "no-store"`).
 Only if that second check fails too does the monitor go down, open an incident and send alerts; the incident then shows "Confirmed by a second check before alerting".
+For HTTP, DNS and TCP monitors the second check runs from another Cloudflare region when the install has it on, and the incident says where ("Confirmed from Atlanta"); see [Second-region confirmation](./SECOND_REGION.md).
 If the second check passes, the monitor stays up and the sample is recorded as a blip (`retry_recovered`, and `"confirmation": "cleared"` in the sample's meta), with no incident and no alert.
 
 The setting is **Confirm failures** in the monitor editor (`confirmFailures` in the API and MCP, `--confirm` in the CLI):
@@ -381,9 +382,10 @@ other monitoring tools offer. We'd rather be upfront than pretend:
 
 - **User-selectable multi-region probes.** Checks originate from Cloudflare's
   edge **near the cron isolate that runs them** - not from arbitrary regions you
-  pick. There's no "check from Frankfurt and Sydney" control. If you need
-  explicit multi-region probing, that's outside what a single-Worker deployment
-  can offer.
+  pick. There's no "check from Frankfurt and Sydney" control. The one
+  exception is the confirmation re-check, which runs from another region
+  ([Second-region confirmation](./SECOND_REGION.md)); every first check still
+  runs where the cron does.
 
 > The short version: OpenPing is honest about being an edge-Worker monitor. What
 > it does - HTTP, heartbeat, DNS-over-HTTPS, TCP `connect()`, and RDAP domain

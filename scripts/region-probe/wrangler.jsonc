@@ -1,0 +1,21 @@
+// A throwaway Worker that measures what second-region confirmation relies on
+// (docs/SECOND_REGION.md). Deploy it to a Workers Free account, read its
+// results, then delete it: `npx wrangler deploy -c scripts/region-probe/wrangler.jsonc`
+// and `npx wrangler delete -c scripts/region-probe/wrangler.jsonc`.
+// It has no database and no secrets, and stores nothing but each Durable
+// Object's own data center.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "open-ping-region-probe",
+  "main": "worker.mjs",
+  "compatibility_date": "2024-12-30",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  // The cron run measures the scheduled path, which is what OpenPing's
+  // confirmation actually runs in; read it with `npx wrangler tail`.
+  "triggers": { "crons": ["*/10 * * * *"] },
+  "durable_objects": {
+    "bindings": [{ "name": "PROBE", "class_name": "Probe" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Probe"] }]
+}

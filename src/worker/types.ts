@@ -1,4 +1,5 @@
 import type { TenantProps } from "../shared/hosted-contract";
+import type { RegionProbe } from "./region-probe";
 
 /**
  * Cloudflare Worker runtime bindings. Secrets are optional at the type level so
@@ -63,6 +64,20 @@ export interface Env {
    * which only the canonical install sets (lib/home-page.ts). A wrangler.jsonc var.
    */
   HOME_PAGE?: string;
+
+  /**
+   * Where a failed check is confirmed from before it opens an incident: a
+   * comma-separated list of Durable Object location hints, in order of
+   * preference ("enam,weur"), or "off" (checks/region.ts). Unset means
+   * off. A wrangler.jsonc var.
+   */
+  CONFIRM_REGIONS?: string;
+
+  /**
+   * The per-region re-checkers (worker/region-probe.ts). Optional, so an install
+   * deployed without it confirms where the check ran, as before.
+   */
+  REGION_PROBE?: DurableObjectNamespace<RegionProbe>;
 
   /**
    * Workers Rate Limiting binding for the landing page's click counter

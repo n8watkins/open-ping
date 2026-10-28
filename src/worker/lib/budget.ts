@@ -211,20 +211,29 @@ export class RunBudget {
    * `confirmFetches` more for its confirmation re-check, if both still fit
    * beside the tail and notification reserves.
    */
-  tryStartCheck(probeFetches: number = CHECK_COST.subrequests, confirmFetches = 0): CheckTicket | null {
+  tryStartCheck(
+    probeFetches: number = CHECK_COST.subrequests,
+    confirmFetches = 0,
+    /** False starts it without the re-check's hold; tryConfirm then reserves `confirmFetches` if it still fits. */
+    holdConfirm = true,
+  ): CheckTicket | null {
     if (this.checks >= this.limits.maxChecks) return null;
+    const hold = holdConfirm ? confirmFetches : 0;
     const d1After =
       this.usage.d1 + this.committedD1 + CHECK_COST.d1 + TAIL_RESERVE.d1 + NOTIFICATION_RESERVE * NOTIFICATION_D1_COST;
-    const fetchesFit = this.fetchesFit(probeFetches + confirmFetches + NOTIFICATION_RESERVE);
+    const fetchesFit = this.fetchesFit(probeFetches + hold + NOTIFICATION_RESERVE);
     if (d1After > this.limits.d1Queries || !fetchesFit) return null;
     // Kept for the whole run: the check's writes go out at the end (CHECK_COST).
     this.committedD1 += CHECK_COST.d1;
-    this.reservedFetches += probeFetches + confirmFetches;
+    this.reservedFetches += probeFetches + hold;
     this.checks++;
     this.inFlight++;
 
-    let reserved = probeFetches + confirmFetches;
-    let held = confirmFetches > 0;
+    let reserved = probeFetches + hold;
+    let held = hold > 0;
+    // What a re-check reserves when it wasn't held: the re-check's own size
+    // (a re-check from another region holds more than the first probe).
+    const later = confirmFetches > 0 ? confirmFetches : probeFetches;
     let ended = false;
     return {
       tryConfirm: () => {
@@ -233,9 +242,9 @@ export class RunBudget {
           held = false;
           return true;
         }
-        if (!this.fetchesFit(probeFetches)) return false;
-        this.reservedFetches += probeFetches;
-        reserved += probeFetches;
+        if (!this.fetchesFit(later)) return false;
+        this.reservedFetches += later;
+        reserved += later;
         return true;
       },
       end: (fetchesSpent?: number) => {
@@ -262,7 +271,7 @@ export class RunBudget {
     for (;;) {
       const ticket = this.tryStartCheck(probeFetches, confirmFetches);
       if (ticket) return ticket;
-      if (this.inFlight === 0) return confirmFetches > 0 ? this.tryStartCheck(probeFetches) : null;
+      if (this.inFlight === 0) return confirmFetches > 0 ? this.tryStartCheck(probeFetches, confirmFetches, false) : null;
       await new Promise<void>((resolve) => this.waiters.push(resolve));
     }
   }

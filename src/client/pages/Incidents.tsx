@@ -12,6 +12,7 @@ import { PageTitle } from "../components/ui/PageTitle";
 import { PullToRefresh } from "../components/PullToRefresh";
 import { StatusPill } from "../components/ui/StatusPill";
 import { formatDateTime, formatDuration, formatRelativeTime } from "../lib/format";
+import { coloCity } from "../../shared/colos";
 import { IncidentUpdatesEditor, type IncidentUpdateItem } from "../components/IncidentUpdatesEditor";
 import { EventList, EventListSkeleton, CauseTag } from "../components/incidents/EventList";
 import { IncidentSummary } from "../components/incidents/IncidentSummary";
@@ -34,6 +35,8 @@ interface IncidentRow extends IncidentSummaryBase {
   rootCause?: string | null;
   /** A second check agreed before the incident opened (confirm before alerting). */
   confirmed?: boolean;
+  /** The Cloudflare data center (IATA code) that second check ran in, when it ran elsewhere. */
+  confirmedFrom?: string | null;
 }
 
 interface IncidentListResponse {
@@ -555,7 +558,19 @@ function DetailPanel(p: DetailPanelProps) {
         <Meta label="Duration" value={durationLabel(inc)} />
         <Meta label="HTTP status" value={inc.httpStatus != null ? String(inc.httpStatus) : "-"} />
         {inc.confirmed && (
-          <p className="col-span-2 text-xs text-ink-muted">Confirmed by a second check before alerting.</p>
+          <p className="col-span-2 text-xs text-ink-muted">
+            {inc.confirmedFrom ? (
+              <>
+                Confirmed from{" "}
+                <span className="font-medium text-ink" title={`Cloudflare data center ${inc.confirmedFrom}`}>
+                  {coloCity(inc.confirmedFrom)}
+                </span>{" "}
+                by a second check before alerting.
+              </>
+            ) : (
+              "Confirmed by a second check before alerting."
+            )}
+          </p>
         )}
       </dl>
 

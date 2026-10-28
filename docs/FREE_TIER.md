@@ -88,6 +88,7 @@ If one of those fails with no fetch left for its re-check, the run does not reco
 OpenPing chooses a 12-minute delay over an alert that wasn't confirmed; Settings > Diagnostics counts these as deferred re-checks.
 A domain monitor whose RDAP lookup was rate limited (HTTP 429), with no recent read to fall back on, is handled the same way: a re-check 5 seconds later would only be refused again, so the failure isn't recorded and the next run asks first; it counts as a deferred re-check too.
 A monitor that is already down gets no re-check, so a long outage costs one fetch per run, and heartbeats are never re-checked.
+With [second-region confirmation](./SECOND_REGION.md) on, a re-check from another region holds 2 more fetches (the hop to the Durable Object and the run's one location lookup); the Durable Object's own requests count against its own invocation, not the run.
 A run with a re-check takes about 5 seconds longer (it waits before the second check); that is wall-clock time, not CPU time.
 
 ### How many monitors fit

@@ -31,8 +31,19 @@
     // What a signed-out visitor sees at "/": "status" shows this install's own
     // default status page. Leave it. Only the canonical install sets "landing"
     // (the OpenPing marketing page and its click counts); docs/INSTALL.md.
-    "HOME_PAGE": "status"
+    "HOME_PAGE": "status",
+    // Where a failed check is confirmed from before it opens an incident: these
+    // Durable Object regions, in order (docs/SECOND_REGION.md). The run asks one
+    // whose data center isn't its own, so one location's network trouble
+    // doesn't page you. "off" re-checks where the check ran.
+    "CONFIRM_REGIONS": "enam,weur"
   },
+  // The per-region re-checkers behind CONFIRM_REGIONS (src/worker/region-probe.ts).
+  // SQLite-backed Durable Objects are on the Workers Free plan.
+  "durable_objects": {
+    "bindings": [{ "name": "REGION_PROBE", "class_name": "RegionProbe" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RegionProbe"] }],
   // Caps the landing page's click counter per visitor (src/worker/routes/events.ts),
   // so it needs no database write to rate limit. Only used when HOME_PAGE is
   // "landing". namespace_id is any integer unique within your Cloudflare account.

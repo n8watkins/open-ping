@@ -156,4 +156,25 @@ describe("RunBudget.startCheck at the end of a run", () => {
     t!.end(4);
     await expect(budget.startCheck(4, 4)).resolves.toBeNull();
   });
+
+  it("sizes a later re-check by the re-check, not the first probe", async () => {
+    // The first probe may make 1 request and its re-check (from another
+    // region, checks/region.ts) up to 4: room for the probe, not the re-check.
+    const tight = { ...PLAN_BUDGETS.free, subrequests: 1 + NOTIFICATION_RESERVE };
+    const budget = new RunBudget(tight, { d1: 0 });
+    const t = (await budget.startCheck(1, 4))!;
+    expect(t).not.toBeNull();
+    expect(t.tryConfirm()).toBe(false);
+    t.end(1);
+  });
+
+  it("can take a second re-check once the held one is used, if it fits", () => {
+    const budget = new RunBudget({ ...PLAN_BUDGETS.free, subrequests: 9 + NOTIFICATION_RESERVE }, { d1: 0 });
+    const t = budget.tryStartCheck(1, 4)!;
+    expect(t.tryConfirm()).toBe(true); // the hold
+    expect(t.tryConfirm()).toBe(true); // 4 more: 9 in all
+    expect(t.tryConfirm()).toBe(false);
+    t.end(6);
+    expect(budget.fetchesUsed).toBe(6);
+  });
 });

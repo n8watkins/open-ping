@@ -61,6 +61,12 @@ export interface CheckOutcome {
    * Absent when the first check passed or no re-check applied.
    */
   confirmation?: "confirmed" | "cleared" | "deferred";
+  /**
+   * The Cloudflare data center (IATA code, such as "FRA") the re-check ran in,
+   * when it ran from another location (checks/region.ts). Absent when it ran
+   * where the first check did, or no re-check ran.
+   */
+  confirmedFrom?: string;
   assertionFailures?: string[];
   /** Type-specific structured detail (resolved records, domain expiry, …). */
   meta?: unknown;

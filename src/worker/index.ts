@@ -205,6 +205,9 @@ function siteOrigin(appUrl: string | undefined, requestUrl: string): string {
   return new URL(requestUrl).origin;
 }
 
+// The per-region re-checkers for second-region confirmation (checks/region.ts).
+export { RegionProbe } from "./region-probe";
+
 export default {
   fetch: app.fetch,
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
