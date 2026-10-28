@@ -12,6 +12,8 @@ import {
 import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
+import { statusPageLimitReached, usageLabel, usePlan } from "../lib/plan-limits";
+import { PlanLimitNotice } from "../components/PlanLimitNotice";
 import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { CategoriesManager } from "../components/CategoriesManager";
@@ -47,6 +49,9 @@ export default function StatusPageSettings() {
   const { data, loading, error, reload } =
     useFetch<{ statusPages: StatusPage[] }>("/api/status-pages");
   const pages = data?.statusPages ?? [];
+  // Hosted mode: how many of the plan's status pages are in use (the default one counts).
+  const plan = usePlan();
+  const atLimit = data ? statusPageLimitReached(plan, pages.length) : null;
 
   const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({});
   const [rowError, setRowError] = useState<string | null>(null);
@@ -82,15 +87,25 @@ export default function StatusPageSettings() {
             Publish one or more public status pages, each with its own branding
             and monitor selection.
           </p>
+          {plan && data && !atLimit && (
+            <p className="mt-1 text-sm text-ink-muted tabular-nums">
+              {usageLabel(pages.length, plan.limits.statusPages, "status page", "status pages")} on your plan
+            </p>
+          )}
         </div>
-        <Link
-          to="/status-page/new"
-          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
-        >
-          <Plus className="size-4" />
-          New status page
-        </Link>
+        {/* At the plan's limit the notice below is the way on, not a second button. */}
+        {!atLimit && (
+          <Link
+            to="/status-page/new"
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
+          >
+            <Plus className="size-4" />
+            New status page
+          </Link>
+        )}
       </div>
+
+      {atLimit && <PlanLimitNotice limit={atLimit} className="mt-4" />}
 
       {rowError && (
         <p className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">

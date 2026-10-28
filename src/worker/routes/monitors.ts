@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
-import { createMonitorSchema } from "../../shared/schemas";
+import { createMonitorSchema, intervalSecondsOf, type CreateMonitorInput } from "../../shared/schemas";
 import {
   createMonitor,
   deleteMonitor,
@@ -27,6 +27,7 @@ import { downtimeBreakdown, loadRangeHistory } from "../history/range";
 import { parseTimeRange, type MonitorHistoryResponse } from "../../shared/time-range";
 import { computeListStats } from "../history/list-stats";
 import type { MonitorRecord } from "../db/monitors";
+import { hostedPlan, intervalLimit, monitorLimit, type HostedPlan, type PlanLimitRefusal } from "../lib/plan-limits";
 
 /** Strip secret config fields and ingestion credentials from normal responses. */
 export function redactMonitor(m: MonitorRecord): MonitorRecord {
@@ -114,17 +115,25 @@ export type MonitorWriteResult =
       status: 400 | 404;
       error: "validation" | "not_found" | "type_immutable";
       issues?: z.core.$ZodIssue[];
-    };
+    }
+  | PlanLimitRefusal;
 
-/** Validate and create a monitor (POST /api/monitors and the MCP tool). */
+/**
+ * Validate and create a monitor (POST /api/monitors and the MCP tool). In
+ * hosted mode `plan` is the tenant's, and a monitor over its limits is refused
+ * (lib/plan-limits.ts); a plain install passes none.
+ */
 export async function createMonitorFromBody(
   env: Env,
   body: unknown,
+  plan?: HostedPlan,
 ): Promise<MonitorWriteResult> {
   const parsed = createMonitorSchema.safeParse(body);
   if (!parsed.success) {
     return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
   }
+  const refused = intervalLimit(plan, parsed.data) ?? (await monitorLimit(env, plan));
+  if (refused) return refused;
   return { ok: true, monitor: await createMonitor(env, parsed.data) };
 }
 
@@ -137,8 +146,9 @@ export async function createMonitorAndCheck(
   env: Env,
   body: unknown,
   waitUntil: ((p: Promise<unknown>) => void) | undefined,
+  plan?: HostedPlan,
 ): Promise<MonitorWriteResult & { firstCheck?: FirstCheckResult }> {
-  const r = await createMonitorFromBody(env, body);
+  const r = await createMonitorFromBody(env, body, plan);
   if (!r.ok) return r;
   return { ...r, firstCheck: await firstCheckWithin(env, r.monitor, waitUntil) };
 }
@@ -156,11 +166,20 @@ export function requestWaitUntil(c: {
   }
 }
 
+/**
+ * An edit is held to the plan's interval only when it changes the interval, so
+ * a monitor kept from a bigger plan can still be renamed or retargeted.
+ */
+function intervalChangeLimit(plan: HostedPlan | undefined, existing: MonitorRecord, input: CreateMonitorInput) {
+  return intervalSecondsOf(input) === existing.intervalSeconds ? null : intervalLimit(plan, input);
+}
+
 /** Validate and fully replace a monitor (PUT /api/monitors/:id). */
 export async function replaceMonitor(
   env: Env,
   id: string,
   body: unknown,
+  plan?: HostedPlan,
 ): Promise<MonitorWriteResult> {
   const parsed = createMonitorSchema.safeParse(body);
   if (!parsed.success) {
@@ -171,6 +190,8 @@ export async function replaceMonitor(
   if (existing.type !== parsed.data.type) {
     return { ok: false, status: 400, error: "type_immutable" };
   }
+  const refused = intervalChangeLimit(plan, existing, parsed.data);
+  if (refused) return refused;
   const monitor = await updateMonitor(env, id, parsed.data);
   if (!monitor) return { ok: false, status: 404, error: "not_found" };
   return { ok: true, monitor };
@@ -181,6 +202,7 @@ export async function patchMonitor(
   env: Env,
   id: string,
   body: unknown,
+  plan?: HostedPlan,
 ): Promise<MonitorWriteResult> {
   const patch = monitorPatchSchema.safeParse(body);
   if (!patch.success) {
@@ -195,6 +217,8 @@ export async function patchMonitor(
   if (!parsed.success) {
     return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
   }
+  const refused = intervalChangeLimit(plan, existing, parsed.data);
+  if (refused) return refused;
   const monitor = await updateMonitor(env, id, parsed.data);
   if (!monitor) return { ok: false, status: 404, error: "not_found" };
   return { ok: true, monitor };
@@ -241,8 +265,9 @@ export async function listMonitorUptime(env: Env, now: number = Date.now()) {
   };
 }
 
-/** Map a failed write to the JSON error body the REST API has always used. */
+/** Map a failed write to the JSON error body the REST API has always used (402: the plan limit body). */
 function writeError(r: Extract<MonitorWriteResult, { ok: false }>) {
+  if (r.error === "plan_limit") return r.body;
   return r.issues ? { error: r.error, issues: r.issues } : { error: r.error };
 }
 
@@ -270,7 +295,7 @@ monitors.get("/", async (c) => {
 
 monitors.post("/", async (c) => {
   const body = await c.req.json().catch(() => undefined);
-  const r = await createMonitorAndCheck(c.env, body, requestWaitUntil(c));
+  const r = await createMonitorAndCheck(c.env, body, requestWaitUntil(c), hostedPlan(c));
   if (!r.ok) return c.json(writeError(r), r.status);
   return c.json({ monitor: presentCreatedMonitor(r.monitor), firstCheck: r.firstCheck }, 201);
 });
@@ -416,7 +441,7 @@ monitors.get("/:id/history", async (c) => {
 
 monitors.put("/:id", async (c) => {
   const body = await c.req.json().catch(() => undefined);
-  const r = await replaceMonitor(c.env, c.req.param("id"), body);
+  const r = await replaceMonitor(c.env, c.req.param("id"), body, hostedPlan(c));
   if (!r.ok) return c.json(writeError(r), r.status);
   return c.json({ monitor: redactMonitor(r.monitor) });
 });
@@ -424,7 +449,7 @@ monitors.put("/:id", async (c) => {
 /** Partial update: see {@link monitorPatchSchema}. */
 monitors.patch("/:id", async (c) => {
   const body = await c.req.json().catch(() => undefined);
-  const r = await patchMonitor(c.env, c.req.param("id"), body);
+  const r = await patchMonitor(c.env, c.req.param("id"), body, hostedPlan(c));
   if (!r.ok) return c.json(writeError(r), r.status);
   return c.json({ monitor: redactMonitor(r.monitor) });
 });

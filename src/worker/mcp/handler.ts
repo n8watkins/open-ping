@@ -11,6 +11,7 @@ import { countApiTokens } from "../db/api-tokens";
 import { hitRateLimit } from "../db/rate-limit";
 import { registerTools, type ToolContext } from "./tools";
 import { requestWaitUntil } from "../routes/monitors";
+import { hostedPlan, usageReporter } from "../lib/plan-limits";
 import pkg from "../../../package.json";
 
 /**
@@ -149,5 +150,11 @@ mcp.all("/", async (c) => {
     }
   }
 
-  return serveMcp(c.req.raw, { env: c.env, origin: selfOrigin, waitUntil: requestWaitUntil(c) });
+  return serveMcp(c.req.raw, {
+    env: c.env,
+    origin: selfOrigin,
+    waitUntil: requestWaitUntil(c),
+    plan: hostedPlan(c),
+    usageChanged: usageReporter(c),
+  });
 });

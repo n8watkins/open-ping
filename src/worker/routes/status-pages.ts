@@ -12,6 +12,7 @@ import {
   updateStatusPage,
   StatusPageError,
 } from "../db/status-pages";
+import { hostedPlan, statusPageLimit } from "../lib/plan-limits";
 
 /**
  * Status-page CRUD API mounted at /api/status-pages (PRD §16 - multiple public
@@ -116,6 +117,8 @@ statusPages.post("/", async (c) => {
   if (!parsed.success) {
     return c.json({ error: "validation", issues: parsed.error.issues }, 400);
   }
+  const refused = await statusPageLimit(c.env, hostedPlan(c));
+  if (refused) return c.json(refused.body, refused.status);
   try {
     const statusPage = await createStatusPage(c.env, parsed.data);
     return c.json({ statusPage }, 201);

@@ -25,6 +25,9 @@ import {
 import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
+import { channelKindRefused, planLimitFromError, usePlan } from "../lib/plan-limits";
+import { PlanLimitNotice } from "../components/PlanLimitNotice";
+import type { PlanLimitBody } from "../../shared/hosted-contract";
 import {
   isPushSupported,
   registerServiceWorker,
@@ -492,7 +495,11 @@ function ChannelForm({
   onCancel: () => void;
 }) {
   const isEdit = existing != null;
-  const initialType: ChannelType = isChannelType(existing?.type) ? existing.type : "slack";
+  // Hosted mode: a new channel starts on a kind the plan includes.
+  const plan = usePlan();
+  const initialType: ChannelType = isChannelType(existing?.type)
+    ? existing.type
+    : (CHANNEL_TYPES.find((t) => !channelKindRefused(plan, t)) ?? "slack");
 
   const [type, setType] = useState<ChannelType>(initialType);
   const [name, setName] = useState(existing?.name ?? "");
@@ -508,6 +515,9 @@ function ChannelForm({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A kind the plan doesn't include: known when it's picked, or answered by the server (402).
+  const [refused, setRefused] = useState<PlanLimitBody | null>(null);
+  const kindLimit = isEdit ? null : (refused ?? channelKindRefused(plan, type));
 
   function buildConfig(): Record<string, unknown> {
     if (type === "discord" || type === "slack" || type === "teams") return { url: url.trim() };
@@ -559,50 +569,68 @@ function ChannelForm({
       }
       onSaved();
     } catch (err) {
-      setError(errMessage(err, "Could not save channel."));
+      const limit = planLimitFromError(err);
+      if (limit) setRefused(limit);
+      else setError(errMessage(err, "Could not save channel."));
     } finally {
       setSaving(false);
     }
   }
 
-  return (
-    <form
-      onSubmit={submit}
-      className="space-y-3 rounded-lg border border-line bg-surface-2/40 p-4"
-    >
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium">
-          {isEdit ? "Edit channel" : "Add channel"}
-        </h4>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="grid size-7 place-items-center rounded-lg text-ink-muted hover:bg-surface-2 hover:text-ink"
-          aria-label="Cancel"
-        >
-          <X className="size-4" />
-        </button>
-      </div>
+  const formClass = "space-y-3 rounded-lg border border-line bg-surface-2/40 p-4";
+  const head = (
+    <div className="flex items-center justify-between">
+      <h4 className="text-sm font-medium">
+        {isEdit ? "Edit channel" : "Add channel"}
+      </h4>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="grid size-7 place-items-center rounded-lg text-ink-muted hover:bg-surface-2 hover:text-ink"
+        aria-label="Cancel"
+      >
+        <X className="size-4" />
+      </button>
+    </div>
+  );
+  const typeField = !isEdit && (
+    <Field label="Type">
+      <select
+        name="type"
+        value={type}
+        onChange={(e) => {
+          setType(e.target.value as ChannelType);
+          setError(null);
+          setRefused(null);
+        }}
+        className="input"
+      >
+        {CHANNEL_TYPES.map((t) => (
+          <option key={t} value={t}>
+            {t === "webhook" ? "Webhook" : metaFor(t).label}
+            {channelKindRefused(plan, t) ? " (upgrade)" : ""}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
 
-      {!isEdit && (
-        <Field label="Type">
-          <select
-            name="type"
-            value={type}
-            onChange={(e) => {
-              setType(e.target.value as ChannelType);
-              setError(null);
-            }}
-            className="input"
-          >
-            {CHANNEL_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t === "webhook" ? "Webhook" : metaFor(t).label}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
+  // Hosted mode, a kind the plan doesn't include: the way to it, not a form that can't be saved.
+  if (kindLimit) {
+    return (
+      <div className={formClass}>
+        {head}
+        {typeField}
+        <PlanLimitNotice limit={kindLimit} />
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className={formClass}>
+      {head}
+
+      {typeField}
 
       <Field label="Name">
         <input

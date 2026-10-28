@@ -2,6 +2,7 @@ import type { Env } from "../types";
 import { newId, randomToken, sha256hex } from "../lib/ids";
 import { encryptConfig, decryptConfig, mergeSecrets } from "../lib/secret-config";
 import { MONITOR_TYPES, type MonitorType } from "../../shared/states";
+import { intervalSecondsOf } from "../../shared/schemas";
 import type {
   Assertion,
   ConfirmFailures,
@@ -236,8 +237,7 @@ export async function createMonitor(
   const heartbeatTokenHash = heartbeatToken
     ? await sha256hex(heartbeatToken)
     : null;
-  const intervalSeconds =
-    input.type === "heartbeat" ? input.config.intervalSeconds : 720;
+  const intervalSeconds = intervalSecondsOf(input);
   const graceSeconds =
     input.type === "heartbeat" ? input.config.graceSeconds : null;
   const assertions = input.type === "http" ? input.assertions : null;
@@ -304,8 +304,7 @@ export async function updateMonitor(
   if (!existing) return null;
 
   const now = Date.now();
-  const intervalSeconds =
-    input.type === "heartbeat" ? input.config.intervalSeconds : 720;
+  const intervalSeconds = intervalSecondsOf(input);
   const graceSeconds =
     input.type === "heartbeat" ? input.config.graceSeconds : null;
   const assertions = input.type === "http" ? input.assertions : null;

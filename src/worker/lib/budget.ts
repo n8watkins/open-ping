@@ -15,8 +15,10 @@
  * and developers.cloudflare.com/d1/platform/limits/.
  */
 import type { Env } from "../types";
+import { isHostedMode } from "../../shared/hosted-contract";
 
-export type WorkersPlan = "free" | "paid";
+/** "hosted" is a customer's OpenPing on OpenPing Hosted (Workers for Platforms). */
+export type WorkersPlan = "free" | "paid" | "hosted";
 
 export interface PlanBudget {
   plan: WorkersPlan;
@@ -36,14 +38,22 @@ export interface PlanBudget {
 export const PLAN_BUDGETS: Record<WorkersPlan, PlanBudget> = {
   free: { plan: "free", d1Queries: 46, subrequests: 45, maxChecks: 200 },
   paid: { plan: "paid", d1Queries: 950, subrequests: 9_000, maxChecks: 200 },
+  // OpenPing Hosted: the platform calls each run with custom limits of 1,000
+  // subrequests (platform/src/dispatch.ts, DISPATCH_LIMITS.platform). D1
+  // queries and fetches together stay under that, with a margin, whichever of
+  // them Cloudflare counts, and a plan's monitors (20 at most) fit many times
+  // over: a run of 20 checks and their re-checks needs about 40 fetches.
+  hosted: { plan: "hosted", d1Queries: 300, subrequests: 600, maxChecks: 200 },
 };
 
 /**
  * The plan this install runs on: `WORKERS_PLAN` ("free" or "paid", set in
  * wrangler.jsonc vars). Unset or unknown means Free, the safe assumption: a
- * Paid install that keeps the default only checks fewer monitors per run.
+ * Paid install that keeps the default only checks fewer monitors per run. In
+ * hosted mode (HOSTED_MODE "1") it is the hosted budget, whatever WORKERS_PLAN says.
  */
-export function planBudget(env: Pick<Env, "WORKERS_PLAN">): PlanBudget {
+export function planBudget(env: Pick<Env, "WORKERS_PLAN" | "HOSTED_MODE">): PlanBudget {
+  if (isHostedMode(env.HOSTED_MODE)) return PLAN_BUDGETS.hosted;
   return env.WORKERS_PLAN === "paid" ? PLAN_BUDGETS.paid : PLAN_BUDGETS.free;
 }
 

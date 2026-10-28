@@ -968,7 +968,9 @@ function apiErrorMessage(method, path, status, data) {
     const issues = Array.isArray(data.issues)
       ? data.issues.slice(0, 8).map((i) => `${(i.path ?? []).join(".") || "(body)"}: ${i.message}`).join("; ")
       : "";
-    return `${head} ${data.error ?? ""}${data.message ? ` - ${data.message}` : ""}${issues ? `\n  ${issues}` : ""}`.trimEnd();
+    // A plan limit (OpenPing Hosted, HTTP 402) says where to upgrade.
+    const upgrade = typeof data.upgradeUrl === "string" ? `\n  Upgrade: ${data.upgradeUrl}` : "";
+    return `${head} ${data.error ?? ""}${data.message ? ` - ${data.message}` : ""}${issues ? `\n  ${issues}` : ""}${upgrade}`.trimEnd();
   }
   return `${head}${data ? `\n  ${String(data).slice(0, 300)}` : ""}`;
 }

@@ -297,6 +297,14 @@ export type NotifyPrefs = z.infer<typeof notifySchema>;
 export type PublicConfig = z.infer<typeof publicConfigSchema>;
 export type CreateMonitorInput = z.infer<typeof createMonitorSchema>;
 
+/** Polled monitors (http, dns, tcp, domain) are checked on every 12-minute run. */
+export const POLLED_INTERVAL_SECONDS = 720;
+
+/** A monitor's interval: how often a polled one is checked, or how often a heartbeat's job pings. */
+export function intervalSecondsOf(input: CreateMonitorInput): number {
+  return input.type === "heartbeat" ? input.config.intervalSeconds : POLLED_INTERVAL_SECONDS;
+}
+
 // --- Categories ---
 const slugSchema = z
   .string()

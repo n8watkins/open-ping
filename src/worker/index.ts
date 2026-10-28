@@ -13,6 +13,7 @@ import { runScheduled } from "./scheduler";
 import { hostedAuth } from "./routes/hosted-auth";
 import { platformRoutes } from "./routes/platform";
 import { forgetSchemaCheck, isSchemaError } from "./lib/migrate";
+import { reportUsageAfterChange } from "./lib/plan-limits";
 import { hostedGate, hostedSchemaGate, refuseWhenHosted, signOutRedirect } from "./lib/hosted";
 import { HANDOFF_PATH, INTERNAL_PATH_PREFIX } from "../shared/hosted-contract";
 import { homePage, withLandingHead } from "./lib/home-page";
@@ -126,6 +127,7 @@ app.use("/api/*", bodyLimit({ maxSize: API_BODY_LIMIT, onError: payloadTooLarge 
 
 // JSON API (auth, monitors, incidents, settings, …). Mounted before the SPA
 // fallback so API routes never get swallowed by the asset handler.
+app.use("/api/*", reportUsageAfterChange);
 app.route("/api", api);
 
 // The OpenPing Hosted sign-in hand-off (hosted mode only; passes through otherwise).

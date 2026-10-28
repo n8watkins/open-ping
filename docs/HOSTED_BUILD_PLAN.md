@@ -145,7 +145,7 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
 - [x] **A1 Hosted mode switch (M), done.** `HOSTED_MODE`, `TENANT_ID`, props typing, the "managed" UI states; `/setup` and `/recover` refuse; tests that a plain install is unchanged. Needs: C0.
 - [x] **A2 Hand-off sign-in (M), done.** `/auth/hosted`, Ed25519 verification with Web Crypto, nonce store (migration), session creation, sign-out back to the platform. Needs: C0.
 - [x] **A3 Platform scheduler entry and self-migration (M), done.** `/__platform/scheduled`, `/__platform/health`, bundled migrations with a lock and a schema version. Needs: C0.
-- **A4 Plan limits (S).** 402 responses with an upgrade link on create routes, UI states, and the budget profile for hosted plans. Needs: C0.
+- [x] **A4 Plan limits (S), done.** 402 responses with an upgrade link on create routes, UI states, and the budget profile for hosted plans. Needs: C0.
 - **A5 Mail through the platform (S).** A mail transport interface with today's Resend sender and a platform-capability sender. Needs: C0.
 
 ### B. The platform Worker (`platform/`)
