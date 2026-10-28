@@ -23,6 +23,8 @@ import {
   UPTIME_WINDOWS,
 } from "../history/metrics";
 import { redactConfig } from "../lib/secret-config";
+import { downtimeBreakdown, loadRangeHistory } from "../history/range";
+import { parseTimeRange, type MonitorHistoryResponse } from "../../shared/time-range";
 import type { MonitorRecord } from "../db/monitors";
 
 /** Strip secret config fields and ingestion credentials from normal responses. */
@@ -293,12 +295,37 @@ monitors.get("/:id/detail", async (c) => {
     .bind(id)
     .first();
 
-  const [d1, d7, d30, d365] = await Promise.all([
+  const [d1, d7, d30, d90, d365] = await Promise.all([
     computeUptime(c.env, id, now - DAY, now),
     computeUptime(c.env, id, now - 7 * DAY, now),
     computeUptime(c.env, id, now - 30 * DAY, now),
+    computeUptime(c.env, id, now - 90 * DAY, now),
     computeUptime(c.env, id, now - 365 * DAY, now),
   ]);
+
+  // Downtime and the suspended share of it per window, so the page can say
+  // when a long-range figure is pulled down by the host suspending the app
+  // rather than by outages. Status intervals are kept 400 days.
+  const downIntervals = await c.env.DB.prepare(
+    `SELECT state, started_at AS startedAt, ended_at AS endedAt
+       FROM status_intervals
+      WHERE monitor_id = ? AND state IN ('down', 'suspended')
+        AND (ended_at IS NULL OR ended_at > ?)`,
+  )
+    .bind(id, now - 365 * DAY)
+    .all<{ state: string; startedAt: number; endedAt: number | null }>();
+  const spans = downIntervals.results ?? [];
+  const downtime = Object.fromEntries(
+    (
+      [
+        ["d1", 1],
+        ["d7", 7],
+        ["d30", 30],
+        ["d90", 90],
+        ["d365", 365],
+      ] as const
+    ).map(([key, days]) => [key, downtimeBreakdown(spans, now - days * DAY, now)]),
+  );
 
   const latency = await c.env.DB.prepare(
     `SELECT AVG(duration_ms) AS avg, MIN(duration_ms) AS min, MAX(duration_ms) AS max
@@ -337,12 +364,48 @@ monitors.get("/:id/detail", async (c) => {
   return c.json({
     monitor: redactMonitor(monitor),
     state,
-    uptime: { d1: d1.uptimePct, d7: d7.uptimePct, d30: d30.uptimePct, d365: d365.uptimePct },
+    uptime: {
+      d1: d1.uptimePct,
+      d7: d7.uptimePct,
+      d30: d30.uptimePct,
+      d90: d90.uptimePct,
+      d365: d365.uptimePct,
+    },
+    downtime,
     latency: { avg: latency?.avg ?? null, min: latency?.min ?? null, max: latency?.max ?? null },
     incidentMetrics,
     recentSamples: samples,
     recentIncidents: incidentsRes.results ?? [],
   });
+});
+
+/**
+ * Range history for one monitor: uptime, state and response time per hour
+ * (24h, 7d) or UTC day (30d, 90d), latency stats with median and p95, the
+ * response-time points (every OK check for 24h, bucket averages otherwise) and
+ * the count of incidents overlapping the range. `range` defaults to 7d.
+ */
+monitors.get("/:id/history", async (c) => {
+  const id = c.req.param("id");
+  const range = parseTimeRange(c.req.query("range"));
+  const h = await loadRangeHistory(c.env, range, Date.now(), id);
+  const m = h.monitors[0];
+  if (!m) return c.json({ error: "not_found" }, 404);
+  const points =
+    range === "24h"
+      ? (h.samples.get(id) ?? [])
+      : m.buckets.flatMap((b) => (b.avgMs != null ? [{ t: b.t, ms: b.avgMs }] : []));
+  const body: MonitorHistoryResponse = {
+    ...m,
+    range: h.range,
+    from: h.from,
+    to: h.to,
+    now: h.now,
+    bucketMs: h.bucketMs,
+    points,
+    incidentCount: h.incidentCount,
+  };
+  return c.json(body);
 });
 
 monitors.put("/:id", async (c) => {

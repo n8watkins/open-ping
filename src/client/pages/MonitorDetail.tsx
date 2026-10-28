@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  ArrowRight,
+  ChevronDown,
   Loader2,
   Play,
   Pause,
@@ -18,17 +20,26 @@ import { useBootstrap } from "../lib/bootstrap";
 import { cn } from "../lib/cn";
 import {
   formatMs,
-  formatPct,
   formatRelativeTime,
   formatDuration,
   formatDateTime,
+  formatShortDateTime,
 } from "../lib/format";
 import { STATE_META, type MonitorState } from "../../shared/states";
 import { monitorTypeLabel, type MonitorType } from "../lib/types";
 import { StatusPill } from "../components/ui/StatusPill";
-import { UptimeBar } from "../components/ui/UptimeBar";
-import { Sparkline } from "../components/ui/Sparkline";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
+import { RangeControl } from "../components/ui/RangeControl";
+import { Skeleton } from "../components/ui/Skeleton";
+import { describeCause } from "../components/ui/incident-groups";
+import {
+  AvailabilityCard,
+  ResponseCard,
+  type DowntimeWindows,
+  type UptimeWindows,
+} from "../components/charts/MonitorHistoryPanel";
+import { useTimeRange } from "../lib/time-range";
+import type { MonitorHistoryResponse } from "../../shared/time-range";
 import { Stat } from "../components/ui/Stat";
 import { EmptyState } from "../components/ui/EmptyState";
 
@@ -83,7 +94,9 @@ interface IncidentRow {
 interface DetailResponse {
   monitor: MonitorInfo;
   state: MonitorStateRow | null;
-  uptime: { d1: number; d7: number; d30: number; d365: number };
+  uptime: UptimeWindows;
+  /** Downtime and its suspended share per uptime window (absent from older workers). */
+  downtime?: DowntimeWindows;
   latency: { avg: number | null; min: number | null; max: number | null };
   incidentMetrics: {
     totalIncidents: number;
@@ -159,14 +172,6 @@ const NOTICE_CLASS = {
   error: "border-down/40 bg-down/10 text-down",
 } as const;
 
-/** Tint an uptime percentage by health, using only static utility classes. */
-function uptimeClass(pct: number): string | undefined {
-  if (pct >= 99.9) return "text-up";
-  if (pct >= 98) return undefined;
-  if (pct >= 95) return "text-degraded";
-  return "text-down";
-}
-
 /** Label/value row used inside the "current state" panel. */
 function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -185,6 +190,10 @@ export default function MonitorDetail() {
 
   const { data, loading, error, reload } = useFetch<DetailResponse>(
     id ? `/api/monitors/${id}/detail` : null,
+  );
+  const [range, setRange] = useTimeRange("monitor");
+  const history = useFetch<MonitorHistoryResponse>(
+    id ? `/api/monitors/${id}/history?range=${range}` : null,
   );
 
   const [pending, setPending] = useState<string | null>(null);
@@ -215,6 +224,17 @@ export default function MonitorDetail() {
     return () => clearTimeout(timer);
   }, [awaitingFirstCheck, data, reload]);
 
+  // Once the first check lands, refresh the history so it shows up.
+  const wasAwaiting = useRef(false);
+  const reloadHistory = history.reload;
+  useEffect(() => {
+    if (awaitingFirstCheck) wasAwaiting.current = true;
+    else if (wasAwaiting.current) {
+      wasAwaiting.current = false;
+      void reloadHistory();
+    }
+  }, [awaitingFirstCheck, reloadHistory]);
+
   // Keep the creation token in component memory only. Clearing router history
   // state means a reload or later Back navigation cannot reveal it again.
   useEffect(() => {
@@ -226,8 +246,15 @@ export default function MonitorDetail() {
 
   if (loading && !data) {
     return (
-      <div className="grid min-h-[40vh] place-items-center">
-        <Loader2 className="size-6 animate-spin text-ink-faint" />
+      <div className="mx-auto max-w-5xl animate-fade" aria-busy="true" aria-label="Loading monitor">
+        <Skeleton className="h-4 w-24" />
+        <div className="mt-4 flex items-center justify-between gap-4">
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-9 w-72 max-w-[45%]" />
+        </div>
+        <Skeleton className="mt-6 h-16 w-full rounded-card" />
+        <Skeleton className="mt-10 h-[230px] w-full rounded-card" />
+        <Skeleton className="mt-4 h-[340px] w-full rounded-card" />
       </div>
     );
   }
@@ -249,7 +276,7 @@ export default function MonitorDetail() {
     );
   }
 
-  const { monitor, state, uptime, latency, incidentMetrics, recentSamples, recentIncidents } = data;
+  const { monitor, state, uptime, incidentMetrics, recentSamples, recentIncidents } = data;
   const scheduleMode = monitor.schedule.mode.replace(/_/g, " ");
   const currentState: MonitorState = state?.state ?? "unknown";
   const heartbeatToken = oneTimeHeartbeatToken ?? monitor.heartbeatToken;
@@ -271,15 +298,6 @@ export default function MonitorDetail() {
 
   // Latest sample's type-specific detail (resolved DNS records, domain expiry).
   const latestMeta = readMeta(recentSamples.at(-1)?.meta);
-
-  const latencyPoints = recentSamples
-    .filter((s) => s.durationMs != null)
-    .map((s) => s.durationMs as number);
-
-  const segments = recentSamples.map((s) => ({
-    state: s.state,
-    title: `${formatDateTime(s.at)} · ${s.ok ? "ok" : s.error ?? "fail"}`,
-  }));
 
   async function onTest() {
     if (!id) return;
@@ -580,61 +598,36 @@ export default function MonitorDetail() {
         )}
       </Card>
 
-      {/* Uptime + latency */}
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Uptime</CardTitle>
-            <span className="text-xs text-ink-faint">
-              {recentSamples.length} {recentSamples.length === 1 ? "check" : "checks"} · 24h
-            </span>
-          </CardHeader>
-          {/* Four values share half the page from lg up, so they step down a size there. */}
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            {(
-              [
-                ["24 hours", uptime.d1],
-                ["7 days", uptime.d7],
-                ["30 days", uptime.d30],
-                ["365 days", uptime.d365],
-              ] as const
-            ).map(([label, pct]) => (
-              <Stat
-                key={label}
-                label={label}
-                value={formatPct(pct)}
-                valueClass={cn("lg:text-base xl:text-xl", uptimeClass(pct))}
-              />
-            ))}
+      {/* History over the chosen range */}
+      <section className="mt-8" aria-labelledby="history-heading">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 id="history-heading" className="text-sm font-semibold text-ink">
+            History
+          </h2>
+          <RangeControl value={range} onChange={setRange} />
+        </div>
+        {history.error && !history.data ? (
+          <p className="rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
+            Could not load history: {history.error}
+          </p>
+        ) : (
+          <div className="stagger grid gap-4">
+            <AvailabilityCard
+              history={history.data}
+              range={range}
+              uptime={uptime}
+              downtime={data.downtime}
+              monitorName={monitor.name}
+            />
+            <ResponseCard
+              history={history.data}
+              range={range}
+              intervalSeconds={monitor.intervalSeconds}
+              monitorName={monitor.name}
+            />
           </div>
-          <div className="mt-4 border-t border-line pt-4">
-            {segments.length > 0 ? (
-              <UptimeBar segments={segments} />
-            ) : (
-              <p className="text-sm text-ink-muted">No checks in the last 24 hours.</p>
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Response time</CardTitle>
-            <span className="text-xs text-ink-faint">last 24h</span>
-          </CardHeader>
-          <div className="grid grid-cols-3 gap-4">
-            <Stat label="Average" value={formatMs(latency.avg)} />
-            <Stat label="Min" value={formatMs(latency.min)} />
-            <Stat label="Max" value={formatMs(latency.max)} />
-          </div>
-          <div className="mt-4 border-t border-line pt-4">
-            {latencyPoints.length > 0 ? (
-              <Sparkline points={latencyPoints} className="h-12 w-full" />
-            ) : (
-              <p className="text-sm text-ink-muted">No latency samples yet.</p>
-            )}
-          </div>
-        </Card>
-      </div>
+        )}
+      </section>
 
       {/* Current state + incident metrics */}
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -644,8 +637,14 @@ export default function MonitorDetail() {
             <StatusPill state={currentState} />
           </CardHeader>
           <div className="divide-y divide-line">
-            <InfoRow label="Time in state">
-              {state?.state_since != null ? formatRelativeTime(state.state_since) : "-"}
+            <InfoRow label="In this state for">
+              {state?.state_since != null ? (
+                <span title={`Since ${formatDateTime(state.state_since)}`}>
+                  {formatDuration((Date.now() - state.state_since) / 1000)}
+                </span>
+              ) : (
+                "-"
+              )}
             </InfoRow>
             <InfoRow label="Last check">
               {state?.last_checked_at != null ? (
@@ -657,13 +656,11 @@ export default function MonitorDetail() {
               )}
             </InfoRow>
             <InfoRow label="Next check">
-              {state?.next_check_at != null ? (
-                <span title={formatDateTime(state.next_check_at)}>
-                  {formatRelativeTime(state.next_check_at)}
-                </span>
-              ) : (
-                "-"
-              )}
+              <NextCheck
+                at={state?.next_check_at ?? null}
+                paused={monitor.paused}
+                offHours={currentState === "scheduled_off"}
+              />
             </InfoRow>
             <InfoRow label="Last success">
               {state?.last_success_at != null ? (
@@ -691,7 +688,7 @@ export default function MonitorDetail() {
             <CardTitle>Incidents</CardTitle>
             {incidentMetrics.mostRecentAt != null && (
               <span className="text-xs text-ink-faint">
-                last {formatRelativeTime(incidentMetrics.mostRecentAt)}
+                latest {formatRelativeTime(incidentMetrics.mostRecentAt)}
               </span>
             )}
           </CardHeader>
@@ -730,41 +727,135 @@ export default function MonitorDetail() {
       </div>
 
       {/* Recent incidents */}
-      <h2 className="mt-8 mb-3 text-sm font-medium text-ink-muted">Recent incidents</h2>
-      {recentIncidents.length === 0 ? (
+      <RecentIncidents
+        incidents={recentIncidents}
+        total={incidentMetrics.totalIncidents}
+        monitorId={monitor.id}
+      />
+    </div>
+  );
+}
+
+/**
+ * When the next check is due. The scheduler runs every 12 minutes, so a
+ * check whose time has just passed is "due now"; one well past it is
+ * overdue (the scheduler may not be running).
+ */
+const DUE_GRACE_MS = 15 * 60 * 1000;
+
+function NextCheck({ at, paused, offHours }: { at: number | null; paused: boolean; offHours: boolean }) {
+  if (paused) return <span className="text-ink-faint">Paused</span>;
+  if (at == null) return <>-</>;
+  const now = Date.now();
+  const title = formatDateTime(at);
+  if (at > now) {
+    return (
+      <span title={title}>
+        {formatRelativeTime(at, now)}
+        {offHours && <span className="text-ink-faint"> (when hours resume)</span>}
+      </span>
+    );
+  }
+  if (now - at <= DUE_GRACE_MS) return <span title={title}>Due now</span>;
+  return (
+    <span title={`Was due ${title}`} className="text-degraded">
+      Overdue by {formatDuration((now - at) / 1000)}
+    </span>
+  );
+}
+
+const INCIDENTS_COLLAPSED = 5;
+
+function RecentIncidents({
+  incidents,
+  total,
+  monitorId,
+}: {
+  incidents: IncidentRow[];
+  total: number;
+  monitorId: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? incidents : incidents.slice(0, INCIDENTS_COLLAPSED);
+  const hidden = incidents.length - shown.length;
+  const listId = "recent-incidents-list";
+
+  return (
+    <section className="mt-8" aria-labelledby="recent-incidents-heading">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 id="recent-incidents-heading" className="text-sm font-semibold text-ink">
+          Recent incidents
+          {total > 0 && <span className="ml-2 font-normal text-ink-faint tabular-nums">{total}</span>}
+        </h2>
+        {total > 0 && (
+          <Link
+            to={`/incidents?monitorId=${encodeURIComponent(monitorId)}`}
+            className="inline-flex items-center gap-1 rounded text-sm text-ink-muted transition-colors hover:text-ink"
+          >
+            All in Incidents <ArrowRight className="size-3.5" />
+          </Link>
+        )}
+      </div>
+      {incidents.length === 0 ? (
         <EmptyState
           icon={<ShieldCheck className="size-6" />}
           title="No incidents recorded"
           description="This monitor has not had any incidents."
         />
       ) : (
-        <Card className="divide-y divide-line p-0">
-          {recentIncidents.map((inc) => (
-            <div key={inc.id} className="flex items-center justify-between gap-3 px-4 py-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium">{inc.title ?? "Incident"}</div>
-                <div className="mt-0.5 truncate text-xs text-ink-faint">
-                  Started {formatRelativeTime(inc.startedAt)}
-                  {inc.error ? ` · ${inc.error}` : ""}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-4 text-xs">
-                <span
-                  className={cn(
-                    "rounded-full border border-line px-2 py-0.5 font-medium capitalize",
-                    inc.status === "open" ? "text-down" : "text-ink-muted",
-                  )}
+        <Card className="overflow-hidden p-0">
+          <ul id={listId} className="divide-y divide-line">
+            {shown.map((inc, i) => (
+              <li
+                key={inc.id}
+                className={cn(i >= INCIDENTS_COLLAPSED && "animate-enter")}
+              >
+                <Link
+                  to={`/incidents?incident=${encodeURIComponent(inc.id)}`}
+                  className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-surface-2/50"
                 >
-                  {inc.status}
-                </span>
-                <span className="w-16 text-right text-ink-muted">
-                  {inc.durationSeconds != null ? formatDuration(inc.durationSeconds) : "ongoing"}
-                </span>
-              </div>
-            </div>
-          ))}
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{inc.title ?? "Incident"}</div>
+                    <div className="mt-0.5 truncate text-xs text-ink-faint">
+                      <span title={formatDateTime(inc.startedAt)}>{formatShortDateTime(inc.startedAt)}</span>
+                      {" · "}
+                      {formatRelativeTime(inc.startedAt)}
+                      {inc.error ? ` · ${describeCause(inc.error)}` : ""}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3 text-xs sm:gap-4">
+                    <span
+                      className={cn(
+                        "rounded-full border px-2 py-0.5 font-medium capitalize",
+                        inc.status === "open" ? "border-down/40 bg-down/10 text-down" : "border-line text-ink-muted",
+                      )}
+                    >
+                      {inc.status}
+                    </span>
+                    <span className="w-14 text-right tabular-nums text-ink-muted">
+                      {inc.durationSeconds != null ? formatDuration(inc.durationSeconds) : "ongoing"}
+                    </span>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {(hidden > 0 || expanded) && incidents.length > INCIDENTS_COLLAPSED && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              aria-expanded={expanded}
+              aria-controls={listId}
+              className="flex w-full items-center justify-center gap-1.5 border-t border-line px-4 py-2.5 text-sm font-medium text-ink-muted transition-colors hover:bg-surface-2/50 hover:text-ink"
+            >
+              {expanded ? "Show fewer" : `Show ${hidden} more`}
+              <ChevronDown
+                className={cn("size-4 transition-transform duration-(--duration-base)", expanded && "rotate-180")}
+              />
+            </button>
+          )}
         </Card>
       )}
-    </div>
+    </section>
   );
 }

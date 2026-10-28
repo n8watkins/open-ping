@@ -19,6 +19,14 @@ import {
   type RecentCheckRow,
   type SummaryCountRow,
 } from "../history/overview-analytics";
+import { loadRangeHistory } from "../history/range";
+import { parseTimeRange, type OverviewHistoryResponse } from "../../shared/time-range";
+import {
+  isWindowActiveAt,
+  listMaintenanceWindows,
+  nextRecurringOccurrence,
+  type MaintenanceWindow,
+} from "../db/maintenance";
 
 /** Dashboard overview API mounted at /api/overview. */
 export const overview = new Hono<AppEnv>();
@@ -70,7 +78,123 @@ export function monitorTarget(monitor: MonitorRecord): string | null {
   }
 }
 
-overview.get("/", async (c) => c.json(await buildOverview(c.env)));
+overview.get("/", async (c) => {
+  const now = Date.now();
+  const [body, maintenance] = await Promise.all([
+    buildOverview(c.env, now),
+    maintenanceOutlook(c.env, now),
+  ]);
+  return c.json({ ...body, maintenance });
+});
+
+/**
+ * Range history for the Overview: every monitor's uptime, state and response
+ * time per hour (24h, 7d) or UTC day (30d, 90d), the install-wide series, and
+ * the incidents that overlap the range. `range` defaults to 7d.
+ */
+overview.get("/history", async (c) => {
+  const range = parseTimeRange(c.req.query("range"));
+  const h = await loadRangeHistory(c.env, range, Date.now());
+  const body: OverviewHistoryResponse = {
+    range: h.range,
+    from: h.from,
+    to: h.to,
+    now: h.now,
+    bucketMs: h.bucketMs,
+    overall: h.overall,
+    // The cards need only the state, uptime and response time per bucket.
+    monitors: h.monitors.map(({ buckets, ...m }) => ({
+      ...m,
+      buckets: buckets.map(({ t, state, checks, okChecks, uptime, avgMs }) => ({
+        t,
+        state,
+        checks,
+        okChecks,
+        uptime,
+        avgMs,
+      })),
+    })),
+    incidents: h.incidents,
+    incidentCount: h.incidentCount,
+  };
+  return c.json(body);
+});
+
+const WEEK_MS = 7 * DAY;
+
+/**
+ * Start of the weekly occurrence that is running at `now` (UTC, like the rest
+ * of the maintenance engine): the latest rule match at or before `now`. PURE.
+ */
+export function currentOccurrenceStart(
+  r: NonNullable<MaintenanceWindow["recurrence"]>,
+  now: number,
+): number {
+  const [h, m] = r.start.split(":").map(Number);
+  const d = new Date(now);
+  const weekStart =
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - d.getUTCDay() * DAY;
+  let start = weekStart + r.weekday * DAY + (h ?? 0) * 60 * 60_000 + (m ?? 0) * 60_000;
+  if (start > now) start -= WEEK_MS;
+  return start;
+}
+
+/** How far ahead the Overview looks for scheduled maintenance. */
+const MAINTENANCE_HORIZON_MS = 14 * DAY;
+
+export interface MaintenanceOutlookEntry {
+  id: string;
+  title: string | null;
+  scope: MaintenanceWindow["scope"];
+  monitorIds: string[] | null;
+  startsAt: number;
+  endsAt: number;
+  recurring: boolean;
+}
+
+/**
+ * Maintenance the administrator should know about: windows active now, and
+ * the next 14 days of upcoming ones (a recurring window by its next
+ * occurrence), soonest first, at most 5. Unlike the public status page, windows
+ * without a public message are included. One D1 read.
+ */
+export async function maintenanceOutlook(
+  env: Env,
+  now: number,
+): Promise<{ active: MaintenanceOutlookEntry[]; upcoming: MaintenanceOutlookEntry[] }> {
+  const all = await listMaintenanceWindows(env);
+  const entry = (w: MaintenanceWindow, startsAt: number, endsAt: number) => ({
+    id: w.id,
+    title: w.title,
+    scope: w.scope,
+    monitorIds: w.monitorIds,
+    startsAt,
+    endsAt,
+    recurring: w.recurrence != null,
+  });
+  const active: MaintenanceOutlookEntry[] = [];
+  const upcoming: MaintenanceOutlookEntry[] = [];
+  const horizon = now + MAINTENANCE_HORIZON_MS;
+  for (const w of all) {
+    if (isWindowActiveAt(w, now)) {
+      if (w.recurrence == null) {
+        active.push(entry(w, w.startsAt, w.endsAt));
+      } else {
+        const startsAt = currentOccurrenceStart(w.recurrence, now);
+        active.push(entry(w, startsAt, startsAt + w.recurrence.durationMinutes * 60_000));
+      }
+      continue;
+    }
+    if (w.recurrence == null) {
+      if (w.startsAt > now && w.startsAt <= horizon) upcoming.push(entry(w, w.startsAt, w.endsAt));
+    } else {
+      const occ = nextRecurringOccurrence(w, now);
+      if (occ && occ.startsAt <= horizon) upcoming.push(entry(w, occ.startsAt, occ.endsAt));
+    }
+  }
+  upcoming.sort((a, b) => a.startsAt - b.startsAt);
+  return { active, upcoming: upcoming.slice(0, 5) };
+}
 
 /**
  * The dashboard overview: every monitor's current state and 24h uptime, the
@@ -188,6 +312,7 @@ export async function buildOverview(env: Env, now: number = Date.now()) {
       lastStatusCode: st?.last_status_code ?? null,
       nextCheckAt: st?.next_check_at ?? null,
       stateSince: st?.state_since ?? null,
+      activeIncidentId: st?.active_incident_id ?? null,
       uptime24h: uptimeByMonitor.get(m.id) ?? 100,
       recentChecks: recentChecksByMonitor.get(m.id) ?? [],
       publicVisible: m.public?.visible ?? false,
