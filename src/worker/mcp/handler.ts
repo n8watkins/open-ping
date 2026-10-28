@@ -6,7 +6,8 @@ import {
   isLegacyRequest,
 } from "@modelcontextprotocol/server";
 import type { AppEnv } from "../types";
-import { hasValidApiToken } from "../middleware/auth";
+import { apiTokenIdentity } from "../middleware/auth";
+import { countApiTokens } from "../db/api-tokens";
 import { hitRateLimit } from "../db/rate-limit";
 import { registerTools, type ToolContext } from "./tools";
 import { requestWaitUntil } from "../routes/monitors";
@@ -22,10 +23,11 @@ import pkg from "../../../package.json";
  * createMcpHandler, and 2025 clients (initialize handshake) through a
  * stateless Streamable HTTP transport in JSON mode.
  *
- * Access is the admin API token only (Authorization: Bearer <API_TOKEN>), the
- * same constant-time check as the REST API. No cookies, no CORS: a browser
- * page on another origin is refused before authentication. When API_TOKEN is
- * not configured the endpoint does not exist (404). Tools call the same
+ * Access is an admin API token only (Authorization: Bearer <token>): the
+ * API_TOKEN secret or a token created under Developers, the same check as the
+ * REST API. No cookies, no CORS: a browser page on another origin is refused
+ * before authentication. With neither the secret nor a stored token the
+ * endpoint does not exist (404). Tools call the same
  * validation and data functions as the REST routes (./tools.ts).
  */
 
@@ -99,11 +101,15 @@ export async function serveMcp(request: Request, ctx: ToolContext): Promise<Resp
 export const mcp = new Hono<AppEnv>();
 
 mcp.all("/", async (c) => {
-  if (!c.env.API_TOKEN) {
+  const authorization = c.req.header("authorization");
+  const who = await apiTokenIdentity(c.env, authorization);
+  // Off until there is a token to use: the secret, or one made under Developers.
+  if (!who && !c.env.API_TOKEN && (await countApiTokens(c.env)) === 0) {
     return c.json(
       {
         error: "mcp_disabled",
-        message: "The MCP server is off on this install. Set the API_TOKEN Worker secret to turn it on (see docs/MCP.md).",
+        message:
+          "The MCP server is off on this install. Create an API token under Developers, or set the API_TOKEN Worker secret, to turn it on (see docs/MCP.md).",
       },
       404,
     );
@@ -118,14 +124,16 @@ mcp.all("/", async (c) => {
     return c.json({ error: "forbidden_origin", message: "Cross-origin requests to /mcp are not allowed." }, 403);
   }
 
-  const authorization = c.req.header("authorization");
-  if (!(await hasValidApiToken(c.env, authorization))) {
+  if (!who) {
     c.header(
       "WWW-Authenticate",
       authorization ? 'Bearer realm="OpenPing", error="invalid_token"' : 'Bearer realm="OpenPing"',
     );
     return c.json(
-      { error: "unauthorized", message: "Send Authorization: Bearer <API_TOKEN> (the Worker's API_TOKEN secret)." },
+      {
+        error: "unauthorized",
+        message: "Send Authorization: Bearer <token>, an API token from Developers or the API_TOKEN Worker secret.",
+      },
       401,
     );
   }

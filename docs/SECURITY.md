@@ -17,6 +17,7 @@ The following values can be configured with `wrangler secret put` or in the Clou
 - `ADMIN_GITHUB_LOGIN` and `ADMIN_EMAIL` identify the single allowed administrator.
 - `APP_URL` defines the canonical public origin used for links and authentication callbacks.
 - `API_TOKEN` is an optional administrator bearer token for the CLI, automation and the `/mcp` endpoint.
+  Named tokens created under **Developers** do the same job and live in D1 as hashes (see [API tokens](#api-tokens)).
 - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` optionally provide the Web Push identity.
 
 Worker secrets are not written to D1 and are not included in a D1 export or OpenPing JSON export.
@@ -81,6 +82,8 @@ Normal monitor and channel API responses redact modeled secret fields, even thou
 - New heartbeat ingestion tokens are stored only as SHA-256 hashes.
 - A heartbeat token is returned in plaintext once when the monitor is created or the token is rotated.
 - Normal monitor API responses do not reveal a heartbeat ingestion token.
+- API tokens created under **Developers** are stored only as SHA-256 hashes, with their first eight characters (`opk_` and four more) kept to tell them apart.
+  The token is returned once, when it is created.
 
 Hashes are not encryption and cannot be reversed during restore.
 If the original heartbeat URL is lost, rotate the monitor token and update the sending system.
@@ -342,11 +345,12 @@ See [Backup and restore](./BACKUP.md) for export and import commands.
 ## The `/mcp` endpoint
 
 The [MCP server](./MCP.md) at `/mcp` is a second way in with the same administrator power as the REST API.
-It exists only while `API_TOKEN` is set; otherwise it answers `404`.
+It exists only while `API_TOKEN` is set or at least one [API token](#api-tokens) exists; otherwise it answers `404`.
 
-- It accepts only `Authorization: Bearer <API_TOKEN>`, checked in constant time by the same function as the REST API, and never a session cookie.
+- It accepts only `Authorization: Bearer <token>` (the `API_TOKEN` secret, checked in constant time, or a stored token, looked up by its hash), through the same function as the REST API, and never a session cookie.
 - A request whose `Origin` header names another site is refused with `403`, and no CORS headers are sent, so a web page cannot drive it through a visitor's browser (including by DNS rebinding).
-- Unauthenticated requests are rejected before any D1 access.
+- Unauthenticated requests never write to D1.
+  A bearer value that starts with `opk_` costs one indexed read to look up, and on an install without the `API_TOKEN` secret so does deciding whether `/mcp` exists.
 - Authenticated requests are capped at 120 a minute per install through the `rate_limits` table, and bodies at 256 KB.
 - It is stateless: nothing about an MCP client is stored between requests.
 - Tool results go to the client's model provider, so they are redacted more strictly than REST responses: modeled secrets (HTTP auth passwords and tokens, heartbeat shared secrets, webhook URLs and secrets, Telegram bot tokens) are blanked as in the API, and custom header values and request bodies are blanked as in a backup export.
@@ -354,13 +358,26 @@ It exists only while `API_TOKEN` is set; otherwise it answers `404`.
 - Plaintext operational data does reach the model provider: monitor names and target URLs (with query strings), schedules, incident errors and private notes, maintenance notes and status page settings.
 - Destructive tools (`delete_monitor`, `delete_maintenance_window`, `rotate_heartbeat_token`) are annotated as destructive and refuse to act without `confirm: true`.
 
-Rotating `API_TOKEN` cuts off the CLI and every MCP client at once.
+Rotating `API_TOKEN` cuts off every client that uses the secret at once; revoking a stored token cuts off only the clients that use it.
+
+## API tokens
+
+The **Developers** page creates named administrator tokens for the CLI, MCP clients and scripts, beside the optional `API_TOKEN` secret.
+
+- A token is `opk_` followed by 32 random bytes in base64url.
+  It grants the same full administrator access as `API_TOKEN`.
+- Only its SHA-256 hash is stored (`api_tokens.token_hash`); the token is shown once, in the response that creates it, which is sent with `Cache-Control: no-store`.
+- Creating and revoking a token need a signed-in browser session with its CSRF token, so a token (a leaked one included) cannot create a replacement or revoke the owner's other tokens.
+  Listing tokens works with either.
+- Revoking deletes the row, so the token stops working on the next request.
+- `last_used_at` is updated at most every five minutes per token.
+- Tokens are not in the JSON export, and signing out everywhere or recovering access does not revoke them: revoke any you no longer trust under **Developers**.
 
 ## Response headers
 
 Every page, the offline page and every API response carry one security policy, defined once in `src/worker/security-headers.ts`.
 It is a strict Content-Security-Policy (scripts from this origin and Cloudflare Web Analytics only, requests to this origin, Web Analytics and the canonical install's waitlist endpoint), `X-Frame-Options: DENY` with `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy: no-referrer` and HSTS.
-The `/embed` widget is the only framable page; it allows `https://n8builds.dev` and `https://*.n8builds.dev` ([WIDGET.md](./WIDGET.md)).
+The `/embed` widget is the only framable page; it allows the install itself (`'self'`, for the embed preview under **Developers**), `https://n8builds.dev` and `https://*.n8builds.dev` ([WIDGET.md](./WIDGET.md)).
 `assets.run_worker_first` in `wrangler.jsonc` sends every request except the hashed `/assets/*` bundles through the Worker, so no page can be served straight from static assets without the policy.
 `public/_headers` only covers those bundles, and `src/static-headers.test.ts` checks that it agrees with the Worker.
 
