@@ -6,7 +6,11 @@
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    // Every request runs the Worker first, so every page gets its security
+    // headers (src/worker/security-headers.ts), except the hashed JS and CSS
+    // bundles, which static assets serve on their own (public/_headers).
+    "run_worker_first": ["/*", "!/assets/*"]
   },
   "observability": {
     "enabled": true

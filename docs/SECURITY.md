@@ -142,6 +142,14 @@ Back up these items separately:
 
 See [Backup and restore](./BACKUP.md) for export and import commands.
 
+## Response headers
+
+Every page, the offline page and every API response carry one security policy, defined once in `src/worker/security-headers.ts`.
+It is a strict Content-Security-Policy (scripts from this origin and Cloudflare Web Analytics only, requests to this origin, Web Analytics and the canonical install's waitlist endpoint), `X-Frame-Options: DENY` with `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy: no-referrer` and HSTS.
+The `/embed` widget is the only framable page; it allows `https://n8builds.dev` and `https://*.n8builds.dev` ([WIDGET.md](./WIDGET.md)).
+`assets.run_worker_first` in `wrangler.jsonc` sends every request except the hashed `/assets/*` bundles through the Worker, so no page can be served straight from static assets without the policy.
+`public/_headers` only covers those bundles, and `src/static-headers.test.ts` checks that it agrees with the Worker.
+
 ## Operational recommendations
 
 - Use independent randomly generated values for `MASTER_KEY`, `SETUP_TOKEN`, and `API_TOKEN`.

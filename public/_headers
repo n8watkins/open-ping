@@ -1,0 +1,11 @@
+# Headers for files served straight from static assets: the hashed JS and CSS
+# bundles under /assets/. Every other request goes through the Worker
+# (wrangler.jsonc run_worker_first), which owns the Content-Security-Policy and
+# framing headers, defined once in src/worker/security-headers.ts.
+# These values must match BASE_SECURITY_HEADERS there, which the Worker also
+# sends; src/static-headers.test.ts checks it.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Strict-Transport-Security: max-age=15552000; includeSubDomains

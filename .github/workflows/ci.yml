@@ -1,0 +1,45 @@
+# Checks for every pull request and every push to main: lint, typecheck, the
+# unit and workerd/D1 integration tests, and a production build.
+#
+# Commit messages are checked by commits.yml (release-kit), not here.
+#
+# There is deliberately no deploy job. wrangler.jsonc keeps a placeholder D1
+# database_id (the real one is never committed), so a deploy from CI would have
+# no database to bind. Deploy from a machine that has deploy.local.json
+# (`npm run deploy:prod`, docs/INSTALL.md) until CI is given that config.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: # lets the release-kit train run it on a release commit
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: Lint, typecheck, tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: release-kit check (warns when the kit or workflow pins are out of date)
+        run: npx release-kit check
+      - run: npm run lint
+      - run: npm run typecheck
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Integration tests (workerd + D1)
+        run: npm run test:integration
+      - run: npm run build

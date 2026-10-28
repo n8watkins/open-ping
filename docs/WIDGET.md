@@ -87,33 +87,29 @@ Hosts that don't add this listener simply use the fixed `height` they set on the
 
 ## Allowing your domain (framing / `frame-ancestors`)
 
-Every OpenPing response is locked down with `X-Frame-Options` and a
-`Content-Security-Policy` of `frame-ancestors 'none'`, so the admin panel, login,
-API and the main `/status` page **cannot** be framed. The `/embed` route is the
-single exception: its framing headers are relaxed so the widget can be embedded
-cross-origin.
+Every OpenPing page and API response is locked down with `X-Frame-Options: DENY` and a `Content-Security-Policy` of `frame-ancestors 'none'`, so the admin panel, login, API and the main `/status` page **cannot** be framed.
+The `/embed` route (and paths under it) is the single exception: it drops `X-Frame-Options` so the widget can be embedded cross-origin.
 
-By default `/embed` allows embedding from **`https://*.n8builds.dev`**
-subdomains. To embed from a different host, edit the allow-list in
-[`src/worker/index.ts`](../src/worker/index.ts):
+By default `/embed` can be embedded from **`https://n8builds.dev`** and its subdomains (**`https://*.n8builds.dev`**).
+A `*.` wildcard in a CSP source matches subdomains only, which is why the bare domain is listed separately.
+To embed from a different host, add its origin to the allow-list in [`src/worker/security-headers.ts`](../src/worker/security-headers.ts):
 
 ```ts
-// src/worker/index.ts
-const ALLOWED_FRAME_ANCESTORS = "https://*.n8builds.dev";
+// src/worker/security-headers.ts
+export const WIDGET_FRAME_ANCESTORS = ["https://n8builds.dev", "https://*.n8builds.dev"] as const;
 ```
 
-Add origins space-separated, for example:
+For example:
 
 ```ts
-const ALLOWED_FRAME_ANCESTORS = "https://*.n8builds.dev https://example.com";
+export const WIDGET_FRAME_ANCESTORS = ["https://n8builds.dev", "https://*.n8builds.dev", "https://example.com"] as const;
 ```
 
-then redeploy (`npm run deploy`). This is scoped to `/embed` only - all other
-routes keep `X-Frame-Options` and `frame-ancestors 'none'`.
+Then update the matching test in `src/static-headers.test.ts` and redeploy (`npm run deploy`).
+This is scoped to `/embed` only; all other routes keep `X-Frame-Options` and `frame-ancestors 'none'`.
 
-> Note: this only changes framing for `/embed`. The override drops
-> `X-Frame-Options` and rewrites just the `frame-ancestors` directive of the CSP;
-> every other CSP directive (`script-src 'self'`, etc.) is preserved.
+> Note: only framing changes for `/embed`.
+> Its CSP is the same policy as every other page with just the `frame-ancestors` directive swapped, so `script-src 'self'` and the rest still apply.
 
 ---
 

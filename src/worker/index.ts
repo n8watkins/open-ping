@@ -7,87 +7,53 @@ import { auth } from "./routes/auth";
 import { magicFlow } from "./routes/magic";
 import { heartbeats } from "./routes/heartbeats";
 import { runScheduled } from "./scheduler";
+import {
+  BASE_SECURITY_HEADERS,
+  cspDirectives,
+  isWidgetPath,
+  serializeCsp,
+  STATIC_HTML_PAGES,
+  widgetCspDirectives,
+} from "./security-headers";
 
 const app = new Hono<AppEnv>();
 const isViteDev = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
 
 // ---------------------------------------------------------------------------
-// Embeddable status widget: framing override (scoped to /embed ONLY).
+// Response security headers. The policy itself lives in ./security-headers.ts.
 //
 // secureHeaders() below locks every response down with `X-Frame-Options: DENY`
-// + `frame-ancestors 'none'`, which is correct for the admin panel, login,
-// API and the main status page (they must never be framed). The /embed widget
-// is the one surface designed to be iframed from an external site, so for that
-// path — and that path only — we drop X-Frame-Options and relax the CSP's
-// frame-ancestors to allow n8builds.dev subdomains. All other CSP directives
-// (script-src 'self', etc.) are preserved.
+// + `frame-ancestors 'none'`, which is correct for the admin panel, login, API
+// and the main status page (they must never be framed). The /embed widget is
+// the one surface designed to be iframed from an external site, so for that
+// path - and that path only - we drop X-Frame-Options and send the widget CSP,
+// which differs only in frame-ancestors (WIDGET_FRAME_ANCESTORS).
 //
 // This middleware is registered FIRST so that, by Hono's onion ordering, its
-// post-`next()` phase runs LAST — i.e. AFTER secureHeaders has written its
-// headers — letting it override them on the already-mutable response (the
+// post-`next()` phase runs LAST - i.e. AFTER secureHeaders has written its
+// headers - letting it override them on the already-mutable response (the
 // clone middleware further below makes the ASSETS/redirect responses mutable).
-//
-// To widen embedding to another host, add origins to ALLOWED_FRAME_ANCESTORS
-// (space-separated, e.g. "https://*.n8builds.dev https://example.com").
-const WIDGET_PATH = "/embed";
-const ALLOWED_FRAME_ANCESTORS = "https://*.n8builds.dev";
-
-function isWidgetPath(path: string): boolean {
-  return path === WIDGET_PATH || path.startsWith(`${WIDGET_PATH}/`);
-}
+const widgetCsp = serializeCsp(widgetCspDirectives({ viteDev: isViteDev }));
 
 app.use("*", async (c, next) => {
   await next();
   if (!c.res || !isWidgetPath(c.req.path)) return;
   c.res.headers.delete("X-Frame-Options");
-  const csp = c.res.headers.get("Content-Security-Policy");
-  c.res.headers.set(
-    "Content-Security-Policy",
-    csp
-      ? csp.replace(/frame-ancestors[^;]*/i, `frame-ancestors ${ALLOWED_FRAME_ANCESTORS}`)
-      : `frame-ancestors ${ALLOWED_FRAME_ANCESTORS}`,
-  );
+  c.res.headers.set("Content-Security-Policy", widgetCsp);
 });
-
-const CF_ANALYTICS_SCRIPT = "https://static.cloudflareinsights.com";
-const CF_ANALYTICS_REPORT = "https://cloudflareinsights.com";
 
 // Security headers on every response (admin SPA, public status page, JSON API).
 // frame-ancestors/X-Frame-Options block clickjacking of the authenticated admin
 // panel; nosniff + a tailored CSP are defense-in-depth for an app that renders
-// admin- and heartbeat-supplied strings. The CSP suits the Vite/React/Tailwind
-// build (external hashed scripts, inline style attributes, same-origin XHR,
-// external/data: images for the status-page logo); tune if you add origins.
+// admin- and heartbeat-supplied strings.
 app.use(
   "*",
   secureHeaders({
     xFrameOptions: "DENY",
-    xContentTypeOptions: "nosniff",
-    referrerPolicy: "no-referrer",
-    contentSecurityPolicy: {
-      defaultSrc: ["'self'"],
-      baseUri: ["'self'"],
-      frameAncestors: ["'none'"],
-      objectSrc: ["'none'"],
-      // Vite injects an inline React Fast Refresh preamble into transformed
-      // HTML during local development. Permit that development-only script so
-      // direct SPA routes can boot; production builds contain no inline script
-      // and retain the strict self-only policy.
-      // Cloudflare Web Analytics, when it's turned on for the zone: Cloudflare
-      // injects its beacon (a versioned path under this host), which reports to
-      // this origin (automatic injection) or to cloudflareinsights.com (manual
-      // embed). developers.cloudflare.com/web-analytics/faq/
-      scriptSrc: isViteDev
-        ? ["'self'", "'unsafe-inline'", CF_ANALYTICS_SCRIPT]
-        : ["'self'", CF_ANALYTICS_SCRIPT],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:", "https:"],
-      fontSrc: ["'self'", "data:"],
-      // The landing page's Hosted waitlist form posts to the canonical install
-      // (src/client/components/landing/WaitlistForm.tsx).
-      connectSrc: ["'self'", CF_ANALYTICS_REPORT, "https://openping.n8builds.dev"],
-      workerSrc: ["'self'"],
-    },
+    xContentTypeOptions: BASE_SECURITY_HEADERS["X-Content-Type-Options"],
+    referrerPolicy: BASE_SECURITY_HEADERS["Referrer-Policy"],
+    strictTransportSecurity: BASE_SECURITY_HEADERS["Strict-Transport-Security"],
+    contentSecurityPolicy: cspDirectives({ viteDev: isViteDev }),
   }),
 );
 
@@ -135,12 +101,29 @@ app.all("*", (c) => {
   if (c.req.path === "/api" || c.req.path.startsWith("/api/")) {
     return c.json({ error: "not_found", path: c.req.path }, 404);
   }
-  // Always ask the assets binding for the HTML entry point. Passing the nested
-  // client route through (for example `/monitors`) makes the Cloudflare Vite
-  // plugin serve its SPA fallback without Vite's HTML transforms in dev. React
-  // Fast Refresh then aborts with "can't detect preamble" and leaves a blank
-  // page on direct navigation. The browser URL remains unchanged, so React
-  // Router still resolves the requested route after the transformed shell loads.
+  // Real files (anything with an extension, such as /sw.js or /index.html,
+  // and the extensionless STATIC_HTML_PAGES) go to the assets binding as
+  // requested, so it serves them, or redirects /index.html to /, as it would on
+  // its own. The Worker still adds its security headers on the way out. In
+  // development, so do Vite's own extensionless modules (/@vite/client,
+  // /@react-refresh, /@id/...), which reach the Worker because every path runs
+  // it first.
+  const path = c.req.path;
+  const lastSegment = path.slice(path.lastIndexOf("/") + 1);
+  if (
+    lastSegment.includes(".") ||
+    (STATIC_HTML_PAGES as readonly string[]).includes(path) ||
+    (isViteDev && path.startsWith("/@"))
+  ) {
+    return c.env.ASSETS.fetch(c.req.raw);
+  }
+  // Everything else is a client route: always ask the assets binding for the
+  // HTML entry point. Passing the nested client route through (for example
+  // `/monitors`) makes the Cloudflare Vite plugin serve its SPA fallback
+  // without Vite's HTML transforms in dev. React Fast Refresh then aborts with
+  // "can't detect preamble" and leaves a blank page on direct navigation. The
+  // browser URL remains unchanged, so React Router still resolves the requested
+  // route after the transformed shell loads.
   const entryUrl = new URL("/", c.req.url);
   return c.env.ASSETS.fetch(new Request(entryUrl, c.req.raw));
 });

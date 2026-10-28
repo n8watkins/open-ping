@@ -70,7 +70,7 @@ Reporting `operational` instead is not needed for that, and it is wrong.
 
 ## Related, separate issues found at the same time
 
-- **The widget can't be embedded on n8builds.dev itself.**
-  `ALLOWED_FRAME_ANCESTORS` in `src/worker/index.ts` (line 33) is `https://*.n8builds.dev`, which matches subdomains but not the bare domain.
-  Add `https://n8builds.dev` if the widget should ever appear there.
+- **The widget couldn't be embedded on n8builds.dev itself (fixed).**
+  The allow-list was `https://*.n8builds.dev`, which matches subdomains but not the bare domain.
+  `WIDGET_FRAME_ANCESTORS` in `src/worker/security-headers.ts` now lists `https://n8builds.dev` too.
 - **Adopt release-kit** (https://github.com/n8watkins/release-kit) for commit checks and releases, when the owner rolls it out across the build repos.
