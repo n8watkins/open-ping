@@ -144,7 +144,7 @@ export function AppLayout() {
               <span className={cn("size-1.5 shrink-0 rounded-full", pill.dot)} />
               <span className="truncate">{statusSummary(overview?.counts)}</span>
             </span>
-            <span className="text-[10px] text-ink-faint">v0.1.0</span>
+            <span className="text-[10px] text-ink-faint">v{__OP_VERSION__}</span>
           </div>
           {me?.identity && (
             <div className="flex items-center justify-between gap-2">

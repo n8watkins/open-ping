@@ -17,6 +17,7 @@ import {
   type NotificationPayload,
 } from "./payload";
 import { assertSafeUrl } from "../lib/ssrf";
+import { DecryptError } from "../lib/crypto";
 
 const MAX_ATTEMPTS = 5;
 const BATCH = 25;
@@ -199,7 +200,16 @@ async function deliverPush(
   attempts: number,
   payload: NotificationPayload,
 ): Promise<PushOutcome> {
-  const sub = subscriptionId ? await getSubscription(env, subscriptionId) : null;
+  let sub: Awaited<ReturnType<typeof getSubscription>>;
+  try {
+    sub = subscriptionId ? await getSubscription(env, subscriptionId) : null;
+  } catch (e) {
+    // Its endpoint or keys can't be decrypted (for example the MASTER_KEY that
+    // sealed them is gone): retrying can never succeed, so stop now.
+    if (!(e instanceof DecryptError)) throw e;
+    await markFailed(env, entryId, MAX_ATTEMPTS, "subscription_unreadable", MAX_ATTEMPTS);
+    return "failed";
+  }
   if (!sub || sub.disabled) {
     await markFailed(env, entryId, MAX_ATTEMPTS, "subscription_gone", MAX_ATTEMPTS);
     return "pruned";

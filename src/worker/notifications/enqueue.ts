@@ -2,7 +2,7 @@ import type { Env } from "../types";
 import type { MonitorRecord } from "../db/monitors";
 import type { IncidentRecord } from "../db/incidents";
 import { listChannels } from "../db/channels";
-import { listActiveSubscriptions } from "../db/push";
+import { listActiveSubscriptionIds } from "../db/push";
 import { enqueue } from "../db/outbox";
 import { getSetting } from "../db/settings";
 import { isVapidConfigured } from "./push/vapid";
@@ -103,14 +103,13 @@ export async function enqueueIncidentEvent(
   // (Least-surprising: a restricted monitor fires ONLY what is listed.)
   const pushAllowed = restrict.length === 0 || restrict.includes("push");
   if (pushAllowed && channelWantsEvent("push", event, null) && (await isVapidConfigured(env))) {
-    const subs = await listActiveSubscriptions(env);
-    for (const s of subs) {
+    for (const id of await listActiveSubscriptionIds(env)) {
       entries.push({
-        eventKey: `${event}:${incident.id}:push:${s.id}`,
+        eventKey: `${event}:${incident.id}:push:${id}`,
         monitorId: monitor.id,
         channelId: null,
         channelType: "push",
-        target: s.id,
+        target: id,
         eventType: event,
         payload,
       });
