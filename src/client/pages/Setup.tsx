@@ -7,8 +7,10 @@ import {
   type ReactNode,
 } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Loader2, ArrowRight, ArrowLeft } from "lucide-react";
+import { Check, Loader2, ArrowRight, ArrowLeft, Fingerprint, Plus } from "lucide-react";
 import { api } from "../lib/api";
+import { hostMatchesRpId, passkeyErrorMessage, passkeysSupported, registerPasskey } from "../lib/webauthn";
+import { defaultPasskeyName } from "../components/PasskeysCard";
 import { useBootstrap } from "../lib/bootstrap";
 import { Logo } from "../components/Logo";
 import { AddSecretHelp } from "../components/AddSecretHelp";
@@ -23,6 +25,10 @@ interface SetupStatus {
   resendConfigured: boolean;
   appUrl: string | null;
   timezone: string | null;
+  /** Passkeys created so far (optional for an older Worker). */
+  passkeyCount?: number;
+  /** The hostname passkeys are bound to, once an address is configured. */
+  passkeyRpId?: string | null;
 }
 interface SetupState {
   currentStep: number;
@@ -87,6 +93,8 @@ export default function Setup() {
   const [timezone, setTimezone] = useState(guessTimezone());
   const [adminGithubLogin, setAdminGithubLogin] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
+  const [creatingPasskey, setCreatingPasskey] = useState(false);
+  const [passkeyError, setPasskeyError] = useState<string | null>(null);
 
   const loadState = useCallback(
     async (token?: string) => {
@@ -136,6 +144,23 @@ export default function Setup() {
     return me?.authenticated
       ? { csrf: csrf ?? undefined }
       : { headers: { "x-setup-token": setupToken } };
+  }
+
+  async function createPasskey() {
+    setCreatingPasskey(true);
+    setPasskeyError(null);
+    try {
+      const res = await registerPasskey<{ status: SetupStatus }>(
+        "/api/setup/passkeys",
+        defaultPasskeyName(),
+        setupRequestOptions(),
+      );
+      setStatus(res.status);
+    } catch (err) {
+      setPasskeyError(passkeyErrorMessage(err));
+    } finally {
+      setCreatingPasskey(false);
+    }
   }
 
   function unlock(event: FormEvent) {
@@ -194,7 +219,7 @@ export default function Setup() {
       const code = e instanceof Error ? e.message : "error";
       setError(
         code === "no_admin_configured"
-          ? "Configure an administrator GitHub login (or email) before finishing."
+          ? "Create a passkey, or add a GitHub username or email address, before finishing."
           : code === "timezone_required"
             ? "Select a timezone before finishing."
             : code === "master_key_required"
@@ -327,6 +352,9 @@ export default function Setup() {
             setAdminGithubLogin={setAdminGithubLogin}
             adminEmail={adminEmail}
             setAdminEmail={setAdminEmail}
+            onCreatePasskey={() => void createPasskey()}
+            creatingPasskey={creatingPasskey}
+            passkeyError={passkeyError}
           />
 
           {error && (
@@ -393,6 +421,9 @@ interface BodyProps {
   setAdminGithubLogin: (v: string) => void;
   adminEmail: string;
   setAdminEmail: (v: string) => void;
+  onCreatePasskey: () => void;
+  creatingPasskey: boolean;
+  passkeyError: string | null;
 }
 
 function StepBody(p: BodyProps) {
@@ -404,7 +435,7 @@ function StepBody(p: BodyProps) {
             <Ready ok label="Worker is running" />
             <Ready ok label="Database is reachable" />
             <Ready ok={p.status?.encryptionConfigured} label="Encryption at rest configured" />
-            <Ready ok={p.status?.githubEnabled} label="GitHub OAuth credentials present" optional />
+            <Ready ok={p.status?.githubEnabled} label="GitHub sign-in app configured" optional />
             <Ready ok={p.status?.resendConfigured} label="Resend email configured" optional />
           </ul>
           {p.status && !p.status.encryptionConfigured && <AddSecretHelp name="MASTER_KEY" />}
@@ -443,12 +474,16 @@ function StepBody(p: BodyProps) {
       );
     case "admin":
       return (
-        <Section title="Administrator" desc="OpenPing is single-administrator. Only this identity can sign in.">
-          {!p.status?.githubEnabled && (
-            <p className="mb-4 rounded-lg border border-degraded/40 bg-degraded/10 px-3 py-2 text-sm text-degraded">
-              GitHub OAuth isn't configured yet. Set the GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET Worker secrets to enable GitHub sign-in. You can still record your login below.
-            </p>
-          )}
+        <Section
+          title="Administrator"
+          desc="OpenPing has one administrator: you. A passkey is enough to sign in; add GitHub or an email address if you want another way in."
+        >
+          <PasskeyStep {...p} />
+          <div className="my-5 flex items-center gap-3 text-xs text-ink-faint">
+            <span className="h-px flex-1 bg-line" />
+            optional
+            <span className="h-px flex-1 bg-line" />
+          </div>
           <Field label="Administrator GitHub username">
             <input
               value={p.adminGithubLogin}
@@ -457,24 +492,24 @@ function StepBody(p: BodyProps) {
               className="input"
             />
           </Field>
-          <div className="my-5 flex items-center gap-3 text-xs text-ink-faint">
-            <span className="h-px flex-1 bg-line" />
-            or
-            <span className="h-px flex-1 bg-line" />
+          {!p.status?.githubEnabled && (
+            <p className="mt-1.5 text-xs text-ink-faint">
+              GitHub sign-in also needs a GitHub OAuth app: the GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET secrets.
+            </p>
+          )}
+          <div className="mt-4">
+            <Field label="Administrator email address">
+              <input
+                type="email"
+                value={p.adminEmail}
+                onChange={(e) => p.setAdminEmail(e.target.value)}
+                placeholder="admin@example.com"
+                autoComplete="email"
+                className="input"
+              />
+            </Field>
           </div>
-          <Field label="Administrator email address">
-            <input
-              type="email"
-              value={p.adminEmail}
-              onChange={(e) => p.setAdminEmail(e.target.value)}
-              placeholder="admin@example.com"
-              autoComplete="email"
-              className="input"
-            />
-          </Field>
-          <p className="mt-3 text-xs text-ink-faint">
-            Email sign-in also requires Resend to be configured.
-          </p>
+          <p className="mt-1.5 text-xs text-ink-faint">Email sign-in also needs RESEND_API_KEY.</p>
         </Section>
       );
     case "finish":
@@ -484,12 +519,15 @@ function StepBody(p: BodyProps) {
             <Ready ok={!!p.status?.timezone || !!p.timezone} label={`Timezone: ${p.timezone}`} />
             <Ready
               ok={
+                (p.status?.passkeyCount ?? 0) > 0 ||
                 p.status?.githubAdminConfigured ||
                 p.status?.emailAdminConfigured ||
                 !!p.adminGithubLogin ||
                 !!p.adminEmail
               }
-              label="Administrator identity recorded"
+              label={
+                (p.status?.passkeyCount ?? 0) > 0 ? "Passkey created for sign-in" : "Administrator identity recorded"
+              }
             />
           </ul>
           <p className="mt-5 rounded-lg border border-line bg-surface-2/50 px-3 py-2 text-sm text-ink-muted">
@@ -502,6 +540,68 @@ function StepBody(p: BodyProps) {
     default:
       return null;
   }
+}
+
+/** The Administrator step's passkey box: create one (or more) for the admin. */
+function PasskeyStep(p: BodyProps) {
+  const count = p.status?.passkeyCount ?? 0;
+  const rpId = p.status?.passkeyRpId ?? window.location.hostname;
+  const supported = passkeysSupported();
+  const here = hostMatchesRpId(rpId);
+  return (
+    <div className="rounded-lg border border-line bg-surface-2/40 p-4">
+      <div className="flex items-start gap-3">
+        <Fingerprint className="mt-0.5 size-5 shrink-0 text-accent" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold text-ink">Sign in with a passkey (recommended)</h2>
+          <p className="mt-1 text-sm text-ink-muted">
+            Uses your fingerprint, face, screen lock or a security key. No GitHub app or email service needed. It works
+            only at <span className="font-mono text-ink">{rpId}</span>.
+          </p>
+          {count > 0 && (
+            <p role="status" className="mt-3 flex items-center gap-1.5 text-sm font-medium text-up">
+              <Check className="size-4" aria-hidden />
+              {count === 1 ? "Passkey created." : `${count} passkeys created.`} You'll sign in with it after setup.
+            </p>
+          )}
+          {!supported ? (
+            <p className="mt-3 text-sm text-degraded">This browser can't create passkeys.</p>
+          ) : !here ? (
+            <p className="mt-3 text-sm text-degraded">
+              Passkeys are bound to the installation URL. Open this wizard at{" "}
+              <span className="font-mono">{rpId}</span> to create one, or change the URL in step 2.
+            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={p.onCreatePasskey}
+              disabled={p.creatingPasskey}
+              className={cn(
+                "mt-3 inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:opacity-60",
+                count > 0
+                  ? "border border-line bg-surface text-ink hover:bg-surface-2"
+                  : "bg-accent text-canvas hover:bg-accent-hover",
+              )}
+            >
+              {p.creatingPasskey ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : count > 0 ? (
+                <Plus className="size-4" />
+              ) : (
+                <Fingerprint className="size-4" />
+              )}
+              {count > 0 ? "Add another passkey" : "Create a passkey"}
+            </button>
+          )}
+          {p.passkeyError && (
+            <p role="alert" className="mt-2 text-sm text-down">
+              {p.passkeyError}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Section({ title, desc, children }: { title: string; desc: string; children: ReactNode }) {

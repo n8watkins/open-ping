@@ -16,7 +16,7 @@ bottom, or the full [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md).
 There are two ways to install it:
 
 - **[The Deploy to Cloudflare button](#the-quick-way-deploy-to-cloudflare)**: about 5 minutes in the browser, no terminal needed.
-- **[By hand](#1-prerequisites)**: clone → register a GitHub sign-in app → set a few secrets → deploy → finish the in-app setup wizard.
+- **[By hand](#1-prerequisites)**: clone → set a few secrets → deploy → finish the in-app setup wizard, where you create a passkey to sign in.
   Budget about 15 minutes the first time.
 
 ---
@@ -41,11 +41,11 @@ The deploy form asks for:
 When the build finishes:
 
 1. Open your new address.
-   It shows the setup page: enter your `SETUP_TOKEN`, confirm the address, pick your timezone and enter your GitHub username (or an email address).
-2. Create a GitHub OAuth app for sign-in, as in [step 3](#3-create-a-github-oauth-app-sign-in), with your new address.
-3. Add its Client ID and Client Secret to the Worker: in the Cloudflare dashboard, open **Workers & Pages**, your Worker, **Settings**, **Variables and Secrets**, then **Add**, choose type **Secret**, and save `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
+   It shows the setup page: enter your `SETUP_TOKEN`, confirm the address, pick your timezone and create a passkey, which is how you sign in.
+2. Sign in with the passkey and add your monitors ([step 8](#8-first-run-complete-setup-then-add-monitors)).
+3. Optional: to also sign in with GitHub, create a GitHub OAuth app as in [step 3](#3-optional-create-a-github-oauth-app), with your new address.
+   Add its Client ID and Client Secret to the Worker: in the Cloudflare dashboard, open **Workers & Pages**, your Worker, **Settings**, **Variables and Secrets**, then **Add**, choose type **Secret**, and save `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
    Any optional secret from [step 5](#5-set-your-worker-secrets), such as `RESEND_API_KEY` for email, is added the same way.
-4. Sign in and add your monitors ([step 8](#8-first-run-complete-setup-then-add-monitors)).
 
 Good to know:
 
@@ -70,7 +70,7 @@ Good to know:
 
 Optional, but recommended for a real install:
 
-- **A GitHub account** - to create the OAuth app used for sign-in (step 3).
+- **A GitHub account** - only for the optional GitHub sign-in (step 3) or to use the Deploy button.
 - **A [Resend](https://resend.com) account** - for transactional email and
   email magic-link sign-in (a free tier is available).
 
@@ -93,10 +93,11 @@ npm install
 
 ---
 
-## 3. Create a GitHub OAuth app (sign-in)
+## 3. (Optional) Create a GitHub OAuth app
 
-OpenPing has a **single administrator**, and GitHub OAuth is the primary way to
-sign in. (Email magic links are an alternative/backup - see the note below.)
+OpenPing has a **single administrator**, who signs in with a **passkey** created in the setup wizard.
+A passkey needs no third-party app or secret, so you can skip this step.
+GitHub OAuth and email magic links are optional extra ways in, useful as a backup if you lose your passkeys (see [Passkeys](#passkeys) below).
 
 1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
    (<https://github.com/settings/developers>).
@@ -117,10 +118,21 @@ sign in. (Email magic links are an alternative/backup - see the note below.)
 > custom domain, set everything to that domain from the start - see
 > [`CUSTOM_DOMAIN.md`](./CUSTOM_DOMAIN.md).
 
+### Passkeys
+
+The setup wizard's Administrator step creates your first passkey (fingerprint, face, screen lock, a password manager or a security key); add more, or remove them, later in **Settings > Passkeys**.
+
+- **A passkey is bound to one hostname**: the hostname of `APP_URL` (or the address saved in the wizard).
+  A passkey made on `https://status.example.com` does not work on your `*.workers.dev` address, and the sign-in page there points to the right one.
+  If you move to a custom domain, set `APP_URL` first, then create passkeys on the new address; passkeys from the old address stop working.
+- **If you lose every passkey**, GitHub or email sign-in still work if you set them up.
+  Otherwise set a new `SETUP_TOKEN` (`npx wrangler secret put SETUP_TOKEN`, or the dashboard) and open `/recover` on your address: it creates a new passkey and signs you in.
+  Each `SETUP_TOKEN` works for this once, and the token you set the install up with never does.
+
 ### Admin identity: `ADMIN_GITHUB_LOGIN` vs `ADMIN_EMAIL`
 
 OpenPing gates the single admin with an allowlist.
-You must configure **at least one** identity before setup can finish, either as a Worker secret here or on the Administrator step of the setup wizard:
+Before setup can finish you need **at least one** way in: a passkey created in the wizard, or an identity set as a Worker secret here or on the wizard's Administrator step:
 
 - **`ADMIN_GITHUB_LOGIN`** - your GitHub **login (username)**, e.g. `octocat`
   (not your display name or email). Pairs with the GitHub OAuth app above.
@@ -128,7 +140,7 @@ You must configure **at least one** identity before setup can finish, either as 
   as an alternative or backup. This path also requires `RESEND_API_KEY` (step 5)
   so OpenPing can actually send the link.
 
-A common, robust setup is to configure **both**: GitHub for everyday sign-in, and email magic link as a fallback in case you ever cannot use GitHub.
+A common, robust setup is a passkey for everyday sign-in plus GitHub or an email magic link as a fallback.
 Worker-secret values take precedence over identities saved by the wizard, which makes them useful for configuration-as-code.
 
 ---
@@ -170,8 +182,8 @@ You'll be prompted to paste the value. Here's every secret OpenPing recognizes:
 | `MASTER_KEY_PREVIOUS` | Only while rotating | The old `MASTER_KEY` during a [key rotation](./SECURITY.md#rotating-master_key); read-only, and deleted once Settings > Encryption keys says it is no longer needed. |
 | `SETUP_TOKEN` | **Yes** | One-time credential that protects the first-run wizard before you can sign in. Generate with `openssl rand -base64 32`. |
 | `APP_URL` | Recommended override | Public origin of this install, e.g. `https://status.example.com`; used for OAuth callbacks, magic links, and Web Push; must use `https://` with no path, query, fragment, credentials, or trailing slash; can instead be saved in the setup wizard. |
-| `ADMIN_GITHUB_LOGIN` | Optional override | Your GitHub login/username, which can instead be saved in the setup wizard; at least one GitHub or email administrator must exist before setup can finish. |
-| `ADMIN_EMAIL` | Optional override | Your email for magic-link sign-in, which can instead be saved in the setup wizard; at least one GitHub or email administrator must exist before setup can finish. |
+| `ADMIN_GITHUB_LOGIN` | Optional | Your GitHub login/username, which can instead be saved in the setup wizard. Needed only for GitHub sign-in. |
+| `ADMIN_EMAIL` | Optional | Your email for magic-link sign-in, which can instead be saved in the setup wizard. Needed only for email sign-in. |
 | `GITHUB_CLIENT_ID` | For GitHub sign-in | Client ID from the OAuth app (step 3). |
 | `GITHUB_CLIENT_SECRET` | For GitHub sign-in | Client secret from the OAuth app (step 3). |
 | `RESEND_API_KEY` | For email / magic links | API key from [Resend](https://resend.com). Required for email notifications and email magic-link sign-in. |
@@ -181,7 +193,7 @@ You'll be prompted to paste the value. Here's every secret OpenPing recognizes:
 | `VAPID_SUBJECT` | Optional | Web Push subject - a `mailto:` address or URL. |
 
 **The minimum Worker secrets for first-run setup:** a valid `MASTER_KEY` and a high-entropy `SETUP_TOKEN`.
-The wizard can save `APP_URL` and the administrator identity in D1.
+The wizard can save `APP_URL` in D1 and creates your passkey.
 GitHub sign-in additionally requires `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, while email sign-in requires `RESEND_API_KEY`.
 
 For example:
@@ -190,10 +202,11 @@ For example:
 npx wrangler secret put MASTER_KEY            # paste the openssl output
 npx wrangler secret put SETUP_TOKEN           # paste another random value
 npx wrangler secret put APP_URL               # e.g. https://status.example.com
+# optional, for GitHub sign-in:
 npx wrangler secret put ADMIN_GITHUB_LOGIN    # your github username
 npx wrangler secret put GITHUB_CLIENT_ID
 npx wrangler secret put GITHUB_CLIENT_SECRET
-# optional but recommended:
+# optional, for email sign-in and email alerts:
 npx wrangler secret put ADMIN_EMAIL
 npx wrangler secret put RESEND_API_KEY
 ```
@@ -292,9 +305,10 @@ status page and stable OAuth/push URLs. Full instructions are in
    ```bash
    npx wrangler secret put APP_URL    # enter https://status.example.com
    ```
-3. Update the GitHub OAuth app's **Homepage URL** and **Authorization callback
+3. If you use GitHub sign-in, update the GitHub OAuth app's **Homepage URL** and **Authorization callback
    URL** to the new domain (`https://status.example.com/auth/github/callback`).
    The client id/secret don't change - only the URLs.
+4. Passkeys are bound to the old hostname: sign in on the new domain with GitHub or email and add a passkey in **Settings > Passkeys**, or recover with a new `SETUP_TOKEN` at `/recover` (see [Passkeys](#passkeys)).
 
 ---
 
@@ -308,14 +322,14 @@ The wizard saves:
 
 - confirming your public app URL,
 - choosing a **timezone** (required - schedules and reports use it),
-- and configuring at least one admin identity if it was not supplied as a Worker secret.
+- and creating your **passkey** on the Administrator step (or recording a GitHub username or email address).
 
 The wizard configures only the prerequisites needed to secure and identify the installation.
 After setup, sign in to create monitors from **Monitoring** and configure delivery channels under **Integrations & API**.
 
-When you finish, **setup locks** and the setup token stops working.
+When you finish, **setup locks** and that setup token stops working, including for passkey recovery, which needs a new one.
 Further changes require signing in as the admin.
-Sign in with **GitHub** or an **email magic link**, then:
+Sign in with your **passkey** (or **GitHub** or an **email magic link**, if you set them up), then:
 
 - **Configure notification channels** under **Integrations** (email via Resend,
   Web Push, Slack, Microsoft Teams, Discord, Telegram, signed webhooks) and send
