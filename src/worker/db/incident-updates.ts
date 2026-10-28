@@ -45,6 +45,14 @@ export const createUpdateSchema = z.object({
   message: messageSchema,
 });
 
+/**
+ * Body of POST /api/incidents/:id/updates: an update plus whether to alert the
+ * monitor's notification channels about it (on unless `notify` is false).
+ */
+export const postUpdateSchema = createUpdateSchema.extend({
+  notify: z.boolean().default(true),
+});
+
 /** Body of PATCH /api/incidents/:id/updates/:updateId: change either or both. */
 export const editUpdateSchema = z
   .object({ status: statusSchema.optional(), message: messageSchema.optional() })

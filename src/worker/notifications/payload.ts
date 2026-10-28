@@ -1,6 +1,11 @@
 import type { MonitorRecord } from "../db/monitors";
 import type { IncidentRecord } from "../db/incidents";
 import { NOTIFY_EVENTS, type NotifyEvent } from "../../shared/notifications";
+import {
+  INCIDENT_UPDATE_LABELS,
+  INCIDENT_UPDATE_STATUSES,
+  type IncidentUpdateStatus,
+} from "../../shared/incident-updates";
 import { stateColor, type DiscordEmbed } from "./channels/discord";
 import {
   escapeHtml,
@@ -23,9 +28,36 @@ export interface NotificationPayload {
   detectedAt: number;
   durationSeconds?: number | null;
   incidentId?: string;
+  /** Only on `incident_update`: the status update the admin posted. */
+  update?: IncidentUpdateSummary;
+}
+
+/** The posted status update an `incident_update` notification carries. */
+export interface IncidentUpdateSummary {
+  id: string;
+  status: IncidentUpdateStatus;
+  /** The status as people read it, for example "Identified". */
+  label: string;
+  message: string;
+  postedAt: number;
 }
 
 const NOTIFY_EVENT_SET = new Set<string>(NOTIFY_EVENTS);
+const UPDATE_STATUS_SET = new Set<string>(INCIDENT_UPDATE_STATUSES);
+
+function isUpdateSummary(value: unknown): value is IncidentUpdateSummary {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const u = value as Record<string, unknown>;
+  return (
+    typeof u.id === "string" &&
+    typeof u.status === "string" &&
+    UPDATE_STATUS_SET.has(u.status) &&
+    typeof u.label === "string" &&
+    typeof u.message === "string" &&
+    typeof u.postedAt === "number" &&
+    Number.isFinite(u.postedAt)
+  );
+}
 
 /** Validate untrusted payloads read from the durable notification outbox. */
 export function isNotificationPayload(value: unknown): value is NotificationPayload {
@@ -63,7 +95,11 @@ export function isNotificationPayload(value: unknown): value is NotificationPayl
     optionalNullableNumber("statusCode") &&
     optionalNullableString("error") &&
     optionalNullableNumber("durationSeconds") &&
-    optionalString("incidentId")
+    optionalString("incidentId") &&
+    // An incident update must say what was posted; nothing else may carry one.
+    (payload.event === "incident_update"
+      ? isUpdateSummary(payload.update)
+      : payload.update === undefined)
   );
 }
 
@@ -75,6 +111,7 @@ const EVENT_TITLE: Record<NotifyEvent, (name: string) => string> = {
   degraded: (n) => `🟠 ${n} is degraded`,
   maintenance_start: (n) => `🔧 Maintenance started: ${n}`,
   maintenance_end: (n) => `🔧 Maintenance ended: ${n}`,
+  incident_update: (n) => `📢 Incident update: ${n}`,
   weekly: () => `OpenPing weekly summary`,
   test: (n) => `✅ Test notification: ${n}`,
 };
@@ -117,6 +154,36 @@ export function buildIncidentPayload(
   };
 }
 
+/**
+ * The payload for a status update an admin posted to an incident: the title
+ * names the monitor and the update's status, and the body is the message as
+ * written. `state` follows the incident (open is "down", resolved is "up").
+ */
+export function buildIncidentUpdatePayload(
+  monitor: Pick<MonitorRecord, "id" | "name">,
+  incident: Pick<IncidentRecord, "id" | "status" | "httpStatus" | "error" | "durationSeconds">,
+  update: { id: string; status: IncidentUpdateStatus; message: string; postedAt: number },
+  appUrl?: string,
+): NotificationPayload {
+  const base = appUrl ? appUrl.replace(/\/$/, "") : undefined;
+  const label = INCIDENT_UPDATE_LABELS[update.status];
+  return {
+    event: "incident_update",
+    monitorId: monitor.id,
+    monitorName: monitor.name,
+    state: incident.status === "resolved" ? "up" : "down",
+    title: `${EVENT_TITLE.incident_update(monitor.name)} - ${label}`,
+    body: update.message,
+    url: base ? `${base}/incidents?incident=${encodeURIComponent(incident.id)}` : undefined,
+    statusCode: incident.httpStatus ?? null,
+    error: incident.error ?? null,
+    detectedAt: update.postedAt,
+    durationSeconds: incident.durationSeconds ?? null,
+    incidentId: incident.id,
+    update: { id: update.id, status: update.status, label, message: update.message, postedAt: update.postedAt },
+  };
+}
+
 /** A synthetic payload for the "send test notification" action. */
 export function buildTestPayload(channelName: string, appUrl?: string): NotificationPayload {
   const base = appUrl ? appUrl.replace(/\/$/, "") : undefined;
@@ -147,6 +214,7 @@ export const EVENT_PILL: Record<NotifyEvent, string> = {
   degraded: "Degraded",
   maintenance_start: "Maintenance",
   maintenance_end: "Maintenance",
+  incident_update: "Update",
   weekly: "Summary",
   test: "Test",
 };
@@ -158,12 +226,27 @@ export function emailButtonLabel(event: NotifyEvent): string {
   return "View incident";
 }
 
+/** The status pill for a payload: an incident update shows its own status. */
+export function pillLabel(p: NotificationPayload): string {
+  return p.update?.label ?? EVENT_PILL[p.event];
+}
+
+/** What `detectedAt` means for this payload: when it was detected, or posted. */
+export function timeLabel(p: NotificationPayload): "Detected" | "Posted" {
+  return p.event === "incident_update" ? "Posted" : "Detected";
+}
+
 /** The labelled facts every rich channel shows under the message body. */
 export function metaLines(p: NotificationPayload): Array<[string, string]> {
   const meta: Array<[string, string]> = [];
-  if (p.statusCode) meta.push(["HTTP status", String(p.statusCode)]);
-  if (p.error) meta.push(["Error", p.error]);
-  meta.push(["Detected", new Date(p.detectedAt).toUTCString()]);
+  if (p.update) {
+    // The update speaks for the incident; the original error would only repeat the down alert.
+    meta.push(["Status", p.update.label]);
+  } else {
+    if (p.statusCode) meta.push(["HTTP status", String(p.statusCode)]);
+    if (p.error) meta.push(["Error", p.error]);
+  }
+  meta.push([timeLabel(p), new Date(p.detectedAt).toUTCString()]);
   return meta;
 }
 
@@ -187,14 +270,15 @@ export function toEmailHtml(p: NotificationPayload): string {
     )
     .join("");
 
+  // pre-line keeps the line breaks of an incident update's message.
   const bodyHtml =
-    `<p style="margin:0 0 18px;font-family:${FONT};font-size:15px;line-height:1.6;color:#16233a;">${escapeHtml(p.body)}</p>` +
+    `<p style="margin:0 0 18px;font-family:${FONT};font-size:15px;line-height:1.6;color:#16233a;white-space:pre-line;">${escapeHtml(p.body)}</p>` +
     `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:#f7f9fc;border:1px solid #e3e9f2;border-radius:10px;padding:6px 16px;">${metaRows}</table>`;
 
   return renderEmailLayout({
     heading: stripLeadingEmoji(p.title),
-    accent: eventColorState(p.event),
-    statusLabel: EVENT_PILL[p.event],
+    accent: colorState(p),
+    statusLabel: pillLabel(p),
     bodyHtml,
     button: p.url ? { label: emailButtonLabel(p.event), url: p.url } : undefined,
     preheader: p.body,
@@ -240,15 +324,34 @@ export function eventColorState(event: NotifyEvent): string {
     case "degraded":
     case "maintenance_start":
       return "degraded"; // amber, not red
+    case "incident_update":
+      return "degraded"; // without its status; see colorState
     default:
       return "down"; // down, heartbeat_missed
   }
 }
 
+/** Accent color state for one update status: red, then amber, then green. */
+const UPDATE_COLOR_STATE: Record<IncidentUpdateStatus, string> = {
+  investigating: "down",
+  identified: "degraded",
+  monitoring: "degraded",
+  resolved: "up",
+};
+
+/** The accent color state for a payload, using an incident update's own status. */
+export function colorState(p: NotificationPayload): string {
+  return p.update ? UPDATE_COLOR_STATE[p.update.status] : eventColorState(p.event);
+}
+
 export function toDiscordEmbed(p: NotificationPayload): DiscordEmbed {
   const fields: DiscordEmbed["fields"] = [];
-  if (p.statusCode) fields.push({ name: "HTTP status", value: String(p.statusCode), inline: true });
-  if (p.error) {
+  if (p.update) {
+    fields.push({ name: "Status", value: p.update.label, inline: true });
+  } else if (p.statusCode) {
+    fields.push({ name: "HTTP status", value: String(p.statusCode), inline: true });
+  }
+  if (p.error && !p.update) {
     fields.push({
       name: "Error",
       value: truncate(escapeDiscordMarkdown(p.error), DISCORD_FIELD_VALUE_MAX),
@@ -260,7 +363,7 @@ export function toDiscordEmbed(p: NotificationPayload): DiscordEmbed {
     // `body` embeds the (untrusted) error, so sanitize it too before truncating.
     description: truncate(escapeDiscordMarkdown(p.body), DISCORD_DESCRIPTION_MAX),
     url: p.url,
-    color: stateColor(eventColorState(p.event)),
+    color: stateColor(colorState(p)),
     fields: fields.length ? fields : undefined,
     timestamp: new Date(p.detectedAt).toISOString(),
     footer: { text: "OpenPing" },

@@ -24,11 +24,25 @@ When you edit a channel, leave a secret field blank to keep the stored value.
 | Missed heartbeat | yes | yes | yes | yes |
 | Flapping | yes | yes | yes | yes |
 | Maintenance started or ended | no | no | yes | no |
+| Incident update | yes | yes | yes | no |
 | Weekly summary | no | yes | no | no |
 | Test | yes | yes | yes | yes |
 
 A channel's own event list (`events` in the API) replaces these defaults, and a monitor can limit its alerts to chosen channels.
 Repeated down, flapping and missed-heartbeat alerts for one monitor are combined into one alert per hour.
+
+## Incident updates
+
+When you post a status update to an incident (under **Incidents**, with `op incidents update`, the MCP tool `post_incident_update` or `POST /api/incidents/:id/updates`), its monitor's channels get an alert with the update's status and message.
+The alert's colour follows the status: red for Investigating, amber for Identified and Monitoring, green for Resolved.
+It shows when the update was posted and links to the incident in OpenPing.
+
+- It goes to the same channels as the monitor's down alerts: every enabled channel whose event list includes `incident_update` (all of them by default), limited to the monitor's chosen channels if it has any.
+- Web Push devices don't get it by default, because they are your own devices and you just wrote the update.
+- Clear **Alert this monitor's notification channels** before posting, or send `notify: false` (`--quiet` in the CLI), to post without alerts.
+- Editing or deleting an update never sends an alert, and updates are never combined: each one you post is sent.
+- An update on an incident that isn't public still alerts your channels, because they are yours, not the public status page.
+- The alert goes out with the next cron run, within 12 minutes, through the same outbox, retries and rate-limit handling as every other alert.
 
 ## Delivery, retries and rate limits
 
@@ -108,7 +122,52 @@ Alerts are embeds coloured like the other chat channels.
 
 Any https URL that does not point at a private, loopback or link-local address.
 With a signing secret, each request carries `X-OpenPing-Timestamp` and `X-OpenPing-Signature: sha256=<HMAC-SHA256 of "<timestamp>.<body>">`.
-The body is the notification payload as JSON.
+The body is the notification payload as JSON, posted with `Content-Type: application/json`:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `event` | string | `down`, `recovered`, `heartbeat_missed`, `flapping`, `degraded`, `maintenance_start`, `maintenance_end`, `incident_update`, `weekly` or `test` |
+| `monitorId` | string | The monitor's id (`test` for a test alert) |
+| `monitorName` | string | The monitor's name |
+| `state` | string | `down` or `up`; for `incident_update`, `down` while the incident is open and `up` once it is resolved |
+| `title` | string | The alert's title, starting with an emoji |
+| `body` | string | The alert's message; for `incident_update`, the update's message as written |
+| `url` | string, optional | The monitor, or for `incident_update` the incident, in OpenPing |
+| `statusCode` | number or null | The HTTP status that opened the incident |
+| `error` | string or null | The error that opened the incident |
+| `detectedAt` | number | Milliseconds since 1970: when the problem was detected, or when the update was posted |
+| `durationSeconds` | number or null | The incident's length once resolved |
+| `incidentId` | string, optional | The incident's id |
+| `update` | object, only on `incident_update` | `id`, `status` (`investigating`, `identified`, `monitoring` or `resolved`), `label` (for example `Identified`), `message` and `postedAt` |
+
+An incident update looks like this:
+
+```json
+{
+  "event": "incident_update",
+  "monitorId": "mon_abc123",
+  "monitorName": "Checkout API",
+  "state": "down",
+  "title": "📢 Incident update: Checkout API - Identified",
+  "body": "A bad deploy; rolling it back.",
+  "url": "https://status.example.com/incidents?incident=inc_def456",
+  "statusCode": 503,
+  "error": "HTTP 503",
+  "detectedAt": 1793196300000,
+  "durationSeconds": null,
+  "incidentId": "inc_def456",
+  "update": {
+    "id": "iup_ghi789",
+    "status": "identified",
+    "label": "Identified",
+    "message": "A bad deploy; rolling it back.",
+    "postedAt": 1793196300000
+  }
+}
+```
+
+Each alert is queued once per channel, keyed by its event, its incident (or update) and the channel.
+A delivery that failed is retried, so a receiver that took a request but answered with an error can get it again; drop duplicates by `update.id`, or by `incidentId` and `event`.
 
 ## Backups
 

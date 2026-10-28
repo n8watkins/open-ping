@@ -28,8 +28,8 @@ import { buildOverview, monitorTarget } from "../routes/overview";
 import { buildDiagnostics } from "../routes/diagnostics";
 import { rekeyStatus } from "../lib/rekey";
 import { listIncidents, type IncidentWithMonitor, type IncidentWithUpdates } from "../routes/incidents";
+import { postIncidentUpdate } from "../notifications/enqueue";
 import {
-  createIncidentUpdate,
   INCIDENT_UPDATE_LABELS,
   INCIDENT_UPDATE_STATUSES,
   MAX_UPDATE_MESSAGE,
@@ -56,6 +56,14 @@ import {
   redactMonitorForMcp,
   type ToolResult,
 } from "./format";
+
+/** How post_incident_update reports the alerts it queued. */
+function alertSentence(requested: boolean, queued: number, error?: string): string {
+  if (!requested) return "No alerts were sent (notify was false).";
+  if (error) return "The update is posted, but its alerts could not be queued; check the diagnostics.";
+  if (queued === 0) return "No notification channel takes incident updates for this monitor, so no alerts were queued.";
+  return `Queued ${queued} alert${queued === 1 ? "" : "s"}; they go out with the next check run, within 12 minutes.`;
+}
 
 /** What every tool can see about the request it serves. */
 export interface ToolContext {
@@ -734,18 +742,22 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     {
       title: "Post incident update",
       description:
-        "Add a status update to an incident's timeline: investigating, identified, monitoring or resolved, with a message. It shows on the public status page and its RSS/Atom feeds only while the incident is public. It describes the incident and does not open or close it. Write it for the public.",
+        "Add a status update to an incident's timeline: investigating, identified, monitoring or resolved, with a message. It shows on the public status page and its RSS/Atom feeds only while the incident is public. It describes the incident and does not open or close it. Write it for the public. It also alerts the incident's monitor's notification channels (sent with the next check run, within 12 minutes) unless notify is false.",
       inputSchema: z.object({
         id: z.string().min(1).max(64).describe("Incident id (inc_...), from list_incidents."),
         status: z.enum(INCIDENT_UPDATE_STATUSES),
         message: z.string().min(1).max(MAX_UPDATE_MESSAGE).describe("What happened or what is being done, for the public."),
+        notify: z
+          .boolean()
+          .optional()
+          .describe("Alert the monitor's notification channels about this update. Default true; false posts it quietly."),
       }),
       annotations: { ...WRITE, idempotentHint: false },
     },
-    async ({ id, status, message }) => {
+    async ({ id, status, message, notify }) => {
       const trimmed = message.trim();
       if (!trimmed) return fail("The message is empty.");
-      const r = await createIncidentUpdate(env, id, { status, message: trimmed });
+      const r = await postIncidentUpdate(env, id, { status, message: trimmed, notify });
       if (!r.ok) {
         return fail(
           r.error === "not_found"
@@ -759,8 +771,10 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         .first<{ public: number }>();
       return ok(
         `Posted "${INCIDENT_UPDATE_LABELS[status]}" to incident ${id} at ${iso(r.update.postedAt, tz)}.` +
-          (visible?.public ? "" : " The incident is not public, so the update is not on the status page yet."),
-        { update: r.update },
+          (visible?.public ? "" : " The incident is not public, so the update is not on the status page yet.") +
+          " " +
+          alertSentence(notify !== false, r.alertsQueued, r.alertsError),
+        { update: r.update, alertsQueued: r.alertsQueued, ...(r.alertsError ? { alertsError: r.alertsError } : {}) },
         tz,
       );
     },

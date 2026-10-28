@@ -5,15 +5,15 @@ import type { IncidentRecord } from "../db/incidents";
 import { requireAuth } from "../middleware/auth";
 import { newId } from "../lib/ids";
 import {
-  createIncidentUpdate,
-  createUpdateSchema,
   deleteIncidentUpdate,
   editIncidentUpdate,
   editUpdateSchema,
   listIncidentUpdates,
+  postUpdateSchema,
   updatesForIncidents,
   type IncidentUpdate,
 } from "../db/incident-updates";
+import { postIncidentUpdate } from "../notifications/enqueue";
 
 /**
  * Incidents read/management API mounted at /api/incidents (PRD §16 Incidents).
@@ -359,17 +359,18 @@ function validationError(issues: z.core.$ZodIssue[]) {
   return { error: "validation", issues };
 }
 
-// POST /:id/updates - post a status update (stamped now).
+// POST /:id/updates - post a status update (stamped now) and, unless `notify`
+// is false, queue alerts for the monitor's channels (sent by the next cron run).
 incidents.post("/:id/updates", async (c) => {
-  const parsed = createUpdateSchema.safeParse(await c.req.json().catch(() => undefined));
+  const parsed = postUpdateSchema.safeParse(await c.req.json().catch(() => undefined));
   if (!parsed.success) return c.json(validationError(parsed.error.issues), 400);
-  const r = await createIncidentUpdate(c.env, c.req.param("id"), parsed.data);
+  const r = await postIncidentUpdate(c.env, c.req.param("id"), parsed.data);
   if (!r.ok) {
     return r.error === "not_found"
       ? c.json({ error: "not_found" }, 404)
       : c.json({ error: "too_many_updates", message: "This incident already has the most updates allowed." }, 409);
   }
-  return c.json({ update: r.update }, 201);
+  return c.json({ update: r.update, alertsQueued: r.alertsQueued, alertsError: r.alertsError }, 201);
 });
 
 // PATCH /:id/updates/:updateId - change an update's status and/or message.
