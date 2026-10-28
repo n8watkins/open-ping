@@ -6,7 +6,7 @@ import {
   type MonitorRow,
 } from "./db/monitors";
 import { isActiveAt } from "./lib/schedule";
-import { runMonitorCheck } from "./checks/runner";
+import { probeFetchLimit, runMonitorCheck } from "./checks/runner";
 import {
   applyCheckResult,
   setScheduledOff,
@@ -265,7 +265,8 @@ export async function runScheduled(
     let deferred = 0;
     await mapLimit(duePolled, CONCURRENCY, async (m) => {
       // Out of budget for this run: leave it due for the next tick.
-      if (!(await budget.startCheck())) {
+      const ticket = await budget.startCheck(probeFetchLimit(m));
+      if (!ticket) {
         deferred++;
         return;
       }
@@ -286,23 +287,20 @@ export async function runScheduled(
       // is open), and a recovery counts on the first passing check.
       const alreadyDown = !!st && (DOWNTIME_STATES.has(st.state) || !!st.active_incident_id);
       const confirm = m.confirmFailures !== "off" && !alreadyDown;
-      let confirmations = 0;
+      let fetchesSpent: number | undefined;
       try {
         const outcome = await runMonitorCheck(m, {
           warmup,
           confirm,
           ...(opts.confirmDelayMs !== undefined ? { confirmDelayMs: opts.confirmDelayMs } : {}),
-          // The re-check costs one more fetch. When the run can't afford it the
+          // The re-check costs another probe. When the run can't afford it the
           // failure is not written at all (no state, sample or alert): the
           // monitor stays due and is first in line next run, so an
           // unconfirmed failure never alerts.
-          allowConfirm: () => {
-            if (!budget.tryConfirm()) return false;
-            confirmations++;
-            return true;
-          },
+          allowConfirm: () => ticket.tryConfirm(),
           now: Date.now(),
         });
+        fetchesSpent = outcome.fetches;
         if (outcome.confirmation === "deferred") {
           tally.confirmationsDeferred++;
           deferred++;
@@ -317,7 +315,7 @@ export async function runScheduled(
         tally.failures++;
         console.error(`[scheduler] check ${m.id} failed`, e);
       } finally {
-        budget.endCheck(confirmations);
+        ticket.end(fetchesSpent);
       }
     });
     if (deferred > 0) {
@@ -367,10 +365,11 @@ export async function runScheduled(
       console.error("[scheduler] weekly summary failed", e);
     }
 
-    // Monthly report (opt-in, on the 1st; notifications/monthly.ts). It costs
-    // two queries when it sends and none otherwise. If the weekly summary
-    // already spent its queries this run, the report waits for the next run,
-    // 12 minutes later and still on the 1st, so the tail reserve holds both.
+    // Monthly report (opt-in, from the 1st; notifications/monthly.ts). It costs
+    // two queries when it tries and none otherwise. One email job per run: if
+    // the weekly summary already tried this run, the report waits for a later
+    // one (it catches up any day until last month's report is sent), so the
+    // tail reserve never has to hold both.
     if (!weeklyAttempted) {
       try {
         await sendMonthlyReport(env, Date.now(), settings, retention);

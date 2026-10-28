@@ -59,7 +59,7 @@ export async function sendResendEmail(
   }
 
   // Capture a short, safe error string from the response body.
-  let detail = "";
+  let detail: string;
   try {
     detail = (await res.text()).slice(0, 200);
   } catch {

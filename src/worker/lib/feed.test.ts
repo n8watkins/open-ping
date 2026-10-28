@@ -134,6 +134,7 @@ describe("RSS and Atom", () => {
     // The message's markup is text twice over: HTML-escaped, then XML-escaped.
     expect(xml).toContain("&amp;lt;script&amp;gt;");
     expect(xml).not.toContain("<script>");
+    // eslint-disable-next-line no-control-regex -- asserting control characters are gone
     expect(xml).not.toMatch(/[\u0000-\u0008]/);
     expect(xml.match(/<item>/g)).toHaveLength(2);
   });

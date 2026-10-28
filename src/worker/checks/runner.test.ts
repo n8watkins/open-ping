@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { HttpCheckResult } from "./http";
 import type { MonitorRecord } from "../db/monitors";
 
-vi.mock("./http", () => ({ runHttpCheck: vi.fn() }));
+vi.mock("./http", () => ({ runHttpCheck: vi.fn(), MAX_REDIRECTS: 5 }));
 vi.mock("./dns", () => ({ runDnsCheck: vi.fn() }));
 vi.mock("./tcp", () => ({ runTcpCheck: vi.fn() }));
 vi.mock("./domain", () => ({ runDomainCheck: vi.fn() }));
@@ -10,7 +10,7 @@ import { runHttpCheck } from "./http";
 import { runDnsCheck } from "./dns";
 import { runTcpCheck } from "./tcp";
 import { runDomainCheck } from "./domain";
-import { classifyCheck, CONFIRM_DELAY_MS, runMonitorCheck } from "./runner";
+import { classifyCheck, CONFIRM_DELAY_MS, probeFetchLimit, runMonitorCheck } from "./runner";
 
 const mockedRun = vi.mocked(runHttpCheck);
 const mockedDns = vi.mocked(runDnsCheck);
@@ -257,6 +257,37 @@ describe("runMonitorCheck confirmation before alerting", () => {
     const allowConfirm = vi.fn(() => true);
     await runMonitorCheck(monitor, { allowConfirm, now: 1 });
     expect(allowConfirm).not.toHaveBeenCalled();
+  });
+
+  it("reports every fetch the cycle made, redirect hops included", async () => {
+    mockedRun
+      .mockResolvedValueOnce(result({ ok: false, error: "timeout", fetches: 4 }))
+      .mockResolvedValueOnce(result({ ok: false, error: "timeout", fetches: 6 }));
+    const o = await runMonitorCheck(monitor, { sleep: async () => {}, now: 1 });
+    expect(o.fetches).toBe(10);
+  });
+
+  it("charges a probe that didn't count its fetches its worst case", async () => {
+    const redirecting = { ...monitor, config: { url: "https://x.test", followRedirects: true } } as MonitorRecord;
+    mockedRun.mockResolvedValue(result());
+    const o = await runMonitorCheck(redirecting, { now: 1 });
+    expect(o.fetches).toBe(probeFetchLimit(redirecting));
+  });
+});
+
+describe("probeFetchLimit", () => {
+  it("holds room for every redirect an HTTP check may follow", () => {
+    const http = (followRedirects: boolean) =>
+      ({ type: "http", config: { url: "https://x.test", followRedirects } }) as unknown as MonitorRecord;
+    expect(probeFetchLimit(http(true))).toBe(6);
+    expect(probeFetchLimit(http(false))).toBe(1);
+  });
+
+  it("counts the RDAP redirect for a domain check, and one fetch for dns and tcp", () => {
+    const of = (type: string) => ({ type, config: {} }) as unknown as MonitorRecord;
+    expect(probeFetchLimit(of("domain"))).toBe(2);
+    expect(probeFetchLimit(of("dns"))).toBe(1);
+    expect(probeFetchLimit(of("tcp"))).toBe(1);
   });
 });
 

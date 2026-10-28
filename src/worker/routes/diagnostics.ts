@@ -207,7 +207,7 @@ diagnostics.get("/", async (c) => c.json(await buildDiagnostics(c.env)));
  * GET /api/diagnostics and the MCP `get_diagnostics` tool.
  */
 export async function buildDiagnostics(env: Env) {
-  let dbOk = false;
+  let dbOk: boolean;
   try {
     await env.DB.prepare("SELECT 1 AS one").first();
     dbOk = true;

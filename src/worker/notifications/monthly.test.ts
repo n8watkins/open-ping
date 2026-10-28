@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMonthlyEmail, monthLabel, monthlyReportDue } from "./monthly";
+import { buildMonthlyEmail, monthLabel, monthlyReportDue, RETRY_AFTER_MS } from "./monthly";
 import type { MonthlyReport } from "../reports/monthly";
 
 const LA = "America/Los_Angeles";
@@ -11,13 +11,26 @@ describe("monthlyReportDue", () => {
     expect(monthlyReportDue(Date.UTC(2026, 11, 1, 23), LA, "2026-10")).toBe("2026-11");
   });
 
-  it("waits until 09:00, skips other days and never sends a month twice", () => {
+  it("waits until 09:00 on the 1st and never sends a month twice", () => {
     expect(monthlyReportDue(Date.UTC(2026, 11, 1, 16, 59), LA, null)).toBeNull();
-    // 1 Dec 09:00 UTC is still 30 Nov in Los Angeles.
-    expect(monthlyReportDue(Date.UTC(2026, 11, 1, 9), LA, null)).toBeNull();
-    expect(monthlyReportDue(Date.UTC(2026, 11, 2, 17), LA, null)).toBeNull();
+    // 1 Dec 09:00 UTC is 01:00 in Los Angeles, too early, and October's report went out.
+    expect(monthlyReportDue(Date.UTC(2026, 11, 1, 9), LA, "2026-10")).toBeNull();
     expect(monthlyReportDue(Date.UTC(2026, 11, 1, 18), LA, "2026-11")).toBeNull();
+    expect(monthlyReportDue(Date.UTC(2026, 11, 20, 18), LA, "2026-11")).toBeNull();
     expect(monthlyReportDue(Date.UTC(2026, 11, 1, 9), "UTC", null)).toBe("2026-11");
+  });
+
+  it("catches up a missed report on any later day of the month", () => {
+    expect(monthlyReportDue(Date.UTC(2026, 11, 2, 17), LA, null)).toBe("2026-11");
+    expect(monthlyReportDue(Date.UTC(2026, 11, 15, 3), LA, "2026-10")).toBe("2026-11");
+    // 1 Dec 07:00 UTC is still 30 Nov in Los Angeles: a missed October report goes out then.
+    expect(monthlyReportDue(Date.UTC(2026, 11, 1, 7), LA, "2026-09")).toBe("2026-10");
+  });
+
+  it("waits an hour after a failed try", () => {
+    const now = Date.UTC(2026, 11, 1, 18);
+    expect(monthlyReportDue(now, LA, "2026-10", now - RETRY_AFTER_MS + 1)).toBeNull();
+    expect(monthlyReportDue(now, LA, "2026-10", now - RETRY_AFTER_MS)).toBe("2026-11");
   });
 });
 

@@ -1037,7 +1037,7 @@ function Features() {
 
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     const index = FEATURE_TABS.findIndex((t) => t.id === active);
-    let next = index;
+    let next: number;
     if (e.key === "ArrowRight") next = (index + 1) % FEATURE_TABS.length;
     else if (e.key === "ArrowLeft") next = (index - 1 + FEATURE_TABS.length) % FEATURE_TABS.length;
     else if (e.key === "Home") next = 0;

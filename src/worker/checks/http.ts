@@ -44,7 +44,7 @@ async function readCappedText(res: Response, maxChars: number): Promise<string> 
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 
 /** Maximum redirect hops followed before giving up. */
-const MAX_REDIRECTS = 5;
+export const MAX_REDIRECTS = 5;
 
 export interface HttpCheckResult extends ProbeResult {
   statusCode?: number;
@@ -125,6 +125,7 @@ export async function runHttpCheck(
       durationMs: 0,
       error: "blocked_url",
       errorMessage: `Target rejected by SSRF guard: ${safe.reason}`,
+      fetches: 0,
     };
   }
 
@@ -155,10 +156,13 @@ export async function runHttpCheck(
 
   const startedAt = Date.now();
   let res: Response;
-  let finalUrl = config.url;
+  let finalUrl: string;
   let redirected = false;
-  let durationMs = 0;
+  let durationMs: number;
   let body: string | undefined;
+  // Every hop is its own fetch, and each counts against the run's subrequest
+  // limit (lib/budget.ts), so the result reports how many were made.
+  let fetches = 0;
   try {
     // Manual redirect following: every hop is re-validated against the SSRF
     // guard, since the Location is controlled by the (untrusted) remote server.
@@ -168,7 +172,6 @@ export async function runHttpCheck(
     let reqBody = config.body;
     let hops = 0;
 
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const init: RequestInit = {
         method,
@@ -184,6 +187,7 @@ export async function runHttpCheck(
         init.body = reqBody;
       }
 
+      fetches++;
       res = await fetch(currentUrl, init);
 
       const isRedirect =
@@ -200,6 +204,7 @@ export async function runHttpCheck(
           durationMs: Date.now() - startedAt,
           error: "too_many_redirects",
           errorMessage: `Exceeded ${MAX_REDIRECTS} redirects`,
+          fetches,
         };
       }
 
@@ -213,6 +218,7 @@ export async function runHttpCheck(
           durationMs: Date.now() - startedAt,
           error: "network_error",
           errorMessage: "Invalid redirect location",
+          fetches,
         };
       }
 
@@ -224,6 +230,7 @@ export async function runHttpCheck(
           durationMs: Date.now() - startedAt,
           error: "blocked_url",
           errorMessage: `Redirect target rejected by SSRF guard: ${safeHop.reason}`,
+          fetches,
         };
       }
 
@@ -288,10 +295,11 @@ export async function runHttpCheck(
         durationMs: elapsed,
         error: "timeout",
         errorMessage: `Request exceeded ${timeoutMs}ms timeout`,
+        fetches,
       };
     }
     const { error, errorMessage } = classifyFetchError(err);
-    return { ok: false, durationMs: elapsed, error, errorMessage };
+    return { ok: false, durationMs: elapsed, error, errorMessage, fetches };
   }
   clearTimeout(timer);
 
@@ -344,5 +352,6 @@ export async function runHttpCheck(
     body,
     redirected,
     finalUrl,
+    fetches,
   };
 }

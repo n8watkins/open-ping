@@ -80,7 +80,7 @@ export async function sendTelegramMessage(botToken: string, message: TelegramMes
     return { ok: false, error: "network_error" };
   }
 
-  let parsed: TelegramError | null = null;
+  let parsed: TelegramError | null;
   try {
     parsed = (await res.json()) as TelegramError;
   } catch {

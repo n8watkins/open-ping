@@ -28,7 +28,10 @@ export function escapeHtml(s: string): string {
 /** Drop a leading status emoji (+ following space) so the HTML heading stays
  *  clean - the colored pill already conveys state. The inbox subject keeps it. */
 export function stripLeadingEmoji(s: string): string {
-  return s.replace(/^[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}️‍\s]+/u, "");
+  // The variation selector (U+FE0F) and zero-width joiner (U+200D) that build
+  // emoji sequences sit outside the character class, where they can't combine
+  // with its other members.
+  return s.replace(/^(?:[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\s]|\u{FE0F}|\u{200D})+/u, "");
 }
 
 // --- Brand palette (email-tuned: accents on a light surface) --------------

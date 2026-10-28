@@ -127,7 +127,7 @@ export default function Maintenance() {
     "/api/monitors",
   );
 
-  const monitors = monData?.monitors ?? [];
+  const monitors = useMemo(() => monData?.monitors ?? [], [monData?.monitors]);
   const monitorsById = useMemo(() => {
     const m = new Map<string, string>();
     for (const mon of monitors) m.set(mon.id, mon.name);

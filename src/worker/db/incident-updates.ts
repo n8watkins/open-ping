@@ -5,6 +5,7 @@ import {
   INCIDENT_UPDATE_STATUSES,
   type IncidentUpdateStatus,
 } from "../../shared/incident-updates";
+import { IN_JSON_LIST, jsonList } from "./sql-list";
 
 /**
  * Incident updates: the timeline of status posts an admin writes for an
@@ -122,9 +123,9 @@ export async function updatesForIncidents(
   if (incidentIds.length === 0) return out;
   const unique = [...new Set(incidentIds)];
   const res = await env.DB.prepare(
-    `SELECT ${COLUMNS} FROM incident_updates WHERE incident_id IN (${unique.map(() => "?").join(", ")})`,
+    `SELECT ${COLUMNS} FROM incident_updates WHERE incident_id ${IN_JSON_LIST}`,
   )
-    .bind(...unique)
+    .bind(jsonList(unique))
     .all<IncidentUpdateRow>();
   for (const row of res.results ?? []) out.get(row.incident_id)?.push(rowToUpdate(row));
   for (const list of out.values()) list.sort(newestFirst);

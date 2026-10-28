@@ -273,7 +273,7 @@ function parseFieldNamed(
   try {
     return parseField(raw, min, max, names, nameBase);
   } catch (err) {
-    throw new Error(`${fieldName} field ("${raw}"): ${(err as Error).message}`);
+    throw new Error(`${fieldName} field ("${raw}"): ${(err as Error).message}`, { cause: err });
   }
 }
 

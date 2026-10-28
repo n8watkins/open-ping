@@ -7,7 +7,7 @@ import type {
   TcpConfig,
 } from "../../shared/schemas";
 import type { CheckOutcome, ProbeResult } from "./types";
-import { runHttpCheck } from "./http";
+import { MAX_REDIRECTS, runHttpCheck } from "./http";
 import { runDnsCheck } from "./dns";
 import { runTcpCheck } from "./tcp";
 import { runDomainCheck } from "./domain";
@@ -30,6 +30,27 @@ import { evaluateAssertions } from "./assertions";
  * and may refuse the re-check for lack of budget, which returns a `deferred`
  * outcome that the scheduler must not persist.
  */
+
+/**
+ * The most outbound requests one probe of this monitor can make, which is what
+ * the run reserves for it before it starts (lib/budget.ts). Cloudflare counts
+ * every redirect hop as its own subrequest:
+ *   - http follows up to MAX_REDIRECTS hops itself (checks/http.ts) and reports
+ *     the real count, so this worst case is only held while the check runs;
+ *   - domain asks rdap.org, which redirects to the registry's RDAP server, and
+ *     the runtime follows that hop, so it costs two;
+ *   - dns and tcp make one request.
+ */
+export function probeFetchLimit(monitor: Pick<MonitorRecord, "type" | "config">): number {
+  switch (monitor.type) {
+    case "http":
+      return (monitor.config as HttpConfig).followRedirects ? 1 + MAX_REDIRECTS : 1;
+    case "domain":
+      return 2;
+    default:
+      return 1;
+  }
+}
 
 /** Pause before the confirmation re-check. */
 export const CONFIRM_DELAY_MS = 5_000;
@@ -66,7 +87,7 @@ interface ClassifyInput {
 }
 
 /** Pure classification of attempt results into a CheckOutcome (sans timestamp). */
-export function classifyCheck(input: ClassifyInput): Omit<CheckOutcome, "at"> {
+export function classifyCheck(input: ClassifyInput): Omit<CheckOutcome, "at" | "fetches"> {
   const { result, ok, succeededAttempt, maxAttempts, warmup, assertionFailures } = input;
   const retryRecovered = ok && succeededAttempt > 1;
 
@@ -156,7 +177,9 @@ export async function runMonitorCheck(
   const confirm = opts.confirm ?? true;
   const sleep = opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
 
+  const limit = probeFetchLimit(monitor);
   const first = await probe(monitor, { warmup, fresh: false });
+  let fetches = first.result.fetches ?? limit;
   let decided = first;
   let succeededAttempt = first.ok ? 1 : -1;
   let attempts = 1;
@@ -170,6 +193,7 @@ export async function runMonitorCheck(
     } else {
       await sleep(opts.confirmDelayMs ?? CONFIRM_DELAY_MS);
       decided = await probe(monitor, { warmup, fresh: true });
+      fetches += decided.result.fetches ?? limit;
       attempts = 2;
       if (decided.ok) succeededAttempt = 2;
       confirmation = decided.ok ? "cleared" : "confirmed";
@@ -189,6 +213,7 @@ export async function runMonitorCheck(
     ...outcome,
     ...(confirmation ? { confirmation } : {}),
     meta: decided.result.meta,
+    fetches,
     at: opts.now ?? Date.now(),
   };
 }

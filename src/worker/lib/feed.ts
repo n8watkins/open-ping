@@ -16,6 +16,7 @@ import {
 } from "../db/incident-updates";
 
 /** Characters XML 1.0 forbids anywhere, even escaped. */
+// eslint-disable-next-line no-control-regex -- matching control characters is the point: they are stripped
 const INVALID_XML_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 /** Escape text for an XML element body or a double- or single-quoted attribute. */

@@ -7,7 +7,8 @@
  *   - Paid: 10,000 subrequests and 1,000 D1 queries.
  * A run that goes past a cap fails with "Too many API requests by single Worker
  * invocation", so the scheduler budgets each run: D1 queries are counted as
- * they happen (countingD1), outbound fetches are estimated per check and per
+ * they happen (countingD1), outbound fetches are reserved at each check's worst
+ * case and charged what it really made (redirect hops included) and one per
  * notification, and work that doesn't fit waits for the next tick.
  *
  * Sources (checked 2026-10-27): developers.cloudflare.com/workers/platform/limits/
@@ -28,8 +29,9 @@ export interface PlanBudget {
 }
 
 /**
- * The plan limits, with a margin kept back (Cloudflare counts a few requests we
- * can't see, such as redirect hops beyond the estimate below).
+ * The plan limits, with a margin kept back (Cloudflare may count a few requests
+ * we can't see, such as an RDAP registry redirecting again beyond the one hop a
+ * domain check expects).
  */
 export const PLAN_BUDGETS: Record<WorkersPlan, PlanBudget> = {
   free: { plan: "free", d1Queries: 46, subrequests: 45, maxChecks: 200 },
@@ -104,17 +106,17 @@ export function countingD1(db: D1Database, counter: UsageCounter): D1Database {
 }
 
 /**
- * Most a single polled check may spend. D1: measured at about 5 queries for a
- * passing check and 9 for one that opens an incident (test/integration/
+ * Most a single polled check may spend in D1: measured at about 5 queries for
+ * a passing check and 9 for one that opens an incident (test/integration/
  * scheduler-budget.test.ts), plus one for an alert channel's queued delivery.
- * Fetches: the check itself. A failed check's confirmation re-check
- * (checks/runner.ts) asks for its own fetch with `tryConfirm`, so a run doesn't
- * hold back a second fetch for every check when most of them pass.
+ * Its fetches depend on the monitor: a check reserves the most its probe can
+ * make (checks/runner.ts `probeFetchLimit`, redirect hops included, since
+ * Cloudflare counts each hop), and is charged what it really made when it ends.
+ * A failed check's confirmation re-check asks for its own reservation with
+ * `tryConfirm`, so a run doesn't hold back a second probe for every check when
+ * most of them pass.
  */
 export const CHECK_COST = { d1: 10, subrequests: 1 } as const;
-
-/** What one confirmation re-check spends: a fetch, and no D1 queries. */
-export const CONFIRM_COST = { subrequests: 1 } as const;
 
 /** What a run keeps back for the work after its checks. Normally that is two
  * batches (the end-of-run work, then the run record and the lease), but if the
@@ -127,9 +129,29 @@ export const TAIL_RESERVE = { d1: 12 } as const;
 export const NOTIFICATION_D1_COST = 2;
 
 /**
+ * One started check's hold on the run's budget (RunBudget.startCheck).
+ */
+export interface CheckTicket {
+  /**
+   * Reserves the check's confirmation re-check (another probe's worst case).
+   * False when the run can't afford it beside the other running checks'
+   * reservations; the scheduler then leaves that monitor due for the next run
+   * instead of alerting on an unconfirmed failure.
+   */
+  tryConfirm(): boolean;
+  /**
+   * Ends the check, charging the fetches it really made (redirect hops
+   * included). Without a count, as when the check threw, it is charged
+   * everything it reserved.
+   */
+  end(fetchesSpent?: number): void;
+}
+
+/**
  * Tracks one run against its plan budget. Checks run in parallel, so each one
  * reserves its worst case before it starts and gives the reservation back when
- * it ends; the real D1 count comes from countingD1.
+ * it ends, keeping only what it really spent; the real D1 count comes from
+ * countingD1.
  */
 export class RunBudget {
   private reservedD1 = 0;
@@ -144,64 +166,62 @@ export class RunBudget {
     private readonly usage: UsageCounter,
   ) {}
 
-  /** Starts a check if its worst case still fits beside the tail reserve. */
-  tryStartCheck(): boolean {
-    if (this.checks >= this.limits.maxChecks) return false;
+  private fetchesFit(n: number): boolean {
+    return this.fetches + this.reservedFetches + n <= this.limits.subrequests;
+  }
+
+  /**
+   * Starts a check whose probe makes at most `probeFetches` requests, if its
+   * worst case still fits beside the tail reserve.
+   */
+  tryStartCheck(probeFetches: number = CHECK_COST.subrequests): CheckTicket | null {
+    if (this.checks >= this.limits.maxChecks) return null;
     const d1After = this.usage.d1 + this.reservedD1 + CHECK_COST.d1 + TAIL_RESERVE.d1;
-    const fetchesAfter = this.fetches + this.reservedFetches + CHECK_COST.subrequests;
-    if (d1After > this.limits.d1Queries || fetchesAfter > this.limits.subrequests) return false;
+    if (d1After > this.limits.d1Queries || !this.fetchesFit(probeFetches)) return null;
     this.reservedD1 += CHECK_COST.d1;
-    this.reservedFetches += CHECK_COST.subrequests;
+    this.reservedFetches += probeFetches;
     this.checks++;
     this.inFlight++;
-    return true;
+
+    let reserved = probeFetches;
+    let ended = false;
+    return {
+      tryConfirm: () => {
+        if (ended || !this.fetchesFit(probeFetches)) return false;
+        this.reservedFetches += probeFetches;
+        reserved += probeFetches;
+        return true;
+      },
+      end: (fetchesSpent?: number) => {
+        if (ended) return;
+        ended = true;
+        this.reservedD1 -= CHECK_COST.d1;
+        this.reservedFetches -= reserved;
+        this.fetches += fetchesSpent ?? reserved;
+        this.inFlight--;
+        for (const wake of this.waiters.splice(0)) wake();
+      },
+    };
   }
 
   /**
    * Starts a check, waiting for running ones to finish when only their
    * worst-case reservations are in the way (most checks spend less, which frees
-   * room). False once nothing is running and it still doesn't fit.
+   * room). Null once nothing is running and it still doesn't fit.
    */
-  async startCheck(): Promise<boolean> {
+  async startCheck(probeFetches: number = CHECK_COST.subrequests): Promise<CheckTicket | null> {
     for (;;) {
-      if (this.tryStartCheck()) return true;
-      if (this.inFlight === 0) return false;
+      const ticket = this.tryStartCheck(probeFetches);
+      if (ticket) return ticket;
+      if (this.inFlight === 0) return null;
       await new Promise<void>((resolve) => this.waiters.push(resolve));
     }
-  }
-
-  /**
-   * Reserves the fetch for a running check's confirmation re-check. False when
-   * the run can't afford it beside the other running checks' reservations;
-   * the scheduler then leaves that monitor due for the next run instead of
-   * alerting on an unconfirmed failure.
-   */
-  tryConfirm(): boolean {
-    if (this.fetches + this.reservedFetches + CONFIRM_COST.subrequests > this.limits.subrequests) {
-      return false;
-    }
-    this.reservedFetches += CONFIRM_COST.subrequests;
-    return true;
-  }
-
-  /**
-   * Ends a started check, counting its fetches: the check itself plus the
-   * confirmation re-checks it reserved with `tryConfirm` (0 or 1).
-   */
-  endCheck(confirmations = 0): void {
-    const spent = CHECK_COST.subrequests + confirmations * CONFIRM_COST.subrequests;
-    this.reservedD1 -= CHECK_COST.d1;
-    this.reservedFetches -= spent;
-    this.fetches += spent;
-    this.inFlight--;
-    for (const wake of this.waiters.splice(0)) wake();
   }
 
   /** Outbound fetches counted so far (finished checks only). */
   get fetchesUsed(): number {
     return this.fetches;
   }
-
   /** How many notifications fit in what's left (one fetch each). */
   notificationAllowance(max: number): number {
     const d1Left = this.limits.d1Queries - this.usage.d1 - TAIL_RESERVE.d1 - 1; // -1: claiming them
