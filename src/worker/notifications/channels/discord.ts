@@ -1,7 +1,7 @@
 /**
  * Discord webhook sender (PRD §12). Pure delivery: POSTs a message (optionally
  * with embeds) to a Discord webhook URL. No DB access, no outbox/retry logic.
- * Runs in the Cloudflare Workers runtime — only global `fetch` is used.
+ * Runs in the Cloudflare Workers runtime - only global `fetch` is used.
  */
 
 import { parseRetryAfter, type SendResult } from "./http";

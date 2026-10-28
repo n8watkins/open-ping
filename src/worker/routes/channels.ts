@@ -28,7 +28,7 @@ import {
 /**
  * Notification channel CRUD API mounted at /api/channels (PRD §16 Integrations).
  * All routes require an authenticated session; the auth middleware also enforces
- * CSRF on mutations. This module is config-only — sending lives in the dispatcher
+ * CSRF on mutations. This module is config-only - sending lives in the dispatcher
  * module, and POST /:id/test is added later by the dispatcher integration.
  *
  * Secret config fields (Discord, Slack, Teams and generic webhook URLs, the
@@ -142,7 +142,7 @@ const channelCreateSchema = z.discriminatedUnion("type", [
 ]);
 
 // Update: `type` is not in the body (it comes from the stored record) and secret
-// config fields arrive blanked ("") to be merged back by the data layer — so the
+// config fields arrive blanked ("") to be merged back by the data layer - so the
 // Discord and generic webhook URLs may legitimately be empty here. The config
 // is validated against the channel's actual type in the handler
 // (updateConfigSchemas).

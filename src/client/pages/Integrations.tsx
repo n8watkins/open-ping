@@ -41,7 +41,7 @@ import {
 } from "../../shared/channel-targets";
 
 // ---------------------------------------------------------------------------
-// Types (local — these mirror the server records but the client owns its view)
+// Types (local - these mirror the server records but the client owns its view)
 // ---------------------------------------------------------------------------
 
 type ChannelType = "slack" | "teams" | "discord" | "telegram" | "email" | "webhook";

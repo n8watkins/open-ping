@@ -1,7 +1,7 @@
 /**
  * Generic signed-webhook sender (PRD §12). Pure delivery: serializes a payload
  * and POSTs it, optionally signing the body with an HMAC-SHA256 secret. No DB
- * access, no outbox/retry logic. Runs in the Cloudflare Workers runtime — only
+ * access, no outbox/retry logic. Runs in the Cloudflare Workers runtime - only
  * global `fetch` and Web Crypto (`crypto.subtle`) are used; no Node APIs.
  */
 

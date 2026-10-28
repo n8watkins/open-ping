@@ -89,7 +89,7 @@ export async function deliverToChannel(
     }
     case "webhook": {
       if (!cfg.url) return { ok: false, error: "missing_url" };
-      // Same SSRF guard the monitor checks use — a channel URL could otherwise
+      // Same SSRF guard the monitor checks use - a channel URL could otherwise
       // point at loopback/link-local/metadata/private ranges and reflect the
       // internal response into last_error. Validated per-delivery (not just at
       // create time) so pre-existing configs are covered and there's no TOCTOU.
@@ -122,7 +122,7 @@ export function outboxTake(limit: number = BATCH): number {
 /**
  * Process due outbox entries (PRD §12 outbox): deliver each independently,
  * record success/failure, retry transient failures with backoff, stop at max.
- * Never throws — a provider failure must not break the monitoring cycle.
+ * Never throws - a provider failure must not break the monitoring cycle.
  */
 export async function processOutbox(
   env: Env,
@@ -198,7 +198,7 @@ export async function processOutbox(
 
       const channel = entry.channelId ? await getChannel(env, entry.channelId) : null;
       if (!channel || !channel.enabled) {
-        // Channel removed/disabled — drop the entry as dead.
+        // Channel removed/disabled - drop the entry as dead.
         await markFailed(env, entry.id, MAX_ATTEMPTS, "channel_unavailable", MAX_ATTEMPTS);
         failed++;
         continue;
@@ -206,7 +206,7 @@ export async function processOutbox(
       const result = await deliverToChannel(env, channel, entry.payload);
       if (result.ok) {
         await markSent(env, entry.id);
-        // Bookkeeping only — must never reach the outer catch (which would
+        // Bookkeeping only - must never reach the outer catch (which would
         // re-mark this already-sent entry failed and re-deliver it).
         try {
           await recordChannelResult(env, channel.id, true);
@@ -277,7 +277,7 @@ async function deliverPush(
   });
   if (result.ok) {
     await markSent(env, entryId);
-    // Bookkeeping only — isolate so a failure here can't reach the caller's
+    // Bookkeeping only - isolate so a failure here can't reach the caller's
     // catch and re-mark this already-sent entry failed (duplicate push).
     try {
       await recordPushResult(env, sub.id, true);

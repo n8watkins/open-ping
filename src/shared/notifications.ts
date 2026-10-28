@@ -41,7 +41,7 @@ export function channelWantsEvent(
   channelEvents: string[] | null,
 ): boolean {
   // Distinguish "no per-channel override" (null/undefined → use defaults) from
-  // an explicit empty list (subscribe to nothing — never fall back to defaults).
+  // an explicit empty list (subscribe to nothing - never fall back to defaults).
   if (channelEvents != null) return channelEvents.includes(event);
   return NOTIFY_DEFAULTS[event]?.[kind] ?? false;
 }

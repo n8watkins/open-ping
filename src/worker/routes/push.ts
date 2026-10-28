@@ -18,7 +18,7 @@ import { sendWebPush } from "../notifications/push/webpush";
 /**
  * Web Push device-management API mounted at /api/push (PRD §12.1 PWA device
  * management). All routes require an authenticated session; the auth middleware
- * also enforces CSRF on mutations. This module is registry-only — sending lives
+ * also enforces CSRF on mutations. This module is registry-only - sending lives
  * in the push-delivery module, and POST /devices/:id/test is wired later by the
  * push-delivery integration.
  */

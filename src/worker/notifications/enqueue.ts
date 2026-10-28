@@ -25,7 +25,7 @@ const COOLDOWN_EVENTS: ReadonlySet<NotifyEvent> = new Set([
 
 /**
  * True when an alert of this exact event type for this monitor was already
- * enqueued within the cooldown window — the signal used to coalesce flapping/
+ * enqueued within the cooldown window - the signal used to coalesce flapping/
  * down storms (one alert per event type per monitor per window). Matched on the
  * indexed monitor_id column. Best-effort: any query error fails OPEN (returns
  * false) so a genuine alert is never lost to a transient DB issue.

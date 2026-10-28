@@ -172,7 +172,7 @@ export async function enqueue(
 /**
  * Claim up to `limit` records that are due for delivery: those `pending` (never
  * tried) or `failed` (awaiting retry) whose `next_attempt_at` has arrived.
- * Oldest-due first so retries don't starve. Note this reads but does not lock —
+ * Oldest-due first so retries don't starve. Note this reads but does not lock -
  * single-drain serialization is the caller's concern (the scheduler lock).
  */
 /** The due-deliveries query (for a caller that batches it with other work). */

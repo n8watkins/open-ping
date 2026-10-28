@@ -216,7 +216,7 @@ function truncate(s: string, max: number): string {
 /**
  * Backslash-escape Discord markdown control characters so an attacker-influenced
  * string (notably a remote `error` body) can't inject bold/italics, spoilers,
- * code blocks, block quotes, or masked links. Single pass — the backslashes we
+ * code blocks, block quotes, or masked links. Single pass - the backslashes we
  * insert are not re-scanned, so there is no double-escaping.
  */
 function escapeDiscordMarkdown(s: string): string {

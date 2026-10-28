@@ -73,7 +73,7 @@ async function encryptChannelConfig(
 
 /**
  * Deep-clone `config`, decrypting each secret field whose value is a stored
- * ciphertext. A failed decrypt never throws outward — the value is left as-is.
+ * ciphertext. A failed decrypt never throws outward - the value is left as-is.
  */
 async function decryptChannelConfig(
   env: Env,
