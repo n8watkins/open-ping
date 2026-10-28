@@ -11,8 +11,8 @@ Last reviewed: 2026-10-28.
 
 - [x] A fresh `MASTER_KEY` was set on 2026-10-28 (key id `641eb0c9`), because no copy of the original existed.
   The only values the old key protected were the Web Push signing key (no devices were subscribed) and four copies of already-sent alerts; they were deleted, and the three monitors' settings were re-encrypted under the new key.
-- [ ] Open `openping-MASTER_KEY.txt` in your Windows Downloads folder, save its contents in your password manager as "OpenPing MASTER_KEY", then delete the file.
-- [ ] Tell the agent it's saved.
+- [x] Saved in your password manager (2026-10-28).
+- [ ] Delete `openping-MASTER_KEY.txt` from your Windows Downloads folder.
 
 Why: Cloudflare never shows a secret again after it is set, so your password manager holds the only readable copy.
 You need it to restore a database backup onto a new install, or if the Worker's secret is ever lost; without it, the encrypted values in a backup can't be read.
@@ -54,6 +54,22 @@ The drill checks, with a real failure: detection, the incident, the down and rec
 Why: everything the button runs was checked locally on 2026-10-28 (a clean clone, `npm ci` with npm 11, the build, `wrangler deploy --dry-run`, and the deploy script's order with and without an existing database), but only a real click shows what the deploy form asks and what it writes into the new repository.
 The test creates a separate Worker and D1 database in your account, so it can't touch openping.n8builds.dev, and both can be deleted afterwards.
 Cloudflare's docs (Deploy buttons page, updated 2026-10-12) say the button provisions D1 and runs the `deploy` script; they don't say how it treats a config without a `database_id`, which is the main thing this click confirms.
+
+### 6. Later: what OpenPing Hosted needs before wave 3 testing
+
+None of these is needed yet; wave 2 runs entirely on fakes.
+The agent will walk you through each one when wave 3 starts, and will never ask you to paste a secret into chat.
+Details are in [platform/README.md](../platform/README.md) and [HOSTED_BUILD_PLAN.md](./HOSTED_BUILD_PLAN.md#12-owner-actions-and-costs).
+
+- [ ] Buy the Hosted domain (about $10 to $15 a year).
+- [ ] Turn on Workers Paid ($5 a month) and Workers for Platforms in Cloudflare.
+- [ ] Create a Cloudflare API token for your one account with only "Workers Scripts: Edit" and "D1: Edit".
+- [ ] Generate `PLATFORM_KEY` (`openssl rand -base64 32`), set it as a platform secret, and save it in your password manager: without it no customer backup can be restored.
+- [ ] Generate the sign-in hand-off key pair (the agent gives you the command): the private half becomes a platform secret, the public half a plain setting.
+- [ ] Create an R2 bucket named `openping-tenant-bundles` for release copies.
+- [ ] Verify the Hosted domain in Resend for sign-in and alert emails.
+- [ ] Create a GitHub OAuth app for Hosted sign-in, with callback `https://app.<domain>/auth/github/callback`.
+- [ ] Before launch: finish the Stripe account (wave 3 billing).
 
 ## Not needed
 
