@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
 import type { AppEnv, Env } from "./types";
@@ -11,6 +12,7 @@ import { mcp, MCP_MAX_BODY_BYTES } from "./mcp/handler";
 import { runScheduled } from "./scheduler";
 import { hostedAuth } from "./routes/hosted-auth";
 import { platformRoutes } from "./routes/platform";
+import { forgetSchemaCheck, isSchemaError } from "./lib/migrate";
 import { hostedGate, hostedSchemaGate, refuseWhenHosted, signOutRedirect } from "./lib/hosted";
 import { HANDOFF_PATH, INTERNAL_PATH_PREFIX } from "../shared/hosted-contract";
 import { homePage, withLandingHead } from "./lib/home-page";
@@ -24,6 +26,17 @@ import {
 } from "./security-headers";
 
 const app = new Hono<AppEnv>();
+
+// Hono's own error answer (a plain 500, or an HTTPException's response), plus
+// one thing: a query that found a table or column missing means the schema
+// isn't what this isolate thought, so it looks again on the next call
+// (hosted self-migration, lib/migrate.ts).
+app.onError((err, c) => {
+  if (isSchemaError(err)) forgetSchemaCheck();
+  if (err instanceof HTTPException) return err.getResponse();
+  console.error(err);
+  return c.text("Internal Server Error", 500);
+});
 const isViteDev = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
 
 // ---------------------------------------------------------------------------

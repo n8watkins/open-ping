@@ -182,14 +182,36 @@ describe("a plain install (HOSTED_MODE unset)", () => {
 });
 
 describe("self-migration in hosted mode", () => {
-  it("applies every bundled migration on the first call to a fresh database, in order, once", async () => {
+  it("never migrates from a public call: it answers 503 updating until a platform call has", async () => {
     expect(await tableNames(env.FRESH_DB)).toEqual([]);
-    const res = await worker.fetch(
-      new Request(`${ORIGIN}/api/auth/status`),
+    const publicCall = (accept?: string) =>
+      worker.fetch(
+        new Request(`${ORIGIN}/api/auth/status`, { headers: accept ? { accept } : {} }),
+        hostedEnv(env.FRESH_DB),
+        contextWith(props({ invocation: "public" })),
+      );
+    const api = await publicCall();
+    expect(api.status).toBe(503);
+    expect(api.headers.get("retry-after")).toBe("10");
+    expect(await api.json()).toEqual({ error: "hosted_updating" });
+    // A browser's page load gets a page that reloads itself.
+    const page = await worker.fetch(
+      new Request(`${ORIGIN}/monitors`, { headers: { accept: "text/html,application/xhtml+xml" } }),
       hostedEnv(env.FRESH_DB),
       contextWith(props({ invocation: "public" })),
     );
-    expect(res.status).toBe(200);
+    expect(page.status).toBe(503);
+    expect(page.headers.get("retry-after")).toBe("10");
+    expect(await page.text()).toContain("This OpenPing is updating");
+    // Nothing was written: no bookkeeping, no lock.
+    expect(await tableNames(env.FRESH_DB)).toEqual([]);
+
+    // The platform's next call migrates; then the public call goes through.
+    expect((await platformCall("/__platform/health", { target: hostedEnv(env.FRESH_DB) })).status).toBe(200);
+    expect((await publicCall()).status).toBe(200);
+  });
+
+  it("the platform call applied every bundled migration to the fresh database, in order, once", async () => {
     const applied = await appliedMigrations(env.FRESH_DB);
     expect(applied).toEqual(env.TEST_MIGRATIONS.map((m) => m.name));
     expect(await tableNames(env.FRESH_DB)).toEqual(
@@ -199,7 +221,8 @@ describe("self-migration in hosted mode", () => {
     const lock = await env.FRESH_DB.prepare("SELECT COUNT(*) AS n FROM d1_migrations_lock").first<{ n: number }>();
     expect(lock!.n).toBe(0);
 
-    // The next call in the same isolate doesn't even look.
+    // Once seen current, the next call in the same isolate doesn't even look.
+    expect(await ensureSchema(env.FRESH_DB)).toEqual({ ok: true, applied: 0, schemaVersion: BUNDLED_SCHEMA_VERSION });
     const prepare = vi.spyOn(env.FRESH_DB, "prepare");
     const again = await ensureSchema(env.FRESH_DB);
     expect(again).toEqual({ ok: true, applied: 0, schemaVersion: BUNDLED_SCHEMA_VERSION });
@@ -234,6 +257,12 @@ describe("self-migration in hosted mode", () => {
     const lock = await env.FRESH_DB.prepare("SELECT COUNT(*) AS n FROM d1_migrations_lock").first<{ n: number }>();
     expect(lock!.n).toBe(0);
 
+    // For 30 seconds this isolate answers the same failure without trying again.
+    const prepare = vi.spyOn(env.FRESH_DB, "prepare");
+    expect(await ensureSchema(env.FRESH_DB, { migrations })).toEqual(result);
+    expect(prepare).not.toHaveBeenCalled();
+    prepare.mockRestore();
+
     // Fixed in the next bundle: only that one is applied.
     const fixed = [migrations[0]!, { name: "9002_broken.sql", queries: ["CREATE TABLE selfmig_b (id TEXT PRIMARY KEY)"] }];
     expect(await ensureSchema(env.FRESH_DB, { migrations: fixed })).toEqual({ ok: true, applied: 1, schemaVersion: 9002 });
@@ -260,18 +289,54 @@ describe("self-migration in hosted mode", () => {
     await env.FRESH_DB.prepare("INSERT INTO d1_migrations_lock (name, holder, expires_at) VALUES ('schema', 'other', ?)")
       .bind(Date.now() + MIGRATION_LOCK_TTL_MS)
       .run();
+    // While it waits it only reads: no batch (the lock write) until the lock is free.
+    const batch = vi.spyOn(env.FRESH_DB, "batch");
     const busy = await ensureSchema(env.FRESH_DB, { migrations, waitMs: 50, pollMs: 10 });
     expect(busy).toMatchObject({ ok: false, reason: "busy" });
+    expect(batch).not.toHaveBeenCalled();
+    batch.mockRestore();
     expect(await tableNames(env.FRESH_DB)).not.toContain("selfmig_e");
 
     await env.FRESH_DB.prepare("UPDATE d1_migrations_lock SET expires_at = ? WHERE name = 'schema'").bind(Date.now() - 1).run();
     expect(await ensureSchema(env.FRESH_DB, { migrations, waitMs: 0 })).toEqual({ ok: true, applied: 1, schemaVersion: 9005 });
   });
 
-  it("answers a public call 503 when the database can't be migrated", async () => {
-    const res = await worker.fetch(new Request(`${ORIGIN}/api/auth/status`), hostedEnv(deadDb), contextWith(props({ invocation: "public" })));
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: "hosted_unavailable" });
+  it("looks again after 10 minutes, or at once after a query finds a column missing", async () => {
+    expect((await ensureSchema(env.DB)).ok).toBe(true);
+    const prepare = vi.spyOn(env.DB, "prepare");
+    await ensureSchema(env.DB);
+    expect(prepare).not.toHaveBeenCalled();
+
+    const later = Date.now() + 11 * 60_000;
+    const now = vi.spyOn(Date, "now").mockReturnValue(later);
+    await ensureSchema(env.DB);
+    expect(prepare).toHaveBeenCalled();
+    now.mockRestore();
+    prepare.mockClear();
+
+    // A request whose query meets a schema it didn't expect.
+    const broken = new Proxy(env.DB, {
+      get(target, prop) {
+        if (prop === "prepare") {
+          return (query: string) => {
+            if (/FROM monitors/.test(query)) throw new Error("D1_ERROR: no such column: confirmed_from");
+            return target.prepare(query);
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await worker.fetch(
+      new Request(`${ORIGIN}/api/monitors`, { headers: { authorization: "Bearer integration-api-token" } }),
+      hostedEnv(broken),
+      contextWith(props({ invocation: "public" })),
+    );
+    expect(res.status).toBe(500);
+    prepare.mockClear();
+    await ensureSchema(env.DB);
+    expect(prepare).toHaveBeenCalled();
   });
 });
 

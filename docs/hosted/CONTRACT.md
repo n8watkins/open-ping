@@ -199,9 +199,12 @@ The internal paths are `src/worker/routes/platform.ts`, and self-migration is `s
 - Applied migrations are rows of Wrangler's own `d1_migrations` table, by file name, so the Worker and `wrangler d1 migrations apply` always agree on what a database has.
   `schemaVersion` is the highest number among those names (`0019_incident_alert_repair.sql` is 19).
 - Each migration and its `d1_migrations` row go in one batch, which D1 runs as one transaction, so a migration is applied whole or not at all; `d1_migrations.name` is unique, so none is applied twice.
-- The lock is a row in `d1_migrations_lock` with a 60-second expiry, pushed on with each migration, so a call that dies mid-migration frees it on its own.
-  A call that finds it held looks again every 250 ms for up to 8 seconds; health doesn't wait.
-- Each isolate remembers that it saw the schema current, so only its first call costs the one query that checks.
+- The lock is a row in `d1_migrations_lock` with a 15-second expiry, pushed on with each migration, so a call that dies mid-migration frees it within seconds.
+  A call that finds it held looks again every 250 ms for up to 8 seconds, with reads only, and tries to take it only once it is free or expired; health doesn't wait.
+- Each isolate remembers for 10 minutes that it saw the schema current, so a call costs no query in that time, and forgets at once when any query fails with "no such table" or "no such column".
+  It remembers a failed migration for 30 seconds, so the calls in that time answer the failure instead of trying again.
+- A public call's check (`schemaIsCurrent`) is the same one read of `d1_migrations`, and never writes.
+- Migrations are additive only ([RELEASING.md](../../RELEASING.md#database-migrations)); `scripts/check-migrations.test.mjs` fails `npm test` for a later migration that drops, renames, or adds a `NOT NULL` column without a default.
 - `POST /__platform/scheduled` passes `cron` and `scheduledTime` to the same `runScheduled` the cron handler calls, then reports usage through `props.platform.reportUsage`.
   A malformed body answers 400 `invalid_request`.
   `d1Queries` counts the run's queries plus the migration check and the usage report.
