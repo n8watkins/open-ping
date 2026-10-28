@@ -66,7 +66,7 @@ const ROWS: Row[] = [
   },
   {
     label: "Sign-in",
-    own: "GitHub or an email link, for you as the only admin",
+    own: "Passkey, GitHub or an email link, for you as the only admin",
     hosted: "Email, Google or GitHub",
   },
 ];
