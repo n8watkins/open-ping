@@ -201,6 +201,24 @@ describe("monitors", () => {
     expect(await count("monitors")).toBe(1);
   });
 
+  it("holds an import to the interval only for the monitors it would create", async () => {
+    limits = { ...PLAN_LIMITS.trial, minIntervalMinutes: 15 };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("ok"));
+    const site = { type: "http", name: "Site", config: { url: "https://site.example.com/" } };
+    await env.DB.prepare(
+      `INSERT INTO monitors (id, type, name, config, schedule, created_at, updated_at)
+       VALUES ('mon_kept', 'http', 'Site', '{"url":"https://site.example.com/"}', '{"mode":"always"}', 0, 0)`,
+    ).run();
+    const data = { version: 1, monitors: [site, heartbeat("New job")], maintenance: [], incidents: [] };
+    // "Site" exists, so it is skipped and its 12-minute checks don't count.
+    expect((await call("/api/data/import", { json: { data } })).status).toBe(200);
+    expect(await count("monitors")).toBe(2);
+    // Imported as a new monitor, it would be refused.
+    const all = await call("/api/data/import", { json: { data: { ...data, monitors: [{ ...site, name: "Site 2" }] } } });
+    expect(all.status).toBe(402);
+    expect(await all.json()).toMatchObject({ limit: "interval" });
+  });
+
   it("refuses a backup import that would go over, before creating anything", async () => {
     limits = { ...PLAN_LIMITS.trial, monitors: 3 };
     await call("/api/monitors", { json: heartbeat("Existing") });

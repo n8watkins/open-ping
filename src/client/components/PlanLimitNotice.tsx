@@ -1,6 +1,6 @@
 import { ArrowUpRight, Gauge } from "lucide-react";
 import type { PlanLimitBody } from "../../shared/hosted-contract";
-import { planLimitTitle } from "../lib/plan-limits";
+import { planLimitMessage, planLimitTitle } from "../lib/plan-limits";
 import { cn } from "../lib/cn";
 
 /**
@@ -33,7 +33,7 @@ export function PlanLimitNotice({
         </span>
         <div className="min-w-0">
           <p className="text-sm font-medium text-ink">{planLimitTitle(limit)}</p>
-          <p className="mt-0.5 text-sm leading-relaxed text-pretty text-ink-muted">{limit.message}</p>
+          <p className="mt-0.5 text-sm leading-relaxed text-pretty text-ink-muted">{planLimitMessage(limit)}</p>
         </div>
       </div>
       <a

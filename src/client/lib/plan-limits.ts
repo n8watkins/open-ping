@@ -71,12 +71,25 @@ const CHANNEL_NAMES: Record<ChannelKind, string> = {
   webhook: "Webhook",
 };
 
+/**
+ * How many exist now, when that is more than the plan includes (a downgrade
+ * keeps everything): the count after the create, less the one asked for.
+ */
+function overBy(limit: PlanLimitBody): { count: number; allowed: number } | null {
+  if (typeof limit.allowed !== "number" || typeof limit.requested !== "number") return null;
+  const count = limit.requested - 1;
+  return count > limit.allowed ? { count, allowed: limit.allowed } : null;
+}
+
 /** A short heading for a limit, above its one-sentence message. */
 export function planLimitTitle(limit: PlanLimitBody): string {
+  const over = overBy(limit);
   switch (limit.limit) {
     case "monitors":
+      if (over) return `${over.count} of ${over.allowed} monitors, over your plan`;
       return `All ${limit.allowed} monitors in use`;
     case "status_pages":
+      if (over) return `${over.count} of ${over.allowed} status pages, over your plan`;
       return limit.allowed === 1 ? "Your status page is in use" : `All ${limit.allowed} status pages in use`;
     case "channel_kind": {
       const kind = String(limit.requested) as ChannelKind;
@@ -85,6 +98,18 @@ export function planLimitTitle(limit: PlanLimitBody): string {
     case "interval":
       return "Faster checks aren't in your plan";
   }
+}
+
+/**
+ * The sentence under the heading: the server's, except over the plan, where
+ * "remove one" would not be enough to add one.
+ */
+export function planLimitMessage(limit: PlanLimitBody): string {
+  const over = overBy(limit);
+  if (!over || (limit.limit !== "monitors" && limit.limit !== "status_pages")) return limit.message;
+  const what = limit.limit === "monitors" ? ["monitor", "monitors"] : ["status page", "status pages"];
+  const extra = over.count - over.allowed + 1;
+  return `Your plan includes ${over.allowed} ${over.allowed === 1 ? what[0] : what[1]}. The ones you have keep working; remove ${extra} or upgrade to add more.`;
 }
 
 /** "3 of 5 monitors", for a count next to a list. */

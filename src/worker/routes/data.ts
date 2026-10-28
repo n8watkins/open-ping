@@ -390,15 +390,16 @@ data.post("/import", async (c) => {
     // The same rule as the loop below: with skipExisting, a name that exists
     // (or came earlier in the backup) is skipped.
     const seen = new Set(existingNames);
-    let creating = 0;
+    const creating: CreateMonitorInput[] = [];
     for (const { input } of validMonitors) {
       if (skipExisting && seen.has(input.name)) continue;
       seen.add(input.name);
-      creating++;
+      creating.push(input);
     }
+    // Only the monitors it would create: a skipped one is never checked.
     const refused =
-      validMonitors.map(({ input }) => intervalLimit(plan, input)).find((r) => r !== null) ??
-      (await monitorLimit(c.env, plan, creating));
+      creating.map((input) => intervalLimit(plan, input)).find((r) => r !== null) ??
+      (await monitorLimit(c.env, plan, creating.length));
     if (refused) return c.json(refused.body, refused.status);
   }
 

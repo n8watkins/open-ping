@@ -49,6 +49,8 @@ function refusal(plan: HostedPlan, exceeded: Parameters<typeof planLimitBody>[0]
   return { ok: false, status: PLAN_LIMIT_STATUS, error: "plan_limit", body: planLimitBody(exceeded, plan) };
 }
 
+// Count, then insert: two creates at the same instant can both take the last
+// free place. Accepted (reviewed 2026-10-28): the next create is refused.
 async function count(env: Env, table: "monitors" | "status_pages"): Promise<number> {
   const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>();
   return row?.n ?? 0;
