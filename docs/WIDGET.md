@@ -117,6 +117,15 @@ routes keep `X-Frame-Options` and `frame-ancestors 'none'`.
 
 ---
 
+## Off-hours
+
+Outside a monitor's operating schedule, the widget shows that service as **Scheduled off since Fri 4:48 PM** (the time it went off, in the visitor's timezone), never as operational.
+When every service on the page is off, the banner reads **All services are scheduled off** with the time of the last check.
+With only some services off, the banner stays **All systems operational**, because off-hours never count as an outage.
+See [Off-hours in the status pages guide](./STATUS_PAGES.md#off-hours-scheduled-off) for the full rules.
+
+---
+
 ## Bonus: SVG status badge
 
 For a tiny shields.io-style badge (great for READMEs / dashboards), use a plain
@@ -134,8 +143,9 @@ Markdown:
 ```
 
 The badge shows only the aggregate status (`operational`, `degraded`,
-`partial outage`, `major outage`, `maintenance`, `no services`) and respects the
-status-page kill switch.
+`partial outage`, `major outage`, `maintenance`, `off hours`, `no services`) and
+respects the status-page kill switch.
+It reads `off hours` when every service on the page is outside its operating schedule, and `no services` when the page has no public services.
 
 Two optional query parameters:
 
