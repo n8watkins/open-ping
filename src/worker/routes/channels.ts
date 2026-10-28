@@ -33,7 +33,7 @@ export const channels = new Hono<AppEnv>();
 channels.use("*", requireAuth);
 
 /** Strip secret config fields from a channel before returning it to the client. */
-function redactChannel(ch: ChannelRecord): ChannelRecord {
+export function redactChannel(ch: ChannelRecord): ChannelRecord {
   return { ...ch, config: redactChannelConfig(ch.type, ch.config) };
 }
 

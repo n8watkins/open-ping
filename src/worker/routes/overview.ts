@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { AppEnv } from "../types";
+import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
 import { listMonitors } from "../db/monitors";
 import { listChannels } from "../db/channels";
@@ -70,8 +70,15 @@ export function monitorTarget(monitor: MonitorRecord): string | null {
   }
 }
 
-overview.get("/", async (c) => {
-  const now = Date.now();
+overview.get("/", async (c) => c.json(await buildOverview(c.env)));
+
+/**
+ * The dashboard overview: every monitor's current state and 24h uptime, the
+ * state counts, incident analytics, channel health and the latest scheduler
+ * run. Shared by GET /api/overview and the MCP `get_status` tool, so both
+ * report the same numbers. About nine D1 reads, run in parallel.
+ */
+export async function buildOverview(env: Env, now: number = Date.now()) {
   const since = now - DAY;
   const [
     monitors,
@@ -84,15 +91,15 @@ overview.get("/", async (c) => {
     incidentAggregate,
     lastRun,
   ] = await Promise.all([
-    listMonitors(c.env),
-    listCategories(c.env),
-    listChannels(c.env),
-    c.env.DB.prepare(
+    listMonitors(env),
+    listCategories(env),
+    listChannels(env),
+    env.DB.prepare(
       `SELECT monitor_id, state, state_since, last_checked_at, last_duration_ms,
               last_status_code, next_check_at, active_incident_id
        FROM monitor_state`,
     ).all<StateRow>(),
-    c.env.DB.prepare(
+    env.DB.prepare(
       `SELECT monitor_id, SUM(checks) AS checks, SUM(ok_checks) AS ok_checks
        FROM summaries
        WHERE period = 'hour' AND bucket_start >= ? AND bucket_start <= ?
@@ -100,7 +107,7 @@ overview.get("/", async (c) => {
     )
       .bind(since, now)
       .all<SummaryCountRow>(),
-    c.env.DB.prepare(
+    env.DB.prepare(
       `SELECT monitor_id, at, ok, state
        FROM (
          SELECT monitor_id, at, ok, state,
@@ -113,20 +120,20 @@ overview.get("/", async (c) => {
     )
       .bind(since, now)
       .all<RecentCheckRow>(),
-    c.env.DB.prepare(
+    env.DB.prepare(
       `SELECT started_at FROM incidents
        WHERE started_at >= ? AND started_at <= ?
        ORDER BY started_at`,
     )
       .bind(since, now)
       .all<IncidentStartRow>(),
-    c.env.DB.prepare(
+    env.DB.prepare(
       `SELECT
          SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_incidents,
          MAX(CASE WHEN status = 'resolved' THEN resolved_at END) AS latest_resolved_at
        FROM incidents`,
     ).first<IncidentAggregateRow>(),
-    c.env.DB.prepare(
+    env.DB.prepare(
       `SELECT id, cron, started_at AS startedAt, finished_at AS finishedAt, ok,
               monitors_checked AS monitorsChecked, check_failures AS checkFailures,
               notification_failures AS notificationFailures, duration_ms AS durationMs
@@ -219,11 +226,11 @@ overview.get("/", async (c) => {
       (ch.lastSuccessAt != null && ch.lastSuccessAt >= ch.lastFailureAt),
   }));
 
-  return c.json({
+  return {
     counts: { ...counts, openIncidents },
     monitors: summaries,
     analytics,
     channels,
     lastRun,
-  });
-});
+  };
+}
