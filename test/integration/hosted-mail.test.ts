@@ -142,7 +142,55 @@ describe("hosted mode", () => {
     expect(row!.status).toBe("sent");
   });
 
-  it("holds a send over the daily cap until the next UTC day", async () => {
+  it("holds an alert over the daily cap until the next UTC day, without spending its attempts", async () => {
+    const id = await emailChannel(hostedEnv());
+    const evening = Date.UTC(2026, 9, 28, 23, 0, 0);
+    const midnight = Date.UTC(2026, 9, 29, 0, 0, 0);
+    const payload = { event: "down", monitorId: "mon_x", monitorName: "API", state: "down", title: "API is down", body: "HTTP 503", detectedAt: evening };
+    await env.DB.prepare(
+      `INSERT INTO notification_outbox (id, event_key, channel_id, channel_type, target, event_type, payload, status, attempts, next_attempt_at, created_at, updated_at)
+       VALUES ('out_cap', 'k:cap', ?, 'email', ?, 'down', ?, 'pending', 0, ?, ?, ?)`,
+    )
+      .bind(id, TO, JSON.stringify(payload), evening - 1, evening, evening)
+      .run();
+    const run = async (at: number, runId: string) => {
+      vi.spyOn(Date, "now").mockReturnValue(at);
+      await env.DB.prepare("DELETE FROM locks").run();
+      const p = props("platform");
+      const res = await call("/__platform/scheduled", {
+        json: { runId, scheduledTime: at, cron: "* * * * *" },
+        target: hostedEnv(),
+        props: p,
+        headers: { [INTERNAL_HEADER]: p.callId },
+      });
+      expect(res.status).toBe(200);
+      return env.DB.prepare("SELECT status, attempts, next_attempt_at FROM notification_outbox WHERE id = 'out_cap'").first<{
+        status: string;
+        attempts: number;
+        next_attempt_at: number;
+      }>();
+    };
+
+    // 23:00 UTC, over the cap: put off to midnight, no attempt spent.
+    answer = "quota";
+    expect(await run(evening, "run_cap_1")).toEqual({ status: "failed", attempts: 0, next_attempt_at: midnight });
+    expect(sent).toHaveLength(1);
+
+    // Every run until midnight leaves it alone (an hourly retry would have
+    // spent all five attempts by morning).
+    for (let minute = 1; minute < 60; minute += 12) {
+      expect(await run(evening + minute * 60_000, `run_cap_wait_${minute}`)).toMatchObject({ attempts: 0 });
+    }
+    expect(sent).toHaveLength(1);
+
+    // After midnight the cap starts over and the alert goes out.
+    answer = "ok";
+    expect(await run(midnight + 60_000, "run_cap_2")).toMatchObject({ status: "sent" });
+    expect(sent).toHaveLength(2);
+    expect(resend).not.toHaveBeenCalled();
+  });
+
+  it("answers a channel test over the daily cap with the cap", async () => {
     answer = "quota";
     const id = await emailChannel(hostedEnv());
     const res = await call(`/api/channels/${id}/test`, { json: {}, target: hostedEnv() });

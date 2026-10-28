@@ -41,11 +41,11 @@ export function resendTransport(env: Env): MailTransport {
   };
 }
 
-/** Until the next UTC midnight, when the platform's daily email cap starts over. */
-function untilNextUtcDay(now: number): number {
+/** The next UTC midnight after `now`, when the platform's daily email cap starts over. */
+export function nextUtcDay(now: number): number {
   const next = new Date(now);
   next.setUTCHours(24, 0, 0, 0);
-  return next.getTime() - now;
+  return next.getTime();
 }
 
 /**
@@ -73,7 +73,9 @@ export function platformTransport(platform: PlatformCapability, now: () => numbe
       }
       if (result.ok) return { ok: true };
       const failed: SendResult = { ok: false, error: result.error };
-      if (result.error === "email_quota_exceeded") failed.retryAfterMs = untilNextUtcDay(now());
+      // Over the daily cap: nothing can go out before the next UTC day, so the
+      // outbox waits for it without spending an attempt (db/outbox.ts markDeferred).
+      if (result.error === "email_quota_exceeded") failed.deferUntil = nextUtcDay(now());
       return failed;
     },
   };

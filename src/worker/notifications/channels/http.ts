@@ -13,6 +13,12 @@ export interface SendResult {
    * sooner than this.
    */
   retryAfterMs?: number;
+  /**
+   * Not an attempt at all: the sender itself (OpenPing Hosted's mail, over its
+   * daily cap) says it can't send before this time (epoch ms). The outbox
+   * waits until then and keeps every attempt it had (db/outbox.ts markDeferred).
+   */
+  deferUntil?: number;
 }
 
 /** Per-request bound so one hung provider can't stall the sequential outbox drain. */

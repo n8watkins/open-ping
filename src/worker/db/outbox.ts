@@ -264,6 +264,24 @@ export async function markFailed(
 }
 
 /**
+ * Put a delivery off until `until` without counting an attempt: the sender
+ * can't take it before then (OpenPing Hosted's mail over its daily cap,
+ * notifications/mail.ts), so trying sooner, or giving up after the usual
+ * attempts, would only lose the alert. Like markFailed, it never touches a
+ * terminal row.
+ */
+export async function markDeferred(env: Env, id: string, until: number, error: string): Promise<void> {
+  const now = Date.now();
+  await env.DB.prepare(
+    `UPDATE notification_outbox
+        SET status = 'failed', next_attempt_at = ?, last_error = ?, updated_at = ?
+      WHERE id = ? AND status NOT IN ('sent', 'dead')`,
+  )
+    .bind(Math.max(until, now), error.slice(0, MAX_ERROR_LEN), now, id)
+    .run();
+}
+
+/**
  * Pure exponential backoff: `min(CAP, BASE * 2^attempt)`, jitter-free. `attempt`
  * is 0-based, so attempt 0 returns BASE (30s) and the delay doubles each step up
  * to the 1h ceiling.

@@ -39,13 +39,13 @@ describe("platformTransport", () => {
     ]);
   });
 
-  it("waits for the next UTC day when the daily cap is reached", async () => {
+  it("puts the send off to the next UTC day when the daily cap is reached", async () => {
     const p = platform({ ok: false, error: "email_quota_exceeded", message: "cap" });
     const now = Date.UTC(2026, 9, 28, 23, 0, 0);
     expect(await platformTransport(p, () => now).send(message)).toEqual({
       ok: false,
       error: "email_quota_exceeded",
-      retryAfterMs: 60 * 60 * 1000,
+      deferUntil: Date.UTC(2026, 9, 29),
     });
   });
 

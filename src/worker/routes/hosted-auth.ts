@@ -111,16 +111,21 @@ async function handOff(c: Ctx, props: TenantProps): Promise<Outcome> {
     if (support) return { ok: false, reason: "audit_failed" };
   }
 
+  // The customer's account email is this OpenPing's admin email: the weekly
+  // summary and the monthly report go there (through the platform's mail).
+  // Kept in step on every sign-in, so a change on the platform reaches it.
+  // Before the session, and never fatal: a failed write can't leave a
+  // half-made sign-in; the reports just keep the address they had.
+  if (!support) {
+    await setSetting(c.env, "admin_email", claims.email).catch((error: unknown) =>
+      console.error("[hosted] could not store the account email for reports", error),
+    );
+  }
+
   // 4. The normal session, rotated: whatever session this browser had ends.
   await endCurrentSession(c);
   if (support) await createSession(c, claims.email, "hosted_support", SUPPORT_SESSION_TTL_MS);
-  else {
-    await createSession(c, claims.email, "hosted");
-    // The customer's account email is this OpenPing's admin email: the weekly
-    // summary and the monthly report go there (through the platform's mail).
-    // Kept in step on every sign-in, so a change on the platform reaches it.
-    await setSetting(c.env, "admin_email", claims.email);
-  }
+  else await createSession(c, claims.email, "hosted");
   return { ok: true, claims };
 }
 

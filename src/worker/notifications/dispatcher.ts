@@ -2,7 +2,7 @@ import type { Env } from "../types";
 import type { ChannelRecord } from "../db/channels";
 import { getChannel, recordChannelResult, secretFieldsFor } from "../db/channels";
 import { getSubscription, recordPushResult } from "../db/push";
-import { claimDue, markSent, markFailed, type OutboxEntry } from "../db/outbox";
+import { claimDue, markDeferred, markSent, markFailed, type OutboxEntry } from "../db/outbox";
 import { getSetting } from "../db/settings";
 import { sendEmail } from "./mail";
 import { sendDiscordMessage } from "./channels/discord";
@@ -275,6 +275,12 @@ export async function processOutbox(
           console.error("[dispatcher] recordChannelResult failed", e);
         }
         sent++;
+      } else if (result.deferUntil !== undefined) {
+        // The sender can't take it before then (Hosted's daily email cap):
+        // wait, without spending an attempt.
+        await markDeferred(env, entry.id, result.deferUntil, result.error ?? "deferred");
+        await recordChannelResult(env, channel.id, false, result.error ?? "deferred");
+        failed++;
       } else {
         await markFailed(
           env,
