@@ -64,5 +64,9 @@
     "@cloudflare/vitest-pool-workers": {
       "zod": "^4.6.7"
     }
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "workerd": true
   }
 }
