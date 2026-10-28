@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   causeLabel,
+  describeCause,
   eventTitle,
   groupIncidents,
   monitorNames,
@@ -127,9 +128,23 @@ describe("causeLabel", () => {
     const long = "x ".repeat(50);
     expect(causeLabel(inc({ ...base, rootCause: long }))!.length).toBeLessThanOrEqual(60);
   });
-  it("ignores an unknown machine code and falls back", () => {
-    expect(causeLabel(inc({ ...base, error: "weird_code" }))).toBeNull();
+  it("reads an unknown machine code as its HTTP status, else as words", () => {
+    expect(causeLabel(inc({ ...base, error: "weird_code" }))).toBe("Weird code");
     expect(causeLabel(inc({ ...base, error: "weird_code", httpStatus: 502 }))).toBe("HTTP 502");
+  });
+});
+
+describe("describeCause", () => {
+  it("labels known codes the same as the incident titles", () => {
+    expect(describeCause("suspended")).toBe("Render suspended the app");
+    expect(describeCause("timeout")).toBe("Timeout");
+    expect(describeCause("heartbeat_missed")).toBe("Missed heartbeat");
+  });
+
+  it("falls back to readable words for codes it doesn't know", () => {
+    expect(describeCause("status_out_of_range")).toBe("Unexpected status");
+    expect(describeCause("http_503")).toBe("HTTP 503");
+    expect(describeCause("weird_code")).toBe("Weird code");
   });
 });
 

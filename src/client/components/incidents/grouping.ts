@@ -77,23 +77,39 @@ const CAUSE_LABELS: Record<string, string> = {
 };
 
 /**
+ * A stored error code in plain words: "suspended" -> "Render suspended the
+ * app", "timeout" -> "Timeout". An unknown code reads as its words
+ * ("weird_code" -> "Weird code"); "http_503" reads as "HTTP 503".
+ */
+export function describeCause(code: string): string {
+  const known = CAUSE_LABELS[code];
+  if (known) return known;
+  if (code === "status_out_of_range") return "Unexpected status";
+  const http = /^http_(\d{3})$/.exec(code);
+  if (http) return `HTTP ${http[1]}`;
+  const words = code.replace(/_/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
  * A short, human cause for an incident, or null when none is known. A root
  * cause the owner typed wins; then the recorded error code; then the HTTP
- * status ("HTTP 503"). A status-code failure reads as its code.
+ * status ("HTTP 503"). A status-code failure, or a code with no label of its
+ * own, reads as its HTTP status when there is one.
  */
 export function causeLabel(inc: GroupableIncident): string | null {
   const http = inc.httpStatus != null ? `HTTP ${inc.httpStatus}` : null;
   for (const raw of [inc.rootCause, inc.error]) {
     const value = raw?.trim();
     if (!value) continue;
-    if (value === "status_out_of_range") return http ?? "Unexpected status";
-    const known = CAUSE_LABELS[value];
-    if (known) return known;
+    if (/^[a-z0-9_]+$/.test(value)) {
+      // A machine code.
+      if (CAUSE_LABELS[value]) return CAUSE_LABELS[value];
+      return http ?? describeCause(value);
+    }
     // Free text (an owner-written root cause, or an error message): keep it
     // short enough for a title line.
-    if (!/^[a-z0-9_]+$/.test(value)) {
-      return value.length > 60 ? `${value.slice(0, 57).trimEnd()}...` : value;
-    }
+    return value.length > 60 ? `${value.slice(0, 57).trimEnd()}...` : value;
   }
   return http;
 }
