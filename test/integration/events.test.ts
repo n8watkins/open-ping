@@ -29,9 +29,9 @@ beforeAll(async () => {
 });
 
 describe("landing click counts", () => {
-  it("tells the app this install's home is the landing page", async () => {
+  it("tells the app this install's home is the landing page, with the waitlist on", async () => {
     const res = await exports.default.fetch(`${ORIGIN}/api/auth/status`);
-    expect(((await res.json()) as { homePage: string }).homePage).toBe("landing");
+    expect(await res.json()).toMatchObject({ homePage: "landing", waitlistEnabled: true });
   });
 
   it("keeps one daily total per event, and nothing about the visitor", async () => {

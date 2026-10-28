@@ -7,6 +7,7 @@ import { getSetting } from "../db/settings";
 import { timingSafeEqual } from "../lib/timing";
 import { isValidMasterKey } from "../lib/crypto";
 import { homePage } from "../lib/home-page";
+import { waitlistEnabled } from "./waitlist";
 
 /** Session/identity endpoints mounted at /api/auth. */
 export const apiAuth = new Hono<AppEnv>();
@@ -37,6 +38,7 @@ apiAuth.get("/status", async (c) => {
     githubAdminConfigured: !!(await getAdminGithubLogin(c.env)),
     emailAdminConfigured: !!(await getAdminEmail(c.env)),
     homePage: homePage(c.env),
+    waitlistEnabled: waitlistEnabled(c.env),
   });
 });
 

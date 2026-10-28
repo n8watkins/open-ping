@@ -19,6 +19,8 @@ export interface AuthStatus {
    * the canonical install. Optional so an older Worker without it still works.
    */
   homePage?: "status" | "landing";
+  /** Whether this install collects the Hosted waitlist (WAITLIST_ENABLED). */
+  waitlistEnabled?: boolean;
 }
 
 export interface Me {

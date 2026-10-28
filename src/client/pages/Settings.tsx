@@ -151,9 +151,12 @@ export default function Settings() {
     useFetch<UsageResponse>("/api/diagnostics/usage");
   const { data: diagData, loading: diagLoading, error: diagError } =
     useFetch<DiagnosticsResponse>("/api/diagnostics");
-  // Only the canonical install collects the Hosted waitlist; elsewhere this
-  // answers 404 and the section stays hidden.
-  const { data: waitlistData } = useFetch<WaitlistResponse>("/api/waitlist");
+  // Only the canonical install collects the Hosted waitlist; elsewhere the
+  // endpoint doesn't exist, so don't ask (a 404 would log a console error).
+  const { status } = useBootstrap();
+  const { data: waitlistData } = useFetch<WaitlistResponse>(
+    status?.waitlistEnabled ? "/api/waitlist" : null,
+  );
 
   return (
     <div className="mx-auto max-w-6xl">

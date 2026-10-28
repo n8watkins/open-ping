@@ -1,4 +1,5 @@
 import { useFetch } from "../lib/useFetch";
+import { useBootstrap } from "../lib/bootstrap";
 import { Card, CardHeader, CardTitle } from "./ui/Card";
 
 /** GET /api/events (src/worker/routes/events.ts). */
@@ -27,11 +28,12 @@ const LABELS: Record<string, string> = {
 
 /**
  * Landing page click counts, shown beside the Hosted waitlist in Settings.
- * Only a HOME_PAGE="landing" install counts them; elsewhere the endpoint
- * answers 404 and this renders nothing.
+ * Only a HOME_PAGE="landing" install counts them; elsewhere there is no
+ * endpoint to ask, and this renders nothing.
  */
 export function LandingEventsCard() {
-  const { data } = useFetch<EventsResponse>("/api/events");
+  const { status } = useBootstrap();
+  const { data } = useFetch<EventsResponse>(status?.homePage === "landing" ? "/api/events" : null);
   if (!data) return null;
   return (
     <section id="landing-counts" className="scroll-mt-6">
