@@ -79,7 +79,7 @@ main {
 }
 main.wide { max-width: 40rem; }
 @media (min-width: 640px) { main { padding: 32px; } }
-.brand { display: flex; align-items: center; gap: 8px; color: var(--ink-muted); font-size: 0.875rem; font-weight: 600; margin: 0 0 20px; text-decoration: none; }
+.brand { display: flex; align-items: center; gap: 8px; color: var(--ink-muted); font-size: 0.875rem; font-weight: 600; margin: -12px 0 8px; padding: 12px 0; width: fit-content; text-decoration: none; }
 .dot { width: 10px; height: 10px; border-radius: 999px; background: var(--accent); flex: none; }
 .badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--tone, var(--link)); margin: 0 0 12px; }
 h1 { font-size: 1.375rem; line-height: 1.3; margin: 0 0 8px; font-weight: 650; overflow-wrap: anywhere; }
@@ -155,6 +155,21 @@ export interface PageOptions {
   /** Same-origin scripts to load (the passkey helper). Without any, the CSP allows no script. */
   scripts?: string[];
   wide?: boolean;
+  /** The admin console's wider, top-aligned card (./admin/pages.ts). */
+  admin?: boolean;
+  /** Replaces the brand line at the top of the card (the console's header and tabs). */
+  header?: Html;
+  /** CSS added after the shared stylesheet. */
+  style?: string;
+  /** False leaves out the "Questions? Write to support" line (the owner's own pages). */
+  footer?: boolean;
+  /**
+   * Go on to this address at once, by GET (a meta refresh; the page also
+   * links it). For a form post whose next stop is another origin: the CSP's
+   * form-action 'self' covers every redirect after a post, so a 303 there is
+   * blocked, but a navigation from a page is not a form submission.
+   */
+  redirectTo?: string;
   /** Reload the page after this many seconds (the "setting up" state). */
   refreshSeconds?: number;
   headers?: Record<string, string>;
@@ -180,7 +195,11 @@ export function contentSecurityPolicy(withScripts: boolean): string {
 
 export function renderPage(options: PageOptions): Response {
   const scripts = options.scripts ?? [];
-  const refresh = options.refreshSeconds ? html`<meta http-equiv="refresh" content="${options.refreshSeconds}">` : "";
+  const refresh = options.redirectTo
+    ? html`<meta http-equiv="refresh" content="0;url=${options.redirectTo}">`
+    : options.refreshSeconds
+      ? html`<meta http-equiv="refresh" content="${options.refreshSeconds}">`
+      : "";
   const body = html`<!doctype html>
 <html lang="en">
 <head>
@@ -189,14 +208,14 @@ export function renderPage(options: PageOptions): Response {
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#0b1220">
 ${refresh}<title>${options.title} - OpenPing Hosted</title>
-<style>${new Html(STYLE)}</style>
+<style>${new Html(STYLE)}${new Html(options.style ?? "")}</style>
 ${scripts.map((src) => html`<script src="${src}" defer></script>`)}
 </head>
 <body>
-<main${options.wide ? new Html(' class="wide"') : ""}>
-<a class="brand" href="${options.homeHref ?? "/"}"><span class="dot" aria-hidden="true"></span>OpenPing Hosted</a>
+<main${options.admin ? new Html(' class="admin"') : options.wide ? new Html(' class="wide"') : ""}>
+${options.header ?? html`<a class="brand" href="${options.homeHref ?? "/"}"><span class="dot" aria-hidden="true"></span>OpenPing Hosted</a>`}
 ${options.main}
-<p class="fine">Questions? Write to <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a>.</p>
+${options.footer === false ? "" : html`<p class="fine">Questions? Write to <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a>.</p>`}
 </main>
 </body>
 </html>

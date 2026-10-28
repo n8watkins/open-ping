@@ -37,6 +37,10 @@ export const LIMITS = {
   githubPerIp: { scope: "signin-github:ip", limit: 30, windowMs: 10 * MINUTE },
   signUpPerIp: { scope: "signup:ip", limit: 5, windowMs: DAY },
   signUpGlobal: { scope: "signup:all", limit: 300, windowMs: DAY },
+  /** The owner's changes in the admin console (B6): plenty for a person, a ceiling for a stolen session. */
+  adminAction: { scope: "admin:account", limit: 120, windowMs: HOUR },
+  /** Support sign-ins into customers' OpenPings, on top of adminAction. */
+  adminSupport: { scope: "admin-support:account", limit: 20, windowMs: HOUR },
 } as const satisfies Record<string, RateLimitRule>;
 
 /** Records one hit against `rule` for `subject` and answers whether it is allowed. */

@@ -137,13 +137,14 @@ export async function addPasskey(
 }
 
 /**
- * Verifies a passkey sign-in and answers the account id. Throws
- * WebAuthnError for an unknown passkey or one that doesn't verify.
+ * Verifies a passkey sign-in and answers the account id and the credential
+ * that signed. Throws WebAuthnError for an unknown passkey or one that
+ * doesn't verify.
  */
 export async function verifyPasskeySignIn(
   db: D1Database,
   input: { credential: AuthenticationResponseJSON; challenge: string; expect: PasskeyExpectation; now: number },
-): Promise<string> {
+): Promise<{ accountId: string; credentialId: string }> {
   const credentialId = typeof input.credential?.rawId === "string" ? input.credential.rawId : "";
   const row = await db
     .prepare(
@@ -163,7 +164,7 @@ export async function verifyPasskeySignIn(
     .prepare("UPDATE account_identities SET sign_count = ?, backup_state = ?, last_used_at = ? WHERE id = ?")
     .bind(verified.signCount, verified.backupState ? 1 : 0, input.now, row.id)
     .run();
-  return row.account_id;
+  return { accountId: row.account_id, credentialId };
 }
 
 export async function removePasskey(db: D1Database, accountId: string, identityId: string): Promise<boolean> {

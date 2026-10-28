@@ -95,7 +95,9 @@ describe("the platform database", () => {
       "rate_limits",
       "slug_holds",
       "subscriptions",
+      "tenant_usage",
       "tenants",
+      "waitlist_entries",
     ]);
   });
 

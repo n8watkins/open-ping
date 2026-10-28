@@ -166,6 +166,7 @@ interface ProvisionRow {
   slug: string;
   script_name: string;
   status: string;
+  owner_suspended_at: number | null;
   plan: string;
   provision_state: string;
   version: string | null;
@@ -191,7 +192,7 @@ interface ProvisionTenant {
 async function loadTenant(db: D1Database, tenantId: string): Promise<ProvisionTenant | null> {
   const row = await db
     .prepare(
-      `SELECT id, account_id, slug, script_name, status, plan, provision_state, version, limit_overrides, trial_ends_at,
+      `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at,
               d1_id, provision_attempts, provision_next_at, provision_paused_at, provisioned_at, created_at
        FROM tenants WHERE id = ?`,
     )
@@ -520,20 +521,47 @@ async function recordFailure(
 }
 
 /**
- * Starts a paused tenant again from the step it stopped at, with a clean
- * slate of retries: the owner fixed the cause (admin console, B6).
+ * Takes the pause off a tenant, with a clean slate of retries, so its next
+ * run (a queue message, the sweep, or runProvisioning) starts again from the
+ * step it stopped at. False when it wasn't paused.
  */
-export async function resumeProvisioning(deps: ProvisioningDeps, tenantId: string): Promise<ProvisionOutcome> {
-  const now = (deps.now ?? Date.now)();
-  const changed = await deps.db
+export async function unpauseProvisioning(db: D1Database, tenantId: string, now: number): Promise<boolean> {
+  const changed = await db
     .prepare(
       `UPDATE tenants SET provision_paused_at = NULL, provision_attempts = 0, provision_next_at = NULL, updated_at = ?
        WHERE id = ? AND provision_paused_at IS NOT NULL`,
     )
     .bind(now, tenantId)
     .run();
-  if ((changed.meta.changes ?? 0) === 0) return runProvisioning(deps, tenantId);
+  return (changed.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Starts a paused tenant again from the step it stopped at, with a clean
+ * slate of retries: the owner fixed the cause (admin console, B6).
+ */
+export async function resumeProvisioning(deps: ProvisioningDeps, tenantId: string): Promise<ProvisionOutcome> {
+  const now = (deps.now ?? Date.now)();
+  if (!(await unpauseProvisioning(deps.db, tenantId, now))) return runProvisioning(deps, tenantId);
   return runProvisioning(deps, tenantId, { force: true });
+}
+
+/**
+ * Marks a tenant for removal: from now on it is never dispatched to (only
+ * `ready` tenants are), and its next run tears it down. `onlyIfPaused`
+ * limits it to a tenant whose provisioning is paused, the admin console's
+ * case. False when nothing matched.
+ */
+export async function markForRemoval(db: D1Database, tenantId: string, now: number, options: { onlyIfPaused?: boolean } = {}): Promise<boolean> {
+  const changed = await db
+    .prepare(
+      `UPDATE tenants SET provision_state = 'deleting', provision_attempts = 0, provision_error = NULL,
+       provision_next_at = NULL, provision_paused_at = NULL, updated_at = ?
+       WHERE id = ? AND (? = 0 OR (provision_paused_at IS NOT NULL AND provision_state <> 'ready'))`,
+    )
+    .bind(now, tenantId, options.onlyIfPaused ? 1 : 0)
+    .run();
+  return (changed.meta.changes ?? 0) > 0;
 }
 
 /**
@@ -543,14 +571,7 @@ export async function resumeProvisioning(deps: ProvisioningDeps, tenantId: strin
  */
 export async function removeTenant(deps: ProvisioningDeps, tenantId: string): Promise<ProvisionOutcome> {
   const now = (deps.now ?? Date.now)();
-  const changed = await deps.db
-    .prepare(
-      `UPDATE tenants SET provision_state = 'deleting', provision_attempts = 0, provision_error = NULL,
-       provision_next_at = NULL, provision_paused_at = NULL, updated_at = ? WHERE id = ?`,
-    )
-    .bind(now, tenantId)
-    .run();
-  if ((changed.meta.changes ?? 0) === 0) return { kind: "missing", tenantId };
+  if (!(await markForRemoval(deps.db, tenantId, now))) return { kind: "missing", tenantId };
   return runProvisioning(deps, tenantId, { force: true });
 }
 

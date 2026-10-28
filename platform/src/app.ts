@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 
 import { accountRoutes, type AccountDeps } from "./account-routes";
+import { adminRoutes } from "./admin/routes";
 import { HOSTED_ERRORS, isInternalPath, type PlatformCapability } from "../../src/shared/hosted-contract";
 import { DISPATCH_LIMITS, buildTenantProps, newCallId, publicRequest, type TenantDispatcher } from "./dispatch";
 import type { PlatformEnv } from "./env";
@@ -47,7 +48,7 @@ type Platform = { Bindings: PlatformEnv };
 
 const NO_STORE = { "cache-control": "no-store" };
 
-/** The platform's own pages on app.<domain>: sign-up, sign-in and the account (billing arrives with B5). */
+/** The platform's own pages on app.<domain>: sign-up, sign-in, the account and the owner's console (billing arrives with B5). */
 function appHost(deps: AppDeps): Hono<Platform> {
   const app = new Hono<Platform>();
 
@@ -62,7 +63,13 @@ function appHost(deps: AppDeps): Hono<Platform> {
     }
   });
 
-  app.route("/", accountRoutes(deps.accounts ?? DEFAULT_ACCOUNT_DEPS));
+  const accounts = deps.accounts ?? DEFAULT_ACCOUNT_DEPS;
+  // Before the account routes: /admin answers its own 404 to everyone but the owner.
+  app.route(
+    "/admin",
+    adminRoutes({ dispatcher: deps.dispatcher, capability: deps.capability, provisioning: accounts.provisioning, now: accounts.now }),
+  );
+  app.route("/", accountRoutes(accounts));
   app.notFound((c) => appNotFoundPage(appOrigin(c.env.HOSTED_DOMAIN)));
   return app;
 }

@@ -37,4 +37,19 @@ export interface PlatformEnv {
   /** Var and secret: the platform's GitHub OAuth app (callback https://app.<domain>/auth/github/callback). */
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
+
+  // --- The owner's admin console (B6, src/admin/) ---
+  /**
+   * Var or secret: who the owner is, as platform account ids (`acc_...`) or
+   * emails, separated by commas or spaces. Empty (the default) means nobody:
+   * every /admin page answers 404.
+   */
+  PLATFORM_OWNERS?: string;
+  /**
+   * Var or secret: the credential ids of the owner's own passkeys, separated
+   * by commas or spaces. Only a sign-in with one of these opens the console,
+   * so a passkey someone adds through the owner's inbox gets them nothing.
+   * The console's "Confirm it's you" page lists the owner's passkey ids to copy.
+   */
+  PLATFORM_OWNER_PASSKEYS?: string;
 }

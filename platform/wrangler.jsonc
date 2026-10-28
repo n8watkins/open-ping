@@ -39,7 +39,17 @@
     "MAIL_FROM": "",
     // The platform's GitHub OAuth app; GitHub sign-in is off while it (or the
     // GITHUB_CLIENT_SECRET secret) is empty.
-    "GITHUB_CLIENT_ID": ""
+    "GITHUB_CLIENT_ID": "",
+    // Who may open the admin console at app.<domain>/admin (src/admin/):
+    // platform account ids (acc_...) or emails, separated by commas. Prefer
+    // the account id here, since this file is public; an email can go in a
+    // secret of the same name instead. Empty means nobody: /admin is a 404.
+    "PLATFORM_OWNERS": "",
+    // The credential ids of the owner's own passkeys (comma separated). Only
+    // a sign-in with one of these opens the admin console; the console's
+    // "Confirm it's you" page lists the owner's passkey ids to copy. Public
+    // ids, safe here.
+    "PLATFORM_OWNER_PASSKEYS": ""
   },
   // Every minute: the safety net for provisioning (src/provisioning.ts);
   // the scheduler (B4) runs from the same trigger.

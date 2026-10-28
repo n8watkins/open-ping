@@ -29,6 +29,8 @@ const TENANT: TenantRecord = {
   slug: "acme",
   scriptName: "t-abcdefgh12345678",
   status: "active",
+  billingStatus: "active",
+  ownerSuspendedAt: null,
   plan: "hosted",
   provisionState: "ready",
   version: "0.8.3",
