@@ -307,11 +307,21 @@ monitors.get("/:id/detail", async (c) => {
     .first<{ avg: number | null; min: number | null; max: number | null }>();
 
   const samplesRes = await c.env.DB.prepare(
-    `SELECT at, ok, state, duration_ms AS durationMs, status_code AS statusCode, error
+    `SELECT at, ok, state, duration_ms AS durationMs, status_code AS statusCode, error, meta
      FROM samples WHERE monitor_id = ? AND at >= ? ORDER BY at`,
   )
     .bind(id, now - DAY)
-    .all();
+    .all<Record<string, unknown> & { meta: string | null }>();
+  // Only the latest sample carries its type-specific meta (resolved DNS records,
+  // domain expiry), which the page shows next to the target.
+  const samples = (samplesRes.results ?? []).map(({ meta, ...sample }, i, all) => {
+    if (i !== all.length - 1 || !meta) return sample;
+    try {
+      return { ...sample, meta: JSON.parse(meta) as unknown };
+    } catch {
+      return sample;
+    }
+  });
 
   const incidentsRes = await c.env.DB.prepare(
     `SELECT id, status, title, started_at AS startedAt, resolved_at AS resolvedAt,
@@ -329,7 +339,7 @@ monitors.get("/:id/detail", async (c) => {
     uptime: { d1: d1.uptimePct, d7: d7.uptimePct, d30: d30.uptimePct, d365: d365.uptimePct },
     latency: { avg: latency?.avg ?? null, min: latency?.min ?? null, max: latency?.max ?? null },
     incidentMetrics,
-    recentSamples: samplesRes.results ?? [],
+    recentSamples: samples,
     recentIncidents: incidentsRes.results ?? [],
   });
 });
