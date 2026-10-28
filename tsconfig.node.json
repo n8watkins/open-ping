@@ -18,6 +18,7 @@
     "vitest.config.ts",
     "vitest.integration.config.ts",
     "platform/vitest.config.ts",
+    "scripts/bundle-module.ts",
     "src/static-headers.test.ts",
     "src/pwa-files.test.ts",
     "src/sw.test.ts"

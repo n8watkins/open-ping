@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import pkg from "./package.json";
+import { openpingBundle } from "./scripts/bundle-module";
 
 // The landing's GitHub button shows the repo's star count. The Worker's CSP
 // keeps the page to same-origin requests, so the count is read once at build
@@ -53,6 +54,7 @@ export default defineConfig(async () => ({
     tailwindcss(),
     cloudflare({ configPath: process.env.OPENPING_WRANGLER_CONFIG || undefined }),
     precacheList(),
+    openpingBundle(),
   ],
   define: {
     __OP_STARS__: JSON.stringify(await starCount()),
