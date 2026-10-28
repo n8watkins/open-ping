@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
-import { createSession } from "../lib/sessions";
+import { createSession, revokeAllSessions } from "../lib/sessions";
+import { appUrlFromEnv } from "../lib/app-origin";
 import { hitRateLimit } from "../db/rate-limit";
 import { getAdminEmail, getAdminGithubLogin } from "../lib/admin";
 import { isSetupComplete, isSetupTokenUnspent, spendSetupToken } from "../db/setup";
@@ -100,6 +101,8 @@ passkeysAdmin.get("/", async (c) => {
     passkeys: (await listPasskeys(c.env)).map(summarize),
     rpId: rp.rpId,
     origin: rp.origin,
+    // When set, the Installation URL setting can't move passkeys (lib/app-origin.ts).
+    appUrlFromEnv: appUrlFromEnv(c.env),
     currentPasskeyId: session?.identity_kind === "passkey" ? session.identity : null,
     otherSignIn: await otherSignInMethods(c.env),
   });
@@ -131,12 +134,16 @@ passkeysAdmin.post("/register/verify", async (c) => {
 passkeysAdmin.delete("/:id", async (c) => {
   const id = c.req.param("id");
   const all = await listPasskeys(c.env);
-  if (!all.some((p) => p.id === id)) return c.json({ error: "not_found" }, 404);
-  const others = await otherSignInMethods(c.env);
-  // Never remove the only way in. GitHub or email (or another passkey) must
-  // still work afterwards; otherwise only SETUP_TOKEN recovery would remain.
-  if (all.length === 1 && !others.github && !others.email) {
-    return c.json({ error: "last_sign_in_method" }, 409);
+  const target = all.find((p) => p.id === id);
+  if (!target) return c.json({ error: "not_found" }, 404);
+  // Never remove the only way in. GitHub or email, or another passkey for this
+  // hostname, must still work afterwards; otherwise only SETUP_TOKEN recovery
+  // would remain. A passkey for another hostname can't sign in here, so it
+  // neither counts as a way in nor is one to protect.
+  const { rpId } = await relyingParty(c);
+  if (target.rp_id === rpId && !all.some((p) => p.id !== id && p.rp_id === rpId)) {
+    const others = await otherSignInMethods(c.env);
+    if (!others.github && !others.email) return c.json({ error: "last_sign_in_method" }, 409);
   }
   await deletePasskey(c.env, id);
   return c.json({ ok: true });
@@ -231,6 +238,9 @@ passkeyAuth.post("/recover/verify", async (c) => {
     await spendSetupToken(c.env);
     // Registering it was this sign-in, so it counts as used.
     await recordPasskeyUse(c.env, row, row.sign_count, row.backup_state === 1);
+    // Recovery means control of the account was in doubt: sign out every
+    // device, whichever way it signed in, before starting this session.
+    await revokeAllSessions(c.env);
     await createSession(c, row.id, "passkey");
     return c.json({ ok: true, passkey: summarize(row) }, 201);
   } catch (e) {

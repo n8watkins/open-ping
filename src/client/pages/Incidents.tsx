@@ -124,7 +124,8 @@ export default function Incidents() {
   const { data, loading, error, reload } = useFetch<IncidentListResponse>(listPath);
 
   // Detail panel.
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // An alert's "View incident" link opens it here: /incidents?incident=<id>.
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get("incident"));
   const detailPath = selectedId ? `/api/incidents/${selectedId}` : null;
   const {
     data: detail,

@@ -255,6 +255,24 @@ describe("incident updates and the monthly report", () => {
       body: { status: "identified", message: "Bad deploy, rolling back" },
     });
     expect(r.stdout).toContain('Posted "Identified" to inc_1');
+    expect(r.calls[0].body).not.toHaveProperty("notify");
+  });
+
+  it("says how many channels it alerts, and --quiet posts without alerts", async () => {
+    const posted = { update: { id: "iup_2", status: "monitoring", postedAt: 1 } };
+    const loud = await cli(["incidents", "update", "inc_1", "--status", "monitoring", "--message", "Fix is out"], {
+      "POST /api/incidents/inc_1/updates": [201, { ...posted, alertsQueued: 3 }],
+    });
+    expect(loud.stdout).toContain("Alerting 3 channels with the next check run");
+    const none = await cli(["incidents", "update", "inc_1", "--status", "monitoring", "--message", "Fix is out"], {
+      "POST /api/incidents/inc_1/updates": [201, { ...posted, alertsQueued: 0 }],
+    });
+    expect(none.stdout).toContain("No notification channel takes incident updates");
+    const quiet = await cli(["incidents", "update", "inc_1", "--status", "monitoring", "--message", "Fix is out", "--quiet"], {
+      "POST /api/incidents/inc_1/updates": [201, { ...posted, alertsQueued: 0 }],
+    });
+    expect(quiet.calls[0].body).toEqual({ status: "monitoring", message: "Fix is out", notify: false });
+    expect(quiet.stdout).toContain("No alerts sent (--quiet).");
   });
 
   it("needs a known status and a message, and sends nothing otherwise", async () => {

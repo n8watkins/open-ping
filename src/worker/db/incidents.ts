@@ -87,8 +87,8 @@ function rowToIncident(row: IncidentRow): IncidentRecord {
   };
 }
 
-/** Read a single incident by id (internal; null if missing). */
-async function getIncidentById(
+/** Read a single incident by id (null if missing). */
+export async function getIncidentById(
   env: Env,
   id: string,
 ): Promise<IncidentRecord | null> {

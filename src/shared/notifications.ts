@@ -8,6 +8,7 @@ export const NOTIFY_EVENTS = [
   "degraded",
   "maintenance_start",
   "maintenance_end",
+  "incident_update",
   "weekly",
   "test",
 ] as const;
@@ -31,6 +32,8 @@ export const NOTIFY_DEFAULTS: Record<NotifyEvent, Record<ChannelKind, boolean>> 
   degraded: { push: false, email: false, discord: false, slack: false, teams: false, telegram: false, webhook: false },
   maintenance_start: { push: false, email: false, discord: false, slack: false, teams: false, telegram: false, webhook: true },
   maintenance_end: { push: false, email: false, discord: false, slack: false, teams: false, telegram: false, webhook: true },
+  // The admin posts these; their own devices don't need to hear back about it.
+  incident_update: { push: false, email: true, discord: true, slack: true, teams: true, telegram: true, webhook: true },
   weekly: { push: false, email: true, discord: false, slack: false, teams: false, telegram: false, webhook: false },
   test: { push: true, email: true, discord: true, slack: true, teams: true, telegram: true, webhook: true },
 };

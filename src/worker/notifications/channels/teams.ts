@@ -10,7 +10,7 @@
  */
 
 import type { NotificationPayload } from "../payload";
-import { emailButtonLabel, eventColorState, metaLines } from "../payload";
+import { colorState, emailButtonLabel, metaLines } from "../payload";
 import { postJson, truncate, type SendResult } from "./http";
 
 const TITLE_MAX = 256;
@@ -60,7 +60,7 @@ export interface TeamsMessage {
 
 /** Card accent for an event: the same green, amber and red as the other channels. */
 function cardStyle(p: NotificationPayload): "good" | "attention" | "warning" {
-  const state = eventColorState(p.event);
+  const state = colorState(p);
   return state === "up" ? "good" : state === "degraded" ? "warning" : "attention";
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  strandedPasskeys,
+  installationUrlImpact,
+  installationUrlWarning,
   authenticationToJSON,
   base64urlToBytes,
   bytesToBase64url,
@@ -92,20 +93,77 @@ describe("passkeyErrorMessage", () => {
   });
 });
 
-describe("strandedPasskeys", () => {
-  const keys = [{ rpId: "status.example.com" }, { rpId: "status.example.com" }, { rpId: "old.example.com" }];
+describe("installationUrlImpact", () => {
+  const SAVED = "https://status.example.com";
+  // Two passkeys for the current hostname, one left over from an older address.
+  const state = {
+    passkeys: [{ rpId: "status.example.com" }, { rpId: "status.example.com" }, { rpId: "old.example.com" }],
+    rpId: "status.example.com",
+    origin: "https://status.example.com",
+    appUrlFromEnv: false,
+    otherSignIn: { github: false, email: false },
+  };
 
-  it("counts passkeys bound to a hostname other than the new address", () => {
-    expect(strandedPasskeys("https://status.example.com/", keys)).toBe(1);
-    expect(strandedPasskeys("https://new.example.com", keys)).toBe(3);
+  it("counts only the passkeys that work now, not ones an earlier change already stranded", () => {
+    expect(installationUrlImpact("https://new.example.com", SAVED, state)).toEqual({
+      stranded: 2,
+      newHost: "new.example.com",
+      passkeysForNewHost: 0,
+      github: false,
+      email: false,
+    });
   });
 
-  it("ignores the port, path and scheme, which passkeys don't depend on", () => {
-    expect(strandedPasskeys("http://status.example.com:8443/app", keys.slice(0, 2))).toBe(0);
+  it("says nothing when the address is unchanged, as on a timezone-only save", () => {
+    expect(installationUrlImpact(SAVED, SAVED, state)).toBeNull();
+    expect(installationUrlImpact(` ${SAVED} `, SAVED, state)).toBeNull();
   });
 
-  it("says nothing for an address that isn't a URL yet, or with no passkeys", () => {
-    expect(strandedPasskeys("status.example", keys)).toBe(0);
-    expect(strandedPasskeys("https://new.example.com", [])).toBe(0);
+  it("says nothing when the hostname stays the same (port, path and scheme don't matter)", () => {
+    expect(installationUrlImpact("http://status.example.com:8443", SAVED, state)).toBeNull();
+    // The setting was empty, and the address passkeys work at is the same host.
+    expect(installationUrlImpact("https://status.example.com", null, state)).toBeNull();
+  });
+
+  it("says nothing when the APP_URL Worker variable sets the address", () => {
+    expect(installationUrlImpact("https://new.example.com", SAVED, { ...state, appUrlFromEnv: true })).toBeNull();
+  });
+
+  it("says nothing when no passkey works at the current hostname", () => {
+    const stale = { ...state, passkeys: [{ rpId: "old.example.com" }] };
+    expect(installationUrlImpact("https://new.example.com", SAVED, stale)).toBeNull();
+    expect(installationUrlImpact("https://new.example.com", SAVED, { ...state, passkeys: [] })).toBeNull();
+  });
+
+  it("says nothing for an address that isn't a URL yet, or before passkeys load", () => {
+    expect(installationUrlImpact("status.example", SAVED, state)).toBeNull();
+    expect(installationUrlImpact("https://new.example.com", SAVED, null)).toBeNull();
+  });
+
+  it("counts passkeys already made for the new hostname as a way in", () => {
+    expect(installationUrlImpact("https://old.example.com", SAVED, state)).toMatchObject({
+      stranded: 2,
+      passkeysForNewHost: 1,
+    });
+  });
+});
+
+describe("installationUrlWarning", () => {
+  const base = { stranded: 1, newHost: "new.example.com", passkeysForNewHost: 0, github: false, email: false };
+
+  it("says the passkeys are the only way in only when nothing else remains", () => {
+    expect(installationUrlWarning(base)).toBe(
+      "Your 1 passkey stops working at the new address. It is your only way to sign in, so you would need a new SETUP_TOKEN and /recover to get back in. Save anyway?",
+    );
+    expect(installationUrlWarning({ ...base, stranded: 2 })).toMatch(/^Your 2 passkeys stop working.* They are your only way/);
+  });
+
+  it("names the ways in that still work", () => {
+    expect(installationUrlWarning({ ...base, github: true })).toMatch(/You can still sign in there with GitHub and add new passkeys\./);
+    expect(installationUrlWarning({ ...base, github: true, email: true })).toMatch(/with GitHub or an email link and/);
+    expect(installationUrlWarning({ ...base, passkeysForNewHost: 1, email: true })).toMatch(
+      /with the passkey you added for new\.example\.com or an email link and/,
+    );
+    expect(installationUrlWarning({ ...base, passkeysForNewHost: 2 })).not.toMatch(/only way/);
   });
 });

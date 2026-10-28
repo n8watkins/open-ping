@@ -111,7 +111,7 @@ Tools that change things:
 | `create_maintenance_window` | Schedules maintenance from `startsAt` (ISO 8601 or `now`) with `endsAt` or `durationMinutes`, for every monitor or a list of them, optionally weekly. |
 | `end_maintenance_window` | Ends an active window now; a weekly window also stops recurring. |
 | `update_status_page` | Changes only the fields you pass; `null` clears an optional text field. |
-| `post_incident_update` | Posts a status update (`investigating`, `identified`, `monitoring` or `resolved`, with a message) to an incident's public timeline. It shows publicly only while the incident is public, and it never opens or closes the incident. |
+| `post_incident_update` | Posts a status update (`investigating`, `identified`, `monitoring` or `resolved`, with a message) to an incident's public timeline. It shows publicly only while the incident is public, and it never opens or closes the incident. It also alerts the monitor's notification channels unless `notify` is `false`, and says how many alerts it queued. |
 
 Destructive tools (annotated `destructiveHint`) do nothing unless called with `confirm: true`.
 Their descriptions tell the model to set it only after you have agreed, and without it they return an error asking for confirmation:
