@@ -1,11 +1,11 @@
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
-import type { AppEnv, Env } from "../types";
+import type { AppEnv } from "../types";
 import { randomToken, sha256hex } from "../lib/ids";
 import { isAllowedGithubLogin } from "../lib/admin";
 import { createSession } from "../lib/sessions";
 import { timingSafeEqual } from "../lib/timing";
-import { getSetting } from "../db/settings";
+import { appOrigin } from "../lib/app-origin";
 import { hitRateLimit } from "../db/rate-limit";
 import { homePage } from "../lib/home-page";
 import { countEvent } from "./events";
@@ -27,27 +27,8 @@ const OAUTH_PER_IP_LIMIT = 20;
 const OAUTH_GLOBAL_LIMIT = 500;
 const UNKNOWN_IP = "unknown";
 
-/** Resolve the configured OAuth origin before falling back to the request URL. */
-async function baseUrl(c: { env: Env; req: { url: string } }): Promise<string> {
-  const configured = c.env.APP_URL ?? (await getSetting(c.env, "app_url"));
-  if (configured) {
-    try {
-      const url = new URL(configured);
-      if (
-        (url.protocol === "https:" ||
-          (url.protocol === "http:" &&
-            (url.hostname === "localhost" || url.hostname === "127.0.0.1"))) &&
-        !url.username &&
-        !url.password
-      ) {
-        return url.origin;
-      }
-    } catch {
-      // Invalid legacy setting: use the request origin rather than emitting it.
-    }
-  }
-  return new URL(c.req.url).origin;
-}
+/** The configured OAuth origin, falling back to the request URL (lib/app-origin.ts). */
+const baseUrl = appOrigin;
 
 // Use c.redirect (NOT Response.redirect): Response.redirect returns a brand-new
 // Response that discards anything set on c.res - including Set-Cookie headers from
