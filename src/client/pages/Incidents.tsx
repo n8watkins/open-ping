@@ -17,6 +17,8 @@ import { IncidentUpdatesEditor, type IncidentUpdateItem } from "../components/In
 interface IncidentRow extends IncidentSummary {
   httpStatus?: number | null;
   rootCause?: string | null;
+  /** A second check agreed before the incident opened (confirm before alerting). */
+  confirmed?: boolean;
 }
 
 interface IncidentListResponse {
@@ -450,6 +452,9 @@ function DetailPanel(p: DetailPanelProps) {
         />
         <Meta label="Duration" value={durationLabel(inc)} />
         <Meta label="HTTP status" value={inc.httpStatus != null ? String(inc.httpStatus) : "-"} />
+        {inc.confirmed && (
+          <p className="col-span-2 text-xs text-ink-muted">Confirmed by a second check before alerting.</p>
+        )}
       </dl>
 
       {(inc.error || inc.rootCause) && (

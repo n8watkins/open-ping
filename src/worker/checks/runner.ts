@@ -15,18 +15,36 @@ import { evaluateAssertions } from "./assertions";
 
 /**
  * Runs one check cycle (PRD §8, §9) for any polled monitor type
- * (http/dns/tcp/domain): up to N attempts with a retry delay, warm-up handling,
- * HTTP assertion evaluation, and classification into up/degraded/down. Pure
- * orchestration — persistence is handled separately by checks/state.
+ * (http/dns/tcp/domain): the check itself, then, if it failed, one
+ * confirmation re-check a few seconds later, warm-up handling, HTTP assertion
+ * evaluation, and classification into up/degraded/down. Pure orchestration -
+ * persistence is handled separately by checks/state.
+ *
+ * Confirmation (docs/MONITOR_TYPES.md, "Confirm before alerting"): a failure
+ * opens an incident and alerts only when a second check, made
+ * CONFIRM_DELAY_MS later with the cache bypassed, fails too. If the second
+ * check passes, the cycle counts as up and the sample is flagged as a blip
+ * (retry_recovered). The caller decides whether a cycle confirms (the
+ * monitor's setting, and not while it is already down, so an ongoing outage
+ * costs one fetch per cycle and a recovery is seen on the first passing check)
+ * and may refuse the re-check for lack of budget, which returns a `deferred`
+ * outcome that the scheduler must not persist.
  */
 
-const DEFAULT_ATTEMPTS = 2;
-const RETRY_DELAY_MS = 10_000;
+/** Pause before the confirmation re-check. */
+export const CONFIRM_DELAY_MS = 5_000;
 
 export interface RunOptions {
   warmup?: boolean;
-  attempts?: number;
-  retryDelayMs?: number;
+  /** Re-check once before reporting a failure (default true). */
+  confirm?: boolean;
+  /** Pause before the re-check (default CONFIRM_DELAY_MS). */
+  confirmDelayMs?: number;
+  /**
+   * Asked right before the re-check; false means the run can't afford it, and
+   * the outcome comes back with `confirmation: "deferred"`.
+   */
+  allowConfirm?: () => boolean;
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   now?: number;
@@ -84,81 +102,93 @@ export function classifyCheck(input: ClassifyInput): Omit<CheckOutcome, "at"> {
   };
 }
 
-/** Permanent-failure error codes that must not consume a retry. */
+/** Permanent-failure error codes that a re-check can't change. */
 const PERMANENT_ERRORS = new Set(["blocked_url", "blocked_host"]);
+
+interface Attempt {
+  result: ClassifiableResult;
+  ok: boolean;
+  assertionFailures?: string[];
+}
+
+/** One probe of the monitor's target, with HTTP assertions applied. */
+async function probe(
+  monitor: MonitorRecord,
+  opts: { warmup: boolean; fresh: boolean },
+): Promise<Attempt> {
+  switch (monitor.type) {
+    case "http": {
+      const r = await runHttpCheck(monitor.config as HttpConfig, {
+        warmup: opts.warmup,
+        ...(opts.fresh ? { noStore: true } : {}),
+      });
+      const assertions = (monitor.assertions ?? []) as Assertion[];
+      // HTTP-only: content/JSON assertions run on a 2xx-ranged response body.
+      if (r.ok && assertions.length) {
+        const ar = evaluateAssertions(assertions, { body: r.body ?? "", statusCode: r.statusCode });
+        if (!ar.passed) return { result: r, ok: false, assertionFailures: ar.failures };
+      }
+      return { result: r, ok: r.ok };
+    }
+    case "dns": {
+      const r = await runDnsCheck(monitor.config as DnsConfig);
+      return { result: r, ok: r.ok };
+    }
+    case "tcp": {
+      const r = await runTcpCheck(monitor.config as TcpConfig);
+      return { result: r, ok: r.ok };
+    }
+    case "domain": {
+      const r = await runDomainCheck(monitor.config as DomainConfig);
+      return { result: r, ok: r.ok };
+    }
+    default:
+      // Heartbeat monitors are push-driven and never routed through here.
+      throw new Error(`runMonitorCheck: unsupported monitor type "${monitor.type}"`);
+  }
+}
 
 export async function runMonitorCheck(
   monitor: MonitorRecord,
   opts: RunOptions = {},
 ): Promise<CheckOutcome> {
-  const assertions = (monitor.assertions ?? []) as Assertion[];
   const warmup = opts.warmup ?? false;
-  const maxAttempts = Math.max(1, opts.attempts ?? DEFAULT_ATTEMPTS);
-  const retryDelayMs = opts.retryDelayMs ?? RETRY_DELAY_MS;
+  const confirm = opts.confirm ?? true;
   const sleep = opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
 
-  let result: ClassifiableResult = { ok: false, durationMs: 0, error: "not_run" };
-  let assertionFailures: string[] | undefined;
-  let succeededAttempt = -1;
+  const first = await probe(monitor, { warmup, fresh: false });
+  let decided = first;
+  let succeededAttempt = first.ok ? 1 : -1;
+  let attempts = 1;
+  let confirmation: CheckOutcome["confirmation"];
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    assertionFailures = undefined;
-    let ok: boolean;
-
-    switch (monitor.type) {
-      case "http": {
-        const r = await runHttpCheck(monitor.config as HttpConfig, { warmup });
-        result = r;
-        ok = r.ok;
-        // HTTP-only: content/JSON assertions run on a 2xx-ranged response body.
-        if (ok && assertions.length) {
-          const ar = evaluateAssertions(assertions, {
-            body: r.body ?? "",
-            statusCode: r.statusCode,
-          });
-          if (!ar.passed) {
-            ok = false;
-            assertionFailures = ar.failures;
-          }
-        }
-        break;
-      }
-      case "dns":
-        result = await runDnsCheck(monitor.config as DnsConfig);
-        ok = result.ok;
-        break;
-      case "tcp":
-        result = await runTcpCheck(monitor.config as TcpConfig);
-        ok = result.ok;
-        break;
-      case "domain":
-        result = await runDomainCheck(monitor.config as DomainConfig);
-        ok = result.ok;
-        break;
-      default:
-        // Heartbeat monitors are push-driven and never routed through here.
-        throw new Error(
-          `runMonitorCheck: unsupported monitor type "${monitor.type}"`,
-        );
+  const confirmable =
+    !first.ok && confirm && !(first.result.error && PERMANENT_ERRORS.has(first.result.error));
+  if (confirmable) {
+    if (opts.allowConfirm && !opts.allowConfirm()) {
+      confirmation = "deferred";
+    } else {
+      await sleep(opts.confirmDelayMs ?? CONFIRM_DELAY_MS);
+      decided = await probe(monitor, { warmup, fresh: true });
+      attempts = 2;
+      if (decided.ok) succeededAttempt = 2;
+      confirmation = decided.ok ? "cleared" : "confirmed";
     }
-
-    if (ok) {
-      succeededAttempt = attempt;
-      break;
-    }
-    // Permanent failures (SSRF-blocked URL/host) shouldn't waste a retry.
-    if (result.error && PERMANENT_ERRORS.has(result.error)) break;
-    if (attempt < maxAttempts) await sleep(retryDelayMs);
   }
 
   const outcome = classifyCheck({
-    result,
+    result: decided.result,
     ok: succeededAttempt > 0,
     succeededAttempt,
-    maxAttempts,
+    maxAttempts: attempts,
     warmup,
-    assertionFailures,
+    assertionFailures: decided.assertionFailures,
   });
 
-  return { ...outcome, meta: result.meta, at: opts.now ?? Date.now() };
+  return {
+    ...outcome,
+    ...(confirmation ? { confirmation } : {}),
+    meta: decided.result.meta,
+    at: opts.now ?? Date.now(),
+  };
 }

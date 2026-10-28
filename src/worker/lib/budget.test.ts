@@ -41,6 +41,25 @@ describe("RunBudget", () => {
     await expect(budget.startCheck()).resolves.toBe(false);
   });
 
+  it("reserves a confirmation re-check's fetch only when asked, and refuses one that doesn't fit", () => {
+    const tight = { ...PLAN_BUDGETS.free, subrequests: 3 };
+    const budget = new RunBudget(tight, { d1: 0 });
+    expect(budget.tryStartCheck()).toBe(true); // 1 fetch reserved
+    expect(budget.tryStartCheck()).toBe(true); // 2
+    expect(budget.tryConfirm()).toBe(true); // 3: the first check's re-check
+    expect(budget.tryConfirm()).toBe(false); // the second check's: no room
+    budget.endCheck(1);
+    budget.endCheck(0);
+    expect(budget.fetchesUsed).toBe(3);
+  });
+
+  it("counts a passing check as one fetch, leaving room for alerts", () => {
+    const budget = new RunBudget(PLAN_BUDGETS.free, { d1: 0 });
+    expect(budget.tryStartCheck()).toBe(true);
+    budget.endCheck();
+    expect(budget.fetchesUsed).toBe(CHECK_COST.subrequests);
+  });
+
   it("only allows the notifications that fit", () => {
     const usage = { d1: 40 };
     const budget = new RunBudget(PLAN_BUDGETS.free, usage);

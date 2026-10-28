@@ -548,6 +548,12 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
   const monitorFields = {
     name: z.string().max(120).optional().describe("Display name, 1-120 characters."),
     enabled: z.boolean().optional(),
+    confirmFailures: z
+      .enum(["retry", "off"])
+      .optional()
+      .describe(
+        'Polled monitors: "retry" (default) re-checks a failure once, 5 seconds later, and alerts only if that fails too; "off" alerts on the first failed check.',
+      ),
     schedule: anyObject()
       .optional()
       .describe(

@@ -20,6 +20,7 @@ import { cn } from "../lib/cn";
 import type { Category } from "../lib/types";
 import type {
   Assertion,
+  ConfirmFailures,
   DnsConfig,
   DomainConfig,
   HeartbeatConfig,
@@ -127,6 +128,8 @@ interface FormState {
   customTimezone: string;
   customDays: CustomDayRow[];
   customExcludedDates: string;
+  // Alerting
+  confirmFailures: ConfirmFailures;
   // Status page
   categoryId: string | null;
   publicVisible: boolean;
@@ -144,6 +147,7 @@ interface LoadedMonitor {
   notify: unknown;
   public: unknown;
   categoryId?: string | null;
+  confirmFailures?: ConfirmFailures;
 }
 
 const HTTP_METHODS: HttpMethod[] = [
@@ -244,6 +248,7 @@ function initialForm(type: MonitorType = "http"): FormState {
     customTimezone: tz,
     customDays: [],
     customExcludedDates: "",
+    confirmFailures: "retry",
     categoryId: null,
     publicVisible: false,
   };
@@ -265,6 +270,7 @@ function prefill(m: LoadedMonitor): FormState {
   base.type = m.type;
   base.enabled = m.enabled;
   base.categoryId = m.categoryId ?? null;
+  base.confirmFailures = m.confirmFailures === "off" ? "off" : "retry";
   const pub =
     m.public && typeof m.public === "object"
       ? (m.public as Record<string, unknown>)
@@ -576,6 +582,7 @@ export default function MonitorEditor() {
     const common: Record<string, unknown> = {
       name: form.name.trim(),
       enabled: form.enabled,
+      confirmFailures: form.confirmFailures,
       schedule,
       categoryId: form.categoryId,
       public: publicConfig,
@@ -1371,6 +1378,34 @@ export default function MonitorEditor() {
                 </Field>
               </div>
             </details>
+          </FormCard>
+        )}
+
+        {/* Alerting (polled types: a missed heartbeat can't be re-checked) */}
+        {form.type !== "heartbeat" && (
+          <FormCard
+            title="Alerting"
+            description="When a failed check opens an incident and sends alerts."
+          >
+            <Field
+              label="Confirm failures"
+              hint={
+                form.confirmFailures === "retry"
+                  ? "A failed check is re-checked 5 seconds later; an incident opens only if that fails too."
+                  : "The first failed check opens an incident and alerts."
+              }
+            >
+              <select
+                value={form.confirmFailures}
+                onChange={(e) =>
+                  set("confirmFailures", e.target.value as ConfirmFailures)
+                }
+                className="input"
+              >
+                <option value="retry">Retry once (default)</option>
+                <option value="off">Off</option>
+              </select>
+            </Field>
           </FormCard>
         )}
 

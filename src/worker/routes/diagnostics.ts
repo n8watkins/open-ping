@@ -112,6 +112,9 @@ interface SchedulerRunRow {
   notification_failures: number | null;
   duration_ms: number | null;
   d1_queries: number | null;
+  confirmations: number | null;
+  confirmations_cleared: number | null;
+  confirmations_deferred: number | null;
   error: string | null;
 }
 
@@ -130,12 +133,17 @@ function mapRun(r: SchedulerRunRow) {
     // for runs recorded before migration 0011).
     durationMs: r.duration_ms,
     d1Queries: r.d1_queries,
+    // Confirmation re-checks (null for runs before migration 0013): made,
+    // passed (a blip that opened no incident), and left for the next run.
+    confirmations: r.confirmations,
+    confirmationsCleared: r.confirmations_cleared,
+    confirmationsDeferred: r.confirmations_deferred,
     error: r.error,
   };
 }
 
 const RUN_COLUMNS =
-  "id, cron, started_at, finished_at, ok, monitors_checked, monitors_skipped, check_failures, notification_failures, duration_ms, d1_queries, error";
+  "id, cron, started_at, finished_at, ok, monitors_checked, monitors_skipped, check_failures, notification_failures, duration_ms, d1_queries, confirmations, confirmations_cleared, confirmations_deferred, error";
 
 async function countRows(
   env: Env,

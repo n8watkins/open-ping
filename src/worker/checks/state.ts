@@ -99,7 +99,14 @@ function sampleStatement(env: Env, monitorId: string, s: SampleInput): D1Prepare
 async function applyIncidentTransition(
   env: Env,
   monitor: MonitorRecord,
-  p: { ok: boolean; at: number; error?: string | null; httpStatus?: number | null },
+  p: {
+    ok: boolean;
+    at: number;
+    error?: string | null;
+    httpStatus?: number | null;
+    /** A second check agreed before this failure was reported. */
+    confirmed?: boolean;
+  },
   downEvent: NotifyEvent = "down",
 ): Promise<{ activeIncidentId: string | null; isFlapping: boolean }> {
   try {
@@ -121,6 +128,7 @@ async function applyIncidentTransition(
         error: p.error,
         httpStatus: p.httpStatus,
         isFlapping: flapping,
+        confirmed: p.confirmed ?? false,
       });
       // Single flapping warning instead of yet another down alert.
       await safe("notify", () =>
@@ -189,6 +197,7 @@ export async function applyCheckResult(
           at: now,
           error: outcome.error,
           httpStatus: outcome.statusCode,
+          confirmed: outcome.confirmation === "confirmed",
         });
 
   const stateUpdate = env.DB.prepare(
@@ -225,6 +234,11 @@ export async function applyCheckResult(
   }
   if (outcome.assertionFailures?.length) {
     sampleMeta.assertionFailures = outcome.assertionFailures;
+  }
+  // "confirmed" or "cleared" (a blip: the first check failed, the re-check
+  // passed, so no incident opened).
+  if (outcome.confirmation === "confirmed" || outcome.confirmation === "cleared") {
+    sampleMeta.confirmation = outcome.confirmation;
   }
 
   const sample: SampleInput = {

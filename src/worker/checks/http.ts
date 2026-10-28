@@ -114,7 +114,7 @@ function classifyFetchError(err: unknown): {
 
 export async function runHttpCheck(
   config: HttpConfig,
-  opts?: { warmup?: boolean; skipBody?: boolean },
+  opts?: { warmup?: boolean; skipBody?: boolean; noStore?: boolean },
 ): Promise<HttpCheckResult> {
   // SSRF guard (PRD §19): reject loopback/link-local/metadata/private/credentialed
   // targets before making any outbound request.
@@ -175,6 +175,10 @@ export async function runHttpCheck(
         headers: reqHeaders,
         redirect: "manual",
         signal: controller.signal,
+        // noStore: a confirmation re-check must see the live origin, never a
+        // response Cloudflare's cache kept from an earlier request (it also
+        // sends Cache-Control: no-cache and Pragma: no-cache upstream).
+        ...(opts?.noStore ? { cache: "no-store" as const } : {}),
       };
       if (reqBody !== undefined && !BODYLESS_METHODS.has(method)) {
         init.body = reqBody;

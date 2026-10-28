@@ -55,6 +55,7 @@ export const monitorPatchSchema = z
     type: z.string().optional(),
     name: z.unknown().optional(),
     enabled: z.unknown().optional(),
+    confirmFailures: z.unknown().optional(),
     schedule: z.unknown().optional(),
     config: z.record(z.string(), z.unknown()).optional(),
     assertions: z.unknown().optional(),
@@ -88,6 +89,7 @@ export function mergeMonitorPatch(
     type: existing.type,
     name: pick(patch.name, existing.name),
     enabled: pick(patch.enabled, existing.enabled),
+    confirmFailures: pick(patch.confirmFailures, existing.confirmFailures),
     schedule: pick(patch.schedule, existing.schedule),
     notify: pick(patch.notify, existing.notify),
     public: patch.public ? { ...existing.public, ...patch.public } : existing.public,
@@ -357,7 +359,10 @@ monitors.post("/:id/test", async (c) => {
     return c.json({ error: "not_testable", message: "Heartbeat monitors are push-driven." }, 400);
   }
   const apply = c.req.query("apply") === "1" || c.req.query("apply") === "true";
-  const outcome = await runMonitorCheck(monitor, { now: Date.now() });
+  const outcome = await runMonitorCheck(monitor, {
+    confirm: monitor.confirmFailures !== "off",
+    now: Date.now(),
+  });
   if (apply) await applyCheckResult(c.env, monitor, outcome);
   return c.json({ outcome, applied: apply });
 });

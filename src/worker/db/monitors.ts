@@ -4,6 +4,7 @@ import { encryptConfig, decryptConfig, mergeSecrets } from "../lib/secret-config
 import { MONITOR_TYPES, type MonitorType } from "../../shared/states";
 import type {
   Assertion,
+  ConfirmFailures,
   CreateMonitorInput,
   DnsConfig,
   DomainConfig,
@@ -40,6 +41,8 @@ export interface MonitorRecord {
   paused: boolean;
   intervalSeconds: number;
   graceSeconds: number | null;
+  /** Re-check a failure before opening an incident (polled types only). */
+  confirmFailures: ConfirmFailures;
   config: MonitorConfig;
   schedule: Schedule;
   assertions: Assertion[];
@@ -61,6 +64,8 @@ export interface MonitorRow {
   paused: number;
   interval_seconds: number;
   grace_seconds: number | null;
+  /** 'retry' | 'off'; NULL (rows before migration 0013) means 'retry'. */
+  confirm_failures?: string | null;
   config: string;
   schedule: string;
   assertions: string | null;
@@ -122,6 +127,7 @@ function rowToMonitor(row: MonitorRow): MonitorRecord {
     paused: row.paused !== 0,
     intervalSeconds: row.interval_seconds,
     graceSeconds: row.grace_seconds ?? null,
+    confirmFailures: row.confirm_failures === "off" ? "off" : "retry",
     config: parseJson<MonitorConfig>(row.config, {} as MonitorConfig),
     schedule: parseJson<Schedule>(row.schedule, { mode: "always" }),
     assertions: parseJson<Assertion[]>(row.assertions, []),
@@ -248,10 +254,10 @@ export async function createMonitor(
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO monitors (
-         id, type, name, enabled, paused, interval_seconds, grace_seconds,
+         id, type, name, enabled, paused, interval_seconds, grace_seconds, confirm_failures,
          config, schedule, assertions, notify, public, category_id, heartbeat_token,
          heartbeat_token_hash, sort_order, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       id,
       input.type,
@@ -260,6 +266,7 @@ export async function createMonitor(
       0,
       intervalSeconds,
       graceSeconds,
+      input.confirmFailures,
       JSON.stringify(storedConfig),
       JSON.stringify(input.schedule),
       assertions == null ? null : JSON.stringify(assertions),
@@ -313,7 +320,7 @@ export async function updateMonitor(
   // sort_order are preserved (type is immutable, enforced at the route layer).
   await env.DB.prepare(
     `UPDATE monitors SET
-       name = ?, enabled = ?, interval_seconds = ?, grace_seconds = ?,
+       name = ?, enabled = ?, interval_seconds = ?, grace_seconds = ?, confirm_failures = ?,
        config = ?, schedule = ?, assertions = ?, notify = ?, public = ?,
        category_id = ?, updated_at = ?
      WHERE id = ?`,
@@ -323,6 +330,7 @@ export async function updateMonitor(
       input.enabled ? 1 : 0,
       intervalSeconds,
       graceSeconds,
+      input.confirmFailures,
       JSON.stringify(storedConfig),
       JSON.stringify(input.schedule),
       assertions == null ? null : JSON.stringify(assertions),

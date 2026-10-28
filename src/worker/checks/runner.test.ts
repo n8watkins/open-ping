@@ -10,7 +10,7 @@ import { runHttpCheck } from "./http";
 import { runDnsCheck } from "./dns";
 import { runTcpCheck } from "./tcp";
 import { runDomainCheck } from "./domain";
-import { classifyCheck, runMonitorCheck } from "./runner";
+import { classifyCheck, CONFIRM_DELAY_MS, runMonitorCheck } from "./runner";
 
 const mockedRun = vi.mocked(runHttpCheck);
 const mockedDns = vi.mocked(runDnsCheck);
@@ -164,6 +164,99 @@ describe("runMonitorCheck", () => {
     expect(o.state).toBe("down");
     expect(o.error).toBe("timeout");
     expect(mockedRun).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("runMonitorCheck confirmation before alerting", () => {
+  beforeEach(() => mockedRun.mockReset());
+
+  const monitor = {
+    id: "mon_1",
+    type: "http",
+    config: { url: "https://x.test" },
+    assertions: [],
+    intervalSeconds: 720,
+    schedule: { mode: "always" },
+  } as unknown as MonitorRecord;
+
+  it("a passing first check makes no re-check", async () => {
+    mockedRun.mockResolvedValue(result());
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const o = await runMonitorCheck(monitor, { sleep, now: 1 });
+    expect(o.state).toBe("up");
+    expect(o.confirmation).toBeUndefined();
+    expect(mockedRun).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("fail then fail: confirmed down, the re-check bypasses the cache after the pause", async () => {
+    mockedRun
+      .mockResolvedValueOnce(result({ ok: false, statusCode: 502, error: "status_out_of_range" }))
+      .mockResolvedValueOnce(result({ ok: false, statusCode: 503, error: "status_out_of_range" }));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const o = await runMonitorCheck(monitor, { sleep, now: 1 });
+    expect(o.state).toBe("down");
+    expect(o.confirmation).toBe("confirmed");
+    expect(o.attempts).toBe(2);
+    // The outcome reports the second (deciding) check.
+    expect(o.statusCode).toBe(503);
+    expect(sleep).toHaveBeenCalledWith(CONFIRM_DELAY_MS);
+    expect(mockedRun.mock.calls[0]?.[1]).not.toHaveProperty("noStore");
+    expect(mockedRun.mock.calls[1]?.[1]).toMatchObject({ noStore: true });
+  });
+
+  it("fail then pass: cleared, up, flagged as a blip", async () => {
+    mockedRun
+      .mockResolvedValueOnce(result({ ok: false, error: "network_error" }))
+      .mockResolvedValueOnce(result({ ok: true, durationMs: 80 }));
+    const o = await runMonitorCheck(monitor, { sleep: async () => {}, now: 1 });
+    expect(o.ok).toBe(true);
+    expect(o.state).toBe("up");
+    expect(o.confirmation).toBe("cleared");
+    expect(o.retryRecovered).toBe(true);
+    expect(o.durationMs).toBe(80);
+  });
+
+  it("an assertion failure is re-checked too", async () => {
+    const withAssertion = {
+      ...monitor,
+      assertions: [{ kind: "contains", value: "ok", caseSensitive: false }],
+    } as unknown as MonitorRecord;
+    mockedRun
+      .mockResolvedValueOnce(result({ body: "maintenance" }))
+      .mockResolvedValueOnce(result({ body: "all ok" }));
+    const o = await runMonitorCheck(withAssertion, { sleep: async () => {}, now: 1 });
+    expect(o.confirmation).toBe("cleared");
+    expect(o.state).toBe("up");
+  });
+
+  it("confirm off: one check, and a failure is down at once", async () => {
+    mockedRun.mockResolvedValue(result({ ok: false, error: "timeout" }));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const o = await runMonitorCheck(monitor, { confirm: false, sleep, now: 1 });
+    expect(o.state).toBe("down");
+    expect(o.confirmation).toBeUndefined();
+    expect(o.attempts).toBe(1);
+    expect(mockedRun).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("no budget for the re-check: deferred, without waiting or re-checking", async () => {
+    mockedRun.mockResolvedValue(result({ ok: false, error: "timeout" }));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const allowConfirm = vi.fn(() => false);
+    const o = await runMonitorCheck(monitor, { allowConfirm, sleep, now: 1 });
+    expect(o.confirmation).toBe("deferred");
+    expect(allowConfirm).toHaveBeenCalledOnce();
+    expect(mockedRun).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("asks for budget only when a re-check is needed", async () => {
+    mockedRun.mockResolvedValue(result());
+    const allowConfirm = vi.fn(() => true);
+    await runMonitorCheck(monitor, { allowConfirm, now: 1 });
+    expect(allowConfirm).not.toHaveBeenCalled();
   });
 });
 

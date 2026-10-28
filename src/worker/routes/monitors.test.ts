@@ -16,6 +16,7 @@ function heartbeatMonitor(): MonitorRecord {
     paused: false,
     intervalSeconds: 3600,
     graceSeconds: 300,
+    confirmFailures: "retry",
     config: {
       intervalSeconds: 3600,
       graceSeconds: 300,

@@ -59,6 +59,11 @@ const monitorFlags = {
   channels: { type: "list", help: "Notification channel ids, comma-separated" },
   enable: { type: "boolean", help: "Enable the monitor" },
   disable: { type: "boolean", help: "Disable the monitor" },
+  confirm: {
+    type: "string",
+    values: ["retry", "off"],
+    help: "Confirm failures: retry (default, re-check once before alerting) or off (alert on the first failure)",
+  },
 };
 
 const yes = { yes: { type: "boolean", help: "Confirm; required because this cannot be undone" } };
@@ -616,6 +621,7 @@ function commonFromFlags(flags) {
   if (flags.category !== undefined) body.categoryId = flags.category === "none" ? null : flags.category;
   if (flags.channels !== undefined) body.notify = { channels: flags.channels };
   if (flags.enable || flags.disable) body.enabled = !!flags.enable;
+  if (flags.confirm !== undefined) body.confirmFailures = flags.confirm;
   return body;
 }
 

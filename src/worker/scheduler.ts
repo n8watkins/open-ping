@@ -31,7 +31,8 @@ import {
   type RunStats,
 } from "./lib/lease";
 import { expiredAuthCleanupStatements } from "./lib/sessions";
-import { countingD1, planBudget, RunBudget, type UsageCounter } from "./lib/budget";
+import { countingD1, planBudget, RunBudget, type PlanBudget, type UsageCounter } from "./lib/budget";
+import { DOWNTIME_STATES } from "../shared/states";
 import { batchEach } from "./lib/batch";
 import { claimDueStatement, outboxEntriesFromRows, type OutboxRow } from "./db/outbox";
 import { parseJSONSetting, settingsFromRows, settingsStatement, type SettingRow } from "./db/settings";
@@ -97,11 +98,16 @@ const RUN_SETTINGS = [
  * them), and the run record keeps the total as `d1_queries` next to its
  * wall-clock `duration_ms`.
  */
-export async function runScheduled(controller: ScheduledController, baseEnv: Env): Promise<void> {
+export async function runScheduled(
+  controller: ScheduledController,
+  baseEnv: Env,
+  /** Tests only: a different budget than the plan's, a shorter re-check pause. */
+  opts: { budget?: PlanBudget; confirmDelayMs?: number } = {},
+): Promise<void> {
   // Every D1 query this run makes is counted against the plan's budget.
   const usage: UsageCounter = { d1: 0 };
   const env: Env = { ...baseEnv, DB: countingD1(baseEnv.DB, usage) };
-  const budget = new RunBudget(planBudget(baseEnv), usage);
+  const budget = new RunBudget(opts.budget ?? planBudget(baseEnv), usage);
   const lease = { name: LEASE_NAME, holder: newId("lease") };
   const run = { id: newId("run"), startedAt: Date.now() };
   const now = run.startedAt;
@@ -125,7 +131,14 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
     return;
   }
 
-  const tally = { checked: 0, skipped: 0, failures: 0 };
+  const tally = {
+    checked: 0,
+    skipped: 0,
+    failures: 0,
+    confirmations: 0,
+    confirmationsCleared: 0,
+    confirmationsDeferred: 0,
+  };
   let stats: RunStats;
   try {
     const monitors = await monitorsFromRows(env, (monitorsRes?.results ?? []) as MonitorRow[]);
@@ -267,8 +280,36 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
         st.state === "scheduled_off" ||
         st.state === "unknown" ||
         st.state === "maintenance";
+      // Confirm before alerting (checks/runner.ts): a failure re-checks once
+      // before it can open an incident, unless the monitor turned that off or
+      // is already down. While down there is nothing to confirm (the incident
+      // is open), and a recovery counts on the first passing check.
+      const alreadyDown = !!st && (DOWNTIME_STATES.has(st.state) || !!st.active_incident_id);
+      const confirm = m.confirmFailures !== "off" && !alreadyDown;
+      let confirmations = 0;
       try {
-        const outcome = await runMonitorCheck(m, { warmup, now: Date.now() });
+        const outcome = await runMonitorCheck(m, {
+          warmup,
+          confirm,
+          ...(opts.confirmDelayMs !== undefined ? { confirmDelayMs: opts.confirmDelayMs } : {}),
+          // The re-check costs one more fetch. When the run can't afford it the
+          // failure is not written at all (no state, sample or alert): the
+          // monitor stays due and is first in line next run, so an
+          // unconfirmed failure never alerts.
+          allowConfirm: () => {
+            if (!budget.tryConfirm()) return false;
+            confirmations++;
+            return true;
+          },
+          now: Date.now(),
+        });
+        if (outcome.confirmation === "deferred") {
+          tally.confirmationsDeferred++;
+          deferred++;
+          return;
+        }
+        if (outcome.confirmation) tally.confirmations++;
+        if (outcome.confirmation === "cleared") tally.confirmationsCleared++;
         await applyCheckResult(env, m, outcome, st ?? null);
         tally.checked++;
         if (!outcome.ok) tally.failures++;
@@ -276,7 +317,7 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
         tally.failures++;
         console.error(`[scheduler] check ${m.id} failed`, e);
       } finally {
-        budget.endCheck();
+        budget.endCheck(confirmations);
       }
     });
     if (deferred > 0) {
@@ -344,6 +385,9 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
       monitorsSkipped: tally.skipped,
       checkFailures: tally.failures,
       notificationFailures,
+      confirmations: tally.confirmations,
+      confirmationsCleared: tally.confirmationsCleared,
+      confirmationsDeferred: tally.confirmationsDeferred,
     };
   } catch (err) {
     console.error("[scheduler] run failed", err);
@@ -353,6 +397,9 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
       monitorsSkipped: tally.skipped,
       checkFailures: tally.failures,
       notificationFailures: 0,
+      confirmations: tally.confirmations,
+      confirmationsCleared: tally.confirmationsCleared,
+      confirmationsDeferred: tally.confirmationsDeferred,
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -373,6 +420,6 @@ export async function runScheduled(controller: ScheduledController, baseEnv: Env
     );
   }
   console.log(
-    `[scheduler] cron=${controller.cron} checked=${stats.monitorsChecked} skipped=${stats.monitorsSkipped} failures=${stats.checkFailures} d1=${stats.d1Queries} ms=${Date.now() - run.startedAt}`,
+    `[scheduler] cron=${controller.cron} checked=${stats.monitorsChecked} skipped=${stats.monitorsSkipped} failures=${stats.checkFailures} confirmations=${stats.confirmations ?? 0} cleared=${stats.confirmationsCleared ?? 0} deferred=${stats.confirmationsDeferred ?? 0} d1=${stats.d1Queries} ms=${Date.now() - run.startedAt}`,
   );
 }
