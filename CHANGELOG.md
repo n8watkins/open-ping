@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.1 - 2026-10-28
+
+Checks run much leaner: a free Cloudflare plan now covers about 24 monitors instead of 8.
+
+### Faster
+
+- A free-plan run now checks about 24 monitors instead of 8 ([#46](https://github.com/n8watkins/open-ping/pull/46))
+
 ## 0.10.0 - 2026-10-28
 
 OpenPing installs as an app on your phone, opens offline on your last known status, and refreshes with a pull.
