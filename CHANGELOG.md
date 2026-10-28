@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.0 - 2026-10-28
+
+Incident updates now reach your alert channels, and a review pass fixed passkey edge cases, big status pages and the monthly report.
+
+### New
+
+- Posting an incident update alerts the monitor's channels ([#36](https://github.com/n8watkins/open-ping/pull/36))
+
+### Fixed
+
+- Warnings about an address change are accurate, and recovery signs out other devices ([#37](https://github.com/n8watkins/open-ping/pull/37))
+- Honest request budget, big status pages, feed links, monthly report catch-up ([#38](https://github.com/n8watkins/open-ping/pull/38))
+
 ## 0.7.0 - 2026-10-28
 
 ### New
