@@ -129,17 +129,31 @@ export function countingD1(db: D1Database, counter: UsageCounter): D1Database {
 export const CHECK_COST = { d1: 1, subrequests: 1 } as const;
 
 /**
- * What a run keeps back for the work after its checks: the shared read batch,
- * the batch of writes and end-of-run work, the weekly summary (about eight
- * queries when it is due) or the monthly report (two), and the batch that
- * records the finish. Retries after a failed batch are paid from what is left
- * and stop when it runs out (lib/batch.ts).
+ * Most D1 queries the weekly summary makes when it is due
+ * (notifications/weekly.ts; measured in test/integration/scheduler-email-budget.test.ts).
  */
-export const TAIL_RESERVE = { d1: 11 } as const;
+export const WEEKLY_SUMMARY_D1 = 9;
+
+/** Most D1 queries the monthly report makes when it tries (notifications/monthly.ts). */
+export const MONTHLY_REPORT_D1 = 2;
 
 /**
- * D1 queries one notification delivery spends (notifications/dispatcher.ts:
- * the channel read, marking it sent or failed, and the channel's result).
+ * What a run keeps back for the work after its checks: the shared read batch,
+ * the batch of writes and end-of-run work, the weekly summary or the monthly
+ * report (one email job per run), and the batch that records the finish.
+ * Retries after a failed batch are paid from what is left and stop when it
+ * runs out (lib/batch.ts), and the emails are skipped, to catch up on a later
+ * run, when retries left too little for them.
+ */
+export const TAIL_RESERVE = { d1: 3 + Math.max(WEEKLY_SUMMARY_D1, MONTHLY_REPORT_D1) } as const;
+
+/**
+ * D1 queries a typical notification delivery spends, for sizing how many a
+ * run claims: a channel's mark and result plus its read, or a Web Push
+ * device's subscription, mark and result. Each delivery is then charged its
+ * own worst case before it goes (notifications/dispatcher.ts deliveryD1Cost:
+ * the once-per-pass channel, VAPID and email_from reads, and a possible
+ * failure mark), and what doesn't fit waits for the next run.
  */
 export const NOTIFICATION_D1_COST = 3;
 

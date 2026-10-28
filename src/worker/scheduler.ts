@@ -11,6 +11,7 @@ import { parseDomainCache } from "./checks/domain";
 import { pacer } from "./lib/pace";
 import {
   checkNeedsIncident,
+  planAlertRepair,
   planCheckResult,
   planHeartbeatMissed,
   planMaintenanceState,
@@ -21,6 +22,7 @@ import {
   type StateRow as CheckStateRow,
 } from "./checks/state";
 import type { CheckOutcome } from "./checks/types";
+import { rowToIncident, unnotifiedIncidentsStatement, type IncidentRow } from "./db/incidents";
 import { activeWindowsFromRows, listMaintenanceStatement, type MaintenanceRow } from "./db/maintenance";
 import { compactionStatements, resolveRetention, type RetentionConfig } from "./history/rollups";
 import { outboxTake, processOutbox } from "./notifications/dispatcher";
@@ -38,7 +40,9 @@ import {
 import { expiredAuthCleanupStatements } from "./lib/sessions";
 import {
   countingD1,
+  MONTHLY_REPORT_D1,
   NOTIFICATION_D1_COST,
+  WEEKLY_SUMMARY_D1,
   planBudget,
   RunBudget,
   type PlanBudget,
@@ -134,7 +138,7 @@ export async function runScheduled(
   // won), and read what the run needs. A batch is one transaction, so the run
   // record can never exist without the lease. Losing the lease wastes only the
   // reads; nothing is written.
-  const [, holderRes, , monitorsRes, statesRes, maintenanceRes, settingsRes] = await env.DB.batch([
+  const [, holderRes, , monitorsRes, statesRes, maintenanceRes, settingsRes, unnotifiedRes] = await env.DB.batch([
     acquireLeaseStatement(env, lease.name, lease.holder, now, LEASE_TTL_MS),
     leaseHolderStatement(env, lease.name),
     recordRunStartStatement(env, run, controller.cron ?? null, lease),
@@ -142,6 +146,7 @@ export async function runScheduled(
     env.DB.prepare(`SELECT monitor_id, next_check_at, ${STATE_COLUMNS} FROM monitor_state`),
     listMaintenanceStatement(env),
     settingsStatement(env, RUN_SETTINGS),
+    unnotifiedIncidentsStatement(env, now),
   ]);
   const holder = (holderRes?.results?.[0] as { holder?: string } | undefined)?.holder;
   if (holder !== lease.holder) {
@@ -358,9 +363,12 @@ export async function runScheduled(
     // overdue heartbeat (a beat may have arrived since the run started).
     // Retries after a failed batch are paid from what the budget has left.
     const retryRoom = () => budget.canSpendD1(2);
+    // Open incidents whose alert a failed write left out (planAlertRepair).
+    const unnotified = ((unnotifiedRes?.results ?? []) as IncidentRow[]).map(rowToIncident);
     const ctx = await readWriteContext(
       env,
       {
+        notify: unnotified.length > 0,
         incidents: [
           ...results
             .filter((r) => checkNeedsIncident(r.outcome, r.st))
@@ -390,6 +398,26 @@ export async function runScheduled(
       } catch (e) {
         tally.failures++;
         console.error(`[scheduler] check ${m.id} failed`, e);
+      }
+    }
+    const byId = new Map(monitors.map((m) => [m.id, m]));
+    // A monitor that recovers in this very run gets its recovery alert, not a
+    // late down alert first.
+    const recovering = new Set(results.filter((r) => r.outcome.ok).map((r) => r.m.id));
+    for (const incident of unnotified) {
+      try {
+        const monitor = recovering.has(incident.monitorId) ? null : (byId.get(incident.monitorId) ?? null);
+        const group = await planAlertRepair(env, monitor, incident, ctx);
+        if (group) {
+          writes.push({
+            group,
+            done: (o) => {
+              if (o === "none") console.error(`[scheduler] alert for ${incident.id} still not queued`);
+            },
+          });
+        }
+      } catch (e) {
+        console.error(`[scheduler] alert repair ${incident.id} failed`, e);
       }
     }
     for (const m of missedHeartbeats) {
@@ -450,7 +478,11 @@ export async function runScheduled(
     if (claimed) {
       try {
         const entries = await outboxEntriesFromRows(env, (claimed.results ?? []) as OutboxRow[]);
-        const r = await processOutbox(env, Date.now(), take, entries);
+        // Each delivery goes only if its worst case still fits (it never
+        // pushes the run past its plan); the rest wait for the next run.
+        const r = await processOutbox(env, Date.now(), take, entries, {
+          canSpend: (d1) => budget.canSpendD1(d1),
+        });
         notificationFailures = r.failed;
       } catch (e) {
         console.error("[scheduler] notification dispatch failed", e);
@@ -458,15 +490,23 @@ export async function runScheduled(
     }
 
     // Weekly summary (self-guards on enabled/recipient/due, from the settings
-    // read up front, so a run where it isn't due costs no queries).
+    // read up front, so a run where it isn't due costs no queries). When
+    // retries above left too little of the budget for it, it waits for a later
+    // run: it stays due until it is sent.
     let weeklyAttempted = false;
-    try {
-      const weekly = await sendWeeklySummary(env, Date.now(), settings);
-      weeklyAttempted =
-        weekly.sent || !["disabled", "no_recipient", "not_due"].includes(weekly.reason ?? "");
-    } catch (e) {
+    if (budget.canSpendD1(WEEKLY_SUMMARY_D1)) {
+      try {
+        const weekly = await sendWeeklySummary(env, Date.now(), settings);
+        weeklyAttempted =
+          weekly.sent || !["disabled", "no_recipient", "not_due"].includes(weekly.reason ?? "");
+      } catch (e) {
+        weeklyAttempted = true;
+        console.error("[scheduler] weekly summary failed", e);
+      }
+    } else {
+      // Counted as tried, so the monthly report doesn't take its place either.
       weeklyAttempted = true;
-      console.error("[scheduler] weekly summary failed", e);
+      console.log("[scheduler] out of D1 budget; the weekly summary and monthly report wait for a later run");
     }
 
     // Monthly report (opt-in, from the 1st; notifications/monthly.ts). It costs
@@ -474,7 +514,7 @@ export async function runScheduled(
     // the weekly summary already tried this run, the report waits for a later
     // one (it catches up any day until last month's report is sent), so the
     // tail reserve never has to hold both.
-    if (!weeklyAttempted) {
+    if (!weeklyAttempted && budget.canSpendD1(MONTHLY_REPORT_D1)) {
       try {
         await sendMonthlyReport(env, Date.now(), settings, retention);
       } catch (e) {

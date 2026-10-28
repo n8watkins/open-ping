@@ -82,17 +82,6 @@ async function parsePayload(env: Env, raw: string): Promise<ParsedPayload> {
 
 /** Map a raw row to a typed entry, parsing the JSON payload. */
 async function rowToEntry(env: Env, row: OutboxRow): Promise<OutboxEntry> {
-  // Upgrade a legacy plaintext payload as soon as the dispatcher claims it.
-  // The current delivery still parses the original JSON below, while retained
-  // sent/dead history is no longer left exposed in D1.
-  if (env.MASTER_KEY && !isCiphertext(row.payload)) {
-    const protectedPayload = await encryptValue(env, row.payload);
-    await env.DB.prepare(
-      "UPDATE notification_outbox SET payload = ?, updated_at = ? WHERE id = ? AND payload = ?",
-    )
-      .bind(protectedPayload, Date.now(), row.id, row.payload)
-      .run();
-  }
   const parsedPayload = await parsePayload(env, row.payload);
   return {
     id: row.id,
@@ -193,8 +182,28 @@ export function claimDueStatement(env: Env, now: number, limit: number): D1Prepa
   ).bind(now, limit);
 }
 
-/** Decode the rows of {@link claimDueStatement}. */
-export function outboxEntriesFromRows(env: Env, rows: OutboxRow[]): Promise<OutboxEntry[]> {
+/**
+ * Decode the rows of {@link claimDueStatement}. A legacy plaintext payload is
+ * upgraded (encrypted in place) as soon as the dispatcher claims it, all of
+ * them in one round trip; the current delivery still parses the original JSON,
+ * while retained sent/dead history is no longer left exposed in D1.
+ */
+export async function outboxEntriesFromRows(env: Env, rows: OutboxRow[]): Promise<OutboxEntry[]> {
+  const legacy = env.MASTER_KEY ? rows.filter((row) => !isCiphertext(row.payload)) : [];
+  if (legacy.length > 0) {
+    const now = Date.now();
+    const upgrades = await Promise.all(
+      legacy.map(async (row) =>
+        env.DB.prepare("UPDATE notification_outbox SET payload = ?, updated_at = ? WHERE id = ? AND payload = ?").bind(
+          await encryptValue(env, row.payload),
+          now,
+          row.id,
+          row.payload,
+        ),
+      ),
+    );
+    await env.DB.batch(upgrades);
+  }
   return Promise.all(rows.map((row) => rowToEntry(env, row)));
 }
 

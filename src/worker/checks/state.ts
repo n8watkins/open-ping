@@ -6,6 +6,7 @@ import { newId } from "../lib/ids";
 import { nextCheckAt, nextActivePeriod } from "../lib/schedule";
 import {
   activeIncidentStatement,
+  markNotifiedStatement,
   observationStatement,
   openIncidentStatements,
   recentIncidentCountStatement,
@@ -168,12 +169,14 @@ const NOTIFY_SETTINGS = ["app_url", "vapid_public_key"] as const;
  */
 export async function readWriteContext(
   env: Env,
-  needs: { incidents?: IncidentNeed[]; states?: string[] },
+  /** `notify`: read the alert channels even when no incident may change. */
+  needs: { incidents?: IncidentNeed[]; states?: string[]; notify?: boolean },
   opts: { canSpend?: () => boolean } = {},
 ): Promise<WriteContext> {
   const incidentNeeds = needs.incidents ?? [];
   const stateIds = needs.states ?? [];
-  if (incidentNeeds.length === 0 && stateIds.length === 0) return EMPTY_WRITE_CONTEXT;
+  const wantNotify = incidentNeeds.length > 0 || !!needs.notify;
+  if (!wantNotify && stateIds.length === 0) return EMPTY_WRITE_CONTEXT;
 
   const stmts: LabeledStatement[] = [];
   for (const id of stateIds) {
@@ -193,7 +196,7 @@ export async function readWriteContext(
       { label: `recent alerts ${n.monitorId}`, stmt: recentAlertsStatement(env, n.monitorId, alertsSince) },
     );
   }
-  if (incidentNeeds.length > 0) {
+  if (wantNotify) {
     stmts.push(
       { label: "channels", stmt: listChannelsStatement(env) },
       { label: "push devices", stmt: activeSubscriptionIdsStatement(env) },
@@ -226,7 +229,7 @@ export async function readWriteContext(
   }
 
   let notify: NotifyContext | null = null;
-  if (incidentNeeds.length > 0) {
+  if (wantNotify) {
     const channelRows = rows(i);
     const pushRows = rows(i + 1);
     const settingRows = rows(i + 2);
@@ -271,6 +274,8 @@ interface IncidentPlan {
   isFlapping: boolean;
   statements: D1PreparedStatement[];
   deliveries: NewOutboxEntry[];
+  /** The incident the deliveries open with: the alert's unit marks it notified. */
+  notifies?: string;
 }
 
 /**
@@ -307,6 +312,11 @@ function planIncidentTransition(
     }
     // Opening a new incident - flag flapping if too many recently.
     const flapping = inc.recentIncidents + 1 >= FLAP_THRESHOLD;
+    // Single flapping warning instead of yet another down alert, and none at all
+    // when one of the same type went out for this monitor within the cooldown
+    // (notifications/enqueue.ts), so flapping/down storms coalesce.
+    const event: NotifyEvent = flapping ? "flapping" : downEvent;
+    const coolingDown = COOLDOWN_EVENTS.has(event) && inc.recentAlerts.has(event);
     const opened = openIncidentStatements(env, monitor, {
       at: p.at,
       error: p.error,
@@ -314,17 +324,20 @@ function planIncidentTransition(
       isFlapping: flapping,
       confirmed: p.confirmed ?? false,
     });
-    // Single flapping warning instead of yet another down alert, and none at all
-    // when one of the same type went out for this monitor within the cooldown
-    // (notifications/enqueue.ts), so flapping/down storms coalesce.
-    const event: NotifyEvent = flapping ? "flapping" : downEvent;
-    const coolingDown = COOLDOWN_EVENTS.has(event) && inc.recentAlerts.has(event);
+    const deliveries =
+      ctx.notify && !coolingDown ? incidentDeliveries(monitor, opened.record, event, ctx.notify) : [];
+    // The incident is marked notified once its alert is queued, by the alert's
+    // own unit; with nothing to send (a cooldown, no channel that wants it)
+    // that happens with the incident itself. One whose alert never landed (or
+    // whose channels couldn't be read) is caught up by a later run
+    // (planAlertRepair).
+    const settled = !!ctx.notify && deliveries.length === 0;
     return {
       activeIncidentId: opened.record.id,
       isFlapping: flapping,
-      statements: opened.statements,
-      deliveries:
-        ctx.notify && !coolingDown ? incidentDeliveries(monitor, opened.record, event, ctx.notify) : [],
+      statements: [...opened.statements, ...(settled ? [markNotifiedStatement(env, opened.record.id)] : [])],
+      deliveries,
+      notifies: deliveries.length ? opened.record.id : undefined,
     };
   }
   if (!active) return { activeIncidentId: null, isFlapping: false, statements: [], deliveries: [] };
@@ -367,7 +380,14 @@ async function assembleGroup(
     ...sample,
   ]);
   const deliveries = incident?.deliveries ?? [];
-  const afterCore = deliveries.length ? [unit(`${label}: alert`, await enqueueStatements(env, deliveries))] : [];
+  const afterCore = deliveries.length
+    ? [
+        unit(`${label}: alert`, [
+          ...(await enqueueStatements(env, deliveries)),
+          ...(incident?.notifies ? [markNotifiedStatement(env, incident.notifies)] : []),
+        ]),
+      ]
+    : [];
   const bare = parts.state(false);
   const fallbacks =
     incident?.statements.length || sample.length
@@ -830,6 +850,37 @@ export async function planHeartbeat(
     ],
   });
   return { group, prevState, stateChanged };
+}
+
+/**
+ * Plan the opening alert of an open incident that never got one: its core
+ * landed but the unit that queues the alert didn't (lib/batch.ts retries ran
+ * out of budget, or the alert channels couldn't be read). The alert is the one
+ * planIncidentTransition would have queued, with the same event keys, so a
+ * delivery that did get queued isn't repeated; the incident is then marked
+ * notified in the same batch. Null when the channels can't be read (try again
+ * next run).
+ */
+export async function planAlertRepair(
+  env: Env,
+  monitor: MonitorRecord | null,
+  incident: IncidentRecord,
+  ctx: WriteContext,
+): Promise<WriteGroup | null> {
+  const label = `alert repair ${incident.id}`;
+  // No monitor (it is gone, or recovering right now): nothing to alert about.
+  if (!monitor) return { label, core: unit(label, [markNotifiedStatement(env, incident.id)]) };
+  if (!ctx.notify) return null;
+  const event: NotifyEvent = incident.isFlapping
+    ? "flapping"
+    : incident.error === "heartbeat_missed"
+      ? "heartbeat_missed"
+      : "down";
+  const deliveries = incidentDeliveries(monitor, incident, event, ctx.notify);
+  return {
+    label,
+    core: unit(label, [...(await enqueueStatements(env, deliveries)), markNotifiedStatement(env, incident.id)]),
+  };
 }
 
 // ---------------------------------------------------------------------------

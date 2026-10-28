@@ -195,11 +195,12 @@ describe("D1 round trips per scheduler run", () => {
     // Every check's writes share the run's batches: a run of passing checks is
     // the idle run's three round trips, and one that opens or resolves
     // incidents adds one shared read batch. Only delivering alerts costs per
-    // alert (notifications/dispatcher.ts).
+    // alert (notifications/dispatcher.ts): the channel is read once per run,
+    // then each delivery is marked and its channel's result recorded.
     expect(warmup.roundTrips).toBe(3);
     expect(passing.roundTrips).toBe(3);
-    expect(failing.roundTrips - 3 * failing.deliveries!).toBe(4);
-    expect(recovering.roundTrips - 3 * recovering.deliveries!).toBe(4);
+    expect(failing.roundTrips - 2 * failing.deliveries!).toBe(4 + 1);
+    expect(recovering.roundTrips - 2 * recovering.deliveries!).toBe(4 + 1);
     expect(failing.deliveries).toBe(Math.min(n, 25));
 
     const row = (c: Counts) =>
@@ -318,6 +319,46 @@ describe("one failing write in a run's batch", () => {
     expect(
       await count("SELECT COUNT(*) AS n FROM incidents WHERE id = ? AND status = 'open'", after!.active_incident_id),
     ).toBe(1);
+    expect(await count("SELECT COUNT(*) AS n FROM notification_outbox WHERE monitor_id = ?", broken!)).toBe(1);
+  });
+
+  it("queues an incident's alert on a later run when the write that queues it didn't land", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await reset(3, "up");
+    const [a, broken] = ids;
+    await env.DB.prepare(
+      `CREATE TRIGGER broken_outbox BEFORE INSERT ON notification_outbox
+         WHEN NEW.monitor_id = '${broken}'
+         BEGIN SELECT RAISE(ABORT, 'broken for this test'); END`,
+    ).run();
+    try {
+      await measuredRun(500);
+    } finally {
+      await env.DB.prepare("DROP TRIGGER IF EXISTS broken_outbox").run();
+    }
+    const incidentOf = (id: string) =>
+      env.DB.prepare("SELECT id, notified FROM incidents WHERE monitor_id = ? AND status = 'open'")
+        .bind(id)
+        .first<{ id: string; notified: number }>();
+    // The incident opened, but its alert wasn't queued: it is still owed one.
+    expect(await incidentOf(broken!)).toMatchObject({ notified: 0 });
+    expect(await count("SELECT COUNT(*) AS n FROM notification_outbox WHERE monitor_id = ?", broken!)).toBe(0);
+    expect(await incidentOf(a!)).toMatchObject({ notified: 1 });
+
+    // The next run (nothing is due) queues it, once, with the event key it
+    // would have had, and delivers it.
+    const owed = (await incidentOf(broken!))!;
+    await env.DB.prepare("UPDATE monitor_state SET next_check_at = ?").bind(Date.now() + 3_600_000).run();
+    await measuredRun(200);
+    expect(await incidentOf(broken!)).toMatchObject({ notified: 1 });
+    const queued = await env.DB.prepare("SELECT event_key, status FROM notification_outbox WHERE monitor_id = ?")
+      .bind(broken)
+      .all<{ event_key: string; status: string }>();
+    expect(queued.results).toHaveLength(1);
+    expect(queued.results[0]!.event_key).toMatch(new RegExp(`^down:${owed.id}:`));
+    expect(queued.results[0]!.status).not.toBe("pending");
+    // And not again.
+    await measuredRun(200);
     expect(await count("SELECT COUNT(*) AS n FROM notification_outbox WHERE monitor_id = ?", broken!)).toBe(1);
   });
 

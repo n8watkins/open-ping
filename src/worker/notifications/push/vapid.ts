@@ -1,7 +1,6 @@
 import type { Env } from "../../types";
-import { getSetting } from "../../db/settings";
+import { getSetting, settingsFromRows, settingsStatement, type SettingRow } from "../../db/settings";
 import { encryptValue } from "../../lib/crypto";
-import { getAdminEmail } from "../../lib/admin";
 import { generateVapidKeys, type VapidKeys } from "./webpush";
 
 /**
@@ -10,20 +9,29 @@ import { generateVapidKeys, type VapidKeys } from "./webpush";
  * settings (private encrypted when a MASTER_KEY is configured).
  */
 
-async function vapidSubject(env: Env): Promise<string> {
-  const configured = env.VAPID_SUBJECT ?? (await getSetting(env, "vapid_subject"));
-  if (configured) return configured;
-  const email = await getAdminEmail(env);
-  return email ? `mailto:${email}` : "mailto:admin@openping.local";
-}
+const VAPID_SETTINGS = ["vapid_public_key", "vapid_private_key", "vapid_subject", "admin_email"] as const;
 
-/** Resolve a usable VAPID keypair, or null if none is configured. */
+/**
+ * Resolve a usable VAPID keypair, or null if none is configured. Worker
+ * secrets win over settings; whatever comes from settings is read in one query
+ * (the dispatcher calls this once per pass, lib/budget.ts counts it as one).
+ */
 export async function getVapid(env: Env): Promise<VapidKeys | null> {
-  const publicKey = env.VAPID_PUBLIC_KEY ?? (await getSetting(env, "vapid_public_key"));
-  const privateKey =
-    env.VAPID_PRIVATE_KEY ?? (await getSetting(env, "vapid_private_key"));
+  const needed = !env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY || !env.VAPID_SUBJECT;
+  const settings = needed
+    ? await settingsFromRows(
+        env,
+        VAPID_SETTINGS,
+        (await settingsStatement(env, VAPID_SETTINGS).all<SettingRow & { key: string }>()).results ?? [],
+      )
+    : new Map<string, string | null>();
+  const publicKey = env.VAPID_PUBLIC_KEY ?? settings.get("vapid_public_key");
+  const privateKey = env.VAPID_PRIVATE_KEY ?? settings.get("vapid_private_key");
   if (!publicKey || !privateKey) return null;
-  return { publicKey, privateKey, subject: await vapidSubject(env) };
+  const configured = env.VAPID_SUBJECT ?? settings.get("vapid_subject");
+  const email = env.ADMIN_EMAIL ?? settings.get("admin_email");
+  const subject = configured || (email ? `mailto:${email}` : "mailto:admin@openping.local");
+  return { publicKey, privateKey, subject };
 }
 
 /**

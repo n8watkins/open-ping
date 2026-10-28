@@ -3,7 +3,10 @@ import { applyD1Migrations } from "cloudflare:test";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import "../../src/worker/index";
+import { createChannel } from "../../src/worker/db/channels";
+import { upsertSubscription } from "../../src/worker/db/push";
 import { countingD1, PLAN_BUDGETS } from "../../src/worker/lib/budget";
+import { ensureVapidPublicKey } from "../../src/worker/notifications/push/vapid";
 import { runScheduled } from "../../src/worker/scheduler";
 import type { Env } from "../../src/worker/types";
 
@@ -159,5 +162,50 @@ describe("scheduler budget", () => {
     const used = await countedRun({ WORKERS_PLAN: "paid" });
     expect(await checkedCount()).toBe(MONITORS);
     expect(used.d1).toBeLessThanOrEqual(PLAN_BUDGETS.paid.d1Queries);
+  });
+});
+
+describe("alert deliveries and the Free budget", () => {
+  const b64url = (buf: ArrayBuffer | Uint8Array) =>
+    btoa(String.fromCharCode(...new Uint8Array(buf))).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+
+  it("stays inside 50 D1 queries with Web Push devices and an email channel on every alert", async () => {
+    // Three monitors fail; each alert fans out to an email channel and three
+    // push devices, and a push delivery reads its device and the VAPID keys.
+    await ensureVapidPublicKey(env);
+    for (let i = 0; i < 3; i++) {
+      const key = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, [
+        "deriveBits",
+      ])) as CryptoKeyPair;
+      await upsertSubscription(env, {
+        endpoint: `https://push.example.com/device-${i}`,
+        p256dh: b64url((await crypto.subtle.exportKey("raw", key.publicKey)) as ArrayBuffer),
+        auth: b64url(crypto.getRandomValues(new Uint8Array(16))),
+      });
+    }
+    await createChannel(env, { type: "email", config: { to: "ops@example.com" } });
+    await env.DB.batch([
+      env.DB.prepare("UPDATE incidents SET status = 'resolved'"),
+      env.DB.prepare("DELETE FROM notification_outbox"),
+      env.DB.prepare(
+        "UPDATE monitor_state SET state = 'up', active_incident_id = NULL, next_check_at = ?",
+      ).bind(Date.now() + 3_600_000),
+      env.DB.prepare(
+        `UPDATE monitor_state SET next_check_at = 0
+          WHERE monitor_id IN (SELECT monitor_id FROM monitor_state ORDER BY monitor_id LIMIT 3)`,
+      ),
+    ]);
+
+    for (let run = 0; run < 3; run++) {
+      const used = await countedRun({}, 500, { confirmDelayMs: 0 });
+      expect(used.d1).toBeLessThanOrEqual(PLAN_BUDGETS.free.d1Queries);
+      expect(used.fetches).toBeLessThanOrEqual(50);
+    }
+    const tried = await env.DB.prepare(
+      `SELECT channel_type, COUNT(*) AS n FROM notification_outbox WHERE status <> 'pending' GROUP BY channel_type`,
+    ).all<{ channel_type: string; n: number }>();
+    const byType = Object.fromEntries(tried.results.map((r) => [r.channel_type, r.n]));
+    // Every alert went out (or was tried) within those runs.
+    expect(byType).toMatchObject({ email: 3, push: 9 });
   });
 });

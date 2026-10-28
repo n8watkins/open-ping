@@ -151,6 +151,12 @@ export function openIncidentStatements(
     httpStatus?: number | null;
     isFlapping?: boolean;
     confirmed?: boolean;
+    /**
+     * Whether its alert is settled already (none is due, as in a cooldown).
+     * When false, the caller queues the alert and marks it with
+     * {@link markNotifiedStatement}; one never queued is caught up later.
+     */
+    notified?: boolean;
   },
 ): { record: IncidentRecord; statements: D1PreparedStatement[] } {
   const id = newId("inc");
@@ -175,7 +181,7 @@ export function openIncidentStatements(
     resolution: null,
     public: false,
     isFlapping: ctx.isFlapping ?? false,
-    notified: false,
+    notified: ctx.notified ?? false,
     confirmed: ctx.confirmed ?? false,
     createdAt: at,
     updatedAt: at,
@@ -188,7 +194,7 @@ export function openIncidentStatements(
            id, monitor_id, status, title, root_cause, started_at,
            last_observed_at, http_status, error, public, is_flapping,
            notified, confirmed, created_at, updated_at
-         ) VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)`,
+         ) VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
         monitor.id,
@@ -199,6 +205,7 @@ export function openIncidentStatements(
         httpStatus,
         error,
         ctx.isFlapping ? 1 : 0,
+        ctx.notified ? 1 : 0,
         ctx.confirmed ? 1 : 0,
         at,
         at,
@@ -209,6 +216,27 @@ export function openIncidentStatements(
       ).bind(newId("iev"), id, at, title),
     ],
   };
+}
+
+/** Record that an incident's opening alert was queued (with the queueing, in one batch). */
+export function markNotifiedStatement(env: Env, incidentId: string): D1PreparedStatement {
+  return env.DB.prepare("UPDATE incidents SET notified = 1 WHERE id = ? AND notified = 0").bind(incidentId);
+}
+
+/** How far back a run looks for an open incident whose alert was never queued. */
+export const ALERT_REPAIR_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Open incidents whose opening alert was never queued (the write that queues
+ * it failed after the incident itself landed), newest first, within
+ * {@link ALERT_REPAIR_WINDOW_MS}. Rows: IncidentRow.
+ */
+export function unnotifiedIncidentsStatement(env: Env, now: number): D1PreparedStatement {
+  return env.DB.prepare(
+    `SELECT * FROM incidents
+      WHERE notified = 0 AND started_at >= ? AND status = 'open'
+      ORDER BY started_at DESC LIMIT 10`,
+  ).bind(now - ALERT_REPAIR_WINDOW_MS);
 }
 
 /**
