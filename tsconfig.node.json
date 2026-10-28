@@ -18,6 +18,8 @@
     "vitest.config.ts",
     "vitest.integration.config.ts",
     "platform/vitest.config.ts",
-    "src/static-headers.test.ts"
+    "src/static-headers.test.ts",
+    "src/pwa-files.test.ts",
+    "src/sw.test.ts"
   ]
 }

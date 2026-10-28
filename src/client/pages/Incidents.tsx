@@ -9,6 +9,7 @@ import type { IncidentSummary as IncidentSummaryBase } from "../lib/types";
 import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { PageTitle } from "../components/ui/PageTitle";
+import { PullToRefresh } from "../components/PullToRefresh";
 import { StatusPill } from "../components/ui/StatusPill";
 import { formatDateTime, formatDuration, formatRelativeTime } from "../lib/format";
 import { IncidentUpdatesEditor, type IncidentUpdateItem } from "../components/IncidentUpdatesEditor";
@@ -264,6 +265,7 @@ export default function Incidents() {
 
   return (
     <div className="mx-auto max-w-6xl">
+      <PullToRefresh onRefresh={() => Promise.all([reload(), selectedId ? reloadDetail() : null])} />
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">

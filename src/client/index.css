@@ -217,3 +217,38 @@
     border-color: transparent;
   }
 }
+
+/*
+ * Installed app (viewport-fit=cover, and on iPhone a see-through status bar):
+ * pages draw under the notch, the status bar and the home indicator unless
+ * they leave room. The admin shell (AppLayout, which sets data-shell="app")
+ * pads its own top bar, main column and bottom nav; every other page (sign-in,
+ * status pages) gets the room here. In a plain browser tab the insets are 0.
+ */
+@layer base {
+  html:not([data-shell="app"]) #root {
+    box-sizing: border-box;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+      env(safe-area-inset-left);
+  }
+
+  /* The shell doesn't rubber-band, and the browser's own pull-to-refresh
+     gives way to the app's (components/PullToRefresh.tsx). */
+  html[data-shell="app"],
+  html[data-shell="app"] body {
+    overscroll-behavior-y: none;
+  }
+
+  /* Instant tap feedback on touch screens: no grey flash, no double-tap
+     delay, and a press dims a control while the finger is on it. */
+  html[data-shell="app"] :is(a, button, summary, [role="button"]) {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  @media (hover: none) and (pointer: coarse) {
+    html[data-shell="app"] :is(a, button, summary, [role="button"]):active:not(:disabled) {
+      opacity: 0.7;
+      transition-duration: 0s;
+    }
+  }
+}

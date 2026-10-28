@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import { followPageThemeColor } from "./lib/theme-color";
 import "./index.css";
 
 const rootEl = document.getElementById("root");
@@ -14,6 +15,8 @@ createRoot(rootEl).render(
     </BrowserRouter>
   </StrictMode>,
 );
+
+followPageThemeColor();
 
 // Register the service worker for PWA install + Web Push (production only;
 // the SW lives in public/ and is served at the root).

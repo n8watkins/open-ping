@@ -88,7 +88,7 @@ Follow [the Hosted plan](./HOSTED_PLAN.md) stages 2 to 7; summary:
 
 The plan is [MOBILE_PLAN.md](./MOBILE_PLAN.md).
 
-- [ ] M1: a first-class installable web app for every install (PNG icons, install button, offline last-known status, notification taps open the app).
+- [x] M1: a first-class installable web app for every install (PNG icons, install button, offline last-known status, notification taps open the app).
 - [ ] M2: OpenPing for Android in Google Play, a small native shell that opens any OpenPing (Hosted or your own), with push through Firebase; after Hosted wave 3.
 - [ ] M3: iPhone store app, only if Hosted customers ask.
 - [x] The mobile standard for every UI change (MOBILE_PLAN.md, "The mobile standard").

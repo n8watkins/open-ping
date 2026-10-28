@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, Navigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -23,6 +23,10 @@ import { useBootstrap } from "../lib/bootstrap";
 import { useFetch } from "../lib/useFetch";
 import type { OverviewResponse } from "../lib/types";
 import { shellTransitionKey } from "../lib/section-routes";
+import { clearSavedData, offlineBanner, offlineSummary, precacheApp, useSavedAt } from "../lib/offline";
+import { InstallNavButton, IosInstallSheet, canOfferInstall } from "./InstallApp";
+import { useInstallState } from "../lib/install";
+import { PAGE_REFRESHED_EVENT } from "../lib/pull-to-refresh";
 
 interface NavItem {
   to: string;
@@ -36,7 +40,16 @@ const STATUS_PILL = {
   degraded: { dot: "bg-degraded", text: "text-degraded", label: "Degraded" },
   down: { dot: "bg-down", text: "text-down", label: "Down" },
   suspended: { dot: "bg-suspended", text: "text-suspended", label: "Suspended" },
+  // Offline: what's on screen is saved or stale, so no live status is claimed.
+  offline: { dot: "bg-ink-faint", text: "text-ink-muted", label: "Offline" },
 } as const;
+
+/** Only a live problem pulses; operational and offline stay still. */
+const PULSING: ReadonlySet<(typeof STATUS_PILL)[keyof typeof STATUS_PILL]> = new Set([
+  STATUS_PILL.down,
+  STATUS_PILL.suspended,
+  STATUS_PILL.degraded,
+]);
 
 /** The sidebar's one-line summary: what's wrong, or that all is well. */
 function statusSummary(counts: OverviewResponse["counts"] | undefined): string {
@@ -82,7 +95,15 @@ function isActivePath(pathname: string, to: string): boolean {
 }
 
 export function AppLayout() {
-  const { loading, status, me, csrf } = useBootstrap();
+  // Offline on a device with a saved Overview, the shell opens on that
+  // (savedSession) instead of a sign-in page that can't work either.
+  const { loading, status, me, csrf, savedSession: offlineShell } = useBootstrap();
+
+  // Signed in: save the whole app for offline use (public/sw.js).
+  const signedIn = !!me?.authenticated;
+  useEffect(() => {
+    if (signedIn) precacheApp();
+  }, [signedIn]);
 
   async function logout() {
     try {
@@ -90,21 +111,24 @@ export function AppLayout() {
     } catch {
       // Ignore - clear the local view and head to login regardless.
     }
+    await clearSavedData();
     // Full reload so bootstrap/auth state (and any PWA cache) resets cleanly.
     window.location.assign("/login");
   }
 
   // Real overall status for the header pill (skipped until authenticated).
-  const { data: overview } = useFetch<OverviewResponse>(
-    me?.authenticated ? "/api/overview" : null,
+  const { data: overview, reload: reloadOverview } = useFetch<OverviewResponse>(
+    me?.authenticated || offlineShell ? "/api/overview" : null,
   );
-  const pill = deriveStatus(overview?.counts);
 
   // Surface offline/stale state (PWA cache): listen for connectivity changes.
   const [online, setOnline] = useState(
     typeof navigator === "undefined" ? true : navigator.onLine,
   );
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [installStepsOpen, setInstallStepsOpen] = useState(false);
+  const closeInstallSteps = useCallback(() => setInstallStepsOpen(false), []);
+  const savedAt = useSavedAt();
   const { pathname } = useLocation();
   const moreRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
@@ -133,6 +157,22 @@ export function AppLayout() {
     };
   }, [mobileMenuOpen]);
 
+  // A page pulled to refresh: the header status follows.
+  useEffect(() => {
+    const onRefreshed = () => void reloadOverview();
+    window.addEventListener(PAGE_REFRESHED_EVENT, onRefreshed);
+    return () => window.removeEventListener(PAGE_REFRESHED_EVENT, onRefreshed);
+  }, [reloadOverview]);
+
+  // The shell's own look on phones: no rubber-band scrolling of the page and
+  // instant tap feedback (index.css, under html[data-shell="app"]).
+  useEffect(() => {
+    document.documentElement.dataset.shell = "app";
+    return () => {
+      delete document.documentElement.dataset.shell;
+    };
+  }, []);
+
   useEffect(() => {
     const goOnline = () => setOnline(true);
     const goOffline = () => setOnline(false);
@@ -151,14 +191,19 @@ export function AppLayout() {
       </div>
     );
   }
-  if (!me?.authenticated) return <Navigate to="/login" replace />;
+  if (!me?.authenticated && !offlineShell) return <Navigate to="/login" replace />;
   // Once the administrator has authenticated, finish any incomplete setup
   // before exposing the admin workspace. This also supports deployments that
   // preconfigure the admin identity as a Worker secret.
   if (status && !status.setupComplete) return <Navigate to="/setup" replace />;
 
   const moreActive = MOBILE_MORE_NAV.some((item) => isActivePath(pathname, item.to));
-  const summary = statusSummary(overview?.counts);
+  // Date.now() only decides whether the saved time needs its date too.
+  const now = Date.now();
+  const banner = offlineBanner({ online: online && !offlineShell, savedAt, now });
+  // While the banner shows, the pill and the summary never claim live status.
+  const pill = banner ? STATUS_PILL.offline : deriveStatus(overview?.counts);
+  const summary = banner ? offlineSummary(savedAt, now) : statusSummary(overview?.counts);
 
   return (
     <div className="flex min-h-full">
@@ -195,6 +240,7 @@ export function AppLayout() {
           </div>
         </nav>
         <div className="mt-3 space-y-3 border-t border-line pt-3">
+          <InstallNavButton variant="sidebar" onShowSteps={() => setInstallStepsOpen(true)} />
           <NavLink
             to="/"
             end
@@ -205,7 +251,7 @@ export function AppLayout() {
             )}
           >
             <span className="relative mt-[3px] grid size-2 shrink-0 place-items-center" aria-hidden>
-              {pill !== STATUS_PILL.operational && (
+              {PULSING.has(pill) && (
                 <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", pill.dot)} />
               )}
               <span className={cn("relative size-2 rounded-full", pill.dot)} />
@@ -238,7 +284,7 @@ export function AppLayout() {
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-canvas/90 px-4 backdrop-blur md:hidden">
+        <header className="sticky top-0 z-20 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center justify-between border-b border-line bg-canvas/90 pt-[env(safe-area-inset-top)] pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))] backdrop-blur md:hidden">
           <div>
             <Logo compact />
           </div>
@@ -269,10 +315,13 @@ export function AppLayout() {
           </div>
         </header>
 
-        {!online && (
-          <div className="flex items-center justify-center gap-2 border-b border-degraded/40 bg-degraded/10 px-4 py-1.5 text-xs text-degraded">
-            <WifiOff className="size-3.5" />
-            You're offline, so data may be stale.
+        {banner && (
+          <div
+            role="status"
+            className="flex items-center justify-center gap-2 border-b border-degraded/40 bg-degraded/10 px-4 py-1.5 text-xs text-degraded"
+          >
+            <WifiOff className="size-3.5 shrink-0" />
+            {banner}
           </div>
         )}
 
@@ -284,7 +333,7 @@ export function AppLayout() {
 
         <main
           id="main-content"
-          className="flex-1 px-4 py-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-8 md:py-7 md:pb-8"
+          className="flex-1 py-6 pr-[max(1rem,env(safe-area-inset-right))] pb-[calc(6rem+env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] md:px-8 md:py-7 md:pb-8"
         >
           {/* Each page eases in when you arrive (reduced motion: no movement). */}
           <div key={shellTransitionKey(pathname)} className="animate-enter">
@@ -298,7 +347,7 @@ export function AppLayout() {
         <div
           ref={moreRef}
           id="mobile-more-menu"
-          className="fixed right-3 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 w-52 origin-bottom-right animate-enter rounded-card border border-line bg-surface p-1.5 shadow-2xl md:hidden"
+          className="fixed right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 w-52 origin-bottom-right animate-enter rounded-card border border-line bg-surface p-1.5 shadow-2xl md:hidden"
         >
           <ul>
             {MOBILE_MORE_NAV.map((item) => {
@@ -325,11 +374,18 @@ export function AppLayout() {
               );
             })}
           </ul>
+          <InstallMenuEntry
+            onShowSteps={() => {
+              setMobileMenuOpen(false);
+              setInstallStepsOpen(true);
+            }}
+          />
         </div>
       )}
+      <IosInstallSheet open={installStepsOpen} onClose={closeInstallSteps} />
       <nav
         aria-label="Mobile"
-        className="fixed inset-x-0 bottom-0 z-20 flex border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+        className="fixed inset-x-0 bottom-0 z-20 flex border-t border-line bg-surface/95 pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] backdrop-blur md:hidden"
       >
         {MOBILE_NAV.map((item) => (
           <BottomLink key={item.to} item={item} />
@@ -348,9 +404,20 @@ export function AppLayout() {
         >
           <BottomIndicator active={moreActive} />
           <MoreHorizontal className="size-5 shrink-0" />
-          <span>More</span>
+          <span className="w-full truncate text-center leading-tight">More</span>
         </button>
       </nav>
+    </div>
+  );
+}
+
+/** The More menu's install entry, under a divider, when there is one to offer. */
+function InstallMenuEntry({ onShowSteps }: { onShowSteps: () => void }) {
+  const state = useInstallState();
+  if (!canOfferInstall(state)) return null;
+  return (
+    <div className="mt-1.5 border-t border-line pt-1.5">
+      <InstallNavButton variant="menu" onShowSteps={onShowSteps} />
     </div>
   );
 }

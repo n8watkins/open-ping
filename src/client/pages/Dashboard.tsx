@@ -19,6 +19,7 @@ import { StatusPill } from "../components/ui/StatusPill";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { PageTitle } from "../components/ui/PageTitle";
+import { PullToRefresh } from "../components/PullToRefresh";
 import { RangeControl } from "../components/ui/RangeControl";
 import { Skeleton } from "../components/ui/Skeleton";
 import { StatusStrip, StripLegend } from "../components/charts/StatusStrip";
@@ -120,14 +121,16 @@ const accentButton =
 
 export default function Dashboard() {
   const [range, setRange] = useTimeRange("overview");
-  const { data, loading, error } = useFetch<OverviewPayload>("/api/overview");
+  const { data, loading, error, reload } = useFetch<OverviewPayload>("/api/overview");
   const history = useFetch<OverviewHistoryResponse>(`/api/overview/history?range=${range}`);
+  const refresh = () => Promise.all([reload(), history.reload()]);
 
   if (loading && !data) return <DashboardSkeleton />;
 
   if (error && !data) {
     return (
       <div className="mx-auto max-w-6xl">
+        <PullToRefresh onRefresh={refresh} />
         <PageTitle>Overview</PageTitle>
         <p className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
           Could not load overview: {error}
@@ -157,6 +160,7 @@ export default function Dashboard() {
 
   return (
     <div className="mx-auto max-w-6xl">
+      <PullToRefresh onRefresh={refresh} />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <PageTitle description="Everything OpenPing is watching, at a glance.">Overview</PageTitle>
         <div className="flex flex-wrap items-center gap-2">
@@ -416,7 +420,7 @@ function HistoryCard({
   return (
     <Card className="mt-6 animate-enter p-5">
       <CardHeader>
-        <CardTitle>Availability and response time</CardTitle>
+        <CardTitle as="h2">Availability and response time</CardTitle>
         <span className="text-xs text-ink-faint">{spec.long}, all monitors</span>
       </CardHeader>
 
@@ -657,7 +661,7 @@ function IncidentsCard({
   return (
     <Card className={cn("animate-enter p-5", className)}>
       <CardHeader>
-        <CardTitle>Incidents</CardTitle>
+        <CardTitle as="h2">Incidents</CardTitle>
         <Link
           to="/incidents"
           className="inline-flex items-center gap-1 rounded text-sm text-ink-muted transition-colors hover:text-ink"
@@ -765,7 +769,7 @@ function MaintenanceCard({
   return (
     <Card className="animate-enter p-5">
       <CardHeader>
-        <CardTitle>Maintenance</CardTitle>
+        <CardTitle as="h2">Maintenance</CardTitle>
         <Link
           to="/maintenance"
           className="inline-flex items-center gap-1 rounded text-sm text-ink-muted transition-colors hover:text-ink"

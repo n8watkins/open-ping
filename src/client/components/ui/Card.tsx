@@ -31,17 +31,19 @@ export function CardHeader({
   );
 }
 
-/** Title text styled for use inside a CardHeader. */
+/**
+ * Title text styled for use inside a CardHeader. An h3 by default; pass
+ * `as="h2"` for a card that sits right under the page's h1, so headings
+ * don't skip a level.
+ */
 export function CardTitle({
   children,
   className,
+  as: Tag = "h3",
 }: {
   children?: ReactNode;
   className?: string;
+  as?: "h2" | "h3";
 }) {
-  return (
-    <h3 className={cn("text-sm font-semibold tracking-tight text-ink", className)}>
-      {children}
-    </h3>
-  );
+  return <Tag className={cn("text-sm font-semibold tracking-tight text-ink", className)}>{children}</Tag>;
 }

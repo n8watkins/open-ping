@@ -2,6 +2,12 @@ import { useRef, type KeyboardEvent } from "react";
 import { cn } from "../../lib/cn";
 import { RANGE_SPEC, TIME_RANGES, type TimeRange } from "../../../shared/time-range";
 
+/** A range button's accessible name: its visible text, then what it means. */
+export function rangeLabel(r: TimeRange): string {
+  const { short, long } = RANGE_SPEC[r];
+  return `${short}, ${long.charAt(0).toLowerCase()}${long.slice(1)}`;
+}
+
 /**
  * The 24h / 7d / 30d / 90d switch. A radio group: Tab reaches the selected
  * option, the arrow keys move between them. The highlight slides to the
@@ -54,7 +60,9 @@ export function RangeControl({
           type="button"
           role="radio"
           aria-checked={r === value}
-          aria-label={RANGE_SPEC[r].long}
+          // Starts with the visible text, so voice control ("tap 24h") and
+          // screen readers agree on the name: "24h, last 24 hours".
+          aria-label={rangeLabel(r)}
           tabIndex={r === value ? 0 : -1}
           onClick={() => onChange(r)}
           className={cn(

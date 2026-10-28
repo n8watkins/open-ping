@@ -33,6 +33,11 @@ describe("rootView", () => {
     expect(rootView({ loading: false, me: { authenticated: false }, status: base })).toBe("status");
     expect(rootView({ loading: false, me: null, status: null })).toBe("status");
   });
+
+  it("opens the dashboard offline on a device with a signed-in admin's saved Overview", () => {
+    expect(rootView({ loading: false, me: null, status: null, savedSession: true })).toBe("dashboard");
+    expect(rootView({ loading: false, me: null, status: null, savedSession: false })).toBe("status");
+  });
 });
 
 describe("isLandingInstall", () => {

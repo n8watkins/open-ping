@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { cloudflare } from "@cloudflare/vite-plugin";
@@ -22,6 +22,29 @@ async function starCount(): Promise<number | null> {
   }
 }
 
+// Public pages a signed-in admin's installed app never needs offline.
+const PUBLIC_ONLY_PAGE = /\/src\/client\/pages\/(Landing|Install|Embed|tools\/)/;
+
+/**
+ * Writes /sw-precache.json, the hashed JS and CSS bundles of the admin app, so
+ * the service worker (public/sw.js) can save them all for offline use. Without
+ * it a page never opened before (a lazy chunk) can't load offline.
+ */
+function precacheList(): Plugin {
+  return {
+    name: "openping-precache-list",
+    applyToEnvironment: (environment) => environment.name === "client",
+    generateBundle(_options, bundle) {
+      const files = Object.values(bundle)
+        .filter((file) => /^assets\/.+\.(js|css)$/.test(file.fileName))
+        .filter((file) => !(file.type === "chunk" && file.facadeModuleId && PUBLIC_ONLY_PAGE.test(file.facadeModuleId)))
+        .map((file) => `/${file.fileName}`)
+        .sort();
+      this.emitFile({ type: "asset", fileName: "sw-precache.json", source: JSON.stringify({ files }) });
+    },
+  };
+}
+
 export default defineConfig(async () => ({
   // `npm run deploy:prod` points the build at the generated production config
   // (scripts/prod-config.mjs); everything else uses wrangler.jsonc.
@@ -29,6 +52,7 @@ export default defineConfig(async () => ({
     react(),
     tailwindcss(),
     cloudflare({ configPath: process.env.OPENPING_WRANGLER_CONFIG || undefined }),
+    precacheList(),
   ],
   define: {
     __OP_STARS__: JSON.stringify(await starCount()),

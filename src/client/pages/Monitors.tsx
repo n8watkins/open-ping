@@ -17,6 +17,7 @@ import type { OverviewResponse } from "../lib/types";
 import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { PageTitle } from "../components/ui/PageTitle";
+import { PullToRefresh } from "../components/PullToRefresh";
 import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import type { Schedule } from "../../shared/schemas";
@@ -167,9 +168,12 @@ export default function Monitors() {
     />
   );
 
+  const refresh = () => Promise.all([reload(), reloadStats()]);
+
   if (error && !data) {
     return (
       <div className="mx-auto max-w-6xl">
+        <PullToRefresh onRefresh={refresh} />
         <PageTitle>Monitors</PageTitle>
         <p className="mt-6 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
           Could not load monitors: {error}
@@ -182,6 +186,7 @@ export default function Monitors() {
 
   return (
     <div className="mx-auto max-w-6xl">
+      <PullToRefresh onRefresh={refresh} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <PageTitle>Monitors</PageTitle>
         <NewMonitorControl />
@@ -251,8 +256,10 @@ export default function Monitors() {
                 </div>
               )}
             </div>
-            <div className="flex min-w-0 flex-1 flex-wrap justify-end gap-2">
-              <label className="relative min-w-[210px] flex-1 lg:max-w-[280px]">
+            {/* Phones: search across, then status and sort side by side, all
+                full width at 16 px (no zoom on focus). From sm up: one row. */}
+            <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
+              <label className="relative col-span-2 min-w-0 sm:min-w-[210px] sm:flex-1 lg:max-w-[280px]">
                 <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-faint" />
                 <input
                   type="search"
@@ -260,10 +267,10 @@ export default function Monitors() {
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search by name or URL"
                   aria-label="Search monitors"
-                  className="w-full rounded-lg border border-line bg-canvas py-2 pr-3 pl-9 text-xs text-ink placeholder:text-ink-faint focus:border-transparent focus:outline-2 focus:outline-accent"
+                  className="w-full rounded-lg border border-line bg-canvas py-2.5 pr-3 pl-9 text-base text-ink placeholder:text-ink-faint focus:border-transparent focus:outline-2 focus:outline-accent sm:py-2 sm:text-xs"
                 />
               </label>
-              <label className="relative inline-flex items-center">
+              <label className="relative flex min-w-0 items-center sm:inline-flex">
                 <Filter className="pointer-events-none absolute left-3 size-3.5 text-ink-faint" />
                 <select
                   value={status}
@@ -271,7 +278,7 @@ export default function Monitors() {
                     setStatus(event.target.value as "all" | MonitorState)
                   }
                   aria-label="Filter monitors by status"
-                  className="appearance-none rounded-lg border border-line bg-surface py-2 pr-8 pl-8 text-xs text-ink"
+                  className="w-full min-w-0 appearance-none truncate rounded-lg border border-line bg-surface py-2.5 pr-8 pl-8 text-base text-ink sm:w-auto sm:py-2 sm:text-xs"
                 >
                   <option value="all">All statuses</option>
                   <option value="up">Up</option>
@@ -284,7 +291,7 @@ export default function Monitors() {
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-2.5 size-3.5 text-ink-faint" />
               </label>
-              <label className="relative inline-flex items-center">
+              <label className="relative flex min-w-0 items-center sm:inline-flex">
                 <ArrowDownUp className="pointer-events-none absolute left-3 size-3.5 text-ink-faint" />
                 <select
                   value={sort}
@@ -292,7 +299,7 @@ export default function Monitors() {
                     setSort(event.target.value as MonitorSortMode)
                   }
                   aria-label="Sort monitors"
-                  className="appearance-none rounded-lg border border-line bg-surface py-2 pr-8 pl-8 text-xs text-ink"
+                  className="w-full min-w-0 appearance-none truncate rounded-lg border border-line bg-surface py-2.5 pr-8 pl-8 text-base text-ink sm:w-auto sm:py-2 sm:text-xs"
                 >
                   <option value="status">Down first</option>
                   <option value="name">Name</option>
