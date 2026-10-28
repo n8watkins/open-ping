@@ -7,6 +7,7 @@ import { createApp } from "../src/app";
 import { TenantCapability } from "../src/capability";
 import { DISPATCH_LIMITS } from "../src/dispatch";
 import type { PlatformEnv } from "../src/env";
+import { TENANT_CACHE_MS, cachedTenantBySlug, clearTenantCache, forgetTenant } from "../src/tenants";
 import { FakeDispatcher, echoWorker } from "./fake-dispatcher";
 
 const DOMAIN = "openping.test";
@@ -74,6 +75,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  clearTenantCache();
   dispatcher = new FakeDispatcher();
 });
 
@@ -314,5 +316,27 @@ describe("internal paths and the internal header (security)", () => {
     expect(body.invocation).toBe("public");
     // And what the fake recorded is exactly what the tenant saw.
     expect(dispatcher.calls[0]!.request.headers.get(INTERNAL_HEADER)).toBeNull();
+  });
+});
+
+describe("the tenant cache", () => {
+  it("keeps a ready tenant briefly, an unknown slug more briefly, and a provisioning one not at all", async () => {
+    const db = env.PLATFORM_DB;
+    await addTenant({ slug: "cachedco" });
+    const first = await cachedTenantBySlug(db, "cachedco", 1_000);
+    await db.prepare("UPDATE tenants SET status = 'suspended' WHERE slug = 'cachedco'").run();
+    expect((await cachedTenantBySlug(db, "cachedco", 1_000 + TENANT_CACHE_MS - 1))!.status).toBe(first!.status);
+    expect((await cachedTenantBySlug(db, "cachedco", 1_000 + TENANT_CACHE_MS))!.status).toBe("suspended");
+    // forgetTenant takes a change made in this isolate at once.
+    await db.prepare("UPDATE tenants SET status = 'active' WHERE slug = 'cachedco'").run();
+    forgetTenant("cachedco");
+    expect((await cachedTenantBySlug(db, "cachedco", 1_000 + TENANT_CACHE_MS + 1))!.status).toBe("active");
+
+    expect(await cachedTenantBySlug(db, "laterco", 5_000)).toBeNull();
+    await addTenant({ slug: "laterco", provisionState: "uploaded" });
+    expect(await cachedTenantBySlug(db, "laterco", 5_001)).toBeNull();
+    expect((await cachedTenantBySlug(db, "laterco", 10_000))!.provisionState).toBe("uploaded");
+    await db.prepare("UPDATE tenants SET provision_state = 'ready' WHERE slug = 'laterco'").run();
+    expect((await cachedTenantBySlug(db, "laterco", 10_001))!.provisionState).toBe("ready");
   });
 });
