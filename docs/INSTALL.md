@@ -104,7 +104,7 @@ If you deploy from a fork you push publicly, or you want `git pull` to never con
 }
 ```
 
-`vars` is optional and may override only vars that `wrangler.jsonc` already defines, so a typo fails loudly.
+`vars` is optional and may override only vars that `wrangler.jsonc` already defines (`WORKERS_PLAN`, `WAITLIST_ENABLED`, `HOME_PAGE`), so a typo fails loudly.
 Then use the `:prod` scripts in place of the plain ones in steps 7 and 8:
 
 ```bash
@@ -263,6 +263,23 @@ to configure anything for monitoring to start.
 
 > If you deployed first to learn your `*.workers.dev` URL, enter that origin in the setup wizard or set `APP_URL` with `wrangler secret put`.
 > Update the GitHub OAuth Homepage and callback URLs from step 4 to match it.
+
+### What visitors see at `/`
+
+Your install is yours alone, so a signed-out visitor who opens its address sees your own default status page, not OpenPing's marketing page.
+If the status page is turned off, `/` shows a short "This OpenPing has no public status page" screen with a small owner sign-in link.
+You, signed in, always get the dashboard at `/`, and `/login` always works.
+
+The `HOME_PAGE` var in `wrangler.jsonc` sets this:
+
+| Value | Signed-out visitors at `/` see |
+|---|---|
+| `"status"` (the default) | This install's default status page |
+| `"landing"` | OpenPing's marketing page, with its click counts in Settings |
+
+Leave it at `"status"`.
+Only the canonical install, openping.n8builds.dev, sets `"landing"`, in its `deploy.local.json`.
+The `ratelimits` entry named `EVENT_LIMITER` in `wrangler.jsonc` caps that page's click counter and does nothing on a `"status"` install; its `namespace_id` only has to be an integer no other Worker in your account uses for a rate limiter.
 
 ---
 

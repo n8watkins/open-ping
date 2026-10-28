@@ -37,7 +37,7 @@ does not reduce uptime.
 - Monitor **categories** and **multiple public status pages** (a default page at `/status`, per-category pages at `/status/:slug`), each polished and configurable
 - An **embeddable status widget** (`<iframe>`) plus an **SVG status badge** for READMEs and dashboards
 - A free **`/tools` suite** (uptime & subnet calculators, cron tester, DNS/MX lookup, and an **"Is it down?" checker**)
-- A marketing **landing page** at `/` for signed-out visitors
+- Your own **status page at `/`** for signed-out visitors (`HOME_PAGE`, [Install, "What visitors see at `/`"](./docs/INSTALL.md#what-visitors-see-at-)); the canonical install shows OpenPing's marketing page there instead
 - Admin **CLI** (`scripts/op.mjs`) + opt-in Bearer API-token auth for scripting/automation
 - A built-in **MCP server** at `/mcp`, so Claude Code or any MCP client can check status and manage monitors ([docs/MCP.md](./docs/MCP.md))
 - Data import/export and transparent Cloudflare usage estimates

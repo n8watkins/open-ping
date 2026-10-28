@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
@@ -8,7 +8,6 @@ import {
   CalendarClock,
   Check,
   Cloud,
-  Code2,
   Database,
   Github,
   Globe,
@@ -20,7 +19,6 @@ import {
   PauseCircle,
   Plug,
   Server,
-  ShieldCheck,
   Smartphone,
   Star,
   Terminal,
@@ -35,11 +33,17 @@ import { ComparisonTable } from "../components/landing/ComparisonTable";
 import { FaqAccordion, type FaqItem } from "../components/landing/FaqAccordion";
 import { SignInModal } from "../components/landing/SignInModal";
 import { WaitlistForm } from "../components/landing/WaitlistForm";
-import { useCountUp, useReveal } from "../components/landing/useReveal";
+import { HostingTable } from "../components/landing/HostingTable";
+import { prefersReducedMotion, useCountUp, useReveal } from "../components/landing/useReveal";
+import { LANDING_DESCRIPTION, LANDING_TITLE } from "../../shared/landing-meta";
+import { setPageMeta } from "../lib/meta";
+import { track } from "../lib/track";
 
 const GITHUB_URL = "https://github.com/n8watkins/open-ping";
 const GITHUB_ISSUES_URL = "https://github.com/n8watkins/open-ping/issues";
-const DEPLOY_URL = `${GITHUB_URL}#deploy-your-own`;
+const HOSTED_PLAN_URL = `${GITHUB_URL}/blob/main/docs/HOSTED_PLAN.md`;
+/** Where every "Deploy free" button goes: the step-by-step guide. */
+const DEPLOY_PATH = "/install";
 const N8BUILDS_URL = "https://n8builds.dev";
 const KOFI_URL = "https://ko-fi.com/n8watkins";
 const KOFI_ENABLED = !KOFI_URL.includes("REPLACE_ME");
@@ -263,58 +267,55 @@ function SectionHeading({
   );
 }
 
-function PrimaryCTA({
-  href,
-  children,
-  className = "",
-}: {
-  href: string;
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className={`op-lift inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-5 py-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover ${className}`}
-    >
-      {children}
-    </a>
-  );
-}
-
 /* ------------------------------------------------------------------ *
  * Page
  * ------------------------------------------------------------------ */
 
+/**
+ * Take the visitor to the Hosted waitlist: scroll the Hosted card into view and
+ * put the cursor in its email field. Links that call it keep href="#pricing",
+ * so they still work without it.
+ */
+function goToWaitlist() {
+  const card = document.getElementById("hosted-card");
+  const input = document.getElementById("waitlist-email");
+  card?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
+  input?.focus({ preventScroll: true });
+  history.replaceState(null, "", "#pricing");
+}
+
 export default function Landing() {
   const [signInOpen, setSignInOpen] = useState(false);
-  const openSignIn = useCallback(() => setSignInOpen(true), []);
+  const openSignIn = useCallback(() => {
+    track("signin_open");
+    setSignInOpen(true);
+  }, []);
   const closeSignIn = useCallback(() => setSignInOpen(false), []);
 
   useEffect(() => {
-    document.title = "OpenPing: uptime monitoring in your own Cloudflare account";
+    setPageMeta({ title: LANDING_TITLE, description: LANDING_DESCRIPTION });
+    track("landing_view");
+    // The page renders after the app shell loads, too late for the browser's
+    // own jump to a link like /#pricing, so make it here.
+    const target = window.location.hash ? document.getElementById(window.location.hash.slice(1)) : null;
+    if (target) requestAnimationFrame(() => target.scrollIntoView());
   }, []);
 
   return (
     <div className="min-h-full scroll-smooth bg-canvas text-ink">
       <LandingStyles />
-      <Nav onSignIn={openSignIn} />
+      <Nav />
 
       <main>
         <Hero />
-        <TrustStrip />
-        <HowItWorks />
         <ScheduleAware />
-        <Features />
-        <StatusPages />
-        <Alerts />
-        <FreeTools />
-        <Comparison />
+        <HowItWorks />
         <Pricing />
+        <Features />
         <FreePlan />
+        <Comparison />
         <QuickStart />
+        <FreeTools />
         <FaqSection />
         <BottomCta />
       </main>
@@ -333,12 +334,11 @@ export default function Landing() {
 const NAV_LINKS = [
   { href: "#how-it-works", label: "How it works" },
   { href: "#features", label: "Features" },
-  { href: "#status-pages", label: "Status pages" },
   { href: "#pricing", label: "Pricing" },
   { href: "#faq", label: "FAQ" },
 ];
 
-function Nav({ onSignIn }: { onSignIn: () => void }) {
+function Nav() {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -358,22 +358,22 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
       }`}
     >
       <div
+        data-header-row
         className={`mx-auto flex max-w-6xl items-center justify-between gap-6 px-4 transition-all duration-300 sm:px-6 ${
           scrolled ? "h-14" : "h-16 sm:h-20"
         }`}
       >
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex shrink-0 items-center gap-4">
           <Link to="/" aria-label="OpenPing home">
             <Logo />
           </Link>
-          {/* Only where the full nav still fits beside it (the row is max-w-6xl). */}
-          <span aria-hidden="true" className="hidden h-5 w-px bg-line lg:block xl:hidden 2xl:block" />
-          <span className="hidden lg:flex xl:hidden 2xl:flex">
+          <span aria-hidden="true" className="hidden h-5 w-px bg-line lg:block" />
+          <span className="hidden lg:flex">
             <N8buildsMark />
           </span>
         </div>
 
-        <nav className="hidden items-center gap-5 whitespace-nowrap text-sm text-ink-muted xl:flex">
+        <nav aria-label="Main" className="hidden items-center gap-6 whitespace-nowrap text-sm text-ink-muted md:flex">
           {NAV_LINKS.map((l) => (
             <a key={l.href} href={l.href} className="transition-colors hover:text-ink">
               {l.label}
@@ -382,63 +382,44 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
         </nav>
 
         <div className="hidden items-center gap-2 whitespace-nowrap md:flex">
-          {KOFI_ENABLED && (
-            <a
-              href={KOFI_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="hidden h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-semibold text-ink transition-colors hover:border-[#ff5e5b]/60 lg:inline-flex"
-            >
-              <KofiCup className="size-[1.125rem]" />
-              Ko-fi
-            </a>
-          )}
-          <StarButton />
-          <button
-            type="button"
-            onClick={onSignIn}
-            className="rounded-lg px-2.5 py-2 text-sm font-medium text-ink-muted transition-colors hover:text-ink"
+          <span className="hidden lg:inline-flex">
+            <StarButton />
+          </span>
+          <Link
+            to={DEPLOY_PATH}
+            onClick={() => track("nav_deploy")}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
           >
-            Sign in
-          </button>
-          <a
-            href={GITHUB_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
-          >
-            <Github className="size-4" />
-            Deploy
-          </a>
+            Deploy free
+            <ArrowRight className="size-4" aria-hidden />
+          </Link>
         </div>
 
-        {/* Phones: sign-in stays one tap away, beside the menu. */}
-        <button
-          type="button"
-          onClick={onSignIn}
-          className="ml-auto rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-surface-2 md:hidden"
-        >
-          Sign in
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setMenuOpen((v) => !v)}
-          aria-label={menuOpen ? "Close menu" : "Open menu"}
-          aria-expanded={menuOpen}
-          aria-controls="mobile-nav"
-          className="grid size-11 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink md:hidden"
-        >
-          {menuOpen ? <X className="size-5" /> : <Menu className="size-5" />}
-        </button>
+        {/* Phones: the one header button is the main call to action. */}
+        <div className="ml-auto flex items-center gap-1 md:hidden">
+          <Link
+            to={DEPLOY_PATH}
+            onClick={() => track("nav_deploy")}
+            className="inline-flex h-9 items-center rounded-lg bg-accent px-3 text-sm font-semibold text-canvas transition-colors hover:bg-accent-hover"
+          >
+            Deploy free
+          </Link>
+          <button
+            type="button"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={menuOpen}
+            aria-controls="mobile-nav"
+            className="grid size-11 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            {menuOpen ? <X className="size-5" /> : <Menu className="size-5" />}
+          </button>
+        </div>
       </div>
 
       {menuOpen && (
-        <div
-          id="mobile-nav"
-          className="border-t border-line bg-surface/95 backdrop-blur md:hidden"
-        >
-          <nav className="mx-auto flex max-w-6xl flex-col gap-1 px-4 py-3 text-sm">
+        <div id="mobile-nav" className="border-t border-line bg-surface/95 backdrop-blur md:hidden">
+          <nav aria-label="Main" className="mx-auto flex max-w-6xl flex-col gap-1 px-4 py-3 text-sm">
             {NAV_LINKS.map((l) => (
               <a
                 key={l.href}
@@ -450,28 +431,27 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
               </a>
             ))}
             <div className="my-2 h-px bg-line" />
-            <button
-              type="button"
-              onClick={() => {
+            <a
+              href="#pricing"
+              onClick={(e) => {
+                e.preventDefault();
                 setMenuOpen(false);
-                onSignIn();
+                goToWaitlist();
               }}
-              className="rounded-lg px-3 py-3 text-left text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+              className="rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
             >
-              Sign in
-            </button>
-            {KOFI_ENABLED && (
-              <a
-                href={KOFI_URL}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => setMenuOpen(false)}
-                className="inline-flex items-center gap-2 rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
-              >
-                <KofiCup className="size-[1.125rem]" />
-                Support on Ko-fi
-              </a>
-            )}
+              Join the Hosted waitlist
+            </a>
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setMenuOpen(false)}
+              className="inline-flex items-center gap-2 rounded-lg px-3 py-3 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <Github className="size-4" aria-hidden />
+              OpenPing on GitHub
+            </a>
             <a
               href={N8BUILDS_URL}
               target="_blank"
@@ -482,16 +462,14 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
               <img src="/n8builds-icon.png" alt="" width={18} height={18} className="rounded" />
               More from n8builds.dev
             </a>
-            <a
-              href={GITHUB_URL}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => setMenuOpen(false)}
-              className="mt-1 inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-3.5 py-3 font-semibold text-canvas transition-colors hover:bg-accent-hover"
+            <Link
+              to={DEPLOY_PATH}
+              onClick={() => track("nav_deploy")}
+              className="mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-accent px-3.5 font-semibold text-canvas transition-colors hover:bg-accent-hover"
             >
-              <Github className="size-4" />
-              Deploy your own
-            </a>
+              Deploy free to your Cloudflare
+              <ArrowRight className="size-4" aria-hidden />
+            </Link>
           </nav>
         </div>
       )}
@@ -504,11 +482,75 @@ function Nav({ onSignIn }: { onSignIn: () => void }) {
  * ------------------------------------------------------------------ */
 
 const HERO_POINTS = [
-  "Free and MIT licensed",
-  "HTTP, TCP, DNS, domains and heartbeats",
+  "HTTP, DNS, TCP and heartbeats",
   "Status pages and alerts",
   "Off-hours aware",
+  "MIT licensed",
 ];
+
+/** The two ways to run OpenPing, side by side, so the hero answers "which one, and what does it cost?". */
+function PathCards() {
+  return (
+    <div className="mx-auto mt-9 grid max-w-3xl gap-3 text-left sm:grid-cols-2">
+      <div className="relative flex flex-col rounded-card border border-accent/60 bg-surface p-4 shadow-xl shadow-accent/10 min-[400px]:p-5">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-card"
+          style={{ background: "radial-gradient(90% 70% at 0% 0%, rgba(109,139,255,0.14), transparent 70%)" }}
+        />
+        <div className="relative flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-accent">Run it yourself</h2>
+          <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-up/30 bg-up/10 px-2 py-0.5 text-xs font-semibold text-up">
+            <span className="op-live-dot size-1.5 rounded-full bg-up" aria-hidden />
+            Available now
+          </span>
+        </div>
+        <p className="relative mt-2 flex items-baseline gap-2">
+          <span className="text-3xl font-semibold tracking-tight text-ink">Free</span>
+          <span className="text-sm text-ink-muted">in your own Cloudflare</span>
+        </p>
+        <p className="relative mt-2 text-sm leading-relaxed text-ink-muted">
+          Every feature, your data in your account. About 20 minutes, step by step.
+        </p>
+        <Link
+          to={DEPLOY_PATH}
+          onClick={() => track("hero_deploy")}
+          className="op-lift relative mt-4 inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover"
+        >
+          Deploy free to your Cloudflare
+          <ArrowRight className="size-4" aria-hidden />
+        </Link>
+      </div>
+
+      <div className="flex flex-col rounded-card border border-line bg-surface/80 p-4 min-[400px]:p-5">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-ink-muted">Let me run it</h2>
+          <span className="shrink-0 whitespace-nowrap rounded-full border border-line bg-surface-2 px-2 py-0.5 text-xs font-semibold text-ink-muted">
+            Not open yet
+          </span>
+        </div>
+        <p className="mt-2 flex items-baseline gap-2">
+          <span className="text-3xl font-semibold tracking-tight text-ink">$24</span>
+          <span className="text-sm text-ink-muted">a year, OpenPing Hosted</span>
+        </p>
+        <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+          Nothing to set up. Sign in, add your sites, take your data with you any time.
+        </p>
+        <a
+          href="#pricing"
+          onClick={(e) => {
+            e.preventDefault();
+            track("hero_waitlist");
+            goToWaitlist();
+          }}
+          className="op-lift mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-4 text-sm font-semibold text-ink hover:border-accent/50"
+        >
+          Join the Hosted waitlist
+        </a>
+      </div>
+    </div>
+  );
+}
 
 function Hero() {
   return (
@@ -534,53 +576,53 @@ function Hero() {
         }}
       />
 
-      <Section className="pt-12 pb-6 sm:pt-20">
-        <Reveal className="mx-auto max-w-3xl text-center">
+      <Section className="pt-10 pb-6 sm:pt-14">
+        <Reveal className="mx-auto max-w-4xl text-center">
           <a
             href={GITHUB_URL}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1 text-xs font-medium text-ink-muted transition-colors hover:border-ink-faint/40 hover:text-ink"
           >
-            <span className="op-live-dot size-1.5 rounded-full bg-up" />
-            Open source, runs in your own Cloudflare account
+            <Github className="size-3.5" aria-hidden />
+            Open source, MIT licensed
           </a>
 
-          <h1 className="mt-6 text-balance text-4xl font-semibold leading-[1.05] tracking-tight text-ink sm:text-6xl">
-            Uptime monitoring in <span className="text-accent">your own</span> Cloudflare account
+          <h1 className="mx-auto mt-6 max-w-3xl text-balance text-[2rem] font-semibold leading-[1.05] tracking-tight text-ink sm:text-6xl">
+            Uptime monitoring on <span className="whitespace-nowrap text-accent">your own</span> Cloudflare
           </h1>
 
-          <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-ink-muted">
-            Checks, status pages and alerts that run on your Worker and keep their history in your D1
-            database. Apps that sleep by design are only checked during their hours.
+          <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-relaxed text-ink-muted sm:text-lg">
+            Checks, status pages and alerts for your sites and APIs, with schedules that know when an app is meant to
+            be asleep. Run it free in your own Cloudflare account. A hosted version is coming.
           </p>
 
-          <ul className="mt-7 flex flex-wrap justify-center gap-x-5 gap-y-2">
+          <ul className="mx-auto mt-6 grid max-w-md grid-cols-2 gap-x-5 gap-y-2 text-left sm:max-w-lg lg:flex lg:max-w-none lg:justify-center lg:gap-x-6">
             {HERO_POINTS.map((b) => (
-              <li key={b} className="flex items-center gap-2 text-sm text-ink-muted">
-                <Check className="size-4 shrink-0 text-up" />
+              <li key={b} className="flex items-start gap-2 text-sm text-ink-muted lg:whitespace-nowrap">
+                <Check className="mt-0.5 size-4 shrink-0 text-up" aria-hidden />
                 {b}
               </li>
             ))}
           </ul>
 
-          <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
-            <PrimaryCTA href={DEPLOY_URL}>
-              <Github className="size-4" />
-              Deploy your own
-              <ArrowRight className="size-4" />
-            </PrimaryCTA>
+          <PathCards />
+
+          <p className="mt-5 text-sm text-ink-muted">
+            Or{" "}
             <Link
               to="/status"
-              className="op-lift inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink hover:bg-surface-2"
+              onClick={() => track("hero_status")}
+              className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent"
             >
-              <Globe className="size-4" />
-              View live status
-            </Link>
-          </div>
-          <p className="mt-4 text-sm text-ink-muted">
-            Or{" "}
-            <Link to="/tools" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
+              see a live status page
+            </Link>{" "}
+            and{" "}
+            <Link
+              to="/tools"
+              onClick={() => track("hero_tools")}
+              className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent"
+            >
               try the free tools
             </Link>
             , no sign-up needed.
@@ -622,36 +664,6 @@ function Hero() {
         </Reveal>
       </Section>
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * 3. Trust strip (honest: no fabricated metrics)
- * ------------------------------------------------------------------ */
-
-const TRUST_ITEMS: { icon: LucideIcon; label: string }[] = [
-  { icon: ShieldCheck, label: "Your data stays in your account" },
-  { icon: Cloud, label: "Fits Cloudflare's free plan" },
-  { icon: Server, label: "No central service" },
-  { icon: Code2, label: "MIT licensed" },
-];
-
-function TrustStrip() {
-  return (
-    <Section className="pb-10">
-      <Reveal>
-        <div className="rounded-card border border-line bg-surface/50 px-6 py-4">
-          <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm text-ink-muted">
-            {TRUST_ITEMS.map(({ icon: Icon, label }) => (
-              <span key={label} className="inline-flex items-center gap-2">
-                <Icon className="size-4 text-accent" />
-                {label}
-              </span>
-            ))}
-          </div>
-        </div>
-      </Reveal>
-    </Section>
   );
 }
 
@@ -738,6 +750,10 @@ function HowItWorks() {
         </div>
         <p className="mt-5 text-center text-sm text-ink-muted">
           The only things that leave your account are the checks themselves and the alerts you set up.
+        </p>
+        <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-ink-faint">
+          That's the free path. With Hosted, the same Worker and database run in my Cloudflare account instead, a
+          separate copy for each customer.
         </p>
       </Reveal>
     </Section>
@@ -879,104 +895,6 @@ const INTERNALS = [
   "Admin CLI and API tokens",
 ];
 
-function Features() {
-  return (
-    <Section id="features" className="py-14 sm:py-20">
-      <Reveal>
-        <SectionHeading
-          eyebrow="Monitoring"
-          title="Checks for everything your users depend on"
-          subtitle="From public endpoints to background jobs, OpenPing tells you the moment one breaks."
-        />
-      </Reveal>
-
-      <Reveal delay={100} className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {CHECKS.map(({ icon: Icon, title, body }) => (
-          <div key={title} className="op-lift flex gap-4 rounded-card border border-line bg-surface p-5">
-            <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
-              <Icon className="size-5" />
-            </span>
-            <div className="min-w-0">
-              <h3 className="text-base font-semibold text-ink">{title}</h3>
-              <p className="mt-1 text-sm leading-relaxed text-ink-muted">{body}</p>
-            </div>
-          </div>
-        ))}
-      </Reveal>
-
-      <Reveal delay={160} className="mt-4 rounded-card border border-line bg-surface/60 px-5 py-5 sm:px-6">
-        <p className="text-xs font-semibold uppercase tracking-widest text-ink-faint">Under the hood</p>
-        <ul className="mt-3 grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
-          {INTERNALS.map((p) => (
-            <li key={p} className="flex items-start gap-2.5 text-sm text-ink-muted">
-              <Check className="mt-0.5 size-4 shrink-0 text-up" />
-              <span>{p}</span>
-            </li>
-          ))}
-        </ul>
-      </Reveal>
-    </Section>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * 6. Status pages (live demo CTA)
- * ------------------------------------------------------------------ */
-
-function StatusPages() {
-  return (
-    <Section id="status-pages" className="py-14 sm:py-20">
-      <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-14">
-        <Reveal className="order-2 lg:order-1 relative">
-          <div
-            aria-hidden
-            className="absolute -inset-4 -z-10 rounded-[2rem] opacity-50 blur-2xl"
-            style={{ background: "radial-gradient(50% 50% at 50% 50%, rgba(47,191,110,0.16), transparent 70%)" }}
-          />
-          <figure className="overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl shadow-black/40">
-            <div aria-hidden className="flex items-center gap-3 border-b border-line bg-surface-2/60 px-4 py-2.5">
-              <span className="flex gap-1.5">
-                <span className="size-2.5 rounded-full bg-[#ff5f57]" />
-                <span className="size-2.5 rounded-full bg-[#febc2e]" />
-                <span className="size-2.5 rounded-full bg-[#28c840]" />
-              </span>
-              <span className="truncate font-mono text-[11px] text-ink-faint">status.your-domain.com</span>
-            </div>
-            <img
-              src="/landing/status-page.webp"
-              alt="An OpenPing status page: a partial outage banner, the open incident, and 90-day uptime bars for each service"
-              width={800}
-              height={620}
-              className="block h-auto w-full"
-              loading="lazy"
-              decoding="async"
-            />
-            <figcaption className="sr-only">A public OpenPing status page, with demo data.</figcaption>
-          </figure>
-        </Reveal>
-        <Reveal delay={120} className="order-1 lg:order-2">
-          <SectionHeading
-            align="left"
-            eyebrow="Status pages"
-            title="A status page your users will trust"
-            subtitle="90-day uptime bars, incident history and maintenance notices, in your colors and with your logo. Embed it as a widget or an SVG badge."
-          />
-          <div className="mt-7 flex flex-wrap gap-3">
-            <Link
-              to="/status"
-              className="op-lift inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover"
-            >
-              <Globe className="size-4" />
-              See a live status page
-              <ArrowRight className="size-4" />
-            </Link>
-          </div>
-        </Reveal>
-      </div>
-    </Section>
-  );
-}
-
 /* ------------------------------------------------------------------ *
  * 7. Alerts, on any channel and on your phone
  * ------------------------------------------------------------------ */
@@ -988,35 +906,211 @@ const CHANNELS: { icon: LucideIcon; title: string; body: string }[] = [
   { icon: Smartphone, title: "Phone push", body: "An installable Android app" },
 ];
 
-function Alerts() {
+type FeatureTab = "checks" | "status-pages" | "alerts";
+
+const FEATURE_TABS: { id: FeatureTab; label: string }[] = [
+  { id: "checks", label: "Checks" },
+  { id: "status-pages", label: "Status pages" },
+  { id: "alerts", label: "Alerts" },
+];
+
+function ChecksPanel() {
   return (
-    <Section id="alerts" className="py-14 sm:py-20">
-      <div className="grid items-center gap-10 lg:grid-cols-[1.2fr_1fr] lg:gap-14">
-        <Reveal>
-          <SectionHeading
-            align="left"
-            eyebrow="Alerts"
-            title="Know the moment something breaks"
-            subtitle="Route alerts to one channel or all of them. Install the dashboard on your phone for push notifications, no app store needed."
-          />
-          <ul className="mt-7 grid gap-3 sm:grid-cols-2">
-            {CHANNELS.map(({ icon: Icon, title, body }) => (
-              <li key={title} className="flex items-center gap-3 rounded-card border border-line bg-surface p-4">
-                <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
-                  <Icon className="size-5" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-ink">{title}</span>
-                  <span className="block text-xs text-ink-muted">{body}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Reveal>
-        <Reveal delay={120} className="flex justify-center">
-          <PhoneMockup />
-        </Reveal>
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {CHECKS.map(({ icon: Icon, title, body }) => (
+          <div key={title} className="op-lift flex gap-4 rounded-card border border-line bg-surface p-5">
+            <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
+              <Icon className="size-5" aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <h3 className="text-base font-semibold text-ink">{title}</h3>
+              <p className="mt-1 text-sm leading-relaxed text-ink-muted">{body}</p>
+            </div>
+          </div>
+        ))}
       </div>
+      <div className="mt-4 rounded-card border border-line bg-surface/60 px-5 py-5 sm:px-6">
+        <p className="text-xs font-semibold uppercase tracking-widest text-ink-faint">Under the hood</p>
+        <ul className="mt-3 grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+          {INTERNALS.map((p) => (
+            <li key={p} className="flex items-start gap-2.5 text-sm text-ink-muted">
+              <Check className="mt-0.5 size-4 shrink-0 text-up" aria-hidden />
+              <span>{p}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </>
+  );
+}
+
+function StatusPagesPanel() {
+  return (
+    <div className="grid items-center gap-8 lg:grid-cols-2 lg:gap-12">
+      <div className="relative">
+        <div
+          aria-hidden
+          className="absolute -inset-4 -z-10 rounded-[2rem] opacity-50 blur-2xl"
+          style={{ background: "radial-gradient(50% 50% at 50% 50%, rgba(47,191,110,0.16), transparent 70%)" }}
+        />
+        <figure className="overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl shadow-black/40">
+          <div aria-hidden className="flex items-center gap-3 border-b border-line bg-surface-2/60 px-4 py-2.5">
+            <span className="flex gap-1.5">
+              <span className="size-2.5 rounded-full bg-[#ff5f57]" />
+              <span className="size-2.5 rounded-full bg-[#febc2e]" />
+              <span className="size-2.5 rounded-full bg-[#28c840]" />
+            </span>
+            <span className="truncate font-mono text-[11px] text-ink-faint">status.your-domain.com</span>
+          </div>
+          <img
+            src="/landing/status-page.webp"
+            alt="An OpenPing status page: a partial outage banner, the open incident, and 90-day uptime bars for each service"
+            width={800}
+            height={620}
+            className="block h-auto w-full"
+            loading="lazy"
+            decoding="async"
+          />
+          <figcaption className="sr-only">A public OpenPing status page, with demo data.</figcaption>
+        </figure>
+      </div>
+      <div>
+        <h3 className="text-2xl font-semibold tracking-tight text-ink">A status page your users will trust</h3>
+        <p className="mt-3 text-base leading-relaxed text-ink-muted">
+          90-day uptime bars, incident history and maintenance notices, in your colors and with your logo. One page per
+          group of services if you like, and an embeddable widget or SVG badge for your own site.
+        </p>
+        <Link
+          to="/status"
+          className="op-lift mt-6 inline-flex h-11 items-center gap-2 rounded-lg border border-line bg-surface-2 px-5 text-sm font-semibold text-ink hover:border-accent/50"
+        >
+          <Globe className="size-4" aria-hidden />
+          See a live status page
+          <ArrowRight className="size-4" aria-hidden />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function AlertsPanel() {
+  return (
+    <div className="grid items-center gap-8 lg:grid-cols-[1.2fr_1fr] lg:gap-12">
+      <div>
+        <h3 className="text-2xl font-semibold tracking-tight text-ink">Know the moment something breaks</h3>
+        <p className="mt-3 text-base leading-relaxed text-ink-muted">
+          Route alerts to one channel or all of them. Install the dashboard on your phone for push notifications, no
+          app store needed.
+        </p>
+        <ul className="mt-6 grid gap-3 sm:grid-cols-2">
+          {CHANNELS.map(({ icon: Icon, title, body }) => (
+            <li key={title} className="flex items-center gap-3 rounded-card border border-line bg-surface p-4">
+              <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
+                <Icon className="size-5" aria-hidden />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-ink">{title}</span>
+                <span className="block text-xs text-ink-muted">{body}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="flex justify-center">
+        <PhoneMockup />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What it checks, the status pages and the alerts, as one section with tabs
+ * (WAI-ARIA tabs: arrow keys, Home and End move between them). Every panel
+ * stays in the page, hidden when not selected, so its text is still there for
+ * search engines and for find-in-page once it's picked.
+ */
+function Features() {
+  const [active, setActive] = useState<FeatureTab>("checks");
+  const baseId = useId();
+  const tabRefs = useRef<Partial<Record<FeatureTab, HTMLButtonElement | null>>>({});
+
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const index = FEATURE_TABS.findIndex((t) => t.id === active);
+    let next = index;
+    if (e.key === "ArrowRight") next = (index + 1) % FEATURE_TABS.length;
+    else if (e.key === "ArrowLeft") next = (index - 1 + FEATURE_TABS.length) % FEATURE_TABS.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = FEATURE_TABS.length - 1;
+    else return;
+    e.preventDefault();
+    const id = FEATURE_TABS[next]!.id;
+    setActive(id);
+    tabRefs.current[id]?.focus();
+  }
+
+  return (
+    <Section id="features" className="py-14 sm:py-20">
+      <Reveal>
+        <SectionHeading
+          eyebrow="Features"
+          title="Checks, status pages and alerts in one place"
+          subtitle="From public endpoints to background jobs, OpenPing tells you the moment one breaks, and tells your users too."
+        />
+      </Reveal>
+
+      <Reveal delay={100} className="mt-10">
+        <div className="flex justify-center">
+          <div
+            role="tablist"
+            aria-label="Features"
+            onKeyDown={onKeyDown}
+            className="inline-flex rounded-xl border border-line bg-surface p-1"
+          >
+            {FEATURE_TABS.map((t) => {
+              const selected = t.id === active;
+              return (
+                <button
+                  key={t.id}
+                  ref={(el) => {
+                    tabRefs.current[t.id] = el;
+                  }}
+                  type="button"
+                  role="tab"
+                  id={`${baseId}-tab-${t.id}`}
+                  aria-selected={selected}
+                  aria-controls={`${baseId}-panel-${t.id}`}
+                  tabIndex={selected ? 0 : -1}
+                  onClick={() => setActive(t.id)}
+                  className={
+                    selected
+                      ? "h-10 rounded-lg bg-accent px-4 text-sm font-semibold text-canvas sm:px-5"
+                      : "h-10 rounded-lg px-4 text-sm font-medium text-ink-muted transition-colors hover:text-ink sm:px-5"
+                  }
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {FEATURE_TABS.map((t) => (
+          <div
+            key={t.id}
+            role="tabpanel"
+            id={`${baseId}-panel-${t.id}`}
+            aria-labelledby={`${baseId}-tab-${t.id}`}
+            hidden={t.id !== active}
+            tabIndex={0}
+            className="mt-8 rounded-card focus-visible:outline-offset-4"
+          >
+            {t.id === "checks" && <ChecksPanel />}
+            {t.id === "status-pages" && <StatusPagesPanel />}
+            {t.id === "alerts" && <AlertsPanel />}
+          </div>
+        ))}
+      </Reveal>
     </Section>
   );
 }
@@ -1144,9 +1238,9 @@ const PLAN_FACTS: { value: string; label: string; body: string }[] = [
 
 const OWN_ACCOUNT_POINTS = [
   "Every feature, MIT licensed",
-  "No monitor cap of its own (Cloudflare's free plan limits apply)",
-  "Your data stays in your Cloudflare account",
-  "About 20 minutes to set up, step by step",
+  "Your data never leaves your account",
+  "Fits Cloudflare's free plan for about 8 monitors at once; Workers Paid for more",
+  "About 20 minutes, step by step",
 ];
 
 const HOSTED_POINTS = [
@@ -1157,7 +1251,29 @@ const HOSTED_POINTS = [
   "Optional 1-minute checks for $12 a year more",
 ];
 
+/** Count the pricing section once per page view, when most of a card is on screen. */
+function usePricingView() {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          track("pricing_view");
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.4 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return ref;
+}
+
 function Pricing() {
+  const cardsRef = usePricingView();
   return (
     <Section id="pricing" className="py-14 sm:py-20">
       <Reveal>
@@ -1167,55 +1283,90 @@ function Pricing() {
           subtitle="The software is the same either way. One path is free in your own Cloudflare account; the other is a hosted plan for people who'd rather not touch Cloudflare."
         />
       </Reveal>
-      <Reveal delay={100} className="mx-auto mt-10 grid max-w-5xl items-stretch gap-4 md:grid-cols-2">
-        <div className="op-lift flex flex-col rounded-card border border-line bg-surface p-6 sm:p-7">
-          <p className="text-sm font-semibold text-accent">In your own Cloudflare account</p>
-          <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">Free</p>
-          <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
-            {OWN_ACCOUNT_POINTS.map((p) => (
-              <li key={p} className="flex gap-2.5">
-                <Check className="mt-0.5 size-4 shrink-0 text-up" />
-                {p}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-auto pt-6">
-            <Link
-              to="/install"
-              className="op-lift inline-flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-5 py-3 text-sm font-semibold text-ink hover:bg-surface"
-            >
-              Set it up, step by step
-              <ArrowRight className="size-4" />
-            </Link>
+      <Reveal delay={100} className="mx-auto mt-10 max-w-5xl">
+        <div ref={cardsRef} className="grid items-stretch gap-4 md:grid-cols-2">
+          <div className="op-lift relative flex flex-col rounded-card border border-accent/60 bg-surface p-5 sm:p-7">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 -z-10 rounded-card"
+              style={{ background: "radial-gradient(80% 60% at 50% 0%, rgba(109,139,255,0.16), transparent 70%)" }}
+            />
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-accent">In your own Cloudflare account</h3>
+              <span className="shrink-0 whitespace-nowrap rounded-full border border-up/30 bg-up/10 px-2.5 py-0.5 text-xs font-semibold text-up">Available now</span>
+            </div>
+            <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">Free</p>
+            <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
+              {OWN_ACCOUNT_POINTS.map((p) => (
+                <li key={p} className="flex gap-2.5">
+                  <Check className="mt-0.5 size-4 shrink-0 text-up" aria-hidden />
+                  {p}
+                </li>
+              ))}
+            </ul>
+            <div className="mt-auto pt-6">
+              <Link
+                to={DEPLOY_PATH}
+                onClick={() => track("pricing_deploy")}
+                className="op-lift inline-flex h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-3 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover"
+              >
+                Deploy free to your Cloudflare
+                <ArrowRight className="size-4" aria-hidden />
+              </Link>
+            </div>
+          </div>
+
+          <div id="hosted-card" className="op-lift relative flex scroll-mt-28 flex-col rounded-card border border-line bg-surface p-5 sm:p-7">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-ink">OpenPing Hosted</h3>
+              <span className="shrink-0 whitespace-nowrap rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-ink-muted">
+                Not open yet
+              </span>
+            </div>
+            <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">
+              $24<span className="text-lg font-medium text-ink-muted"> a year</span>
+            </p>
+            <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
+              {HOSTED_POINTS.map((p) => (
+                <li key={p} className="flex gap-2.5">
+                  <Check className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
+                  {p}
+                </li>
+              ))}
+            </ul>
+            <div className="mt-auto pt-6">
+              <WaitlistForm onJoined={() => track("waitlist_join")} />
+              <a
+                href={HOSTED_PLAN_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-ink-muted underline decoration-line underline-offset-4 hover:text-ink hover:decoration-accent"
+              >
+                Where Hosted is up to
+                <ArrowUpRight className="size-3.5" aria-hidden />
+              </a>
+            </div>
           </div>
         </div>
 
-        <div className="op-lift relative flex flex-col rounded-card border border-accent/50 bg-surface p-6 sm:p-7">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 -z-10 rounded-card"
-            style={{ background: "radial-gradient(80% 60% at 50% 0%, rgba(109,139,255,0.16), transparent 70%)" }}
-          />
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-accent">OpenPing Hosted</p>
-            <span className="rounded-full border border-accent/40 bg-accent/10 px-2.5 py-0.5 text-xs font-semibold text-accent">
-              Coming soon
-            </span>
-          </div>
-          <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">
-            $24<span className="text-lg font-medium text-ink-muted"> a year</span>
+        <div className="mx-auto mt-6 flex max-w-3xl items-start gap-3 rounded-card border border-line bg-surface/60 px-4 py-4 sm:items-center sm:px-5">
+          <img src="/n8builds-icon.png" alt="" width={36} height={36} className="mt-0.5 shrink-0 rounded-lg ring-1 ring-white/10 sm:mt-0" />
+          <p className="text-sm leading-relaxed text-ink-muted">
+            Hosted is run by{" "}
+            <a href={N8BUILDS_URL} target="_blank" rel="noreferrer" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
+              Nathan Watkins (n8builds)
+            </a>
+            , the person who writes OpenPing. Hosted accounts will live at{" "}
+            <span className="font-mono text-xs text-ink">app.openping.n8builds.dev</span>, separate from any install
+            you run yourself.
           </p>
-          <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
-            {HOSTED_POINTS.map((p) => (
-              <li key={p} className="flex gap-2.5">
-                <Check className="mt-0.5 size-4 shrink-0 text-accent" />
-                {p}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-auto pt-6">
-            <WaitlistForm />
-          </div>
+        </div>
+      </Reveal>
+
+      <Reveal delay={140} className="mx-auto mt-12 max-w-5xl">
+        <h3 className="text-center text-xl font-semibold tracking-tight text-ink sm:text-2xl">Self-host or Hosted, side by side</h3>
+        <div className="mt-6">
+          <HostingTable />
         </div>
       </Reveal>
     </Section>
@@ -1327,7 +1478,30 @@ function QuickStart() {
 const FAQS: FaqItem[] = [
   {
     q: "Is OpenPing really free?",
-    a: "The software is free and MIT licensed, and it runs in your own Cloudflare account, which for typical personal and small-team use fits inside Cloudflare's free plan. If you'd rather not run it yourself, OpenPing Hosted ($24 a year) is coming; join the waitlist in Pricing.",
+    a: "Yes. The software is free and MIT licensed, and it runs in your own Cloudflare account, which for typical personal and small-team use fits inside Cloudflare's free plan. Every feature is in the free version; nothing is held back for Hosted.",
+  },
+  {
+    q: "Is there a hosted version?",
+    a: (
+      <>
+        Planned, not open yet. OpenPing Hosted will be $24 a year for people who'd rather not run it themselves.{" "}
+        <a
+          href="#pricing"
+          onClick={(e) => {
+            e.preventDefault();
+            goToWaitlist();
+          }}
+          className="text-accent underline"
+        >
+          Join the waitlist
+        </a>{" "}
+        to hear once when it opens, and see{" "}
+        <a href={HOSTED_PLAN_URL} target="_blank" rel="noreferrer" className="text-accent underline">
+          where Hosted is up to
+        </a>
+        .
+      </>
+    ),
   },
   {
     q: "Where does my data live?",
@@ -1352,7 +1526,7 @@ const FAQS: FaqItem[] = [
   },
   {
     q: "Who can sign in?",
-    a: "OpenPing has a single administrator. You sign in with GitHub or an email magic link, and only the identity you configure gets in.",
+    a: "In your own Cloudflare account, only you: OpenPing has one administrator, who signs in with GitHub or an email link, and the OpenPing project never sees that install. OpenPing Hosted, when it opens, will have normal accounts with email, Google or GitHub sign-in, kept separate from any install you run yourself.",
   },
   {
     q: "Can I automate it?",
@@ -1381,7 +1555,7 @@ function BottomCta() {
   return (
     <Section className="py-14 sm:py-24">
       <Reveal>
-        <div className="relative overflow-hidden rounded-card border border-line bg-surface px-6 py-12 text-center sm:px-12 sm:py-14">
+        <div className="relative overflow-hidden rounded-card border border-line bg-surface px-4 py-12 text-center sm:px-12 sm:py-14">
           <div
             aria-hidden
             className="pointer-events-none absolute inset-0 -z-10"
@@ -1391,34 +1565,39 @@ function BottomCta() {
             Own your uptime monitoring
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-pretty text-base leading-relaxed text-ink-muted">
-            Free, open source and yours. Found a rough edge or have an idea? Issues
-            and pull requests are welcome.
+            Run it free in your own Cloudflare account today, or get on the list for the hosted version.
           </p>
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            <PrimaryCTA href={DEPLOY_URL}>
-              <Github className="size-4" />
-              Deploy your own
-              <ArrowRight className="size-4" />
-            </PrimaryCTA>
-            <a
-              href={GITHUB_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="op-lift inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-surface px-5 py-3 text-sm font-semibold text-ink hover:bg-surface-2"
+          <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+            <Link
+              to={DEPLOY_PATH}
+              onClick={() => track("cta_deploy")}
+              className="op-lift inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-5 text-sm font-semibold text-canvas shadow-lg shadow-accent/20 hover:bg-accent-hover"
             >
-              <Star className="size-4" />
-              Star on GitHub
-            </a>
+              Deploy free to your Cloudflare
+              <ArrowRight className="size-4" aria-hidden />
+            </Link>
             <a
-              href={GITHUB_ISSUES_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center justify-center gap-2 rounded-lg px-3 py-3 text-sm font-semibold text-ink-muted transition-colors hover:text-ink"
+              href="#pricing"
+              onClick={(e) => {
+                e.preventDefault();
+                track("cta_waitlist");
+                goToWaitlist();
+              }}
+              className="op-lift inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-5 text-sm font-semibold text-ink hover:border-accent/50"
             >
-              <Bug className="size-4" />
-              Open an issue
+              Join the Hosted waitlist
             </a>
           </div>
+          <p className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-ink-muted">
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 hover:text-ink">
+              <Star className="size-4" aria-hidden />
+              Star on GitHub
+            </a>
+            <a href={GITHUB_ISSUES_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 hover:text-ink">
+              <Bug className="size-4" aria-hidden />
+              Found a rough edge? Open an issue
+            </a>
+          </p>
         </div>
       </Reveal>
     </Section>
@@ -1429,46 +1608,47 @@ function BottomCta() {
  * 17. Footer
  * ------------------------------------------------------------------ */
 
+const FOOTER_LINKS: { label: string; href?: string; to?: string }[] = [
+  { label: "How it works", href: "#how-it-works" },
+  { label: "Features", href: "#features" },
+  { label: "Pricing", href: "#pricing" },
+  { label: "FAQ", href: "#faq" },
+  { label: "Install guide", to: "/install" },
+  { label: "Live status", to: "/status" },
+  { label: "Free tools", to: "/tools" },
+];
+
 function Footer({ onSignIn }: { onSignIn: () => void }) {
   return (
     <footer className="border-t border-line">
       <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
-        <div className="flex flex-col items-start justify-between gap-8 md:flex-row md:items-center">
+        <div className="flex flex-col items-start justify-between gap-8 md:flex-row">
           <div>
             <Logo />
-            <p className="mt-3 max-w-xs text-sm text-ink-muted">
-              Uptime monitoring and status pages that run entirely in your own
-              Cloudflare account.
+            <p className="mt-3 max-w-xs text-sm leading-relaxed text-ink-muted">
+              Uptime monitoring and status pages, free in your own Cloudflare account. A hosted version is planned.
             </p>
           </div>
 
-          <nav className="flex flex-wrap gap-x-8 gap-y-3 text-sm text-ink-muted">
-            <a href="#features" className="transition-colors hover:text-ink">
-              Features
-            </a>
-            <a href="#comparison" className="transition-colors hover:text-ink">
-              Compare
-            </a>
-            <a href="#status-pages" className="transition-colors hover:text-ink">
-              Status pages
-            </a>
-            <a href="#faq" className="transition-colors hover:text-ink">
-              FAQ
-            </a>
-            <Link to="/status" className="transition-colors hover:text-ink">
-              Live status
-            </Link>
-            <button
-              type="button"
-              onClick={onSignIn}
-              className="transition-colors hover:text-ink"
-            >
-              Sign in
+          <nav aria-label="Footer" className="grid grid-cols-2 gap-x-10 gap-y-3 text-sm text-ink-muted sm:grid-cols-3">
+            {FOOTER_LINKS.map((l) =>
+              l.to ? (
+                <Link key={l.label} to={l.to} className="transition-colors hover:text-ink">
+                  {l.label}
+                </Link>
+              ) : (
+                <a key={l.label} href={l.href} className="transition-colors hover:text-ink">
+                  {l.label}
+                </a>
+              ),
+            )}
+            <button type="button" onClick={onSignIn} className="text-left transition-colors hover:text-ink">
+              Owner sign-in
             </button>
           </nav>
         </div>
 
-        {/* Support / star / other-projects CTAs */}
+        {/* Support / star / other-projects */}
         <div className="mt-10 flex flex-wrap items-center gap-3 border-t border-line pt-8">
           {KOFI_ENABLED && (
             <a
@@ -1487,7 +1667,7 @@ function Footer({ onSignIn }: { onSignIn: () => void }) {
             rel="noreferrer"
             className="op-lift inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink hover:bg-surface-2"
           >
-            <Star className="size-4" />
+            <Star className="size-4" aria-hidden />
             Star on GitHub
           </a>
           <a
@@ -1497,14 +1677,13 @@ function Footer({ onSignIn }: { onSignIn: () => void }) {
             className="op-lift inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink hover:bg-surface-2"
           >
             <img src="/n8builds-icon.png" alt="" width={18} height={18} className="rounded" />
-            More projects
-            <span className="text-ink-muted">n8builds.dev</span>
-            <ArrowUpRight className="size-4 text-ink-faint" />
+            More from n8builds
+            <ArrowUpRight className="size-4 text-ink-faint" aria-hidden />
           </a>
         </div>
 
         <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-line pt-6 text-xs text-ink-faint sm:flex-row sm:items-center">
-          <p>MIT licensed · Runs in your own Cloudflare account.</p>
+          <p>MIT licensed. Made by Nathan Watkins (n8builds).</p>
           <p>© {new Date().getFullYear()} OpenPing</p>
         </div>
       </div>

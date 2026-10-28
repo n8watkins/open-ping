@@ -1,16 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Github, Loader2, Mail, X } from "lucide-react";
+import { X } from "lucide-react";
 import { Logo } from "../Logo";
-import { api } from "../../lib/api";
-import { useBootstrap } from "../../lib/bootstrap";
+import { SignInPanel } from "../SignInPanel";
 
 /**
- * Accessible sign-in modal for the marketing landing page.
- *
- * Mirrors the provider logic in pages/Login.tsx but is fully self-contained so
- * the landing page can offer sign-in without a full-page navigation. /login
- * remains a working deep-link fallback.
+ * The owner sign-in dialog, opened from the landing page's footer. The form
+ * itself is the same SignInPanel as /login, which stays the deep link.
  *
  * Accessibility: role="dialog" + aria-modal, labelled by its heading, Escape to
  * close, click-backdrop to close, a Tab focus-trap, focus restored to the
@@ -27,27 +23,8 @@ export function SignInModal({
   open: boolean;
   onClose: () => void;
 }) {
-  const { status } = useBootstrap();
-  const githubEnabled = status?.githubEnabled ?? false;
-  const emailEnabled = status?.emailAdminConfigured ?? false;
-
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
-
-  const [email, setEmail] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [emailError, setEmailError] = useState<string | null>(null);
-
-  // Reset transient form state whenever the modal is dismissed.
-  useEffect(() => {
-    if (!open) {
-      setEmail("");
-      setSubmitting(false);
-      setSent(false);
-      setEmailError(null);
-    }
-  }, [open]);
 
   // Focus trap, Escape handling, scroll lock, and focus restoration.
   useEffect(() => {
@@ -97,32 +74,10 @@ export function SignInModal({
       window.clearTimeout(focusTimer);
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = prevOverflow;
-      previousFocus.current?.focus?.();
+      // Without scrolling, so a link that moved the page (to #pricing) stays put.
+      previousFocus.current?.focus?.({ preventScroll: true });
     };
   }, [open, onClose]);
-
-  const requestMagicLink = useCallback(
-    async (e: FormEvent) => {
-      e.preventDefault();
-      setSubmitting(true);
-      setEmailError(null);
-      try {
-        // The server always responds { ok: true } regardless of whether the
-        // address is allowed, so we show the same generic confirmation either way.
-        await api("/api/auth/magic/request", { method: "POST", json: { email } });
-        setSent(true);
-      } catch (err) {
-        setEmailError(
-          err instanceof Error
-            ? err.message
-            : "Could not send a sign-in link. Please try again.",
-        );
-      } finally {
-        setSubmitting(false);
-      }
-    },
-    [email],
-  );
 
   if (!open) return null;
 
@@ -154,7 +109,7 @@ export function SignInModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="signin-modal-title"
-        className="op-modal-panel relative z-10 w-full max-w-sm rounded-card border border-line bg-surface p-6 shadow-2xl shadow-black/50"
+        className="op-modal-panel relative z-10 w-full max-h-[calc(100dvh-2rem)] max-w-sm overflow-y-auto rounded-card border border-line bg-surface p-6 shadow-2xl shadow-black/50"
       >
         <button
           type="button"
@@ -169,81 +124,9 @@ export function SignInModal({
           <Logo />
         </div>
 
-        <h2
-          id="signin-modal-title"
-          className="mt-4 text-center text-lg font-semibold tracking-tight text-ink"
-        >
-          Sign in
-        </h2>
-        <p className="mt-1 text-center text-sm text-ink-muted">
-          OpenPing is single-administrator. Only the configured identity can sign in.
-        </p>
-
-        <div className="mt-6 space-y-3">
-          {githubEnabled ? (
-            <a
-              href="/auth/github/start"
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-canvas transition-opacity hover:opacity-90"
-            >
-              <Github className="size-4" />
-              Continue with GitHub
-            </a>
-          ) : (
-            <button
-              type="button"
-              disabled
-              title="GitHub sign-in isn't configured on this installation."
-              className="flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-canvas opacity-40"
-            >
-              <Github className="size-4" />
-              Continue with GitHub
-            </button>
-          )}
-
-          {emailEnabled &&
-            (sent ? (
-              <p className="rounded-lg border border-up/40 bg-up/10 px-3 py-2 text-center text-sm text-up">
-                If that address is allowed, a sign-in link has been sent.
-              </p>
-            ) : (
-              <form onSubmit={(e) => void requestMagicLink(e)} className="space-y-2">
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  aria-label="Email address"
-                  className="input"
-                />
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-line disabled:opacity-40"
-                >
-                  {submitting ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Mail className="size-4" />
-                  )}
-                  Email magic link
-                </button>
-                {emailError && (
-                  <p className="text-center text-sm text-down">{emailError}</p>
-                )}
-              </form>
-            ))}
-
-          {!githubEnabled && !emailEnabled && (
-            <p className="rounded-lg border border-line bg-surface-2/60 px-3 py-2 text-center text-sm text-ink-muted">
-              No sign-in options are configured on this installation yet.
-            </p>
-          )}
+        <div className="mt-4">
+          <SignInPanel titleId="signin-modal-title" titleAs="h2" onNavigate={onClose} />
         </div>
-
-        <p className="mt-6 text-center text-xs text-ink-faint">
-          Runs in your own Cloudflare account.
-        </p>
       </div>
     </div>,
     document.body,

@@ -8,6 +8,7 @@ import { magicFlow } from "./routes/magic";
 import { heartbeats } from "./routes/heartbeats";
 import { mcp, MCP_MAX_BODY_BYTES } from "./mcp/handler";
 import { runScheduled } from "./scheduler";
+import { homePage, withLandingHead } from "./lib/home-page";
 import {
   BASE_SECURITY_HEADERS,
   cspDirectives,
@@ -79,6 +80,7 @@ const payloadTooLarge = (c: Context) =>
   c.json({ error: "payload_too_large" }, 413);
 app.use("/api/auth/magic/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/api/tools/is-it-down", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
+app.use("/api/events", bodyLimit({ maxSize: 1024, onError: payloadTooLarge }));
 app.use("/api/waitlist", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/hb/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/mcp", bodyLimit({ maxSize: MCP_MAX_BODY_BYTES, onError: payloadTooLarge }));
@@ -109,7 +111,7 @@ app.all("/.well-known/*", async (c, next) => {
 // in wrangler.jsonc makes ASSETS return index.html for client-side routes.
 // Unmatched /api paths must return JSON, not the HTML shell — Hono's route()
 // merge means a sub-app's own notFound never fires for the parent, so guard here.
-app.all("*", (c) => {
+app.all("*", async (c) => {
   if (c.req.path === "/api" || c.req.path.startsWith("/api/")) {
     return c.json({ error: "not_found", path: c.req.path }, 404);
   }
@@ -137,8 +139,38 @@ app.all("*", (c) => {
   // browser URL remains unchanged, so React Router still resolves the requested
   // route after the transformed shell loads.
   const entryUrl = new URL("/", c.req.url);
-  return c.env.ASSETS.fetch(new Request(entryUrl, c.req.raw));
+  const shell = await c.env.ASSETS.fetch(new Request(entryUrl, c.req.raw));
+  // On the canonical install `/` is the marketing page: write its title,
+  // description and link-preview tags into the shell (lib/home-page.ts).
+  if (
+    path === "/" &&
+    homePage(c.env) === "landing" &&
+    shell.ok &&
+    (shell.headers.get("content-type") ?? "").includes("text/html")
+  ) {
+    const headers = new Headers(shell.headers);
+    headers.delete("content-length");
+    headers.delete("etag");
+    return new Response(withLandingHead(await shell.text(), siteOrigin(c.env.APP_URL, c.req.url)), {
+      status: shell.status,
+      headers,
+    });
+  }
+  return shell;
 });
+
+/** The install's public origin: APP_URL when it's a valid URL, else the request's. */
+function siteOrigin(appUrl: string | undefined, requestUrl: string): string {
+  if (appUrl) {
+    try {
+      const url = new URL(appUrl);
+      if (url.protocol === "https:" || url.protocol === "http:") return url.origin;
+    } catch {
+      // Fall through to the request's origin.
+    }
+  }
+  return new URL(requestUrl).origin;
+}
 
 export default {
   fetch: app.fetch,

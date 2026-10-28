@@ -18,6 +18,7 @@ import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { Stat } from "../components/ui/Stat";
 import { formatMs, formatRelativeTime } from "../lib/format";
 import { cn } from "../lib/cn";
+import { LandingEventsCard } from "../components/LandingEventsCard";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -198,6 +199,7 @@ export default function Settings() {
           />
           <EncryptionSection csrf={csrf ?? undefined} />
           {waitlistData && <WaitlistSection waitlist={waitlistData} />}
+          <LandingEventsCard />
           <AboutSection version={diagData?.version ?? null} />
         </div>
       </div>

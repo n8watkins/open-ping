@@ -55,6 +55,19 @@ export interface Env {
    */
   WAITLIST_ENABLED?: string;
 
+  /**
+   * What a signed-out visitor sees at `/`: "status" (the default) for this
+   * install's own status page, or "landing" for OpenPing's marketing page,
+   * which only the canonical install sets (lib/home-page.ts). A wrangler.jsonc var.
+   */
+  HOME_PAGE?: string;
+
+  /**
+   * Workers Rate Limiting binding for the landing page's click counter
+   * (routes/events.ts). Optional, so an install without it still works.
+   */
+  EVENT_LIMITER?: RateLimit;
+
   /** Web Push VAPID keypair (set during PWA setup). */
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;

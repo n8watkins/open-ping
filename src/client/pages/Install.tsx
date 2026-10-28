@@ -2,6 +2,10 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Check, Copy } from "lucide-react";
 import { Logo } from "../components/Logo";
+import { useBootstrap } from "../lib/bootstrap";
+import { isLandingInstall } from "../lib/home";
+import { setPageMeta } from "../lib/meta";
+import { track } from "../lib/track";
 
 /**
  * /install: the step-by-step guide to running OpenPing in your own Cloudflare
@@ -54,9 +58,17 @@ const C = ({ children }: { children: ReactNode }) => (
 );
 
 export default function Install() {
+  const { status } = useBootstrap();
+  const landing = isLandingInstall(status);
   useEffect(() => {
-    document.title = "Set up OpenPing in your own Cloudflare account";
+    setPageMeta({
+      title: "Set up OpenPing in your own Cloudflare account",
+      description: "Step by step, about 20 minutes: run OpenPing free in your own Cloudflare account.",
+    });
   }, []);
+  useEffect(() => {
+    if (landing) track("install_view");
+  }, [landing]);
 
   return (
     <div className="min-h-full bg-canvas text-ink">

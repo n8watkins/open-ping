@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   AlertOctagon,
   AlertTriangle,
@@ -17,6 +17,7 @@ import { Logo } from "../components/Logo";
 import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { cn } from "../lib/cn";
+import { setPageMeta } from "../lib/meta";
 import {
   formatDateTime,
   formatDuration,
@@ -220,7 +221,15 @@ const BAR_META: Record<BarState, string> = {
  * Page
  * ------------------------------------------------------------------ */
 
-export default function PublicStatus() {
+/** Where "Powered by OpenPing" points: the project's own site. */
+const OPENPING_SITE = "https://openping.n8builds.dev";
+
+/**
+ * The public status page, at /status, /status/:slug, and at `/` for signed-out
+ * visitors on a HOME_PAGE="status" install (`asHome`), where a disabled page
+ * becomes a short "no public status page" screen instead of a bare notice.
+ */
+export default function PublicStatus({ asHome = false }: { asHome?: boolean } = {}) {
   // Optional per-category slug from the `/status/:slug` route; `/status` (no
   // param) still resolves to the default page. Encode it so it is a safe query
   // value. The response JSON shape is identical with or without a slug.
@@ -235,9 +244,21 @@ export default function PublicStatus() {
   // page (distinct from a generic fetch failure).
   const notFound = error === "not_found";
 
+  const pageName = data?.page.name;
+  const pageDescription = data?.page.description;
+  const pageEnabled = data?.enabled;
   useEffect(() => {
-    if (data?.page.name) document.title = `${data.page.name} | Status`;
-  }, [data?.page.name]);
+    if (!pageName) return;
+    if (pageEnabled === false) {
+      // Nothing public to find here, so keep it out of search results.
+      setPageMeta({ title: asHome ? pageName : `${pageName} | Status`, noindex: true });
+      return;
+    }
+    setPageMeta({
+      title: `${pageName} | Status`,
+      description: pageDescription || `Live status and uptime history for ${pageName}.`,
+    });
+  }, [asHome, pageName, pageDescription, pageEnabled]);
 
   // Apply the configured theme: light/dark explicitly, or follow the visitor's
   // OS preference when "system". The resolved value drives data-theme on the
@@ -285,7 +306,7 @@ export default function PublicStatus() {
   }
 
   if (!data.enabled) {
-    return <Notice message="This status page is not enabled." />;
+    return asHome ? <NoPublicPage /> : <Notice message="This status page is not enabled." />;
   }
 
   const { page, overall, updatedAt, groups, activeIncidents, recentIncidents } = data;
@@ -466,7 +487,15 @@ export default function PublicStatus() {
           {page.footer && <p className="text-ink-muted">{page.footer}</p>}
           {page.attribution && (
             <p className={cn(page.footer && "mt-2")}>
-              Powered by <span className="font-medium text-ink-muted">OpenPing</span>
+              Powered by{" "}
+              <a
+                href={OPENPING_SITE}
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-ink-muted underline decoration-line underline-offset-4 hover:text-ink hover:decoration-accent"
+              >
+                OpenPing
+              </a>
             </p>
           )}
         </footer>
@@ -611,6 +640,45 @@ function Callout({
           {message && <p className="mt-1 text-sm text-ink-muted">{message}</p>}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * `/` on a HOME_PAGE="status" install whose status page is turned off: say so
+ * plainly, and leave the owner a small way in.
+ */
+function NoPublicPage() {
+  return (
+    <div className="grid min-h-full place-items-center bg-canvas px-4 text-ink">
+      <main className="max-w-sm text-center">
+        <div className="mb-6 flex justify-center">
+          <Logo />
+        </div>
+        <h1 className="text-balance text-lg font-semibold tracking-tight text-ink">
+          This OpenPing has no public status page
+        </h1>
+        <p className="mt-2 text-pretty text-sm leading-relaxed text-ink-muted">
+          Its owner monitors their services here privately and hasn't published a status page.
+        </p>
+        <p className="mt-8 flex items-center justify-center gap-3 text-xs text-ink-faint">
+          <Link to="/login" className="underline decoration-line underline-offset-4 hover:text-ink hover:decoration-accent">
+            Owner sign-in
+          </Link>
+          <span aria-hidden="true">·</span>
+          <span>
+            Powered by{" "}
+            <a
+              href={OPENPING_SITE}
+              target="_blank"
+              rel="noreferrer"
+              className="underline decoration-line underline-offset-4 hover:text-ink hover:decoration-accent"
+            >
+              OpenPing
+            </a>
+          </span>
+        </p>
+      </main>
     </div>
   );
 }

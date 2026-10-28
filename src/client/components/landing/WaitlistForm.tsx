@@ -12,7 +12,10 @@ export const WAITLIST_URL =
 
 type State = { kind: "idle" } | { kind: "sending" } | { kind: "done" } | { kind: "error"; message: string };
 
-export function WaitlistForm() {
+/** A light check before posting; the server validates for real. */
+const LOOKS_LIKE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function WaitlistForm({ onJoined }: { onJoined?: () => void } = {}) {
   const [email, setEmail] = useState("");
   // The honeypot: hidden from people (and from screen readers), so only a bot fills it in.
   const [website, setWebsite] = useState("");
@@ -20,6 +23,12 @@ export function WaitlistForm() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (state.kind === "sending") return;
+    // The button stays enabled (a dimmed one reads as broken), so check here.
+    if (!LOOKS_LIKE_EMAIL.test(email.trim())) {
+      setState({ kind: "error", message: "Enter your email address, like you@company.com." });
+      return;
+    }
     setState({ kind: "sending" });
     try {
       const res = await fetch(WAITLIST_URL, {
@@ -27,7 +36,10 @@ export function WaitlistForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, website }),
       });
-      if (res.ok) return setState({ kind: "done" });
+      if (res.ok) {
+        onJoined?.();
+        return setState({ kind: "done" });
+      }
       if (res.status === 400) return setState({ kind: "error", message: "That doesn't look like an email address." });
       if (res.status === 429) return setState({ kind: "error", message: "Too many tries. Give it a minute and try again." });
       setState({ kind: "error", message: "The waitlist isn't taking sign-ups right now. Try again later." });
@@ -40,7 +52,7 @@ export function WaitlistForm() {
     return (
       <p role="status" className="flex items-center gap-2 rounded-lg border border-up/40 bg-up/10 px-4 py-3 text-sm font-medium text-ink">
         <Check className="size-4 shrink-0 text-up" />
-        You're on the list. I'll email you once, when Hosted opens.
+        You're on the list. One email when Hosted opens, nothing else.
       </p>
     );
   }
@@ -60,12 +72,14 @@ export function WaitlistForm() {
           placeholder="you@company.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="min-w-0 flex-1 rounded-lg border border-line bg-canvas px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
+          aria-invalid={state.kind === "error" ? true : undefined}
+          aria-describedby={state.kind === "error" ? "waitlist-error waitlist-note" : "waitlist-note"}
+          className="h-11 w-full min-w-0 rounded-lg sm:flex-1 border border-line bg-canvas px-3.5 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
         />
         <button
           type="submit"
-          disabled={state.kind === "sending" || email.trim() === ""}
-          className="op-lift inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-canvas hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+          aria-disabled={state.kind === "sending" ? true : undefined}
+          className="op-lift inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-accent/50 bg-accent-soft px-4 text-sm font-semibold text-ink hover:border-accent hover:bg-accent/20"
         >
           {state.kind === "sending" ? "Joining..." : "Join the waitlist"}
           <ArrowRight className="size-4" />
@@ -82,12 +96,12 @@ export function WaitlistForm() {
         />
       </div>
       {state.kind === "error" && (
-        <p role="alert" className="mt-2 text-sm text-down">
+        <p id="waitlist-error" role="alert" className="mt-2 text-sm text-down">
           {state.message}
         </p>
       )}
-      <p className="mt-3 text-xs leading-relaxed text-ink-faint">
-        Just your email, used once to tell you when Hosted opens. No newsletter, never shared.
+      <p id="waitlist-note" className="mt-3 text-xs leading-relaxed text-ink-faint">
+        No date yet. I'll email you once when it opens, with early pricing. No newsletter, never shared.
       </p>
     </form>
   );

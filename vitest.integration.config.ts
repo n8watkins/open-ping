@@ -11,12 +11,16 @@ export default defineConfig({
         compatibilityDate: "2024-12-30",
         compatibilityFlags: ["nodejs_compat"],
         d1Databases: ["DB"],
+        // The landing click counter's per-visitor limit (wrangler.jsonc ratelimits).
+        ratelimits: { EVENT_LIMITER: { namespace_id: "4271", simple: { limit: 30, period: 60 } } },
         bindings: {
           API_TOKEN: "integration-api-token",
           APP_URL: "https://openping.test",
           MASTER_KEY: TEST_MASTER_KEY,
           // The integration install plays the canonical one, so the waitlist is on.
           WAITLIST_ENABLED: "true",
+          // ...and its home page is the marketing page, so click counts are on.
+          HOME_PAGE: "landing",
           TEST_MIGRATIONS: await readD1Migrations("./migrations"),
         },
       },

@@ -14,6 +14,11 @@ export interface AuthStatus {
   githubEnabled: boolean;
   githubAdminConfigured: boolean;
   emailAdminConfigured: boolean;
+  /**
+   * What `/` shows a signed-out visitor (the HOME_PAGE var): "landing" only on
+   * the canonical install. Optional so an older Worker without it still works.
+   */
+  homePage?: "status" | "landing";
 }
 
 export interface Me {
