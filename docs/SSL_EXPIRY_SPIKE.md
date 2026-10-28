@@ -1,6 +1,6 @@
 # Spike: an SSL certificate expiry monitor
 
-Status: research done 2026-10-28, no monitor type shipped yet.
+Status: research done and measured on a deployed Worker 2026-10-28, no monitor type shipped yet.
 Roadmap item: stage 2, "SSL certificate expiry monitor" ([ROADMAP.md](./ROADMAP.md)).
 
 ## The question
@@ -103,6 +103,26 @@ Sources: [Radar CT insights changelog, 2025-08-06](https://developers.cloudflare
 Full TLS scanners such as Qualys SSL Labs need registration, are slow (a scan takes minutes) and restrict automated and commercial use.
 Paying for a certificate API breaks OpenPing's "runs free on your own account" promise.
 
+## Measurement on Cloudflare's network (2026-10-28)
+
+The probe ran from a throwaway Worker (`openping-probe-tmp`, deleted afterwards) against 160 hosts: popular sites across categories, the owner's own apps, and test hosts.
+Requests were served from several Cloudflare locations (MAN, MRS, LAX, YYZ).
+
+| Result | Hosts | Share |
+| --- | --- | --- |
+| Expiry read | 125 | 78% |
+| Blocked: the host is behind Cloudflare's proxy | 34 | 21% |
+| TLS 1.3 only (alert 70, recognised) | 1 | 1% |
+
+- **Accuracy:** five hosts checked against `openssl s_client` (n8builds.dev, wikipedia.org, vercel.com, python.org, nytimes.com) matched to the second, and `expired.badssl.com` read its real 2015 expiry.
+- **No hello was refused:** every host that wasn't behind Cloudflare answered the hand-written TLS 1.2 hello with its certificate, except the one TLS 1.3-only test host.
+- **The Cloudflare block is a clear error:** `connect()` fails at once with "proxy request failed, cannot connect to the specified address", so the monitor can show "behind Cloudflare, can't be checked" reliably.
+- **Render apps are behind Cloudflare:** all three of the owner's monitored apps (on `onrender.com`), openping.n8builds.dev itself, and render.com, railway.app, openai.com and similar were blocked.
+  Their certificates are issued and renewed automatically by the platform, so the risk the monitor covers is lowest exactly where it can't see.
+- **Vercel and most self-managed hosts work:** n8builds.dev (Vercel), github.com, wikipedia.org and the major news, university and government sites were read.
+
+What this means for the monitor: it is worth building for people who run their own servers or certificates (the case where expiry actually bites), and it must present the Cloudflare-proxied case as a neutral, non-alerting "can't be checked from Workers" state, since about a fifth of hosts, and every Render app, land there.
+
 ## Recommendation
 
 1. Next PR: a `cert` monitor type built on the TLS 1.2 handshake probe.
@@ -110,5 +130,5 @@ Paying for a certificate API breaks OpenPing's "runs free on your own account" p
    States: up with the expiry date and days left in the sample meta (like the domain monitor), degraded inside the warning window, down when expired or when the handshake fails.
    Two explicit, non-alerting results: "behind Cloudflare, can't be checked from Workers" and "TLS 1.3 only".
    Check once a day per monitor, not every 12 minutes: expiry changes slowly, and it keeps the budget for HTTP checks.
-2. Before that PR: deploy the probe to a throwaway Worker (not the production install) and run it against a list of a few hundred popular hosts, to measure how many are behind Cloudflare, how many are TLS 1.3 only, and that the hand-written hello is accepted by the rest.
+2. Done 2026-10-28: the measurement above (78% readable, 21% behind Cloudflare, 1% TLS 1.3 only, no refused hellos).
 3. Optional later: let a user add a Cert Spotter API key to cover Cloudflare-proxied hosts through CT, clearly labelled as "issued", not "served".

@@ -40,10 +40,11 @@ These are the gaps a buyer is likely to notice, most valuable first:
 - [x] **Confirm before alerting** (M, overlaps Hosted stage 2) (#31).
   A failure is re-checked once, 5 seconds later, before it opens an incident, so one bad request doesn't page anyone; "Confirm failures" per monitor, on by default.
   The re-check runs from the same Cloudflare location; a second-location check (a Durable Object with a location hint) stays in Hosted stage 2.
-- [ ] **SSL certificate expiry monitor** (M, spike done in this PR).
+- [ ] **SSL certificate expiry monitor** (M, spike and measurement done).
   UptimeRobot, StatusCake and HetrixTools warn before a certificate expires.
   A Worker's `fetch()` doesn't expose the certificate; a TLS 1.2 handshake over a plain TCP socket can read it, except for Cloudflare-proxied and TLS 1.3-only hosts.
-  Next: measure that on a throwaway deployed Worker, then build the monitor type ([SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md)).
+  Measured 2026-10-28 on a deployed Worker: 78% of 160 hosts readable, 21% behind Cloudflare (including every Render app), 1% TLS 1.3 only.
+  Next: build the monitor type, with "behind Cloudflare, can't be checked" as a neutral state ([SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md)).
 - [x] **Incident updates on the status page** (M) (#30).
   A timeline of posts ("Investigating", "Identified", "Fixed") instead of a single message, as Instatus and Better Stack show.
 - [x] **Status page feeds** (S): RSS and Atom for incidents, so people can follow a page without an account (#30).
