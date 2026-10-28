@@ -11,6 +11,9 @@ export default defineConfig({
         compatibilityDate: "2024-12-30",
         compatibilityFlags: ["nodejs_compat"],
         d1Databases: ["DB"],
+        // Second-region confirmation's re-checkers (wrangler.jsonc durable_objects).
+        // CONFIRM_REGIONS stays unset, so only the tests that turn it on use them.
+        durableObjects: { REGION_PROBE: { className: "RegionProbe", useSQLite: true } },
         // The landing click counter's per-visitor limit (wrangler.jsonc ratelimits).
         ratelimits: { EVENT_LIMITER: { namespace_id: "4271", simple: { limit: 30, period: 60 } } },
         bindings: {

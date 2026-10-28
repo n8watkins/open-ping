@@ -84,13 +84,31 @@ export interface RunOptions {
   refreshDomain?: boolean;
   /** Awaited before each RDAP request, so one run spaces its lookups out. */
   paceLookup?: () => Promise<void>;
+  /**
+   * Runs the confirmation re-check somewhere else: from another Cloudflare
+   * location (checks/region.ts). It resolves with that probe's result, where
+   * it ran and the requests it cost, or `{ attempt: null, fetches }` when it
+   * couldn't run there, in which case the re-check runs here as before, if
+   * `allowConfirm` still finds room for it. Absent means re-check here.
+   */
+  remoteRecheck?: (monitor: MonitorRecord, opts: { warmup: boolean }) => Promise<RemoteRecheck>;
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   now?: number;
 }
 
+/** What a re-check made from another location returned (RunOptions.remoteRecheck). */
+export interface RemoteRecheck {
+  /** The probe's result, or null when it couldn't run there. */
+  attempt: ProbeAttempt | null;
+  /** The Cloudflare data center (IATA code, such as "FRA") it ran in, when known. */
+  colo?: string;
+  /** Requests charged to this run for it, the hop itself included. */
+  fetches: number;
+}
+
 /** A probe result plus the HTTP-only fields classification consults if present. */
-type ClassifiableResult = ProbeResult & {
+export type ClassifiableResult = ProbeResult & {
   statusCode?: number;
   suspended?: boolean;
 };
@@ -144,17 +162,18 @@ export function classifyCheck(input: ClassifyInput): Omit<CheckOutcome, "at" | "
 /** Permanent-failure error codes that a re-check can't change. */
 const PERMANENT_ERRORS = new Set(["blocked_url", "blocked_host"]);
 
-interface Attempt {
+/** One probe's result, with its HTTP assertions applied. */
+export interface ProbeAttempt {
   result: ClassifiableResult;
   ok: boolean;
   assertionFailures?: string[];
 }
 
 /** One probe of the monitor's target, with HTTP assertions applied. */
-async function probe(
+export async function probe(
   monitor: MonitorRecord,
   opts: { warmup: boolean; fresh: boolean; run: RunOptions },
-): Promise<Attempt> {
+): Promise<ProbeAttempt> {
   switch (monitor.type) {
     case "http": {
       const r = await runHttpCheck(monitor.config as HttpConfig, {
@@ -209,6 +228,7 @@ export async function runMonitorCheck(
   let succeededAttempt = first.ok ? 1 : -1;
   let attempts = 1;
   let confirmation: CheckOutcome["confirmation"];
+  let confirmedFrom: string | undefined;
 
   const confirmable =
     !first.ok &&
@@ -221,11 +241,27 @@ export async function runMonitorCheck(
       confirmation = "deferred";
     } else {
       await sleep(opts.confirmDelayMs ?? CONFIRM_DELAY_MS);
-      decided = await probe(monitor, { warmup, fresh: true, run: opts });
-      fetches += decided.result.fetches ?? limit;
-      attempts = 2;
-      if (decided.ok) succeededAttempt = 2;
-      confirmation = decided.ok ? "cleared" : "confirmed";
+      // From another location when the caller set that up; here when it
+      // couldn't run there and the run still has room for a local re-check.
+      let second: ProbeAttempt | null = null;
+      if (opts.remoteRecheck) {
+        const remote = await opts.remoteRecheck(monitor, { warmup });
+        fetches += remote.fetches;
+        second = remote.attempt;
+        if (second && remote.colo) confirmedFrom = remote.colo;
+      }
+      if (!second && opts.remoteRecheck && opts.allowConfirm && !opts.allowConfirm()) {
+        confirmation = "deferred";
+      } else {
+        if (!second) {
+          second = await probe(monitor, { warmup, fresh: true, run: opts });
+          fetches += second.result.fetches ?? limit;
+        }
+        decided = second;
+        attempts = 2;
+        if (decided.ok) succeededAttempt = 2;
+        confirmation = decided.ok ? "cleared" : "confirmed";
+      }
     }
   }
 
@@ -241,6 +277,7 @@ export async function runMonitorCheck(
   return {
     ...outcome,
     ...(confirmation ? { confirmation } : {}),
+    ...(confirmedFrom ? { confirmedFrom } : {}),
     meta: decided.result.meta,
     ...(decided.result.domainCache ? { domainCache: decided.result.domainCache } : {}),
     fetches,

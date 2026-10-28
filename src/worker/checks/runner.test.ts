@@ -418,3 +418,98 @@ describe("runMonitorCheck dispatch by type", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("runMonitorCheck re-check from another region", () => {
+  beforeEach(() => mockedRun.mockReset());
+
+  const monitor = {
+    id: "mon_1",
+    type: "http",
+    config: { url: "https://x.test" },
+    assertions: [],
+    intervalSeconds: 720,
+    schedule: { mode: "always" },
+  } as unknown as MonitorRecord;
+  const failed = (statusCode = 502) =>
+    ({ result: result({ ok: false, statusCode, error: "status_out_of_range" }), ok: false }) as const;
+
+  it("a remote failure confirms the incident and records where it ran", async () => {
+    mockedRun.mockResolvedValueOnce(result({ ok: false, error: "timeout", fetches: 1 }));
+    const remoteRecheck = vi.fn().mockResolvedValue({ attempt: failed(503), colo: "FRA", fetches: 3 });
+    const o = await runMonitorCheck(monitor, { remoteRecheck, sleep: async () => {}, now: 1 });
+    expect(o.state).toBe("down");
+    expect(o.confirmation).toBe("confirmed");
+    expect(o.confirmedFrom).toBe("FRA");
+    expect(o.statusCode).toBe(503);
+    expect(o.attempts).toBe(2);
+    // The first probe here, the remote one charged what it reported.
+    expect(o.fetches).toBe(4);
+    expect(mockedRun).toHaveBeenCalledOnce();
+    expect(remoteRecheck).toHaveBeenCalledWith(monitor, { warmup: false });
+  });
+
+  it("a remote pass clears it: a blip where the first check ran", async () => {
+    mockedRun.mockResolvedValueOnce(result({ ok: false, error: "network_error" }));
+    const remoteRecheck = vi.fn().mockResolvedValue({
+      attempt: { result: result({ durationMs: 90 }), ok: true },
+      colo: "IAD",
+      fetches: 2,
+    });
+    const o = await runMonitorCheck(monitor, { remoteRecheck, sleep: async () => {}, now: 1 });
+    expect(o.state).toBe("up");
+    expect(o.confirmation).toBe("cleared");
+    expect(o.retryRecovered).toBe(true);
+    expect(o.confirmedFrom).toBe("IAD");
+  });
+
+  it("a remote re-check without a known location records none", async () => {
+    mockedRun.mockResolvedValueOnce(result({ ok: false, error: "timeout" }));
+    const remoteRecheck = vi.fn().mockResolvedValue({ attempt: failed(), fetches: 2 });
+    const o = await runMonitorCheck(monitor, { remoteRecheck, sleep: async () => {}, now: 1 });
+    expect(o.confirmation).toBe("confirmed");
+    expect(o).not.toHaveProperty("confirmedFrom");
+  });
+
+  it("a remote re-check that couldn't run falls back to a re-check here", async () => {
+    mockedRun
+      .mockResolvedValueOnce(result({ ok: false, error: "timeout", fetches: 1 }))
+      .mockResolvedValueOnce(result({ ok: false, statusCode: 500, error: "status_out_of_range", fetches: 1 }));
+    const remoteRecheck = vi.fn().mockResolvedValue({ attempt: null, fetches: 4 });
+    const allowConfirm = vi.fn(() => true);
+    const o = await runMonitorCheck(monitor, { remoteRecheck, allowConfirm, sleep: async () => {}, now: 1 });
+    expect(o.confirmation).toBe("confirmed");
+    expect(o).not.toHaveProperty("confirmedFrom");
+    expect(o.statusCode).toBe(500);
+    expect(mockedRun).toHaveBeenCalledTimes(2);
+    expect(mockedRun.mock.calls[1]?.[1]).toMatchObject({ noStore: true });
+    // Once for the remote re-check, once more for the one here.
+    expect(allowConfirm).toHaveBeenCalledTimes(2);
+    expect(o.fetches).toBe(6);
+  });
+
+  it("no room left for the fallback: deferred, charged for the failed hop", async () => {
+    mockedRun.mockResolvedValueOnce(result({ ok: false, error: "timeout", fetches: 1 }));
+    const remoteRecheck = vi.fn().mockResolvedValue({ attempt: null, fetches: 4 });
+    const allowConfirm = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
+    const o = await runMonitorCheck(monitor, { remoteRecheck, allowConfirm, sleep: async () => {}, now: 1 });
+    expect(o.confirmation).toBe("deferred");
+    expect(mockedRun).toHaveBeenCalledOnce();
+    expect(o.fetches).toBe(5);
+  });
+
+  it("no budget for any re-check: deferred before the hop", async () => {
+    mockedRun.mockResolvedValueOnce(result({ ok: false, error: "timeout" }));
+    const remoteRecheck = vi.fn();
+    const o = await runMonitorCheck(monitor, { remoteRecheck, allowConfirm: () => false, sleep: async () => {}, now: 1 });
+    expect(o.confirmation).toBe("deferred");
+    expect(remoteRecheck).not.toHaveBeenCalled();
+  });
+
+  it("a passing first check never leaves", async () => {
+    mockedRun.mockResolvedValueOnce(result());
+    const remoteRecheck = vi.fn();
+    const o = await runMonitorCheck(monitor, { remoteRecheck, now: 1 });
+    expect(o.state).toBe("up");
+    expect(remoteRecheck).not.toHaveBeenCalled();
+  });
+});

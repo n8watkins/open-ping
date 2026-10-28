@@ -49,6 +49,9 @@
       "HOME_PAGE": {
         "description": "Leave `status`, so visitors see your status page at `/`. Only the OpenPing project's own site uses `landing`."
       },
+      "CONFIRM_REGIONS": {
+        "description": "Leave `weur,enam,apac`. Before a failure opens an incident, OpenPing re-checks it from one of these Cloudflare regions, away from where the first check ran, so one location's network trouble doesn't page you. `off` re-checks from the same place. [More](https://github.com/n8watkins/open-ping/blob/main/docs/SECOND_REGION.md)"
+      },
       "DB": {
         "description": "OpenPing's database: monitors, check results, incidents and settings. The deploy creates its tables."
       }

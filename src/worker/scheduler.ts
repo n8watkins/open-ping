@@ -8,6 +8,12 @@ import {
 import { isActiveAt } from "./lib/schedule";
 import { probeFetchLimit, runMonitorCheck } from "./checks/runner";
 import { parseDomainCache } from "./checks/domain";
+import {
+  regionalRechecker,
+  REMOTE_RECHECK_OVERHEAD,
+  supportsRemoteRecheck,
+  type RegionalOptions,
+} from "./checks/region";
 import { pacer } from "./lib/pace";
 import {
   checkNeedsIncident,
@@ -123,8 +129,13 @@ const RUN_SETTINGS = [
 export async function runScheduled(
   controller: ScheduledController,
   baseEnv: Env,
-  /** Tests only: a different budget than the plan's, a shorter re-check pause or RDAP spacing. */
-  opts: { budget?: PlanBudget; confirmDelayMs?: number; rdapSpacingMs?: number } = {},
+  /** Tests only: a different budget than the plan's, a shorter re-check pause or RDAP spacing, regional stand-ins. */
+  opts: {
+    budget?: PlanBudget;
+    confirmDelayMs?: number;
+    rdapSpacingMs?: number;
+    regional?: RegionalOptions;
+  } = {},
 ): Promise<void> {
   // Every D1 query this run makes is counted against the plan's budget.
   const usage: UsageCounter = { d1: 0 };
@@ -281,6 +292,9 @@ export async function runScheduled(
     let deferred = 0;
     const results: { m: MonitorRecord; outcome: CheckOutcome; st: SchedulerStateRow | null }[] = [];
     const paceLookup = pacer(opts.rdapSpacingMs ?? RDAP_SPACING_MS);
+    // Second-region confirmation (checks/region.ts): null when this install
+    // confirms where the check ran.
+    const remoteRecheck = regionalRechecker(env, opts.regional);
     await mapLimit(duePolled, CONCURRENCY, async (m) => {
       const st = states.get(m.id);
       // A domain cycle judged from its cached read (checks/domain.ts) makes no
@@ -304,12 +318,13 @@ export async function runScheduled(
       // is open), and a recovery counts on the first passing check.
       const alreadyDown = !!st && (DOWNTIME_STATES.has(st.state) || !!st.active_incident_id);
       const confirm = m.confirmFailures !== "off" && !alreadyDown;
+      const remote = confirm && remoteRecheck && supportsRemoteRecheck(m.type) ? remoteRecheck : undefined;
       // Out of budget for this run: leave it due for the next tick. A check
       // that may confirm holds its re-check's fetches too (a fresh probe, so no
       // cached read), so a failure it finds can always be confirmed.
       const ticket = await budget.startCheck(
         probeFetchLimit(m, m.type === "domain" ? { cache: domainCache, now: plannedAt } : undefined),
-        confirm ? probeFetchLimit(m) : 0,
+        confirm ? probeFetchLimit(m) + (remote ? REMOTE_RECHECK_OVERHEAD : 0) : 0,
       );
       if (!ticket) {
         deferred++;
@@ -327,6 +342,7 @@ export async function runScheduled(
           // the monitor stays due and is first in line next run, so an
           // unconfirmed failure never alerts.
           allowConfirm: () => ticket.tryConfirm(),
+          ...(remote ? { remoteRecheck: remote } : {}),
           domainCache,
           plannedAt,
           paceLookup,
