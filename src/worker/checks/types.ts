@@ -17,6 +17,13 @@ export interface ProbeResult {
   degraded?: boolean;
   /** Type-specific structured detail persisted on the sample. */
   meta?: unknown;
+  /**
+   * Outbound requests the probe made, redirect hops included (Cloudflare
+   * counts each one against the run's subrequest limit; lib/budget.ts).
+   * Absent means the probe couldn't count them, and the runner charges its
+   * worst case (`probeFetchLimit` in checks/runner.ts).
+   */
+  fetches?: number;
 }
 
 /** The classified result of one full check cycle for a monitor. */
@@ -45,6 +52,8 @@ export interface CheckOutcome {
   assertionFailures?: string[];
   /** Type-specific structured detail (resolved records, domain expiry, …). */
   meta?: unknown;
+  /** Outbound requests the whole cycle made: every probe, redirect hops included. */
+  fetches: number;
   /** Epoch ms when the cycle completed. */
   at: number;
 }

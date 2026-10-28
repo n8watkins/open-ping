@@ -115,6 +115,34 @@ describe("scheduler budget", () => {
     // Each failing check waits 10s before its retry (checks/runner.ts).
   }, 120_000);
 
+  it("counts every redirect hop as a fetch, so redirecting checks stay inside the Free budget", async () => {
+    // Every monitor redirects the most times a check follows (checks/http.ts),
+    // so each check makes six fetches, and Cloudflare counts all six.
+    await env.DB.prepare(
+      `UPDATE monitor_state SET state = 'up', next_check_at = 0, active_incident_id = NULL`,
+    ).run();
+    await env.DB.prepare("UPDATE incidents SET status = 'resolved'").run();
+    for (let run = 0; run < 2; run++) {
+      const usage = { d1: 0 };
+      const fetches = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        const hop = Number(url.searchParams.get("hop") ?? "0");
+        if (hop < 5) {
+          url.searchParams.set("hop", String(hop + 1));
+          return new Response(null, { status: 302, headers: { location: url.toString() } });
+        }
+        return new Response("ok", { status: 200 });
+      });
+      await runScheduled(controller, { ...env, DB: countingD1(env.DB, usage) });
+      const calls = fetches.mock.calls.length;
+      fetches.mockRestore();
+      expect(usage.d1).toBeLessThanOrEqual(50);
+      // Within the plan's own budget, not just Cloudflare's hard cap.
+      expect(calls).toBeLessThanOrEqual(PLAN_BUDGETS.free.subrequests);
+      expect(calls).toBeGreaterThan(0);
+    }
+  });
+
   it("runs the whole backlog at once on Paid", async () => {
     await env.DB.prepare("UPDATE monitor_state SET next_check_at = 0, last_success_at = NULL").run();
     const used = await countedRun({ WORKERS_PLAN: "paid" });

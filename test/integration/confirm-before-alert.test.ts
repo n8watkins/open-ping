@@ -3,6 +3,7 @@ import { applyD1Migrations } from "cloudflare:test";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import "../../src/worker/index";
+import { MAX_REDIRECTS } from "../../src/worker/checks/http";
 import { PLAN_BUDGETS } from "../../src/worker/lib/budget";
 import { runScheduled } from "../../src/worker/scheduler";
 
@@ -202,8 +203,8 @@ describe("confirm before alerting", () => {
     const url = "https://confirm-budget.example.com/";
     const id = await createMonitor("Confirm budget", url);
     await dueAndUp(id);
-    // Room for the check's own fetch and nothing more.
-    const tight = { ...PLAN_BUDGETS.free, subrequests: 1 };
+    // Room for the check's own fetches (it may follow redirects) and nothing more.
+    const tight = { ...PLAN_BUDGETS.free, subrequests: 1 + MAX_REDIRECTS };
     let calls = stubTargets({ [url]: [503] });
 
     await runScheduled(controller, env, { ...FAST, budget: tight });

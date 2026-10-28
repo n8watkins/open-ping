@@ -69,16 +69,19 @@ Sources: [Workers limits](https://developers.cloudflare.com/workers/platform/lim
 
 A run that goes past the per-invocation limits fails with "Too many API requests
 by single Worker invocation", so OpenPing budgets each run
-(`src/worker/lib/budget.ts`): it counts its D1 queries as it goes, allows one
-fetch per check, one more for a failed check's confirmation re-check, and one per
-alert, keeps room for the work every run ends with (rollups, cleanup, the run
-record), and leaves any monitor that doesn't fit due for the next tick, most
-overdue first. Nothing is dropped; it just waits 12 minutes.
+(`src/worker/lib/budget.ts`): it counts its D1 queries as it goes, counts every
+fetch a check makes (Cloudflare counts each redirect hop as its own
+subrequest, so an HTTP check that follows redirects holds room for up to six
+while it runs and is then charged what it really made), the same again for a
+failed check's confirmation re-check, and one per alert, keeps room for the
+work every run ends with (rollups, cleanup, the run record), and leaves any
+monitor that doesn't fit due for the next tick, most overdue first. Nothing is
+dropped; it just waits 12 minutes.
 
 ### Confirm before alerting and the budget
 
 A failed check on a monitor that was up is checked once more about 5 seconds later before it can open an incident ([MONITOR_TYPES.md](./MONITOR_TYPES.md#confirm-before-alerting)).
-The re-check costs one outbound fetch and no D1 queries, and the run asks for that fetch only when a check has failed, so passing checks keep costing one fetch each.
+The re-check costs another probe's fetches (one, plus any redirects it follows) and no D1 queries, and the run asks for them only when a check has failed, so passing checks keep costing only their own fetches.
 D1 queries, not fetches, decide how many checks fit on Free, so re-checks don't reduce the number of monitors a run can check.
 If a run has no fetch left for a re-check, it does not record the failure at all: the monitor keeps its state, no incident opens, and it stays due, so the next run checks it first and confirms it then.
 OpenPing chooses a 12-minute delay over an alert that wasn't confirmed; Settings > Diagnostics counts these as deferred re-checks.

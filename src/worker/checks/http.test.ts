@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { runHttpCheck, isSuspendedResponse } from "./http";
+import { runHttpCheck, isSuspendedResponse, MAX_REDIRECTS } from "./http";
 import type { HttpConfig } from "../../shared/schemas";
 
 /** Build a complete HttpConfig with sensible defaults, overridable per test. */
@@ -258,6 +258,8 @@ describe("runHttpCheck", () => {
     const result = await runHttpCheck(makeConfig());
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Each hop is its own subrequest, and the result says so (lib/budget.ts).
+    expect(result.fetches).toBe(2);
     expect(result.ok).toBe(true);
     expect(result.redirected).toBe(true);
     expect(result.body).toBe("final body");
@@ -274,6 +276,7 @@ describe("runHttpCheck", () => {
 
     // The blocked target is never fetched - re-validation happens before the hop.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.fetches).toBe(1);
     expect(result.ok).toBe(false);
     expect(result.error).toBe("blocked_url");
   });
@@ -286,6 +289,9 @@ describe("runHttpCheck", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toBe("too_many_redirects");
+    // The first request plus every redirect it followed.
+    expect(result.fetches).toBe(fetchMock.mock.calls.length);
+    expect(result.fetches).toBe(1 + MAX_REDIRECTS);
   });
 
   it("does not follow redirects when followRedirects is false", async () => {
