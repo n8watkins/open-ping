@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { decryptValue, encryptValue } from "../lib/crypto";
+import { IN_JSON_LIST, jsonList } from "./sql-list";
 
 /**
  * Settings store: a key/value table in D1 for app configuration. Values may be
@@ -26,8 +27,8 @@ export async function getSetting(env: Env, key: string): Promise<string | null> 
 /** Several settings in one query (for a caller that batches its reads). */
 export function settingsStatement(env: Env, keys: readonly string[]): D1PreparedStatement {
   return env.DB.prepare(
-    `SELECT key, value, encrypted FROM settings WHERE key IN (${keys.map(() => "?").join(", ")})`,
-  ).bind(...keys);
+    `SELECT key, value, encrypted FROM settings WHERE key ${IN_JSON_LIST}`,
+  ).bind(jsonList(keys));
 }
 
 /**

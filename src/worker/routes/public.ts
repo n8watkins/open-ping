@@ -16,6 +16,7 @@ import {
   type IncidentUpdate,
   type IncidentUpdateStatus,
 } from "../db/incident-updates";
+import { IN_JSON_LIST, jsonList } from "../db/sql-list";
 
 /**
  * Public status-page API mounted at /api/public (PRD §15). This router is
@@ -383,32 +384,33 @@ function toPublicIncident(
  * incident for a monitor that isn't on this page can never appear on it, even if
  * that incident is itself flagged public. Only public-safe columns are selected
  * (never `error`, `title`, or notes). `LIMIT 10` is applied per page to the
- * resolved list, preserving the original semantics. An empty page short-circuits
- * (an `IN ()` is invalid SQL and there is nothing to return anyway).
+ * resolved list, preserving the original semantics. The ids travel as one JSON
+ * parameter (db/sql-list.ts), so a page of any size fits D1's 100-parameter
+ * limit. An empty page short-circuits: there is nothing to return.
  */
 async function loadPublicIncidents(
   env: Env,
   monitorIds: string[],
 ): Promise<{ active: PublicIncidentRow[]; recent: PublicIncidentRow[] }> {
   if (monitorIds.length === 0) return { active: [], recent: [] };
-  const placeholders = monitorIds.map(() => "?").join(", ");
+  const ids = jsonList(monitorIds);
   const [activeRes, recentRes] = await Promise.all([
     env.DB.prepare(
       `SELECT id, monitor_id, started_at, resolved_at, duration_seconds, public_message
          FROM incidents
-        WHERE public = 1 AND status = 'open' AND monitor_id IN (${placeholders})
+        WHERE public = 1 AND status = 'open' AND monitor_id ${IN_JSON_LIST}
         ORDER BY started_at DESC`,
     )
-      .bind(...monitorIds)
+      .bind(ids)
       .all<PublicIncidentRow>(),
     env.DB.prepare(
       `SELECT id, monitor_id, started_at, resolved_at, duration_seconds, public_message
          FROM incidents
-        WHERE public = 1 AND status = 'resolved' AND monitor_id IN (${placeholders})
+        WHERE public = 1 AND status = 'resolved' AND monitor_id ${IN_JSON_LIST}
         ORDER BY resolved_at DESC
         LIMIT ?`,
     )
-      .bind(...monitorIds, RECENT_INCIDENT_LIMIT)
+      .bind(ids, RECENT_INCIDENT_LIMIT)
       .all<PublicIncidentRow>(),
   ]);
   return { active: activeRes.results ?? [], recent: recentRes.results ?? [] };
@@ -722,11 +724,11 @@ export async function loadPublicFeed(
   const res = await env.DB.prepare(
     `SELECT id, monitor_id, started_at, resolved_at, duration_seconds, public_message
        FROM incidents
-      WHERE public = 1 AND monitor_id IN (${ids.map(() => "?").join(", ")})
+      WHERE public = 1 AND monitor_id ${IN_JSON_LIST}
       ORDER BY started_at DESC
       LIMIT ?`,
   )
-    .bind(...ids, FEED_INCIDENT_LIMIT)
+    .bind(jsonList(ids), FEED_INCIDENT_LIMIT)
     .all<PublicIncidentRow>();
   const rows = res.results ?? [];
   const updates = await updatesForIncidents(env, rows.map((r) => r.id));

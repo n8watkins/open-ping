@@ -391,9 +391,8 @@ function makeDb(fixture: {
             (i) => i.public === 1 && i.status === status,
           );
           if (sql.includes("monitor_id IN")) {
-            const ids = new Set(
-              status === "open" ? bound : bound.slice(0, -1),
-            );
+            // The page's ids are bound first, as one JSON array (db/sql-list.ts).
+            const ids = new Set(JSON.parse(String(bound[0])) as string[]);
             rows = rows.filter((i) => ids.has(i.monitor_id));
           }
           return { results: rows };
