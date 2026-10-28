@@ -250,6 +250,11 @@ export default function Embed() {
 
     body = (
       <>
+        {/* The iframe document is transparent and the tone classes are
+            translucent tints, so the banner needs an opaque surface under
+            them: otherwise a dark-theme title sits on the host page's (often
+            white) background and is unreadable. */}
+        <div className="rounded-card bg-surface">
         <div
           className={cn(
             "flex items-center gap-3 rounded-card border p-3",
@@ -277,6 +282,7 @@ export default function Embed() {
               </div>
             )}
           </div>
+        </div>
         </div>
 
         {services.length > 0 && (
