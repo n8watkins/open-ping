@@ -14,7 +14,7 @@ import { hostMatchesRpId, passkeyErrorMessage, passkeysSupported, registerPasske
  */
 
 const C = ({ children }: { children: string }) => (
-  <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[0.8125rem] text-ink">{children}</code>
+  <code className="whitespace-nowrap rounded bg-surface-2 px-1 py-0.5 font-mono text-[0.8125rem] text-ink">{children}</code>
 );
 
 function recoveryError(err: unknown): string {

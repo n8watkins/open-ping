@@ -5,7 +5,7 @@
  * comes first (docs/INSTALL.md, "The quick way").
  */
 export function AddSecretHelp({ name }: { name: "MASTER_KEY" | "SETUP_TOKEN" }) {
-  const code = "rounded bg-surface-2 px-1 py-0.5 text-xs text-ink";
+  const code = "whitespace-nowrap rounded bg-surface-2 px-1 py-0.5 text-xs text-ink";
   return (
     <div className="mt-4 rounded-lg border border-line bg-surface-2/50 px-3 py-3 text-sm text-ink-muted">
       <p className="font-medium text-ink">
