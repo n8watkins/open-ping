@@ -2,12 +2,20 @@ import type { Env } from "../types";
 import { getSetting } from "../db/settings";
 
 /**
+ * True when the APP_URL Worker variable is set. It takes precedence, so the
+ * wizard's app_url setting (Settings > Installation URL) then changes nothing.
+ */
+export function appUrlFromEnv(env: Env): boolean {
+  return env.APP_URL != null;
+}
+
+/**
  * The install's configured public origin (APP_URL, else the wizard's app_url
  * setting), or null when neither is a usable origin: https, or http only for
  * localhost and 127.0.0.1, with no embedded credentials.
  */
 export async function configuredOrigin(env: Env): Promise<string | null> {
-  const configured = env.APP_URL ?? (await getSetting(env, "app_url"));
+  const configured = appUrlFromEnv(env) ? env.APP_URL : await getSetting(env, "app_url");
   if (!configured) return null;
   try {
     const url = new URL(configured);

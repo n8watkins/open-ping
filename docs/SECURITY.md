@@ -284,7 +284,8 @@ Verification is implemented with Web Crypto only, in `src/worker/lib/webauthn.ts
 - **Rate limits:** sign-in options and verification share 30 a minute per IP and 600 a minute in total; recovery allows 5 a minute per IP and 20 in total.
 - **Registration** needs a signed-in browser session with its CSRF token (not the `API_TOKEN`), or, during first-run setup, the `SETUP_TOKEN`.
 - **Removal** of a passkey ends every session signed in with it.
-  The last passkey can't be removed while it is the only working way in (no GitHub app plus admin login, and no admin email plus `RESEND_API_KEY`).
+  A passkey for the current hostname can't be removed while it is the only working way in (no other passkey for that hostname, no GitHub app plus admin login, and no admin email plus `RESEND_API_KEY`).
+  Passkeys for another hostname can't sign in, so they never count as a way in and can always be removed.
   "Sign out everywhere" ends every session, whichever way it signed in.
 
 ### Recovery
@@ -294,7 +295,8 @@ Otherwise the Cloudflare account is the root of trust:
 
 1. Set a new random `SETUP_TOKEN`: `npx wrangler secret put SETUP_TOKEN`, or the dashboard's Variables and Secrets.
 2. Open `/recover` on the install's own address, enter the token, and create a passkey; you are signed in.
-3. Remove lost passkeys in Settings > Passkeys.
+   Recovery signs out every other session first, whichever way it signed in, so a device that lost control or a stolen cookie no longer works.
+3. Review Settings > Passkeys and remove every passkey you no longer have or don't recognize: a lost device's passkey still works until it is removed.
 
 Recovery accepts only a token whose hash differs from `setup_token_spent_hash`, then stores the new hash, so each token works once and the token that set the install up never does.
 On installs finished before passkeys existed nothing is recorded yet: the first passkey registration records the token set at that time, and recovery refuses until a new one is set.

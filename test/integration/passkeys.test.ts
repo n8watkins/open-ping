@@ -175,8 +175,14 @@ describe("passkeys", () => {
     // Mutations still need the session's CSRF token.
     const noCsrf = await browser.fetch("/api/passkeys/register/options", { method: "POST", json: {} });
     expect(noCsrf.status).toBe(403);
-    const list = await (await browser.fetch("/api/passkeys")).json<{ passkeys: { name: string; lastUsedAt: number | null }[]; rpId: string }>();
+    const list = await (await browser.fetch("/api/passkeys")).json<{
+      passkeys: { name: string; lastUsedAt: number | null }[];
+      rpId: string;
+      appUrlFromEnv: boolean;
+    }>();
     expect(list.rpId).toBe(RP_ID);
+    // APP_URL is a Worker variable here, so the Installation URL setting can't move passkeys.
+    expect(list.appUrlFromEnv).toBe(true);
     expect(list.passkeys).toHaveLength(1);
     expect(list.passkeys[0]!.lastUsedAt).not.toBeNull();
   });
@@ -298,6 +304,22 @@ describe("passkeys", () => {
     const last = await browser.fetch(`/api/passkeys/${laptopId}`, { method: "DELETE", headers: { "x-csrf-token": csrf } });
     expect(last.status).toBe(409);
     expect(await last.json()).toEqual({ error: "last_sign_in_method" });
+
+    // A passkey for another hostname (left over from an earlier APP_URL) can't
+    // sign in here, so it doesn't count as another way in...
+    await env.DB.prepare(
+      `INSERT INTO passkeys (id, credential_id, public_key, alg, sign_count, rp_id, name, created_at)
+       SELECT 'pk_stale', 'stale-credential', public_key, alg, 0, 'old.openping.test', 'Old laptop', created_at
+       FROM passkeys WHERE id = ?`,
+    )
+      .bind(laptopId)
+      .run();
+    const withStale = await browser.fetch(`/api/passkeys/${laptopId}`, { method: "DELETE", headers: { "x-csrf-token": csrf } });
+    expect(withStale.status).toBe(409);
+    expect(await withStale.json()).toEqual({ error: "last_sign_in_method" });
+    // ...and removing it never takes away a way in.
+    const stale = await browser.fetch("/api/passkeys/pk_stale", { method: "DELETE", headers: { "x-csrf-token": csrf } });
+    expect(stale.status).toBe(200);
   });
 
   it("recovers with a new SETUP_TOKEN, once", async () => {
@@ -322,6 +344,10 @@ describe("passkeys", () => {
     expect(wrong.status).toBe(403);
     expect(await wrong.json()).toEqual({ error: "setup_token_invalid" });
 
+    // A browser still signed in (perhaps the one that lost control) before recovery.
+    const before = new Browser("198.51.100.15");
+    expect((await signIn(before, laptop)).status).toBe(200);
+
     const header = { "x-setup-token": RECOVERY_TOKEN };
     const optRes = await owner.fetch("/api/auth/passkeys/recover/options", {
       method: "POST",
@@ -343,6 +369,10 @@ describe("passkeys", () => {
     expect(owner.cookies.has("op_session")).toBe(true);
     const me = await (await owner.fetch("/api/auth/me")).json<Record<string, unknown>>();
     expect(me).toMatchObject({ authenticated: true, identity: "New laptop", identityKind: "passkey" });
+    // Recovery signs out every other device: only the new session is left.
+    expect((await (await before.fetch("/api/auth/me")).json<{ authenticated: boolean }>()).authenticated).toBe(false);
+    const sessions = await env.DB.prepare("SELECT COUNT(*) AS n FROM sessions").first<{ n: number }>();
+    expect(sessions?.n).toBe(1);
 
     const reuse = await new Browser("198.51.100.12").fetch("/api/auth/passkeys/recover/options", {
       method: "POST",
