@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.0 - 2026-10-28
+
+### Fixed
+
+- The landing page now lists all 7 alert channels and passkey sign-in, and no longer names an address for Hosted.
+
 ## 0.12.0 - 2026-10-28
 
 _Maintenance release: no user-facing changes._
