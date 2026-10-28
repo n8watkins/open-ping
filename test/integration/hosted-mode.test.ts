@@ -551,3 +551,82 @@ describe("nonce cleanup", () => {
     expect(left.results.map((r) => r.nonce)).toEqual(["currentcurrentcurrent0"]);
   });
 });
+
+describe("a support sign-in", () => {
+  async function supportBrowser() {
+    const browser = hostedBrowser();
+    expect((await browser.fetch(handoffPath(await token({ role: "support", email: "help@openping.test" })))).status).toBe(302);
+    const { csrf } = await browser.me();
+    const call = (path: string, init: FetchInit = {}) =>
+      browser.fetch(path, { ...init, headers: { "x-csrf-token": csrf!, ...(init.headers as Record<string, string> | undefined) } });
+    return { browser, call };
+  }
+
+  const supportRows = async () =>
+    (
+      await env.DB.prepare("SELECT kind, identity, method, path, status FROM support_activity WHERE identity = 'help@openping.test' ORDER BY id").all<{
+        kind: string;
+        identity: string;
+        method: string | null;
+        path: string | null;
+        status: number | null;
+      }>()
+    ).results;
+
+  it("can fix things, can't touch credentials or delete, and every change is recorded for the customer", async () => {
+    await env.DB.prepare("DELETE FROM support_activity").run();
+    const { call } = await supportBrowser();
+    const created = await call("/api/monitors", { json: { type: "heartbeat", name: "Fixed by support", config: { intervalSeconds: 3600, graceSeconds: 300 } } });
+    expect(created.status).toBe(201);
+    const { monitor } = await created.json<{ monitor: { id: string } }>();
+    expect((await call("/api/settings", { method: "PUT", json: { settings: { timezone: "Europe/Berlin" } } })).status).toBe(200);
+
+    const refusals: [string, FetchInit][] = [
+      [`/api/monitors/${monitor.id}`, { method: "DELETE" }],
+      ["/api/passkeys/register/options", { method: "POST", json: {} }],
+      ["/api/api-tokens", { method: "POST", json: { name: "mine" } }],
+      ["/api/data/import", { method: "POST", json: {} }],
+      ["/api/settings", { method: "PUT", json: { settings: { retention: '{"dailyDays":1}' } } }],
+      ["/api/auth/logout-all", { method: "POST" }],
+    ];
+    for (const [path, init] of refusals) {
+      const res = await call(path, init);
+      expect(res.status, path).toBe(403);
+      expect(await res.json(), path).toEqual({ error: "support_restricted", message: expect.stringContaining("support sign-in can't") });
+    }
+    // Nothing refused happened.
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM monitors WHERE id = ?").bind(monitor.id).first<{ n: number }>()).toEqual({ n: 1 });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM api_tokens").first<{ n: number }>()).toEqual({ n: 0 });
+
+    const rows = await supportRows();
+    expect(rows.map((r) => `${r.kind} ${r.method ?? ""} ${r.path ?? ""} ${r.status ?? ""}`.trim())).toEqual([
+      "signed_in",
+      "change POST /api/monitors 201",
+      "change PUT /api/settings 200",
+      `refused DELETE /api/monitors/${monitor.id} 403`,
+      "refused POST /api/passkeys/register/options 403",
+      "refused POST /api/api-tokens 403",
+      "refused POST /api/data/import 403",
+      "refused PUT /api/settings 403",
+      "refused POST /api/auth/logout-all 403",
+    ]);
+    // The platform hears of each one too.
+    expect(audits.filter((a) => a.actor === "support").map((a) => a.action)).toEqual([
+      "session.created",
+      "support.change",
+      "support.change",
+      ...refusals.map(() => "support.refused"),
+    ]);
+
+    // The customer sees it all in Settings.
+    const customer = hostedBrowser();
+    await customer.fetch(handoffPath(await token()));
+    const activity = await (await customer.fetch("/api/auth/support-activity")).json<{ entries: { kind: string }[] }>();
+    expect(activity.entries.map((e) => e.kind).slice(-1)).toEqual(["signed_in"]);
+    expect(activity.entries).toHaveLength(9);
+    // And the customer's own changes aren't support's.
+    const { csrf } = await customer.me();
+    expect((await customer.fetch(`/api/monitors/${monitor.id}`, { method: "DELETE", headers: { "x-csrf-token": csrf! } })).status).toBe(200);
+    expect(await supportRows()).toHaveLength(9);
+  });
+});

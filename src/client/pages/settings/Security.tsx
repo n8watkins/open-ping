@@ -24,6 +24,7 @@ export default function SecuritySettings() {
     <div className="stagger space-y-6 [&>*]:animate-enter">
       <PasskeysCard csrf={csrf ?? undefined} />
       <SessionsCard csrf={csrf ?? undefined} />
+      {me?.hosted && <SupportActivityCard />}
       <ApiTokensPointer />
       {/* On OpenPing Hosted the platform holds and rotates the encryption key. */}
       {!me?.hosted && (
@@ -99,6 +100,81 @@ function SessionsCard({ csrf }: { csrf: string | undefined }) {
           <div className="mt-3">
             <ErrorBanner>{error}</ErrorBanner>
           </div>
+        )}
+      </Card>
+    </section>
+  );
+}
+
+interface SupportActivityEntry {
+  id: number;
+  at: number;
+  kind: "signed_in" | "change" | "refused";
+  identity: string;
+  method: string | null;
+  path: string | null;
+  status: number | null;
+}
+
+/** What part of OpenPing an API path is, in words. */
+const AREA: Record<string, string> = {
+  monitors: "monitors",
+  "status-pages": "status pages",
+  channels: "alert channels",
+  settings: "settings",
+  incidents: "incidents",
+  maintenance: "maintenance windows",
+  categories: "categories",
+  push: "push devices",
+  reports: "reports",
+  passkeys: "passkeys",
+  "api-tokens": "API tokens",
+  data: "data import",
+  auth: "sessions",
+  admin: "the encryption key",
+};
+
+function describeSupport(e: SupportActivityEntry): string {
+  if (e.kind === "signed_in") return `${e.identity} signed in as support`;
+  const segment = e.path?.split("/")[2] ?? "";
+  const area = AREA[segment] ?? (segment || "something");
+  if (e.kind === "refused") return `Tried to ${e.method === "DELETE" ? "delete from" : "change"} ${area}, and was refused`;
+  return `Changed ${area}`;
+}
+
+/**
+ * OpenPing Hosted only: each time support signed in here, what it changed,
+ * and what it was refused (support can't touch sign-in, tokens or keys, or
+ * delete anything). Support sign-ins last an hour at most.
+ */
+function SupportActivityCard() {
+  const { data } = useFetch<{ entries: SupportActivityEntry[] }>("/api/auth/support-activity");
+  const entries = data?.entries ?? [];
+  return (
+    <section id="support" className="scroll-mt-6">
+      <Card className="p-5">
+        <CardHeader>
+          <CardTitle>Support access</CardTitle>
+        </CardHeader>
+        <p className="text-sm text-ink-muted">
+          When OpenPing Hosted support signs in to help, it is listed here with everything it changed. Support sign-ins last an hour, and can't change
+          passkeys, sessions, API tokens or keys, or delete anything.
+        </p>
+        {data && entries.length === 0 && <p className="mt-3 text-sm text-ink-faint">Support has never signed in to this OpenPing.</p>}
+        {entries.length > 0 && (
+          <ul className="mt-3 divide-y divide-line">
+            {entries.map((e) => (
+              <li key={e.id} className="flex flex-col gap-0.5 py-2.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
+                <span className="min-w-0 text-sm text-ink">
+                  <span className={e.kind === "refused" ? "text-down" : undefined}>{describeSupport(e)}</span>
+                  {e.path && <span className="block truncate font-mono text-xs text-ink-faint">{`${e.method ?? ""} ${e.path}`}</span>}
+                </span>
+                <time dateTime={new Date(e.at).toISOString()} className="shrink-0 text-xs text-ink-faint">
+                  {new Date(e.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                </time>
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
     </section>
