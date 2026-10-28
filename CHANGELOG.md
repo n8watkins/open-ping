@@ -1,0 +1,14 @@
+# Changelog
+
+## 0.2.0 - 2026-10-27
+
+Off-hours services now show as Scheduled off on the status page, widget, badge and feed instead of operational, and say since when. The widget can be embedded on n8builds.dev itself. Installs can keep their database id out of git with npm run deploy:prod.
+
+### Safer
+
+- One strict header policy for every page, widget on n8builds.dev, checks-only CI ([#16](https://github.com/n8watkins/open-ping/pull/16))
+
+### Faster
+
+- Scheduled runs that have nothing to check now finish in well under a second, and Settings > Diagnostics shows how many database calls each run made.
+
