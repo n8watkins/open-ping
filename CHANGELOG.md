@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.3 - 2026-10-28
+
+### Fixed
+
+- Domain expiry checks no longer alert when the lookup is rate limited or fails ([#39](https://github.com/n8watkins/open-ping/pull/39))
+
 ## 0.8.2 - 2026-10-28
 
 ### Fixed
