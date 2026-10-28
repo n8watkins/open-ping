@@ -1,6 +1,17 @@
 import { describe, it, expect } from "vitest";
 import worker from "./index";
 import type { Env } from "./types";
+import {
+  BASE_SECURITY_HEADERS,
+  cspDirectives,
+  serializeCsp,
+  widgetCspDirectives,
+} from "./security-headers";
+
+// Vitest runs with Vite's DEV flag on, so the Worker sends its dev CSP here.
+const viteDev = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
+const pageCsp = serializeCsp(cspDirectives({ viteDev }));
+const widgetCsp = serializeCsp(widgetCspDirectives({ viteDev }));
 
 /**
  * Simulate a Cloudflare ASSETS / `fetch()` response: readable body, but with
@@ -80,12 +91,58 @@ describe("worker fetch — SPA fallback + secureHeaders", () => {
     expect(res.status).toBe(200);
     // X-Frame-Options is removed so the iframe can load cross-origin.
     expect(res.headers.get("x-frame-options")).toBeNull();
-    // frame-ancestors is relaxed to n8builds.dev subdomains; the rest of the CSP
-    // (script-src 'self', etc.) is preserved.
+    // frame-ancestors is relaxed to n8builds.dev subdomains; the rest of the
+    // CSP (script-src 'self', etc.) is preserved.
     const csp = res.headers.get("content-security-policy") ?? "";
-    expect(csp).toContain("frame-ancestors https://*.n8builds.dev");
+    expect(csp).toContain("frame-ancestors https://*.n8builds.dev;");
     expect(csp).not.toContain("frame-ancestors 'none'");
     expect(csp).toContain("script-src 'self'");
+    expect(csp).toBe(widgetCsp);
+    expect(csp.replace(/frame-ancestors [^;]*/, "frame-ancestors 'none'")).toBe(pageCsp);
+  });
+
+  it("frames nested widget paths the same way, and nothing that only starts with /embed", async () => {
+    const nested = await worker.fetch!(new Request("https://example.com/embed/api"), makeEnv(), ctx);
+    expect(nested.headers.get("content-security-policy")).toBe(widgetCsp);
+    const lookalike = await worker.fetch!(new Request("https://example.com/embedded"), makeEnv(), ctx);
+    expect(lookalike.headers.get("x-frame-options")).toBe("DENY");
+    expect(lookalike.headers.get("content-security-policy")).toBe(pageCsp);
+  });
+
+  it("gives every response the one policy, including the real files it passes through", async () => {
+    for (const path of ["/", "/index.html", "/offline", "/offline.html", "/sw.js", "/status", "/login", "/monitors/1"]) {
+      const res = await worker.fetch!(new Request(`https://example.com${path}`), makeEnv(), ctx);
+      expect(res.headers.get("content-security-policy"), path).toBe(pageCsp);
+      expect(res.headers.get("x-frame-options"), path).toBe("DENY");
+      for (const [name, value] of Object.entries(BASE_SECURITY_HEADERS)) {
+        expect(res.headers.get(name), `${path} ${name}`).toBe(value);
+      }
+    }
+  });
+
+  it("hands real files to the assets binding as requested, and client routes the SPA entry", async () => {
+    const asked: Record<string, string> = {};
+    for (const path of ["/", "/index.html", "/offline", "/offline.html", "/sw.js", "/landing/status-page.webp", "/@vite/client", "/status", "/embed/api"]) {
+      await worker.fetch!(
+        new Request(`https://example.com${path}`),
+        makeEnv((request) => {
+          asked[path] = new URL(request.url).pathname;
+        }),
+        ctx,
+      );
+    }
+    expect(asked).toEqual({
+      "/": "/",
+      "/index.html": "/index.html",
+      "/offline": "/offline",
+      "/offline.html": "/offline.html",
+      "/sw.js": "/sw.js",
+      "/landing/status-page.webp": "/landing/status-page.webp",
+      // Vitest runs as Vite dev, where Vite's own modules pass through too.
+      "/@vite/client": "/@vite/client",
+      "/status": "/",
+      "/embed/api": "/",
+    });
   });
 
   it("returns JSON 404 for an unmatched /api route (never the SPA shell)", async () => {
