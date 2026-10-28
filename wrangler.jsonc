@@ -6,7 +6,9 @@
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
+    // The Worker serves the app shell for client routes itself
+    // (src/worker/index.ts), so a missing file is a real 404, not the app.
+    "not_found_handling": "none",
     // Every request runs the Worker first, so every page gets its security
     // headers (src/worker/security-headers.ts), except the hashed JS and CSS
     // bundles, which static assets serve on their own (public/_headers).
