@@ -1,6 +1,6 @@
 # OpenPing on phones: the mobile plan
 
-Status: planned, 2026-10-28.
+Status: M1 built 2026-10-28; M2 and M3 planned.
 The owner wants people to use OpenPing from their phones: as a web app they install from the browser, and as an Android app.
 This plan covers both, for every install (self-hosted, the owner's, and Hosted), and makes "works well on a phone" a rule for all future UI work.
 
@@ -33,6 +33,26 @@ Owner actions: none.
    Lighthouse PWA and mobile checks in CI on the built app, and a browser check of install, offline and notification-tap flows.
 
 Works the same for self-hosted installs, the owner's install and Hosted customers, because each serves the same files from its own address.
+
+### M1 as built (2026-10-28)
+
+- Icons: `node scripts/build-icons.mjs` renders the PNGs in `public/` from `icon.svg` and `maskable-icon.svg` (plus the white notification badge); commit them after changing an SVG.
+- Manifest screenshots (`public/screenshots/`) are the real Overview at 390x844 (2x) and 1440x900; retake them when the Overview changes a lot.
+- Install: `src/client/lib/install.ts` keeps the `beforeinstallprompt` event; `components/InstallApp.tsx` has the sidebar and More-menu entry, the iPhone steps sheet and the Settings > General card.
+- Offline: `public/sw.js` keeps the last `/api/overview` and `/api/overview/history` answers (network first) and no other API answer.
+  A signed-out answer (401 or 403) or signing out clears them.
+  The signed-in app asks the worker to save every admin bundle listed in `/sw-precache.json` (written by `vite.config.ts`), so pages not opened yet still load offline.
+  With the server unreachable and a saved Overview on the device, the app opens on it with "Offline, showing data from HH:MM".
+- Change `VERSION` in `public/sw.js` whenever its caching changes.
+- Pull to refresh: `components/PullToRefresh.tsx` on Overview, Monitors and Incidents; touch only, only from the very top of the page, never inside a scrolled panel, a fixed sheet or a field.
+- Notification taps: `notificationclick` moves an open OpenPing window to the incident, or opens one inside the app's scope, so the installed app opens it.
+- Tests: `src/pwa-files.test.ts` (manifest, icons on disk at their sizes, `index.html`, the worker's shell list), `src/sw.test.ts` (notification taps and the Overview cache, run against the real `sw.js`), and unit tests for the install, offline-banner and pull logic.
+
+**Checking it by hand.**
+Lighthouse no longer has a PWA category (removed in Lighthouse 12), and adding it to CI would mean a headless Chrome and Lighthouse as new dependencies, so it isn't in CI.
+To check a build: `npm run build`, `npx vite preview --port 5212`, sign in, then in Chrome DevTools run Lighthouse for Mobile, and look at Application > Manifest (no installability errors) and Application > Service workers.
+The 2026-10-28 run on the Overview scored Accessibility 98, Best Practices 100 and SEO 100; the two accessibility findings (heading order on the Overview, the range buttons' labels) predate M1.
+For offline, stop the server (DevTools' offline switch doesn't reach the worker's own requests) and reload.
 
 ## Stage M2: OpenPing for Android in Google Play
 
