@@ -58,6 +58,26 @@ export function parseJSONSetting<T>(raw: string | null | undefined): T | null {
   }
 }
 
+/**
+ * Store a value as given (`encrypted` says whether it is already ciphertext),
+ * as a statement a caller can put in a batch.
+ */
+export function setSettingStatement(
+  env: Env,
+  key: string,
+  stored: string,
+  encrypted = false,
+): D1PreparedStatement {
+  return env.DB.prepare(
+    `INSERT INTO settings (key, value, encrypted, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET
+       value = excluded.value,
+       encrypted = excluded.encrypted,
+       updated_at = excluded.updated_at`,
+  ).bind(key, stored, encrypted ? 1 : 0, Date.now());
+}
+
 export async function setSetting(
   env: Env,
   key: string,
@@ -66,16 +86,7 @@ export async function setSetting(
 ): Promise<void> {
   const secret = opts.secret ?? false;
   const stored = secret ? await encryptValue(env, value) : value;
-  await env.DB.prepare(
-    `INSERT INTO settings (key, value, encrypted, updated_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET
-       value = excluded.value,
-       encrypted = excluded.encrypted,
-       updated_at = excluded.updated_at`,
-  )
-    .bind(key, stored, secret ? 1 : 0, Date.now())
-    .run();
+  await setSettingStatement(env, key, stored, secret).run();
 }
 
 export async function deleteSetting(env: Env, key: string): Promise<void> {

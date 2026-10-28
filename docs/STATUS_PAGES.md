@@ -181,6 +181,7 @@ Download it as CSV from the same card, or get it from `GET /api/reports/monthly?
 `month` defaults to last month.
 
 Tick **Email me this report every month** to get it by email on the 1st, from 09:00 in the install's timezone, at the admin email (it needs `RESEND_API_KEY`).
+A report that can't go out then (the email fails, or the Worker misses the day) is sent at the next chance later in the month, trying at most once an hour, and each month's report is sent only once.
 
 The report comes from the hourly and daily rollups, never from raw samples, in one database round trip.
 Hourly rollups are kept for 64 days by default, so last month is exact until this month ends.

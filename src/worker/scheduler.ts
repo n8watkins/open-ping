@@ -365,10 +365,11 @@ export async function runScheduled(
       console.error("[scheduler] weekly summary failed", e);
     }
 
-    // Monthly report (opt-in, on the 1st; notifications/monthly.ts). It costs
-    // two queries when it sends and none otherwise. If the weekly summary
-    // already spent its queries this run, the report waits for the next run,
-    // 12 minutes later and still on the 1st, so the tail reserve holds both.
+    // Monthly report (opt-in, from the 1st; notifications/monthly.ts). It costs
+    // two queries when it tries and none otherwise. One email job per run: if
+    // the weekly summary already tried this run, the report waits for a later
+    // one (it catches up any day until last month's report is sent), so the
+    // tail reserve never has to hold both.
     if (!weeklyAttempted) {
       try {
         await sendMonthlyReport(env, Date.now(), settings, retention);

@@ -1,6 +1,6 @@
 import { DateTime } from "luxon";
 import type { Env } from "../types";
-import { setSetting, settingsFromRows, settingsStatement } from "../db/settings";
+import { setSetting, setSettingStatement, settingsFromRows, settingsStatement } from "../db/settings";
 import type { RetentionConfig } from "../history/rollups";
 import { sendResendEmail } from "./channels/resend";
 import { escapeHtml, renderEmailLayout, renderEmailText } from "./email-layout";
@@ -16,36 +16,56 @@ import {
 /**
  * Monthly uptime report email (opt-in, `monthly_report_enabled`). The
  * scheduler calls {@link sendMonthlyReport} once per run, like the weekly
- * summary. It sends on the 1st of the month, from 09:00 in the install's
- * timezone, the report for the month that just ended, at most once per month
+ * summary. It sends the report for the month that just ended from 09:00 on the
+ * 1st in the install's timezone, at most once per month
  * (`monthly_report_last_sent` holds the month it last sent).
  *
+ * It catches up: a report that wasn't sent on the 1st (the run where it fell
+ * due was busy with the weekly summary, the email failed, the Worker was down)
+ * goes out at the next chance, any day of the month. A failed send waits
+ * RETRY_AFTER_MS before the next try (`monthly_report_last_attempt`), so a
+ * broken email setup costs one try an hour rather than one every run.
+ *
  * A run where it isn't due costs no D1 queries (the gate settings come from
- * the scheduler's first round trip). A run that sends costs two: one batch for
- * the report and the sender settings, and one to record the send.
+ * the scheduler's first round trip). A run that tries costs two: one batch for
+ * the report, the sender settings and the attempt time, and one to record a
+ * successful send.
  */
 
 /** The settings the gate reads; the scheduler loads them up front. */
 export const MONTHLY_GATE_SETTINGS = [
   "monthly_report_enabled",
   "monthly_report_last_sent",
+  "monthly_report_last_attempt",
   "timezone",
   "admin_email",
 ] as const;
 
 /** Local hour on the 1st from which the report goes out. */
 const SEND_HOUR = 9;
+/** How long a failed send waits before the next try. */
+export const RETRY_AFTER_MS = 60 * 60 * 1000;
 const DEFAULT_FROM = "OpenPing <onboarding@resend.dev>";
 
 /**
- * The month to report on if a report is due at `now`, else null: it is the
- * 1st in `zone`, at or after 09:00, and last month's report hasn't been sent.
+ * The month to report on if a report is due at `now`, else null: last month's
+ * report hasn't been sent, it is past 09:00 on the 1st in `zone` (any later
+ * day catches up a missed one), and the last failed try, if any, was at least
+ * RETRY_AFTER_MS ago.
  */
-export function monthlyReportDue(now: number, zone: string, lastSent: string | null): string | null {
+export function monthlyReportDue(
+  now: number,
+  zone: string,
+  lastSent: string | null,
+  lastAttemptAt: number | null = null,
+): string | null {
   const local = DateTime.fromMillis(now, { zone: safeZone(zone) });
-  if (local.day !== 1 || local.hour < SEND_HOUR) return null;
+  if (local.day === 1 && local.hour < SEND_HOUR) return null;
   const month = previousMonth(now, zone);
-  return lastSent === month ? null : month;
+  // "yyyy-MM" sorts as text; a report for this month or later is never resent.
+  if (lastSent != null && lastSent >= month) return null;
+  if (lastAttemptAt != null && now - lastAttemptAt < RETRY_AFTER_MS) return null;
+  return month;
 }
 
 /** "October 2026" for "2026-10". */
@@ -164,15 +184,19 @@ export async function sendMonthlyReport(
   const recipient = env.ADMIN_EMAIL ?? settings.get("admin_email") ?? null;
   if (!recipient) return { sent: false, reason: "no_recipient" };
   const zone = safeZone(settings.get("timezone"));
-  const month = monthlyReportDue(now, zone, settings.get("monthly_report_last_sent") ?? null);
+  const lastAttempt = Number(settings.get("monthly_report_last_attempt")) || null;
+  const month = monthlyReportDue(now, zone, settings.get("monthly_report_last_sent") ?? null, lastAttempt);
   if (!month) return { sent: false, reason: "not_due" };
 
-  // One round trip: the report's three queries and the sender settings.
+  // One round trip: the report's three queries, the sender settings, and the
+  // attempt time, so a send that fails (or a run that dies mid-send) waits
+  // RETRY_AFTER_MS before the next try.
   const bounds = monthBounds(month, zone);
   const senderKeys = ["app_url", "email_from"] as const;
   const results = await env.DB.batch([
     ...reportStatements(env, bounds, now, retention),
     settingsStatement(env, senderKeys),
+    setSettingStatement(env, "monthly_report_last_attempt", String(now)),
   ]);
   const report = reportFromResults(bounds, now, results);
   const sender = await settingsFromRows(
