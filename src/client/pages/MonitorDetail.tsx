@@ -553,17 +553,27 @@ export default function MonitorDetail() {
         <Card>
           <CardHeader>
             <CardTitle>Uptime</CardTitle>
-            <span className="text-xs text-ink-faint">{recentSamples.length} checks · 24h</span>
+            <span className="text-xs text-ink-faint">
+              {recentSamples.length} {recentSamples.length === 1 ? "check" : "checks"} · 24h
+            </span>
           </CardHeader>
+          {/* Four values share half the page from lg up, so they step down a size there. */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Stat label="24 hours" value={formatPct(uptime.d1)} valueClass={uptimeClass(uptime.d1)} />
-            <Stat label="7 days" value={formatPct(uptime.d7)} valueClass={uptimeClass(uptime.d7)} />
-            <Stat label="30 days" value={formatPct(uptime.d30)} valueClass={uptimeClass(uptime.d30)} />
-            <Stat
-              label="365 days"
-              value={formatPct(uptime.d365)}
-              valueClass={uptimeClass(uptime.d365)}
-            />
+            {(
+              [
+                ["24 hours", uptime.d1],
+                ["7 days", uptime.d7],
+                ["30 days", uptime.d30],
+                ["365 days", uptime.d365],
+              ] as const
+            ).map(([label, pct]) => (
+              <Stat
+                key={label}
+                label={label}
+                value={formatPct(pct)}
+                valueClass={cn("lg:text-base xl:text-xl", uptimeClass(pct))}
+              />
+            ))}
           </div>
           <div className="mt-4 border-t border-line pt-4">
             {segments.length > 0 ? (

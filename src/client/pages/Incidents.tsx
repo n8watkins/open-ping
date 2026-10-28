@@ -316,7 +316,7 @@ export default function Incidents() {
                   {data.total} incident{data.total === 1 ? "" : "s"}
                 </p>
               )}
-              <Card className="divide-y divide-line p-0">
+              <Card className="divide-y divide-line overflow-hidden p-0">
                 {incidents.map((inc) => (
                   <button
                     key={inc.id}
@@ -575,7 +575,7 @@ function Meta({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs font-medium text-ink-muted">{label}</dt>
-      <dd className="mt-0.5 truncate text-ink">{value}</dd>
+      <dd className="mt-0.5 break-words text-ink">{value}</dd>
     </div>
   );
 }
