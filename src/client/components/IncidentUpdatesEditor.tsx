@@ -27,6 +27,21 @@ const TONE: Record<IncidentUpdateStatus, string> = {
   resolved: "text-up",
 };
 
+/** What POST /api/incidents/:id/updates says about the alerts it queued. */
+interface PostUpdateResponse {
+  alertsQueued?: number;
+  alertsError?: string;
+}
+
+/** One line on what happened to a new update's alerts. */
+function alertsNote(notify: boolean, r: PostUpdateResponse): string {
+  if (!notify) return "Posted without alerts.";
+  if (r.alertsError) return "Posted, but its alerts could not be queued.";
+  const n = r.alertsQueued ?? 0;
+  if (n === 0) return "Posted. No alert channel takes incident updates for this monitor.";
+  return `Posted. ${n} alert channel${n === 1 ? "" : "s"} will hear about it within 12 minutes.`;
+}
+
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : "Something went wrong.";
 }
@@ -81,8 +96,10 @@ export function IncidentUpdatesEditor({
   // Start from the incident's current status (the newest update's).
   const [status, setStatus] = useState<IncidentUpdateStatus>(updates[0]?.status ?? "investigating");
   const [message, setMessage] = useState("");
+  const [notify, setNotify] = useState(true);
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   async function post() {
     if (!message.trim()) {
@@ -91,9 +108,15 @@ export function IncidentUpdatesEditor({
     }
     setPosting(true);
     setError(null);
+    setNote(null);
     try {
-      await api(`/api/incidents/${incidentId}/updates`, { method: "POST", json: { status, message }, csrf });
+      const r = await api<PostUpdateResponse>(`/api/incidents/${incidentId}/updates`, {
+        method: "POST",
+        json: { status, message, notify },
+        csrf,
+      });
       setMessage("");
+      setNote(alertsNote(notify, r));
       await onChanged();
     } catch (e) {
       setError(errorText(e));
@@ -124,9 +147,20 @@ export function IncidentUpdatesEditor({
             onChange={(e) => {
               setMessage(e.target.value);
               setError(null);
+              setNote(null);
             }}
             placeholder="What's happening, for the people reading the status page."
           />
+        </label>
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-muted">
+          <input
+            type="checkbox"
+            name="update-notify"
+            checked={notify}
+            onChange={(e) => setNotify(e.target.checked)}
+            className="size-3.5 accent-accent"
+          />
+          Alert this monitor's notification channels
         </label>
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -141,6 +175,11 @@ export function IncidentUpdatesEditor({
           {error && (
             <span role="alert" className="text-xs text-down">
               {error}
+            </span>
+          )}
+          {!error && note && (
+            <span role="status" className="text-xs text-ink-muted">
+              {note}
             </span>
           )}
         </div>

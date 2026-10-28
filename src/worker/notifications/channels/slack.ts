@@ -11,7 +11,7 @@
  */
 
 import type { NotificationPayload } from "../payload";
-import { EVENT_PILL, emailButtonLabel, eventColorState, metaLines } from "../payload";
+import { colorState, emailButtonLabel, metaLines, pillLabel, timeLabel } from "../payload";
 import { stateColor } from "./discord";
 import { postJson, truncate, type SendResult } from "./http";
 
@@ -56,7 +56,8 @@ export function toSlackMessage(p: NotificationPayload): SlackMessage {
     },
   ];
 
-  const facts = metaLines(p).filter(([label]) => label !== "Detected");
+  // The time goes in the context line below, in each reader's own time zone.
+  const facts = metaLines(p).filter(([label]) => label !== timeLabel(p));
   if (facts.length) {
     blocks.push({
       type: "section",
@@ -75,7 +76,7 @@ export function toSlackMessage(p: NotificationPayload): SlackMessage {
     elements: [
       {
         type: "mrkdwn",
-        text: `${EVENT_PILL[p.event]} · Detected <!date^${seconds}^{date_short_pretty} at {time}|${fallback}> · OpenPing`,
+        text: `${escapeSlackText(pillLabel(p))} · ${timeLabel(p)} <!date^${seconds}^{date_short_pretty} at {time}|${fallback}> · OpenPing`,
       },
     ],
   });
@@ -96,7 +97,7 @@ export function toSlackMessage(p: NotificationPayload): SlackMessage {
 
   return {
     text: truncate(escapeSlackText(`${p.title}: ${p.body}`), FALLBACK_TEXT_MAX),
-    attachments: [{ color: hex(stateColor(eventColorState(p.event))), blocks }],
+    attachments: [{ color: hex(stateColor(colorState(p))), blocks }],
   };
 }
 

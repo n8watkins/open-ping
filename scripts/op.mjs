@@ -129,6 +129,7 @@ export const COMMANDS = {
     flags: {
       status: { type: "string", values: UPDATE_STATUSES, help: "The incident's status now" },
       message: { type: "string", help: "What happened or what is being done, for the public" },
+      quiet: { type: "boolean", help: "Post it without alerting the monitor's notification channels" },
     },
     run: cmdIncidentsUpdate,
   },
@@ -739,10 +740,19 @@ async function cmdIncidentsUpdate({ api, out, flags, positionals: [id] }) {
   if (!flags.message || !flags.message.trim()) throw new UsageError("--message is required.");
   const result = await api(`/api/incidents/${encodeURIComponent(id)}/updates`, {
     method: "POST",
-    body: { status: flags.status, message: flags.message },
+    body: { status: flags.status, message: flags.message, ...(flags.quiet ? { notify: false } : {}) },
   });
   if (flags.json) return out.json(result);
   out.line(`Posted "${UPDATE_LABELS[result.update.status]}" to ${id} at ${fmtTime(result.update.postedAt)} (${result.update.id})`);
+  out.line(`  ${alertsLine(Boolean(flags.quiet), result.alertsQueued ?? 0, result.alertsError)}`);
+}
+
+/** What happened to an update's alerts, in one line. */
+function alertsLine(quiet, queued, error) {
+  if (quiet) return "No alerts sent (--quiet).";
+  if (error) return "Posted, but its alerts could not be queued.";
+  if (queued === 0) return "No notification channel takes incident updates for this monitor.";
+  return `Alerting ${queued} channel${queued === 1 ? "" : "s"} with the next check run (within 12 minutes).`;
 }
 
 async function cmdReport({ api, out, flags }) {

@@ -140,7 +140,9 @@ Each update has a status (**Investigating**, **Identified**, **Monitoring** or *
   OpenPing resolves an incident when its monitor recovers, and you may want to post "Resolved" before or after that.
 - An incident holds at most 100 updates of up to 2,000 characters each.
 
-Posting an update does not send alerts to your notification channels yet.
+Posting an update also alerts the incident's monitor's notification channels, with the update's status and message, unless you clear **Alert this monitor's notification channels** (or pass `notify: false`, or `--quiet` in the CLI).
+Editing or deleting an update never sends an alert.
+See [Alert channels](./ALERT_CHANNELS.md#incident-updates) for who gets them.
 
 ---
 

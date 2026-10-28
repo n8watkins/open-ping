@@ -50,7 +50,7 @@ These are the gaps a buyer is likely to notice, most valuable first:
 - [ ] **Status page email subscribers** (M, double opt-in, unsubscribe links, sending limits).
   Do this after the feeds, and only if people ask.
 - [x] **Monthly uptime report** (S): a CSV and an email per monitor, for SLAs and clients (#30).
-- [ ] Notify channels when an incident update is posted (the outbox has no event for it yet).
+- [x] Notify channels when an incident update is posted: a new `incident_update` alert with the status and message, on by default and switchable per update ([Alert channels](./ALERT_CHANNELS.md#incident-updates)).
 - [x] **Passkeys for the admin sign-in** (M, landing plan item 2.1), which makes the GitHub OAuth app optional (2.2) (#34).
   Created in the setup wizard or Settings > Passkeys, usernameless sign-in with autofill, recovery with a new `SETUP_TOKEN` at `/recover`; verified with Web Crypto, no dependency ([SECURITY.md](./SECURITY.md#passkeys)).
 - [x] **"Deploy to Cloudflare" button** (M spike, plan items 2.3 and 2.4), to cut the 20-minute install (#33); the owner's one-time click test is in [DEFERRED_INPUTS.md](./DEFERRED_INPUTS.md).
