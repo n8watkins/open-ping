@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, Fingerprint, Loader2 } from "lucide-react";
+import { ArrowLeft, Fingerprint, Loader2 } from "lucide-react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { Logo } from "../components/Logo";
 import { SignInPanel, usePasskeySignIn } from "../components/SignInPanel";
@@ -140,8 +140,7 @@ function HostedSignIn({ status, signInUrl }: { status: AuthStatus; signInUrl: st
               href={signInUrl}
               className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-semibold text-canvas transition-opacity hover:opacity-90"
             >
-              Continue with OpenPing Hosted
-              <ArrowRight className="size-4" aria-hidden />
+              Sign in with OpenPing Hosted
             </a>
 
             {passkeyHere && (
