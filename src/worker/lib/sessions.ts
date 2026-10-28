@@ -24,7 +24,7 @@ type Ctx = Context<AppEnv>;
 export async function createSession(
   c: Ctx,
   identity: string,
-  identityKind: "github" | "email",
+  identityKind: SessionRow["identity_kind"],
   ttlMs: number = DEFAULT_TTL_MS,
 ): Promise<{ id: string; csrf: string; expiresAt: number }> {
   const token = randomToken(32);
@@ -99,13 +99,13 @@ async function destroySessionById(env: Env, id: string): Promise<void> {
 }
 
 /**
- * Revoke every session for an identity ("sign out everywhere"). Lets the admin
+ * Revoke every session ("sign out everywhere"). OpenPing has one administrator,
+ * so this ends GitHub, email and passkey sessions alike. Lets the admin
  * forcibly kill a leaked/stolen cookie (otherwise valid up to 30 days) without
- * waiting for expiry. Exposed via POST /api/auth/logout-all; also suitable to
- * call on an admin-identity/credential rotation.
+ * waiting for expiry. Exposed via POST /api/auth/logout-all.
  */
-export async function revokeAllSessions(env: Env, identity: string): Promise<void> {
-  await env.DB.prepare(`DELETE FROM sessions WHERE identity = ?`).bind(identity).run();
+export async function revokeAllSessions(env: Env): Promise<void> {
+  await env.DB.prepare(`DELETE FROM sessions`).run();
 }
 
 /**

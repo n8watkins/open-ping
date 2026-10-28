@@ -155,15 +155,15 @@ export default function Install() {
               <p className="font-semibold text-ink">When the build finishes</p>
               <ol className="mt-2 list-decimal space-y-1 pl-5">
                 <li>
-                  Open your new address. The setup page asks for your <C>SETUP_TOKEN</C>, your timezone and your GitHub
-                  username.
+                  Open your new address. The setup page asks for your <C>SETUP_TOKEN</C> and your timezone, and has you
+                  create a passkey, the way you&apos;ll sign in.
                 </li>
-                <li>Create a GitHub sign-in app with that address (step 5 below shows how).</li>
+                <li>Sign in with your passkey and add your sites.</li>
                 <li>
-                  In the Cloudflare dashboard, open your Worker, Settings, Variables and Secrets, and add its Client ID and
-                  Client Secret as the secrets <C>GITHUB_CLIENT_ID</C> and <C>GITHUB_CLIENT_SECRET</C>.
+                  Optional: to also sign in with GitHub, create a GitHub sign-in app (step 5 below) and add its Client ID
+                  and Client Secret in the Cloudflare dashboard (your Worker, Settings, Variables and Secrets) as{" "}
+                  <C>GITHUB_CLIENT_ID</C> and <C>GITHUB_CLIENT_SECRET</C>.
                 </li>
-                <li>Sign in with GitHub and add your sites.</li>
               </ol>
             </div>
             <p>
@@ -213,10 +213,11 @@ export default function Install() {
             </p>
           </Step>
 
-          <Step n={5} title="Create a GitHub sign-in app">
+          <Step n={5} title="Optional: add GitHub sign-in">
             <p>
-              On GitHub, open Settings, Developer settings, OAuth Apps, New OAuth App. Use your address from step 4 as the
-              homepage, and this as the callback URL:
+              A passkey is enough to sign in, so you can skip this. To also sign in with GitHub, open GitHub Settings,
+              Developer settings, OAuth Apps, New OAuth App. Use your address from step 4 as the homepage, and this as the
+              callback URL:
             </p>
             <Code>https://YOUR-ADDRESS/auth/github/callback</Code>
             <p>Then add its Client ID and a new Client Secret:</p>
@@ -225,14 +226,15 @@ export default function Install() {
 
           <Step n={6} title="Finish setup in the browser">
             <p>
-              Open your address. The setup screen asks for your <C>SETUP_TOKEN</C>, then your address, your timezone and
-              your GitHub username (the only account that can sign in). When you finish, setup locks.
+              Open your address. The setup screen asks for your <C>SETUP_TOKEN</C>, then your address and your timezone,
+              and has you create a passkey, the way you&apos;ll sign in. You can add a GitHub username or an email address
+              too. When you finish, setup locks.
             </p>
           </Step>
 
           <Step n={7} title="Sign in and add your sites">
             <p>
-              Sign in with GitHub, add monitors (HTTP, heartbeat, DNS, TCP or domain expiry), and set up alerts under
+              Sign in with your passkey, add monitors (HTTP, heartbeat, DNS, TCP or domain expiry), and set up alerts under
               Integrations: email, Web Push, Slack, Microsoft Teams, Discord, Telegram or a webhook.
             </p>
           </Step>
@@ -242,7 +244,10 @@ export default function Install() {
               <li>
                 Email alerts and magic-link sign-in: add a <C>RESEND_API_KEY</C> from Resend.
               </li>
-              <li>Your own domain: add it to the Worker in Cloudflare, then update the GitHub app and your address.</li>
+              <li>
+                Your own domain: add it to the Worker in Cloudflare and update your address (and the GitHub app, if you
+                use one). Passkeys belong to one address, so add new ones there.
+              </li>
               <li>
                 On Cloudflare's paid Workers plan, set <C>WORKERS_PLAN</C> to <C>paid</C> in <C>wrangler.jsonc</C> to
                 check more monitors per run.

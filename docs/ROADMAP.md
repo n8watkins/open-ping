@@ -51,7 +51,8 @@ These are the gaps a buyer is likely to notice, most valuable first:
   Do this after the feeds, and only if people ask.
 - [x] **Monthly uptime report** (S): a CSV and an email per monitor, for SLAs and clients (#30).
 - [ ] Notify channels when an incident update is posted (the outbox has no event for it yet).
-- [ ] **Passkeys for the admin sign-in** (M, landing plan item 2.1), which makes the GitHub OAuth app optional (2.2).
+- [x] **Passkeys for the admin sign-in** (M, landing plan item 2.1), which makes the GitHub OAuth app optional (2.2) (this PR).
+  Created in the setup wizard or Settings > Passkeys, usernameless sign-in with autofill, recovery with a new `SETUP_TOKEN` at `/recover`; verified with Web Crypto, no dependency ([SECURITY.md](./SECURITY.md#passkeys)).
 - [ ] **"Deploy to Cloudflare" button** (M spike, plan items 2.3 and 2.4), to cut the 20-minute install.
   Built in this PR: the button on the README and `/install`, a deploy that creates the database and applies migrations, and setup-page help for a missing secret.
   Left: one real click by the owner ([Deferred inputs](./DEFERRED_INPUTS.md), item 5), then the button in the landing hero.

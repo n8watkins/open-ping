@@ -34,7 +34,7 @@ does not reduce uptime.
 - Failures confirmed by a second check before anyone is alerted, and new monitors checked the moment you add them
 - Compact historical uptime (samples → intervals → hourly → daily → monthly)
 - Alerts to Slack, Microsoft Teams, Discord and Telegram, email via Resend, signed webhooks and mobile Web Push (installable Android PWA), with a test button for each ([docs/ALERT_CHANNELS.md](./docs/ALERT_CHANNELS.md))
-- GitHub OAuth + email magic-link auth (single administrator)
+- Passkey sign-in for the single administrator, with optional GitHub OAuth and email magic links
 - Monitor **categories** and **multiple public status pages** (a default page at `/status`, per-category pages at `/status/:slug`), each polished and configurable
 - An **embeddable status widget** (`<iframe>`) plus an **SVG status badge** for READMEs and dashboards
 - A free **`/tools` suite** (uptime & subnet calculators, cron tester, DNS/MX lookup, and an **"Is it down?" checker**)
@@ -72,18 +72,18 @@ The quickest way is the button: it copies this repository into your GitHub accou
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/n8watkins/open-ping)
 
-Then open your new address, unlock the setup page with your `SETUP_TOKEN`, and add a GitHub sign-in app ([the button's steps](./docs/INSTALL.md#the-quick-way-deploy-to-cloudflare)).
+Then open your new address, unlock the setup page with your `SETUP_TOKEN`, and create a passkey to sign in ([the button's steps](./docs/INSTALL.md#the-quick-way-deploy-to-cloudflare)).
 
 By hand, the outline is:
 
 1. Clone, `npm install`, and `npx wrangler login`.
-2. Configure GitHub OAuth and/or email magic-link sign-in, then generate a `MASTER_KEY`.
-3. Set Worker secrets (`MASTER_KEY`, `SETUP_TOKEN`, GitHub OAuth, optionally `APP_URL`, an admin identity and Resend).
+2. Generate a `MASTER_KEY` (GitHub OAuth and email magic-link sign-in are optional extras).
+3. Set Worker secrets (`MASTER_KEY`, `SETUP_TOKEN`, optionally `APP_URL`, GitHub OAuth, an admin identity and Resend).
 4. `npm run deploy`: it builds, creates the D1 database on the first run, applies the migrations and deploys.
-5. Open the app, unlock the first-run wizard with `SETUP_TOKEN`, finish setup, and add monitors.
+5. Open the app, unlock the first-run wizard with `SETUP_TOKEN`, create your passkey, finish setup, and add monitors.
 
 **Follow the full, copy-pasteable walkthrough in
-[docs/INSTALL.md](./docs/INSTALL.md)** - it covers the GitHub OAuth app, every
+[docs/INSTALL.md](./docs/INSTALL.md)** - it covers passkeys, the optional GitHub OAuth app, every
 secret, custom domains, and a verify-it's-working checklist.
 
 ## Documentation

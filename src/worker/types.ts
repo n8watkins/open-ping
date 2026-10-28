@@ -88,7 +88,7 @@ export interface AppVariables {
 export interface SessionRow {
   id: string;
   identity: string;
-  identity_kind: "github" | "email";
+  identity_kind: "github" | "email" | "passkey";
   csrf_secret: string;
   created_at: number;
   expires_at: number;

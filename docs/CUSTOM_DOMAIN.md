@@ -37,9 +37,14 @@ npm run deploy
 
 Use `https://` and **no trailing slash**.
 
-## 3. Update the GitHub OAuth app
+## 3. Passkeys and the GitHub OAuth app
 
-The OAuth callback must match the new `APP_URL`. In **GitHub → Settings →
+A passkey is bound to the hostname of `APP_URL`, so passkeys made on the old address stop working once `APP_URL` changes.
+Before you switch, make sure you can still get in: GitHub or email sign-in, or a new `SETUP_TOKEN` for `/recover`.
+After switching, sign in on the new domain and add a passkey in **Settings > Passkeys**, then remove the old ones (they show "for <old hostname>").
+If passkeys were your only way in, set a new `SETUP_TOKEN` and open `https://status.example.com/recover`.
+
+If you use GitHub sign-in, the OAuth callback must match the new `APP_URL`. In **GitHub → Settings →
 Developer settings → OAuth Apps → your app**:
 
 - **Homepage URL:** `https://status.example.com`
@@ -50,7 +55,7 @@ Developer settings → OAuth Apps → your app**:
 ## 4. Verify
 
 - Open `https://status.example.com` and confirm the app loads over HTTPS.
-- Sign in with GitHub - if you get "invalid callback" or a redirect-URI error,
+- Sign in with your new passkey, or with GitHub - if you get "invalid callback" or a redirect-URI error,
   the callback URL in step 3 doesn't exactly match `APP_URL` + `/auth/github/
   callback`.
 - If you use Web Push, re-subscribe from your device so the subscription is tied

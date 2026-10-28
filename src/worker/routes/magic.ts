@@ -6,6 +6,7 @@ import { randomToken, sha256hex } from "../lib/ids";
 import { isAllowedEmail } from "../lib/admin";
 import { createSession } from "../lib/sessions";
 import { getSetting } from "../db/settings";
+import { appOrigin } from "../lib/app-origin";
 import { sendResendEmail } from "../notifications/channels/resend";
 import { hitRateLimit } from "../db/rate-limit";
 import {
@@ -41,32 +42,12 @@ const UNKNOWN_IP = "unknown";
 const requestSchema = z.object({ email: z.string().email() });
 
 /**
- * Resolve the public base URL (env > settings > request origin), no trailing
- * slash. The request-origin fallback derives from the spoofable Host header;
- * setup /complete now requires app_url (env or settings) so a completed
- * deployment builds single-use magic links from a configured base, not the
- * caller-controlled Host.
+ * The public base URL (env > settings > request origin, lib/app-origin.ts).
+ * The request-origin fallback derives from the spoofable Host header; setup
+ * /complete requires app_url (env or settings) so a completed deployment builds
+ * single-use magic links from a configured base, not the caller-controlled Host.
  */
-async function baseUrl(c: Ctx): Promise<string> {
-  const configured = c.env.APP_URL ?? (await getSetting(c.env, "app_url"));
-  if (configured) {
-    try {
-      const url = new URL(configured);
-      if (
-        (url.protocol === "https:" ||
-          (url.protocol === "http:" &&
-            (url.hostname === "localhost" || url.hostname === "127.0.0.1"))) &&
-        !url.username &&
-        !url.password
-      ) {
-        return url.origin;
-      }
-    } catch {
-      // Invalid legacy setting: use the request origin rather than emitting it.
-    }
-  }
-  return new URL(c.req.url).origin;
-}
+const baseUrl = appOrigin;
 
 // c.redirect (NOT Response.redirect) so any Set-Cookie on c.res survives - see
 // the same note in routes/auth.ts.

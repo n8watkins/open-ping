@@ -11,6 +11,7 @@ import {
   KeyRound,
   RefreshCw,
   FileBarChart,
+  Fingerprint,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
@@ -21,6 +22,7 @@ import { formatMs, formatRelativeTime } from "../lib/format";
 import { cn } from "../lib/cn";
 import { LandingEventsCard } from "../components/LandingEventsCard";
 import { ReportsCard } from "../components/ReportsCard";
+import { PasskeysCard } from "../components/PasskeysCard";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -126,6 +128,7 @@ function timezones(): string[] {
 
 const NAV = [
   { id: "general", label: "General", icon: <SettingsIcon className="size-4" /> },
+  { id: "sign-in", label: "Passkeys", icon: <Fingerprint className="size-4" /> },
   { id: "reports", label: "Reports", icon: <FileBarChart className="size-4" /> },
   { id: "retention", label: "Data retention", icon: <Database className="size-4" /> },
   { id: "usage", label: "Usage estimates", icon: <Gauge className="size-4" /> },
@@ -192,6 +195,7 @@ export default function Settings() {
             csrf={csrf ?? undefined}
             onSaved={() => void reloadSettings()}
           />
+          <PasskeysCard csrf={csrf ?? undefined} />
           <ReportsCard
             emailEnabled={settingsData?.settings.monthly_report_enabled === "true"}
             csrf={csrf ?? undefined}
@@ -318,7 +322,7 @@ function GeneralSection({
 
             <Field
               label="Installation URL"
-              hint="Public base URL, used for links in notifications and OAuth redirects."
+              hint="Public base URL, used for links in notifications, OAuth redirects and passkeys. Passkeys work only at this address, so changing it means adding new ones."
             >
               <input
                 value={appUrl}

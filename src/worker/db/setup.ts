@@ -1,5 +1,7 @@
 import type { Env } from "../types";
 import { getJSON, setJSON, getSetting, setSetting } from "./settings";
+import { sha256hex } from "../lib/ids";
+import { timingSafeEqual } from "../lib/timing";
 
 /**
  * First-run setup state (PRD §22). The wizard must be resumable, so progress
@@ -73,4 +75,43 @@ export async function markSetupComplete(env: Env): Promise<void> {
 
 export async function resetSetup(env: Env): Promise<void> {
   await setSetting(env, COMPLETE_KEY, "false");
+}
+
+/**
+ * SETUP_TOKEN spending, for passkey recovery (docs/SECURITY.md, "Passkeys").
+ * A finished install keeps the SHA-256 of the SETUP_TOKEN that was in place
+ * when setup finished, or when it was last used to recover. Recovery accepts
+ * only a SETUP_TOKEN with a different hash, so the token that set the install
+ * up never works again and each new token works once.
+ *
+ * Installs finished before passkeys existed have no record ("unknown"): the
+ * first passkey registration records whatever token is set then, and recovery
+ * refuses until a new token is set after that.
+ */
+const SPENT_KEY = "setup_token_spent_hash";
+const NO_TOKEN = "none";
+
+/** Record the current SETUP_TOKEN (or its absence) as spent. */
+export async function spendSetupToken(env: Env): Promise<void> {
+  await setSetting(env, SPENT_KEY, env.SETUP_TOKEN ? await sha256hex(env.SETUP_TOKEN) : NO_TOKEN);
+}
+
+/** Record the current token as spent only when nothing has been recorded yet. */
+export async function ensureSetupTokenSpendRecorded(env: Env): Promise<void> {
+  if ((await getSetting(env, SPENT_KEY)) == null) await spendSetupToken(env);
+}
+
+/**
+ * Whether the configured SETUP_TOKEN can still be used for recovery: set, and
+ * different from the spent one. An install with no record yet records the
+ * current token and answers false.
+ */
+export async function isSetupTokenUnspent(env: Env): Promise<boolean> {
+  if (!env.SETUP_TOKEN) return false;
+  const spent = await getSetting(env, SPENT_KEY);
+  if (spent == null) {
+    await spendSetupToken(env);
+    return false;
+  }
+  return !(await timingSafeEqual(spent, await sha256hex(env.SETUP_TOKEN)));
 }
