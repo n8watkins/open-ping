@@ -197,6 +197,9 @@ const UPSERT_TOTALS = `ON CONFLICT(monitor_id, period, bucket_start) DO UPDATE S
   min_latency_ms = excluded.min_latency_ms, max_latency_ms = excluded.max_latency_ms,
   monitored_seconds = excluded.monitored_seconds, down_seconds = excluded.down_seconds`;
 
+/** How long a sent or dead notification delivery is kept, for Diagnostics. */
+const OUTBOX_KEEP_DAYS = 30;
+
 /** The `retention` setting over the defaults (a partial or unset setting keeps the rest). */
 export function resolveRetention(stored: Partial<RetentionConfig> | null | undefined): RetentionConfig {
   return { ...DEFAULT_RETENTION, ...(stored ?? {}) };
@@ -213,7 +216,8 @@ export function resolveRetention(stored: Partial<RetentionConfig> | null | undef
  *  3. Prune expired tiers per the retention horizons: samples > 24h, hour > 64d,
  *     day > 400d by default (overridable via the `retention` setting). Months
  *     are kept forever. Closed status intervals and scheduler-run diagnostics
- *     past the daily horizon go too (open intervals are always kept).
+ *     past the daily horizon go too (open intervals are always kept), and
+ *     notification deliveries OUTBOX_KEEP_DAYS after they were sent or gave up.
  *
  * A derived bucket is recomputed only while ALL of its source rows are still
  * retained; older buckets are sealed at their last full value, so the prune in
@@ -280,6 +284,14 @@ export function compactionStatements(
       // ~120 rows/day; only recent runs are read.
       label: "run-record prune",
       stmt: env.DB.prepare("DELETE FROM scheduler_runs WHERE started_at < ?").bind(now - dailyMs),
+    },
+    {
+      // Finished deliveries only: pending and failed rows are still being
+      // retried. The alert cooldown reads minutes back, far inside this.
+      label: "outbox prune",
+      stmt: env.DB.prepare(
+        "DELETE FROM notification_outbox WHERE status IN ('sent', 'dead') AND updated_at < ?",
+      ).bind(now - OUTBOX_KEEP_DAYS * DAY_MS),
     },
   ];
 }

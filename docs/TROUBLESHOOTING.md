@@ -35,6 +35,7 @@ OpenPing checks monitors from a **Cron Trigger that fires every 12 minutes**
 - Delivery goes through an **outbox** (`notification_outbox`) with retries.
   A row stuck in `pending`/`failed` carries a `last_error` explaining why;
   `dead` means it exhausted retries.
+  Sent and dead rows are cleared 30 days after they finish.
 - **Email:** verify `RESEND_API_KEY` is set and your Resend sending
   domain/sender is verified.
 - **Slack, Teams, Discord, Telegram or webhook:** re-check the URL (or the

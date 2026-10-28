@@ -135,7 +135,7 @@ The re-encryption pass and the status report cover every value that `MASTER_KEY`
 | Monitor configuration | `monitors.config` | The whole sealed configuration, including legacy field-level values inside it |
 | Notification channel secrets | `notification_channels.config` | Discord, Slack and Teams webhook URLs, Telegram bot tokens, generic webhook URLs and HMAC secrets |
 | Web Push subscriptions | `push_subscriptions` | Endpoint, `p256dh` and `auth` |
-| Notification outbox payloads | `notification_outbox.payload` | Every payload, including delivered and dead history |
+| Notification outbox payloads | `notification_outbox.payload` | Every payload, including delivered and dead history (cleared 30 days after it finishes) |
 
 Worker secrets such as `VAPID_PRIVATE_KEY` or `API_TOKEN` live outside D1 and are not affected.
 Hashed values (sessions, sign-in tokens, heartbeat tokens) do not depend on `MASTER_KEY`.
