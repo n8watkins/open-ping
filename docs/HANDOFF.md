@@ -2,7 +2,30 @@
 
 This document is the current zero-context handoff for continuing work on OpenPing.
 
-Last updated: 2026-07-15.
+Last updated: 2026-10-27.
+## Current state (2026-10-27): start here
+
+- `main` has round 2 (rebuilt landing page, signed-in app UI, a scheduler that stays inside Cloudflare's free-plan limits, Cloudflare Web Analytics allowed in the CSP, no em dashes) and Hosted stage 1 (PR #12: "Runs in your own Cloudflare account" wording, a pricing section, a waitlist at `/api/waitlist`, the `/install` guide, the waitlist count and CSV in Settings).
+- **Not live yet.** Production still runs the older version, until the owner does the steps below.
+- The paid hosted version is planned in [the Hosted plan](./HOSTED_PLAN.md): stages 0 to 7, each with a go/no-go gate.
+  Chosen pricing: $24 a year (20 monitors, 12-minute checks, 2 status pages), plus $12 a year for 1-minute checks; no free hosted plan.
+  Gate after stage 1: about 20 waitlist sign-ups within 8 weeks.
+- Tagline everywhere: "Uptime monitoring on your own Cloudflare".
+- Open bug: off-hours monitors show as "operational" (known gap 0 below).
+
+### Owner steps before the next deploy
+
+1. Set `WAITLIST_ENABLED` to "true" for the production deploy only.
+2. `npm run db:migrate` (applies migration 0010 to the remote D1).
+3. `npm run deploy`, then sign in at https://openping.n8builds.dev/login (check the `ADMIN_GITHUB_LOGIN` secret).
+4. Optional: `RESEND_API_KEY` for waitlist confirmations; `WORKERS_PLAN` "paid" if on Workers Paid.
+
+### Next
+
+1. Fix the off-hours status bug: reproduce it end to end, fix, add a test, open a PR.
+2. Watch the waitlist; start stage 2 (batched writes, second-region confirmation) and stage 3 (a Workers for Platforms prototype) only when the owner says so.
+
+The sections below describe the July pass and are still accurate for architecture, verification and conventions.
 
 ## Project summary
 
@@ -133,6 +156,11 @@ git status --short --branch
 Commit future work on a feature branch, then run `no-mistakes axi run --intent "..."` before merging it into `main`.
 
 ## Known gaps and recommended next work
+
+0. Fix the off-hours status bug (open, found 2026-10-25).
+   During scheduled off-hours the public feed, status page and widget report a monitor as "operational", because `mapPublicState` in `src/worker/routes/public.ts` hides `scheduled_off` unless `showScheduledOff` is on, which defaults to off and has no control in the monitor editor.
+   The landing page promises the opposite, and the developer portfolio, which reads the feed, shows sleeping Render apps as up.
+   Repro, cause and fix direction: [docs/BUG-public-scheduled-off.md](./BUG-public-scheduled-off.md).
 
 1. Implement dual-key `MASTER_KEY` rotation.
    The storage inventory and safety requirements are documented, but an online rotation still needs dual-key reads, an idempotent re-encryption pass over every protected storage class, and a proof that the previous key is no longer required.
