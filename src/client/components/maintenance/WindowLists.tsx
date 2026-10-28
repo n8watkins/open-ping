@@ -134,6 +134,9 @@ export function ActiveWindowCard({
           >
             {formatCountdown(left)}
           </div>
+          <div className="text-xs text-ink-muted">
+            at {new Date(timing.endsAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+          </div>
         </div>
       </div>
 
