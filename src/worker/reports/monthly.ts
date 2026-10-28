@@ -17,7 +17,8 @@ import { csvCell } from "../routes/incidents";
  * off-hours time never reaches the rollups. It counts as neither uptime nor
  * downtime, and `monitoredMinutes` shows how much of the month was watched.
  *
- * Which rollup tier: hourly rows are kept for `hourlyDays` (35 by default),
+ * Which rollup tier: hourly rows are kept for `hourlyDays` (64 by default,
+ * so last month is always complete in hourly rows until this month ends),
  * daily rows for `dailyDays` (400), monthly rows forever, all in UTC buckets.
  * Each stretch of the month is read from the finest tier that still holds it
  * completely ({@link tierRanges}). A local month rarely starts on a UTC bucket
@@ -25,8 +26,8 @@ import { csvCell } from "../routes/incidents";
  * straddles the month's start or end counts in proportion to its overlap
  * ({@link reduceReportGroups}). With hourly rows that is exact for every
  * whole-hour timezone; with daily or monthly rows (months older than the hourly
- * horizon) the edge day or month is prorated, which is the best the retained
- * data allows.
+ * horizon, or a shorter custom retention) the edge day or month is prorated,
+ * which is the best the retained data allows.
  */
 
 const HOUR_MS = 60 * 60 * 1000;

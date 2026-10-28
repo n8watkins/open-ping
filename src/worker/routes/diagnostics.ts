@@ -38,7 +38,7 @@ interface RetentionConfig {
 
 const DEFAULT_RETENTION: RetentionConfig = {
   sampleHours: 24,
-  hourlyDays: 35,
+  hourlyDays: 64,
   dailyDays: 400,
 };
 

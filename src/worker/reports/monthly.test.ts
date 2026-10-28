@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveRetention } from "../history/rollups";
 import {
   currentMonth,
   isMonth,
@@ -81,6 +82,17 @@ describe("tierRanges", () => {
     expect(r.hour).toEqual({ from: Date.UTC(2026, 9, 17), to: end });
     expect(r.day).toEqual({ from: Date.UTC(2026, 9, 1), to: Date.UTC(2026, 9, 17) });
     expect(r.month.from).toBeGreaterThanOrEqual(r.month.to);
+  });
+
+  it("keeps all of last month in hourly rows by default, even on the last day of this month", () => {
+    for (const zone of ["America/Los_Angeles", "Pacific/Kiritimati", "Asia/Kolkata", "UTC"]) {
+      const { start, end } = monthBounds("2026-12", zone);
+      // The last minute of January in that zone: last month is as old as it gets.
+      const now = monthBounds("2027-01", zone).end - 60_000;
+      const r = tierRanges(start, end, now, resolveRetention(null));
+      expect(r.hour.from).toBeLessThanOrEqual(start);
+      expect(r.day.from).toBeGreaterThanOrEqual(r.day.to);
+    }
   });
 
   it("uses only hourly rows for a recent month", () => {

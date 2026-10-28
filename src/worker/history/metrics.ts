@@ -62,7 +62,7 @@ export function computeUptimeFromRows(
 
 /**
  * Windows up to this length are summed from the finest ('hour') summaries.
- * Hourly rows are pruned after ~35d, so anything longer must use 'day' rows.
+ * Hourly rows are pruned after ~64d (by default), so anything longer must use 'day' rows.
  */
 const HOURLY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
