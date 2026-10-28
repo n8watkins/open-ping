@@ -17,6 +17,7 @@ import { publicStatus } from "./public";
 import { data } from "./data";
 import { isItDown } from "./is-it-down";
 import { waitlist } from "./waitlist";
+import { rekey } from "./rekey";
 
 export const api = new Hono<AppEnv>();
 
@@ -34,6 +35,7 @@ api.route("/settings", settings);
 api.route("/maintenance", maintenance);
 api.route("/data", data);
 api.route("/push", push);
+api.route("/admin/rekey", rekey);
 
 // Public, UNAUTHENTICATED status-page data (redacted).
 api.route("/public", publicStatus);

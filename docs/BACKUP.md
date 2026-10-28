@@ -110,7 +110,10 @@ A full dump includes sessions, samples, summaries, encrypted values, and compati
 Treat the SQL file as highly sensitive even when `MASTER_KEY` is configured.
 
 The authoritative list of values protected by `MASTER_KEY` is maintained in [Security and secret storage](./SECURITY.md#d1-storage-inventory).
-The original `MASTER_KEY` is required to decrypt protected values after a restore, so back it up separately in a secret manager.
+The `MASTER_KEY` that sealed the protected values is required to decrypt them after a restore, so back it up separately in a secret manager.
+After a [key rotation](./SECURITY.md#rotating-master_key), an export taken before it can only be decrypted with the old key.
+Keep the old key with those exports, and to restore one, set the old key as `MASTER_KEY_PREVIOUS` and run the re-encryption pass.
+If the key for a backup is lost, see [If the old key is lost](./SECURITY.md#if-the-old-key-is-lost) for what becomes unreadable and how to start fresh.
 Cloudflare Worker secrets such as `MASTER_KEY`, `SETUP_TOKEN`, OAuth credentials, `RESEND_API_KEY`, and `API_TOKEN` live outside D1 and are never included in either backup format.
 
 Heartbeat ingestion tokens are stored as SHA-256 hashes.
@@ -123,7 +126,7 @@ Keep the active heartbeat URL in the calling job's secret store, or rotate it af
 | --- | --- | --- |
 | Portable configuration and public-safe history | `GET /api/data/export` | Credentials removed, but operational metadata remains sensitive |
 | Complete database | `wrangler d1 export` | Sensitive snapshot containing encrypted and possibly legacy plaintext rows |
-| `MASTER_KEY` and other Worker secrets | Your secret manager | Required separately because Worker secrets are outside D1 |
+| `MASTER_KEY` and other Worker secrets | Your secret manager | Required separately because Worker secrets are outside D1; keep a rotated-out key as long as exports taken before the rotation |
 | Active heartbeat URLs | The calling job's secret manager | Raw tokens cannot be recovered from their D1 hashes |
 
 Take an API export before every upgrade and after significant configuration changes.

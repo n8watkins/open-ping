@@ -233,7 +233,7 @@ describe("tools/list", () => {
     const tools = new Map(body.result.tools.map((t) => [t.name, t]));
     expect([...tools.keys()].sort()).toEqual(
       [
-        "get_status", "list_monitors", "get_monitor", "list_incidents", "get_uptime", "get_diagnostics",
+        "get_status", "list_monitors", "get_monitor", "list_incidents", "get_uptime", "get_diagnostics", "get_key_status",
         "list_channels", "list_status_pages", "list_categories", "list_maintenance",
         "create_monitor", "update_monitor", "pause_monitor", "resume_monitor",
         "create_maintenance_window", "end_maintenance_window", "update_status_page",

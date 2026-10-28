@@ -8,6 +8,8 @@ import {
   Info,
   CheckCircle2,
   XCircle,
+  KeyRound,
+  RefreshCw,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
@@ -120,6 +122,7 @@ const NAV = [
   { id: "retention", label: "Data retention", icon: <Database className="size-4" /> },
   { id: "usage", label: "Usage estimates", icon: <Gauge className="size-4" /> },
   { id: "diagnostics", label: "Diagnostics", icon: <ServerCog className="size-4" /> },
+  { id: "encryption", label: "Encryption keys", icon: <KeyRound className="size-4" /> },
   { id: "about", label: "About", icon: <Info className="size-4" /> },
 ];
 
@@ -193,6 +196,7 @@ export default function Settings() {
             loading={diagLoading && !diagData}
             error={diagError}
           />
+          <EncryptionSection csrf={csrf ?? undefined} />
           {waitlistData && <WaitlistSection waitlist={waitlistData} />}
           <AboutSection version={diagData?.version ?? null} />
         </div>
@@ -701,6 +705,350 @@ function DiagnosticsSection({
         )}
       </Card>
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Encryption keys (MASTER_KEY rotation)
+// ---------------------------------------------------------------------------
+
+interface KeyClassStatus {
+  id: string;
+  label: string;
+  rows: number;
+  current: number;
+  previous: number;
+  legacy: number;
+  unsealed: number;
+  unreadable: number;
+}
+interface UnreadableValue {
+  class: string;
+  id: string;
+  field: string;
+  reason: string;
+}
+interface RekeyStatusResponse {
+  encryptionConfigured: boolean;
+  currentKeyId: string | null;
+  previousKey: { configured: boolean; valid: boolean; keyId: string | null; sameAsCurrent: boolean };
+  classes: KeyClassStatus[];
+  needsReencryption: number;
+  dependsOnPreviousKey: number;
+  unverified: number;
+  unreadable: UnreadableValue[];
+  unreadableCount: number;
+  safeToRemovePreviousKey: boolean;
+  summary: string;
+}
+interface RekeyBatchResponse {
+  done: boolean;
+  cursor: string | null;
+  stats: {
+    scanned: number;
+    rewritten: number;
+    reencrypted: number;
+    sealed: number;
+    unchanged: number;
+    conflicts: number;
+  };
+  unreadable: UnreadableValue[];
+}
+interface PassProgress {
+  scanned: number;
+  total: number;
+  reencrypted: number;
+  sealed: number;
+  unreadable: number;
+}
+
+const UNREADABLE_REASONS: Record<string, string> = {
+  unknown_key: "sealed with a key that is not configured",
+  decrypt_failed: "opens with neither key",
+  invalid_format: "not a recognised ciphertext",
+  invalid_json: "stored JSON cannot be read",
+  no_key: "no key configured",
+};
+
+const RUNBOOK_URL =
+  "https://github.com/n8watkins/open-ping/blob/main/docs/SECURITY.md#rotating-master_key";
+
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
+}
+
+/**
+ * MASTER_KEY rotation: which key protects what, and a button that runs the
+ * batched re-encryption pass (POST /api/admin/rekey) until it reports done.
+ */
+function EncryptionSection({ csrf }: { csrf: string | undefined }) {
+  const { data, loading, error, reload } =
+    useFetch<RekeyStatusResponse>("/api/admin/rekey/status");
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<PassProgress | null>(null);
+  const [passError, setPassError] = useState<string | null>(null);
+  const [finished, setFinished] = useState(false);
+
+  async function reencrypt() {
+    if (!data) return;
+    const total = data.classes.reduce((n, c) => n + c.rows, 0);
+    const p: PassProgress = { scanned: 0, total, reencrypted: 0, sealed: 0, unreadable: 0 };
+    setRunning(true);
+    setFinished(false);
+    setPassError(null);
+    setProgress({ ...p });
+    try {
+      let cursor: string | null = null;
+      do {
+        const batch: RekeyBatchResponse = await api<RekeyBatchResponse>("/api/admin/rekey", {
+          method: "POST",
+          csrf,
+          json: { cursor },
+        });
+        p.scanned += batch.stats.scanned;
+        p.reencrypted += batch.stats.reencrypted;
+        p.sealed += batch.stats.sealed;
+        p.unreadable += batch.unreadable.length;
+        // Rows created mid-pass can push the count past the starting total.
+        p.total = Math.max(p.total, p.scanned);
+        setProgress({ ...p });
+        cursor = batch.cursor;
+      } while (cursor);
+      setFinished(true);
+    } catch (e) {
+      setPassError(errMessage(e, "The re-encryption pass stopped."));
+    } finally {
+      setRunning(false);
+      void reload();
+    }
+  }
+
+  const blocked =
+    !data || !data.encryptionConfigured || (data.previousKey.configured && !data.previousKey.valid);
+  const pct = progress && progress.total > 0
+    ? Math.min(100, Math.round((progress.scanned / progress.total) * 100))
+    : running ? 0 : 100;
+
+  return (
+    <section id="encryption" className="scroll-mt-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Encryption keys</CardTitle>
+          {data && <KeyStateBadge status={data} />}
+        </CardHeader>
+
+        {loading && !data ? (
+          <SectionSpinner />
+        ) : error && !data ? (
+          <ErrorBanner>Could not load key status: {error}</ErrorBanner>
+        ) : data ? (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <KeyVal
+                label="Current key id"
+                value={
+                  <span className="font-mono">{data.currentKeyId ?? "Not configured"}</span>
+                }
+                valueClass={data.currentKeyId ? undefined : "text-down"}
+              />
+              <KeyVal
+                label="Previous key id"
+                value={
+                  !data.previousKey.configured ? (
+                    <span className="text-ink-muted">Not set</span>
+                  ) : !data.previousKey.valid ? (
+                    "Invalid"
+                  ) : (
+                    <span className="font-mono">{data.previousKey.keyId}</span>
+                  )
+                }
+                valueClass={
+                  data.previousKey.configured && !data.previousKey.valid ? "text-down" : undefined
+                }
+              />
+              <KeyVal
+                label="On previous key"
+                value={fmt(data.dependsOnPreviousKey)}
+                valueClass={data.dependsOnPreviousKey ? "text-degraded" : undefined}
+              />
+              <KeyVal
+                label="Unreadable"
+                value={fmt(data.unreadableCount)}
+                valueClass={data.unreadableCount ? "text-down" : undefined}
+              />
+            </div>
+
+            <p
+              role="status"
+              className={cn(
+                "rounded-lg border px-3 py-2 text-sm",
+                data.safeToRemovePreviousKey
+                  ? "border-up/40 bg-up/10 text-up"
+                  : data.unreadableCount || !data.encryptionConfigured
+                    ? "border-down/40 bg-down/10 text-down"
+                    : "border-line bg-surface-2/40 text-ink-muted",
+              )}
+            >
+              {data.summary}
+            </p>
+
+            <div>
+              <h4 className="mb-2 text-xs font-medium text-ink-muted">Protected values</h4>
+              <ul className="divide-y divide-line rounded-lg border border-line">
+                {data.classes.map((c) => (
+                  <li
+                    key={c.id}
+                    className="flex flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+                  >
+                    <span className="text-sm text-ink">{c.label}</span>
+                    <ClassCounts c={c} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {data.unreadable.length > 0 && (
+              <div>
+                <h4 className="mb-2 text-xs font-medium text-ink-muted">
+                  Unreadable values (left unchanged; re-create or delete them)
+                </h4>
+                <ul className="divide-y divide-line rounded-lg border border-down/40 text-sm">
+                  {data.unreadable.map((u) => (
+                    <li key={`${u.class}/${u.id}/${u.field}`} className="px-3 py-2">
+                      <div className="text-ink">
+                        {data.classes.find((c) => c.id === u.class)?.label ?? u.class}
+                        <span className="text-ink-faint"> · {u.field}</span>
+                      </div>
+                      <div className="mt-0.5 break-all font-mono text-xs text-ink-faint">{u.id}</div>
+                      <div className="mt-0.5 text-xs text-down">
+                        {UNREADABLE_REASONS[u.reason] ?? u.reason}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                {data.unreadableCount > data.unreadable.length && (
+                  <p className="mt-2 text-xs text-ink-faint">
+                    Showing {data.unreadable.length} of {fmt(data.unreadableCount)}.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {progress && (running || finished || passError) && (
+              <div className="space-y-2">
+                <div
+                  className="h-1.5 overflow-hidden rounded-full bg-surface-2"
+                  role="progressbar"
+                  aria-label="Re-encryption progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={pct}
+                >
+                  <div
+                    className={cn("h-full rounded-full transition-[width]", passError ? "bg-down" : "bg-accent")}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <p className="text-xs text-ink-muted">
+                  {running
+                    ? `Re-encrypting… ${progress.scanned.toLocaleString()} of ${progress.total.toLocaleString()} rows checked`
+                    : finished
+                      ? passSummary(progress)
+                      : `Stopped after ${progress.scanned.toLocaleString()} rows. Running it again resumes safely.`}
+                </p>
+              </div>
+            )}
+            {passError && <ErrorBanner>Re-encryption failed: {passError}</ErrorBanner>}
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <button
+                type="button"
+                onClick={() => void reencrypt()}
+                disabled={running || blocked}
+                className="inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover disabled:opacity-60"
+              >
+                {running ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                Re-encrypt now
+              </button>
+              <a
+                href={RUNBOOK_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sm text-ink-muted underline-offset-2 hover:text-ink hover:underline"
+              >
+                How to rotate MASTER_KEY
+              </a>
+            </div>
+            <p className="text-xs text-ink-faint">
+              Re-encrypting is safe to repeat: it rewrites only values that are not yet on the
+              current key, in small batches, and never changes a value it cannot read.
+            </p>
+          </div>
+        ) : null}
+      </Card>
+    </section>
+  );
+}
+
+/** "Done: 8 values re-encrypted, 1 unreadable value left unchanged." (zero parts omitted). */
+function passSummary(p: PassProgress): string {
+  const parts = [
+    p.reencrypted ? `${plural(p.reencrypted, "value")} re-encrypted` : null,
+    p.sealed ? `${plural(p.sealed, "plaintext value")} encrypted for the first time` : null,
+    p.unreadable ? `${plural(p.unreadable, "unreadable value")} left unchanged` : null,
+  ].filter(Boolean);
+  return parts.length
+    ? `Done: ${parts.join(", ")}.`
+    : "Done: every value was already on the current key.";
+}
+
+function KeyStateBadge({ status }: { status: RekeyStatusResponse }) {
+  const [tone, label] = !status.encryptionConfigured
+    ? (["down", "Encryption off"] as const)
+    : status.previousKey.configured && !status.previousKey.valid
+      ? (["down", "Previous key invalid"] as const)
+      : status.previousKey.configured
+        ? status.safeToRemovePreviousKey
+          ? (["up", "Previous key no longer needed"] as const)
+          : (["degraded", "Rotation in progress"] as const)
+        : (["up", "Single key"] as const);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+        tone === "up" && "border-up/40 bg-up/10 text-up",
+        tone === "down" && "border-down/40 bg-down/10 text-down",
+        tone === "degraded" && "border-degraded/40 bg-degraded/10 text-degraded",
+      )}
+    >
+      <KeyRound className="size-3.5" />
+      {label}
+    </span>
+  );
+}
+
+function ClassCounts({ c }: { c: KeyClassStatus }) {
+  const parts: { text: string; className: string }[] = [];
+  if (c.current) parts.push({ text: `${fmt(c.current)} current`, className: "text-ink-muted" });
+  if (c.previous) parts.push({ text: `${fmt(c.previous)} previous key`, className: "text-degraded" });
+  if (c.legacy) parts.push({ text: `${fmt(c.legacy)} legacy format`, className: "text-degraded" });
+  if (c.unsealed) parts.push({ text: `${fmt(c.unsealed)} not encrypted`, className: "text-degraded" });
+  if (c.unreadable) parts.push({ text: `${fmt(c.unreadable)} unreadable`, className: "text-down" });
+  if (parts.length === 0) {
+    return <span className="text-xs text-ink-faint">Nothing stored</span>;
+  }
+  return (
+    <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs tabular-nums">
+      {parts.map((p) => (
+        <span key={p.text} className={p.className}>
+          {p.text}
+        </span>
+      ))}
+    </span>
   );
 }
 

@@ -94,6 +94,7 @@ Read-only tools (annotated `readOnlyHint`):
 | `list_incidents` | Incidents, newest first; filter by `status` (open, resolved, all), `monitorId`, `since`, `limit`. |
 | `get_uptime` | Uptime per monitor over 24h, 7d, 30d and 90d from the rollups; optional `monitorId`. |
 | `get_diagnostics` | Recent scheduler runs (checked, skipped, failures, duration, D1 queries) and table counts. |
+| `get_key_status` | `MASTER_KEY` rotation status: key ids, protected values per storage class by key, unreadable values by location, and whether `MASTER_KEY_PREVIOUS` is safe to delete ([runbook](./SECURITY.md#rotating-master_key)). |
 | `list_channels` | Notification channels and their delivery health, with webhook URLs and secrets blanked. |
 | `list_status_pages` | Status pages with slug, URL, enabled flag and which monitors they show. |
 | `list_categories` | Monitor categories. |

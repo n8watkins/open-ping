@@ -501,8 +501,8 @@ describe("authenticated monitor lifecycle", () => {
       )
         .bind(channelId)
         .first<{ config: string }>();
-      expect(storedChannel?.config).toMatch(/"url":"v1:/);
-      expect(storedChannel?.config).toMatch(/"secret":"v1:/);
+      expect(storedChannel?.config).toMatch(/"url":"v2:/);
+      expect(storedChannel?.config).toMatch(/"secret":"v2:/);
       expect(storedChannel?.config).not.toContain(webhookUrl);
       expect(storedChannel?.config).not.toContain(webhookSecret);
 
@@ -530,7 +530,7 @@ describe("authenticated monitor lifecycle", () => {
       )
         .bind(eventKey)
         .first<{ payload: string }>();
-      expect(storedDelivery?.payload).toMatch(/^v1:/);
+      expect(storedDelivery?.payload).toMatch(/^v2:/);
       expect(storedDelivery?.payload).not.toContain("Integration notification");
 
       // Existing queues can contain plaintext JSON from an older deployment.
@@ -565,7 +565,7 @@ describe("authenticated monitor lifecycle", () => {
           payload: string;
         }>();
       expect(delivery).toMatchObject({ status: "sent", attempts: 0, last_error: null });
-      expect(delivery?.payload).toMatch(/^v1:/);
+      expect(delivery?.payload).toMatch(/^v2:/);
       expect(delivery?.payload).not.toContain("Integration notification");
 
       const channelResult = await env.DB.prepare(

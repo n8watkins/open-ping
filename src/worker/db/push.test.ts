@@ -36,9 +36,9 @@ describe("Web Push subscription secret storage", () => {
     const env = envWithKey();
     const protectedValues = await protectPushSecrets(env, plaintext);
 
-    expect(protectedValues.endpoint).toMatch(/^v1:/);
-    expect(protectedValues.p256dh).toMatch(/^v1:/);
-    expect(protectedValues.auth).toMatch(/^v1:/);
+    expect(protectedValues.endpoint).toMatch(/^v2:[0-9a-f]{8}:/);
+    expect(protectedValues.p256dh).toMatch(/^v2:[0-9a-f]{8}:/);
+    expect(protectedValues.auth).toMatch(/^v2:[0-9a-f]{8}:/);
     expect(protectedValues).not.toContain(plaintext.endpoint);
     expect(await rowToSubscription(env, row(protectedValues))).toMatchObject(plaintext);
   });

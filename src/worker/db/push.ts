@@ -1,7 +1,6 @@
 import type { Env } from "../types";
 import { newId, sha256hex } from "../lib/ids";
-import { decryptValue, encryptValue } from "../lib/crypto";
-import { isCiphertext } from "../lib/secret-config";
+import { decryptValue, encryptValue, isCiphertext } from "../lib/crypto";
 
 /**
  * Web Push subscription data layer (PRD §12.1 PWA device management). The

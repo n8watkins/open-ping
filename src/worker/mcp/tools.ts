@@ -26,6 +26,7 @@ import {
 } from "../db/maintenance";
 import { buildOverview, monitorTarget } from "../routes/overview";
 import { buildDiagnostics } from "../routes/diagnostics";
+import { rekeyStatus } from "../lib/rekey";
 import { listIncidents, type IncidentWithMonitor } from "../routes/incidents";
 import { redactChannel } from "../routes/channels";
 import { maintenanceCreateSchema } from "../routes/maintenance";
@@ -385,6 +386,32 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         ),
       ].join("\n");
       return ok(text, { ...d, recentRuns }, tz);
+    },
+  );
+
+  server.registerTool(
+    "get_key_status",
+    {
+      title: "Get encryption key status",
+      description:
+        "MASTER_KEY rotation status: current and previous key ids, protected values per storage class by key, values no key can open (by location, never values), and whether MASTER_KEY_PREVIOUS is safe to delete.",
+      inputSchema: z.object({}),
+      annotations: READ,
+    },
+    async () => {
+      const [s, tz] = await Promise.all([rekeyStatus(env), zone()]);
+      const text = [
+        s.summary,
+        `Current key id: ${s.currentKeyId ?? "not configured"}; previous key: ${
+          !s.previousKey.configured ? "not set" : s.previousKey.valid ? s.previousKey.keyId : "INVALID"
+        }.`,
+        ...s.classes.map(
+          (c) =>
+            `- ${c.label}: ${c.current} current, ${c.previous} previous key, ${c.legacy} legacy format, ${c.unsealed} not encrypted, ${c.unreadable} unreadable`,
+        ),
+        ...s.unreadable.map((u) => `- unreadable: ${u.class} ${u.id} ${u.field} (${u.reason})`),
+      ].join("\n");
+      return ok(text, { ...s }, tz);
     },
   );
 

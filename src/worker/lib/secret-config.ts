@@ -1,6 +1,14 @@
 import type { Env } from "../types";
 import type { MonitorType } from "../../shared/states";
-import { encryptValue, decryptValue } from "./crypto";
+import {
+  encryptValue,
+  decryptValue,
+  decryptWithKeyring,
+  isCiphertext,
+  type Keyring,
+} from "./crypto";
+
+export { isCiphertext };
 
 /**
  * Encryption-at-rest helpers for monitor configuration.
@@ -17,8 +25,7 @@ import { encryptValue, decryptValue } from "./crypto";
 /** Every known sensitive location, scanned when the type is unknown. */
 const ALL_SECRET_PATHS: readonly string[] = ["secret", "auth.password", "auth.token"];
 
-const CIPHERTEXT_PREFIX = "v1:";
-const SEALED_CONFIG_KEY = "__openping_sealed_config_v1";
+export const SEALED_CONFIG_KEY = "__openping_sealed_config_v1";
 
 type SealedConfig = { [SEALED_CONFIG_KEY]: string };
 
@@ -30,20 +37,8 @@ type SealedConfig = { [SEALED_CONFIG_KEY]: string };
  */
 let encryptionDisabledWarned = false;
 
-/**
- * True only for a STRUCTURALLY valid `v1:<iv>:<ct>` ciphertext (both segments
- * base64). A bare `startsWith("v1:")` prefix sniff is unsafe: a plaintext secret
- * the admin happens to begin with "v1:" would be mistaken for ciphertext and
- * skipped by the encryptor, silently stored in plaintext at rest. Requiring the
- * full two-segment base64 shape closes that collision so such values get
- * encrypted normally.
- */
-export function isCiphertext(v: unknown): v is string {
-  return typeof v === "string" && /^v1:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/.test(v);
-}
-
 /** Identify the intentionally narrow envelope used for whole-config encryption. */
-function isSealedConfig(config: Record<string, unknown>): config is SealedConfig {
+export function isSealedConfig(config: Record<string, unknown>): config is SealedConfig {
   const keys = Object.keys(config);
   return (
     keys.length === 1 &&
@@ -141,7 +136,7 @@ export async function decryptConfig(
 
   for (const path of ALL_SECRET_PATHS) {
     const value = getPath(clone, path);
-    if (typeof value === "string" && value.startsWith(CIPHERTEXT_PREFIX)) {
+    if (isCiphertext(value)) {
       try {
         setPath(clone, path, await decryptValue(env, value));
       } catch {
@@ -151,6 +146,83 @@ export async function decryptConfig(
     }
   }
   return clone;
+}
+
+/**
+ * A monitor config opened for re-encryption: the plaintext document plus what
+ * it took to open it. Unlike {@link decryptConfig}, nothing is swallowed.
+ */
+export interface OpenedConfig {
+  config: Record<string, unknown>;
+  /** True when the stored document was already one sealed value. */
+  sealed: boolean;
+  /** True when every ciphertext in it is a `v2:` value under the current key. */
+  current: boolean;
+  /** How many ciphertexts it held (the seal plus any legacy field values). */
+  ciphertexts: number;
+}
+
+/** Thrown by {@link openConfigStrict}; `field` names the location, never a value. */
+export class ConfigOpenError extends Error {
+  readonly field: string;
+  readonly code: string;
+  constructor(field: string, code: string) {
+    super(`Cannot open monitor config field ${field}: ${code}`);
+    this.name = "ConfigOpenError";
+    this.field = field;
+    this.code = code;
+  }
+}
+
+/**
+ * Strictly open a stored monitor config for the key-rotation pass: the seal and
+ * every legacy field-level ciphertext must decrypt with a configured key, or a
+ * {@link ConfigOpenError} says which one did not. Callers re-seal the result
+ * with {@link encryptConfig} when it is not already current.
+ */
+export async function openConfigStrict(
+  keyring: Keyring,
+  stored: Record<string, unknown>,
+): Promise<OpenedConfig> {
+  let config = structuredClone(stored);
+  const sealed = isSealedConfig(config);
+  let current = true;
+  let ciphertexts = 0;
+
+  const open = async (field: string, value: string): Promise<string> => {
+    try {
+      const out = await decryptWithKeyring(keyring, value);
+      ciphertexts += 1;
+      if (out.version !== "v2" || out.keyRole !== "current") current = false;
+      return out.plaintext;
+    } catch (e) {
+      throw new ConfigOpenError(field, (e as { code?: string }).code ?? "decrypt_failed");
+    }
+  };
+
+  if (sealed) {
+    const plaintext = await open("config", (config as SealedConfig)[SEALED_CONFIG_KEY]);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(plaintext);
+    } catch {
+      throw new ConfigOpenError("config", "invalid_json");
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new ConfigOpenError("config", "invalid_json");
+    }
+    config = parsed as Record<string, unknown>;
+  }
+
+  for (const path of ALL_SECRET_PATHS) {
+    const value = getPath(config, path);
+    if (isCiphertext(value)) {
+      setPath(config, path, await open(path, value));
+      // A field-level value inside a document is a legacy layout: re-seal it.
+      current = false;
+    }
+  }
+  return { config, sealed, current: sealed && current, ciphertexts };
 }
 
 /**

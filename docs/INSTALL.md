@@ -173,7 +173,7 @@ Copy the output - you'll set it as the `MASTER_KEY` secret in the next step.
 > **What if I skip it?** OpenPing can boot for diagnostics, but the first-run wizard will not complete without a valid key.
 > Existing installations created before this requirement display an administrator warning and may store new credentials in plaintext until `MASTER_KEY` is configured.
 > **Back it up somewhere safe** - it is the only thing that can decrypt protected values in a full D1 dump (see [`BACKUP.md`](./BACKUP.md)).
-> Changing it later makes previously encrypted values unreadable.
+> To change it later, follow [Rotating `MASTER_KEY`](./SECURITY.md#rotating-master_key); simply replacing it makes previously encrypted values unreadable.
 
 ---
 
@@ -192,6 +192,7 @@ You'll be prompted to paste the value. Here's every secret OpenPing recognizes:
 | Secret | Required? | What it is / how to obtain it |
 | --- | --- | --- |
 | `MASTER_KEY` | **Yes** | Base64 32-byte AES-GCM key for encryption-at-rest. Generate with `openssl rand -base64 32` (step 5). |
+| `MASTER_KEY_PREVIOUS` | Only while rotating | The old `MASTER_KEY` during a [key rotation](./SECURITY.md#rotating-master_key); read-only, and deleted once Settings > Encryption keys says it is no longer needed. |
 | `SETUP_TOKEN` | **Yes** | One-time credential that protects the first-run wizard before you can sign in. Generate with `openssl rand -base64 32`. |
 | `APP_URL` | Recommended override | Public origin of this install, e.g. `https://status.example.com`; used for OAuth callbacks, magic links, and Web Push; must use `https://` with no path, query, fragment, credentials, or trailing slash; can instead be saved in the setup wizard. |
 | `ADMIN_GITHUB_LOGIN` | Optional override | Your GitHub login/username, which can instead be saved in the setup wizard; at least one GitHub or email administrator must exist before setup can finish. |

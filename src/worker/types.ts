@@ -13,6 +13,13 @@ export interface Env {
   /** AES-GCM master key (base64) for encrypting sensitive D1 values. */
   MASTER_KEY?: string;
 
+  /**
+   * The master key being rotated away from (base64), read-only. Set it only for
+   * a key rotation, and delete it once GET /api/admin/rekey/status reports that
+   * nothing depends on it (docs/SECURITY.md, "Rotating MASTER_KEY").
+   */
+  MASTER_KEY_PREVIOUS?: string;
+
   /** One-time credential required for unauthenticated first-run setup. */
   SETUP_TOKEN?: string;
 
