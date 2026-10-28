@@ -38,7 +38,7 @@ export function LandingEventsCard() {
   if (!data) return null;
   return (
     <section id="landing-counts" className="scroll-mt-6">
-      <Card>
+      <Card className="p-5">
         <CardHeader>
           <CardTitle>Landing page counts</CardTitle>
         </CardHeader>

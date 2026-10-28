@@ -1,8 +1,9 @@
-import { Routes, Route, Outlet } from "react-router-dom";
+import { Routes, Route, Outlet, Navigate, useLocation } from "react-router-dom";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 import { BootstrapProvider, useBootstrap } from "./lib/bootstrap";
 import { rootView } from "./lib/home";
+import { alertsTarget, settingsTarget } from "./lib/section-routes";
 import { AppLayout } from "./components/AppLayout";
 import PublicStatus from "./pages/PublicStatus";
 import Login from "./pages/Login";
@@ -35,6 +36,16 @@ const MonitorEditor = lazy(() => import("./pages/MonitorEditor"));
 const Incidents = lazy(() => import("./pages/Incidents"));
 const Integrations = lazy(() => import("./pages/Integrations"));
 const Settings = lazy(() => import("./pages/Settings"));
+const GeneralSettings = lazy(() => import("./pages/settings/General"));
+const SecuritySettings = lazy(() => import("./pages/settings/Security"));
+const ReportsSettings = lazy(() => import("./pages/settings/Reports"));
+const SystemSettings = lazy(() => import("./pages/settings/System"));
+const Developers = lazy(() => import("./pages/Developers"));
+const DeveloperTokens = lazy(() => import("./pages/developers/Tokens"));
+const DeveloperMcp = lazy(() => import("./pages/developers/Mcp"));
+const DeveloperCli = lazy(() => import("./pages/developers/Cli"));
+const DeveloperWebhooks = lazy(() => import("./pages/developers/Webhooks"));
+const DeveloperEmbeds = lazy(() => import("./pages/developers/Embeds"));
 const Maintenance = lazy(() => import("./pages/Maintenance"));
 const StatusPageSettings = lazy(() => import("./pages/StatusPageSettings"));
 const StatusPageEditor = lazy(() => import("./pages/StatusPageEditor"));
@@ -45,6 +56,12 @@ function PageFallback() {
       <Loader2 className="size-6 animate-spin text-ink-faint" />
     </div>
   );
+}
+
+/** Send an old address to its new home, keeping what the target maps through. */
+function RedirectWith({ target }: { target: (search: string, hash: string) => string }) {
+  const { search, hash } = useLocation();
+  return <Navigate to={target(search, hash)} replace />;
 }
 
 /**
@@ -104,8 +121,25 @@ export default function App() {
             <Route path="/monitors/:id/edit" element={<MonitorEditor />} />
             <Route path="/incidents" element={<Incidents />} />
             <Route path="/maintenance" element={<Maintenance />} />
-            <Route path="/integrations" element={<Integrations />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/alerts" element={<Integrations />} />
+            <Route path="/integrations" element={<RedirectWith target={alertsTarget} />} />
+            <Route path="/developers" element={<Developers />}>
+              <Route index element={<Navigate to="tokens" replace />} />
+              <Route path="tokens" element={<DeveloperTokens />} />
+              <Route path="mcp" element={<DeveloperMcp />} />
+              <Route path="cli" element={<DeveloperCli />} />
+              <Route path="webhooks" element={<DeveloperWebhooks />} />
+              <Route path="embeds" element={<DeveloperEmbeds />} />
+              <Route path="*" element={<Navigate to="tokens" replace />} />
+            </Route>
+            <Route path="/settings" element={<Settings />}>
+              <Route index element={<RedirectWith target={settingsTarget} />} />
+              <Route path="general" element={<GeneralSettings />} />
+              <Route path="security" element={<SecuritySettings />} />
+              <Route path="reports" element={<ReportsSettings />} />
+              <Route path="system" element={<SystemSettings />} />
+              <Route path="*" element={<Navigate to="general" replace />} />
+            </Route>
             <Route path="/status-page" element={<StatusPageSettings />} />
             <Route path="/status-page/new" element={<StatusPageEditor />} />
             <Route path="/status-page/:id" element={<StatusPageEditor />} />

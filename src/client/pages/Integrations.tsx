@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import {
   Loader2,
   Plus,
@@ -19,6 +20,7 @@ import {
   Hash,
   Users,
   Bot,
+  ArrowRight,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
@@ -30,6 +32,7 @@ import {
 } from "../lib/push";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
+import { PageTitle } from "../components/ui/PageTitle";
 import { formatRelativeTime } from "../lib/format";
 import { cn } from "../lib/cn";
 import {
@@ -212,15 +215,21 @@ export default function Integrations() {
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Integrations<span className="text-accent">.</span></h1>
-        <p className="mt-1 text-sm text-ink-muted">
-          Notification channels and push devices that receive OpenPing alerts.
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <PageTitle description="Where OpenPing sends alerts: chat, email, webhooks and the devices you get push on.">
+          Alerts
+        </PageTitle>
+        <Link
+          to="/developers/webhooks"
+          className="group inline-flex shrink-0 items-center gap-1.5 self-start text-sm text-ink-muted transition-colors hover:text-ink sm:self-auto"
+        >
+          Webhook payload and signatures
+          <ArrowRight aria-hidden className="size-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
+        </Link>
       </div>
 
       {/* ---- Notification channels --------------------------------------- */}
-      <section className="mt-6">
+      <section className="mt-6 animate-enter">
         <Card>
           <CardHeader>
             <CardTitle>Notification channels</CardTitle>
@@ -254,9 +263,7 @@ export default function Integrations() {
           )}
 
           {chLoading && !chData ? (
-            <div className="grid place-items-center py-10">
-              <Loader2 className="size-5 animate-spin text-ink-faint" />
-            </div>
+            <ListSkeleton />
           ) : chError ? (
             <p className="rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
               Could not load channels: {chError}
@@ -317,7 +324,7 @@ export default function Integrations() {
       </section>
 
       {/* ---- Push devices ------------------------------------------------ */}
-      <section className="mt-6">
+      <section className="mt-6 animate-enter [animation-delay:60ms]">
         <PushDevices csrf={csrf ?? undefined} />
       </section>
     </div>
@@ -1031,9 +1038,7 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
       )}
 
       {devLoading && !devData ? (
-        <div className="grid place-items-center py-10">
-          <Loader2 className="size-5 animate-spin text-ink-faint" />
-        </div>
+        <ListSkeleton />
       ) : devListError ? (
         <p className="rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
           Could not load devices: {devListError}
@@ -1135,6 +1140,16 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
 // ---------------------------------------------------------------------------
 // Shared field wrapper
 // ---------------------------------------------------------------------------
+
+function ListSkeleton() {
+  return (
+    <div className="space-y-2" aria-busy="true" aria-label="Loading">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="skeleton h-14" style={{ opacity: 1 - i * 0.2 }} />
+      ))}
+    </div>
+  );
+}
 
 function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
   return (
