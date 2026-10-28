@@ -54,6 +54,9 @@ Nothing past stage 2 starts until the stage 1 gate passes.
 - **Scope:**
   - Batch each run's check results into one database write per run instead of about 3 per check.
   - Confirm a failure from a second region (a Durable Object placed by location hint) before opening an incident; 2 of 3 must agree when 3 are used.
+    The same-location re-check already ships ("Confirm failures", [MONITOR_TYPES.md](./MONITOR_TYPES.md#confirm-before-alerting)); this step swaps its probe for one in another region.
+    Findings (2026-10-28): Durable Objects work on Workers Free (SQLite-backed only); Free allows 50 external subrequests but 1,000 to Cloudflare services per invocation, which should cover calls to a Durable Object (to be measured); a location hint is best effort and applies only when the object is first created, so each region needs its own named object; and the cron's own location is not chosen, so "a different location" must be checked, not assumed.
+    Smart Placement and placement hints only move `fetch` handlers, and a service binding runs on the same machine as its caller, so neither gives a second location.
 - **Acceptance:** writes per check measured on a real install and under the budget the pricing assumes; a simulated single-region blip doesn't alert; a real outage alerts within one extra check.
 - **Effort:** 3 to 4 days.
 - **Cost:** under 1 cent per customer a month.

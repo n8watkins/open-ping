@@ -31,6 +31,7 @@ does not reduce uptime.
 - Timezone-aware operating schedules with warm-up handling
 - Distinct **Suspended** status for hosts that signal suspension (e.g. Render free-tier)
 - Incidents with automatic recovery, flapping protection, MTBF/MTTR
+- Failures confirmed by a second check before anyone is alerted, and new monitors checked the moment you add them
 - Compact historical uptime (samples → intervals → hourly → daily → monthly)
 - Alerts to Slack, Microsoft Teams, Discord and Telegram, email via Resend, signed webhooks and mobile Web Push (installable Android PWA), with a test button for each ([docs/ALERT_CHANNELS.md](./docs/ALERT_CHANNELS.md))
 - GitHub OAuth + email magic-link auth (single administrator)
