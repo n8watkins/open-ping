@@ -7,19 +7,17 @@ Last reviewed: 2026-10-28.
 
 ## To do
 
-### 1. Back up the `MASTER_KEY` (decide soon)
+### 1. Save the new `MASTER_KEY` in your password manager
 
-- [ ] Look in your password manager for the production `MASTER_KEY` from the original setup (around 2026-06-29).
-- [ ] If you find it, keep it there and tick this item.
-- [ ] If you can't, tell the agent "set a fresh MASTER_KEY". It will generate one, set it on the Worker and show it once so you can save it in your password manager.
+- [x] A fresh `MASTER_KEY` was set on 2026-10-28 (key id `641eb0c9`), because no copy of the original existed.
+  The only values the old key protected were the Web Push signing key (no devices were subscribed) and four copies of already-sent alerts; they were deleted, and the three monitors' settings were re-encrypted under the new key.
+- [ ] Open `openping-MASTER_KEY.txt` in your Windows Downloads folder, save its contents in your password manager as "OpenPing MASTER_KEY", then delete the file.
+- [ ] Tell the agent it's saved.
 
-Why: `MASTER_KEY` encrypts sensitive data in D1, and Cloudflare never shows a secret again after it is set.
-On 2026-10-28 no copy existed on the development machine; both local `.dev.vars` keys are development keys and decrypt none of the production data.
-Today very little depends on it: the Web Push signing key (no devices subscribed) and copies of alerts that were already sent.
-Monitor settings get encrypted the next time each monitor is saved, so a fresh key is cheapest now, before that happens.
+Why: Cloudflare never shows a secret again after it is set, so your password manager holds the only readable copy.
+You need it to restore a database backup onto a new install, or if the Worker's secret is ever lost; without it, the encrypted values in a backup can't be read.
 Do not paste the key into an issue, pull request, chat or repository file.
-Once this release is deployed, either path is supported: rotate online with the old key ([Rotating `MASTER_KEY`](./SECURITY.md#rotating-master_key)), or start fresh without it ([If the old key is lost](./SECURITY.md#if-the-old-key-is-lost)), and Settings > Encryption keys lists exactly what each path leaves unreadable.
-See also [Backup and restore](./BACKUP.md).
+See [Rotating `MASTER_KEY`](./SECURITY.md#rotating-master_key) and [Backup and restore](./BACKUP.md).
 
 ### 2. Optional: send alert emails from your own domain
 
