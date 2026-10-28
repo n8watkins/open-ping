@@ -14,7 +14,7 @@ The following values can be configured with `wrangler secret put` or in the Clou
 - `RESEND_API_KEY` authorizes email delivery.
 - `ADMIN_GITHUB_LOGIN` and `ADMIN_EMAIL` identify the single allowed administrator.
 - `APP_URL` defines the canonical public origin used for links and authentication callbacks.
-- `API_TOKEN` is an optional administrator bearer token for the CLI and automation.
+- `API_TOKEN` is an optional administrator bearer token for the CLI, automation and the `/mcp` endpoint.
 - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` optionally provide the Web Push identity.
 
 Worker secrets are not written to D1 and are not included in a D1 export or OpenPing JSON export.
@@ -141,6 +141,23 @@ Back up these items separately:
 4. Heartbeat URLs in the systems that call them, or a plan to rotate those tokens after recovery.
 
 See [Backup and restore](./BACKUP.md) for export and import commands.
+
+## The `/mcp` endpoint
+
+The [MCP server](./MCP.md) at `/mcp` is a second way in with the same administrator power as the REST API.
+It exists only while `API_TOKEN` is set; otherwise it answers `404`.
+
+- It accepts only `Authorization: Bearer <API_TOKEN>`, checked in constant time by the same function as the REST API, and never a session cookie.
+- A request whose `Origin` header names another site is refused with `403`, and no CORS headers are sent, so a web page cannot drive it through a visitor's browser (including by DNS rebinding).
+- Unauthenticated requests are rejected before any D1 access.
+- Authenticated requests are capped at 120 a minute per install through the `rate_limits` table, and bodies at 256 KB.
+- It is stateless: nothing about an MCP client is stored between requests.
+- Tool results go to the client's model provider, so they are redacted more strictly than REST responses: modeled secrets (HTTP auth passwords and tokens, heartbeat shared secrets, webhook URLs and secrets) are blanked as in the API, and custom header values and request bodies are blanked as in a backup export.
+- Heartbeat ping tokens are returned only by `create_monitor` and `rotate_heartbeat_token`, matching the API's one-time disclosure.
+- Plaintext operational data does reach the model provider: monitor names and target URLs (with query strings), schedules, incident errors and private notes, maintenance notes and status page settings.
+- Destructive tools (`delete_monitor`, `delete_maintenance_window`, `rotate_heartbeat_token`) are annotated as destructive and refuse to act without `confirm: true`.
+
+Rotating `API_TOKEN` cuts off the CLI and every MCP client at once.
 
 ## Response headers
 
