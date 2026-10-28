@@ -28,12 +28,12 @@ const controller: ScheduledController = {
 };
 
 /** One cron run with every D1 query and outbound fetch counted. */
-async function countedRun(extra: Partial<Env> = {}, status = 200) {
+async function countedRun(extra: Partial<Env> = {}, status = 200, opts: { confirmDelayMs?: number } = {}) {
   const usage = { d1: 0 };
   const fetches = vi.spyOn(globalThis, "fetch").mockImplementation(
     async () => new Response(status === 200 ? "ok" : "down", { status }),
   );
-  await runScheduled(controller, { ...env, ...extra, DB: countingD1(env.DB, usage) });
+  await runScheduled(controller, { ...env, ...extra, DB: countingD1(env.DB, usage) }, opts);
   const calls = fetches.mock.calls.length;
   fetches.mockRestore();
   return { d1: usage.d1, fetches: calls };
@@ -99,7 +99,8 @@ describe("scheduler budget", () => {
     await env.DB.prepare("UPDATE monitor_state SET next_check_at = 0, state = 'up'").run();
     const perRun: number[] = [];
     for (let run = 0; run < 4; run++) {
-      const used = await countedRun({}, 500);
+      // No pause before each re-check: the budget is what's measured here.
+      const used = await countedRun({}, 500, { confirmDelayMs: 0 });
       expect(used.d1).toBeLessThanOrEqual(50);
       expect(used.fetches).toBeLessThanOrEqual(50);
       const latest = await env.DB.prepare(
@@ -112,7 +113,6 @@ describe("scheduler budget", () => {
       n: number;
     }>();
     expect(open?.n ?? 0).toBeGreaterThan(0);
-    // Each failing check waits 10s before its retry (checks/runner.ts).
   }, 120_000);
 
   it("counts every redirect hop as a fetch, so redirecting checks stay inside the Free budget", async () => {

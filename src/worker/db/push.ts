@@ -248,10 +248,13 @@ export async function listDevices(env: Env): Promise<PushDeviceSummary[]> {
  * unreadable device can't stop an incident's other notifications.
  */
 export async function listActiveSubscriptionIds(env: Env): Promise<string[]> {
-  const res = await env.DB.prepare(
-    "SELECT id FROM push_subscriptions WHERE disabled = 0 ORDER BY created_at",
-  ).all<{ id: string }>();
+  const res = await activeSubscriptionIdsStatement(env).all<{ id: string }>();
   return (res.results ?? []).map((row) => row.id);
+}
+
+/** The listActiveSubscriptionIds query, for a caller that batches its reads (rows: `{ id }`). */
+export function activeSubscriptionIdsStatement(env: Env): D1PreparedStatement {
+  return env.DB.prepare("SELECT id FROM push_subscriptions WHERE disabled = 0 ORDER BY created_at");
 }
 
 export async function subscriptionExists(env: Env, id: string): Promise<boolean> {

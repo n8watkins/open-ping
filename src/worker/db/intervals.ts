@@ -33,18 +33,6 @@ const ZERO_AGG: LatencyAgg = {
   maxLatencyMs: null,
 };
 
-/** Raw shape of the columns we read back from `status_intervals`. */
-interface IntervalRow {
-  id: string;
-  state: MonitorState;
-  started_at: number;
-  checks: number;
-  ok_checks: number;
-  sum_latency_ms: number;
-  min_latency_ms: number | null;
-  max_latency_ms: number | null;
-}
-
 /**
  * Pure decision: given the currently-open interval (or null) and the incoming
  * state, what should happen?
@@ -85,28 +73,78 @@ export function mergeLatency(
   return next;
 }
 
-/** Fetch the full open interval row (ended_at IS NULL) for a monitor, if any. */
-async function getOpenRow(
+/**
+ * The interval update for one check/state observation, as statements a caller
+ * can batch with its other writes (they must run in this order, in one batch):
+ *
+ *  1. extend: fold the sample into the open interval when its state matches;
+ *  2. close: end an open interval whose state differs (a state change);
+ *  3. open: start a fresh interval, seeded with this sample, when none is open
+ *     any more. Its reason is `opts.reason`, else "state_change" when step 2
+ *     just closed one, else none (the monitor's first interval).
+ *
+ * The SQL does what decideIntervalAction and mergeLatency describe without
+ * reading the row first, so a check's interval costs no round trip of its own.
+ * Latency is folded in only when `latencyMs` is a finite number.
+ */
+export function intervalStatements(
   env: Env,
   monitorId: string,
-): Promise<IntervalRow | null> {
-  return env.DB.prepare(
-    `SELECT id, state, started_at, checks, ok_checks,
-            sum_latency_ms, min_latency_ms, max_latency_ms
-       FROM status_intervals
-      WHERE monitor_id = ? AND ended_at IS NULL
-      ORDER BY started_at DESC
-      LIMIT 1`,
-  )
-    .bind(monitorId)
-    .first<IntervalRow>();
+  state: MonitorState,
+  at: number,
+  opts: { latencyMs?: number | null; ok?: boolean; reason?: string } = {},
+): D1PreparedStatement[] {
+  const l = typeof opts.latencyMs === "number" && Number.isFinite(opts.latencyMs) ? opts.latencyMs : null;
+  const ok = opts.ok ? 1 : 0;
+  const first = mergeLatency(ZERO_AGG, { ...(l != null ? { latencyMs: l } : {}), ok: opts.ok ?? false });
+  return [
+    env.DB.prepare(
+      `UPDATE status_intervals
+          SET checks = checks + 1,
+              ok_checks = ok_checks + ?3,
+              sum_latency_ms = sum_latency_ms + COALESCE(?4, 0),
+              min_latency_ms = CASE WHEN ?4 IS NULL THEN min_latency_ms
+                                    ELSE MIN(COALESCE(min_latency_ms, ?4), ?4) END,
+              max_latency_ms = CASE WHEN ?4 IS NULL THEN max_latency_ms
+                                    ELSE MAX(COALESCE(max_latency_ms, ?4), ?4) END
+        WHERE monitor_id = ?1 AND ended_at IS NULL AND state = ?2`,
+    ).bind(monitorId, state, ok, l),
+    env.DB.prepare(
+      `UPDATE status_intervals SET ended_at = ?3
+        WHERE monitor_id = ?1 AND ended_at IS NULL AND state <> ?2`,
+    ).bind(monitorId, state, at),
+    env.DB.prepare(
+      `INSERT INTO status_intervals (
+          id, monitor_id, state, started_at, ended_at,
+          checks, ok_checks, sum_latency_ms, min_latency_ms, max_latency_ms, reason
+        )
+        SELECT ?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, ?9,
+               COALESCE(?10, CASE WHEN EXISTS (
+                 SELECT 1 FROM status_intervals WHERE monitor_id = ?2 AND ended_at = ?4
+               ) THEN 'state_change' END)
+         WHERE NOT EXISTS (
+           SELECT 1 FROM status_intervals WHERE monitor_id = ?2 AND ended_at IS NULL
+         )`,
+    ).bind(
+      newId("ivl"),
+      monitorId,
+      state,
+      at,
+      first.checks,
+      first.okChecks,
+      first.sumLatencyMs,
+      first.minLatencyMs,
+      first.maxLatencyMs,
+      opts.reason ?? null,
+    ),
+  ];
 }
 
 /**
- * Record a check/state observation against the evolving interval timeline.
- * Extends the open interval when the state is unchanged; closes it and opens a
- * new one on a state change (default reason "state_change"); opens a first
- * interval when none is currently open.
+ * Record a check/state observation against the evolving interval timeline
+ * (intervalStatements, in one round trip). Extends the open interval when the
+ * state is unchanged; closes it and opens a new one on a state change (default
+ * reason "state_change"); opens a first interval when none is currently open.
  */
 export async function updateStatusInterval(
   env: Env,
@@ -115,69 +153,5 @@ export async function updateStatusInterval(
   at: number,
   opts: { latencyMs?: number; ok?: boolean; reason?: string } = {},
 ): Promise<void> {
-  const open = await getOpenRow(env, monitorId);
-  const action = decideIntervalAction(open, state);
-
-  if (action === "extend" && open) {
-    const merged = mergeLatency(
-      {
-        checks: open.checks,
-        okChecks: open.ok_checks,
-        sumLatencyMs: open.sum_latency_ms,
-        minLatencyMs: open.min_latency_ms,
-        maxLatencyMs: open.max_latency_ms,
-      },
-      opts,
-    );
-    await env.DB.prepare(
-      `UPDATE status_intervals
-          SET checks = ?, ok_checks = ?, sum_latency_ms = ?,
-              min_latency_ms = ?, max_latency_ms = ?
-        WHERE id = ?`,
-    )
-      .bind(
-        merged.checks,
-        merged.okChecks,
-        merged.sumLatencyMs,
-        merged.minLatencyMs,
-        merged.maxLatencyMs,
-        open.id,
-      )
-      .run();
-    return;
-  }
-
-  // "open" or "split": fold the first sample into a fresh interval, closing the
-  // previous one first when splitting. Batched so a split is atomic.
-  const agg = mergeLatency(ZERO_AGG, opts);
-  const reason = opts.reason ?? (action === "split" ? "state_change" : null);
-  const insert = env.DB.prepare(
-    `INSERT INTO status_intervals (
-        id, monitor_id, state, started_at, ended_at,
-        checks, ok_checks, sum_latency_ms, min_latency_ms, max_latency_ms, reason
-      ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
-  ).bind(
-    newId("ivl"),
-    monitorId,
-    state,
-    at,
-    agg.checks,
-    agg.okChecks,
-    agg.sumLatencyMs,
-    agg.minLatencyMs,
-    agg.maxLatencyMs,
-    reason,
-  );
-
-  if (action === "split" && open) {
-    await env.DB.batch([
-      env.DB.prepare("UPDATE status_intervals SET ended_at = ? WHERE id = ?").bind(
-        at,
-        open.id,
-      ),
-      insert,
-    ]);
-  } else {
-    await insert.run();
-  }
+  await env.DB.batch(intervalStatements(env, monitorId, state, at, opts));
 }

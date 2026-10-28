@@ -106,37 +106,59 @@ export function countingD1(db: D1Database, counter: UsageCounter): D1Database {
 }
 
 /**
- * Most a single polled check may spend in D1: measured at about 5 queries for
- * a passing check and 9 for one that opens an incident (test/integration/
- * scheduler-budget.test.ts), plus one for an alert channel's queued delivery.
- * Its fetches depend on the monitor: a check reserves the most its probe can
- * make (checks/runner.ts `probeFetchLimit`, redirect hops included, since
- * Cloudflare counts each hop), and is charged what it really made when it ends.
- * A failed check's confirmation re-check asks for its own reservation with
- * `tryConfirm`, so a run doesn't hold back a second probe for every check when
- * most of them pass.
+ * What one polled check holds of the run's budget.
+ *
+ * D1: a check makes no query of its own. The scheduler collects every check's
+ * writes (state, sample, rollup, interval, incident and alert) and sends them
+ * with the end-of-run work in one batch, after one shared read batch for the
+ * checks that may open or resolve an incident (checks/state.ts), so a run's
+ * round trips don't grow with its checks (test/integration/
+ * scheduler-writes.test.ts). Each check still keeps one query back, for good:
+ * if that batch fails, the run retries each monitor's writes as their own
+ * batch, and this is what pays for it (deeper retries stop when the run is out
+ * of budget; lib/batch.ts runWritePlan).
+ *
+ * Fetches: a check reserves the most its probe can make (checks/runner.ts
+ * `probeFetchLimit`, redirect hops included, since Cloudflare counts each hop),
+ * and is charged what it really made when it ends. A check that would
+ * confirm a failure also holds its re-check's worst case while it runs, so the
+ * re-check is never refused for lack of fetches once the check started; the
+ * hold is released when the check passes, so a passing check is still charged
+ * only what it made.
  */
-export const CHECK_COST = { d1: 10, subrequests: 1 } as const;
+export const CHECK_COST = { d1: 1, subrequests: 1 } as const;
 
-/** What a run keeps back for the work after its checks. Normally that is two
- * batches (the end-of-run work, then the run record and the lease), but if the
- * end-of-run batch fails its ten statements are retried one by one
- * (lib/batch.ts), and the weekly summary may need a few reads, so the reserve
- * covers that worst case. */
-export const TAIL_RESERVE = { d1: 12 } as const;
+/**
+ * What a run keeps back for the work after its checks: the shared read batch,
+ * the batch of writes and end-of-run work, the weekly summary (about eight
+ * queries when it is due) or the monthly report (two), and the batch that
+ * records the finish. Retries after a failed batch are paid from what is left
+ * and stop when it runs out (lib/batch.ts).
+ */
+export const TAIL_RESERVE = { d1: 11 } as const;
 
-/** D1 queries one notification delivery spends (mark sent or failed, plus slack). */
-export const NOTIFICATION_D1_COST = 2;
+/**
+ * D1 queries one notification delivery spends (notifications/dispatcher.ts:
+ * the channel read, marking it sent or failed, and the channel's result).
+ */
+export const NOTIFICATION_D1_COST = 3;
+
+/**
+ * Deliveries a run always keeps room for, so a run that fills up with checks
+ * can still send the alerts its failures queue (the rest wait for the next run).
+ */
+export const NOTIFICATION_RESERVE = 3;
 
 /**
  * One started check's hold on the run's budget (RunBudget.startCheck).
  */
 export interface CheckTicket {
   /**
-   * Reserves the check's confirmation re-check (another probe's worst case).
-   * False when the run can't afford it beside the other running checks'
-   * reservations; the scheduler then leaves that monitor due for the next run
-   * instead of alerting on an unconfirmed failure.
+   * Takes the check's confirmation re-check (another probe's worst case): the
+   * fetches it held from the start, or, for a check started without that hold,
+   * a new reservation if one still fits. False when it doesn't; the scheduler
+   * then leaves that monitor due for the next run instead of alerting on an
+   * unconfirmed failure.
    */
   tryConfirm(): boolean;
   /**
@@ -154,7 +176,7 @@ export interface CheckTicket {
  * countingD1.
  */
 export class RunBudget {
-  private reservedD1 = 0;
+  private committedD1 = 0;
   private reservedFetches = 0;
   private fetches = 0;
   private checks = 0;
@@ -171,23 +193,33 @@ export class RunBudget {
   }
 
   /**
-   * Starts a check whose probe makes at most `probeFetches` requests, if its
-   * worst case still fits beside the tail reserve.
+   * Starts a check whose probe makes at most `probeFetches` requests, holding
+   * `confirmFetches` more for its confirmation re-check, if both still fit
+   * beside the tail and notification reserves.
    */
-  tryStartCheck(probeFetches: number = CHECK_COST.subrequests): CheckTicket | null {
+  tryStartCheck(probeFetches: number = CHECK_COST.subrequests, confirmFetches = 0): CheckTicket | null {
     if (this.checks >= this.limits.maxChecks) return null;
-    const d1After = this.usage.d1 + this.reservedD1 + CHECK_COST.d1 + TAIL_RESERVE.d1;
-    if (d1After > this.limits.d1Queries || !this.fetchesFit(probeFetches)) return null;
-    this.reservedD1 += CHECK_COST.d1;
-    this.reservedFetches += probeFetches;
+    const d1After =
+      this.usage.d1 + this.committedD1 + CHECK_COST.d1 + TAIL_RESERVE.d1 + NOTIFICATION_RESERVE * NOTIFICATION_D1_COST;
+    const fetchesFit = this.fetchesFit(probeFetches + confirmFetches + NOTIFICATION_RESERVE);
+    if (d1After > this.limits.d1Queries || !fetchesFit) return null;
+    // Kept for the whole run: the check's writes go out at the end (CHECK_COST).
+    this.committedD1 += CHECK_COST.d1;
+    this.reservedFetches += probeFetches + confirmFetches;
     this.checks++;
     this.inFlight++;
 
-    let reserved = probeFetches;
+    let reserved = probeFetches + confirmFetches;
+    let held = confirmFetches > 0;
     let ended = false;
     return {
       tryConfirm: () => {
-        if (ended || !this.fetchesFit(probeFetches)) return false;
+        if (ended) return false;
+        if (held) {
+          held = false;
+          return true;
+        }
+        if (!this.fetchesFit(probeFetches)) return false;
         this.reservedFetches += probeFetches;
         reserved += probeFetches;
         return true;
@@ -195,7 +227,6 @@ export class RunBudget {
       end: (fetchesSpent?: number) => {
         if (ended) return;
         ended = true;
-        this.reservedD1 -= CHECK_COST.d1;
         this.reservedFetches -= reserved;
         this.fetches += fetchesSpent ?? reserved;
         this.inFlight--;
@@ -207,13 +238,17 @@ export class RunBudget {
   /**
    * Starts a check, waiting for running ones to finish when only their
    * worst-case reservations are in the way (most checks spend less, which frees
-   * room). Null once nothing is running and it still doesn't fit.
+   * room). Once nothing is running and the re-check's hold still doesn't fit,
+   * the check starts without it if its own probe fits (its re-check is then
+   * reserved only if it fails and room is left, else deferred to the next
+   * run), so the end of a run's budget isn't left unused. Null once nothing is
+   * running and even that doesn't fit.
    */
-  async startCheck(probeFetches: number = CHECK_COST.subrequests): Promise<CheckTicket | null> {
+  async startCheck(probeFetches: number = CHECK_COST.subrequests, confirmFetches = 0): Promise<CheckTicket | null> {
     for (;;) {
-      const ticket = this.tryStartCheck(probeFetches);
+      const ticket = this.tryStartCheck(probeFetches, confirmFetches);
       if (ticket) return ticket;
-      if (this.inFlight === 0) return null;
+      if (this.inFlight === 0) return confirmFetches > 0 ? this.tryStartCheck(probeFetches) : null;
       await new Promise<void>((resolve) => this.waiters.push(resolve));
     }
   }
@@ -222,9 +257,12 @@ export class RunBudget {
   get fetchesUsed(): number {
     return this.fetches;
   }
-  /** How many notifications fit in what's left (one fetch each). */
+  /**
+   * How many notifications fit in what's left (one fetch each), keeping the
+   * checks' retry room and the tail reserve. Call it once the checks are done.
+   */
   notificationAllowance(max: number): number {
-    const d1Left = this.limits.d1Queries - this.usage.d1 - TAIL_RESERVE.d1 - 1; // -1: claiming them
+    const d1Left = this.limits.d1Queries - this.usage.d1 - this.committedD1 - TAIL_RESERVE.d1;
     const byD1 = Math.floor(d1Left / NOTIFICATION_D1_COST);
     const byFetch = this.limits.subrequests - this.fetches;
     return Math.max(0, Math.min(max, byD1, byFetch));
@@ -232,5 +270,15 @@ export class RunBudget {
 
   get d1Used(): number {
     return this.usage.d1;
+  }
+
+  /**
+   * True while one more D1 query still leaves `keep` queries for what must come
+   * after it (the run record, the deliveries already claimed). Retry paths ask
+   * this before each round trip, so a failing batch can never push the run
+   * past its plan's limit.
+   */
+  canSpendD1(keep = 1): boolean {
+    return this.usage.d1 + 1 + keep <= this.limits.d1Queries;
   }
 }

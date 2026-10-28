@@ -119,19 +119,27 @@ async function rowToEntry(env: Env, row: OutboxRow): Promise<OutboxEntry> {
  * immediately. Inserts are idempotent on `event_key`: a duplicate key is
  * silently dropped, making re-enqueue safe to retry.
  */
-export async function enqueue(
-  env: Env,
-  entries: Array<{
-    eventKey: string;
-    monitorId?: string | null;
-    channelId?: string | null;
-    channelType: string;
-    target?: string | null;
-    eventType: string;
-    payload: unknown;
-  }>,
-): Promise<void> {
+export async function enqueue(env: Env, entries: NewOutboxEntry[]): Promise<void> {
   if (entries.length === 0) return;
+  await env.DB.batch(await enqueueStatements(env, entries));
+}
+
+/** One delivery to queue (see {@link enqueue}). */
+export interface NewOutboxEntry {
+  eventKey: string;
+  monitorId?: string | null;
+  channelId?: string | null;
+  channelType: string;
+  target?: string | null;
+  eventType: string;
+  payload: unknown;
+}
+
+/**
+ * The inserts {@link enqueue} makes (payloads encrypted), for a caller that
+ * batches them with other writes.
+ */
+export async function enqueueStatements(env: Env, entries: NewOutboxEntry[]): Promise<D1PreparedStatement[]> {
   const now = Date.now();
   const protectedEntries = await Promise.all(
     entries.map(async (entry) => {
@@ -166,7 +174,7 @@ export async function enqueue(
       now,
     ),
   );
-  await env.DB.batch(statements);
+  return statements;
 }
 
 /**
