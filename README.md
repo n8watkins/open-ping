@@ -32,7 +32,7 @@ does not reduce uptime.
 - Distinct **Suspended** status for hosts that signal suspension (e.g. Render free-tier)
 - Incidents with automatic recovery, flapping protection, MTBF/MTTR
 - Compact historical uptime (samples → intervals → hourly → daily → monthly)
-- Mobile Web Push (installable Android PWA), email via Resend, Discord, signed webhooks
+- Alerts to Slack, Microsoft Teams, Discord and Telegram, email via Resend, signed webhooks and mobile Web Push (installable Android PWA), with a test button for each ([docs/ALERT_CHANNELS.md](./docs/ALERT_CHANNELS.md))
 - GitHub OAuth + email magic-link auth (single administrator)
 - Monitor **categories** and **multiple public status pages** (a default page at `/status`, per-category pages at `/status/:slug`), each polished and configurable
 - An **embeddable status widget** (`<iframe>`) plus an **SVG status badge** for READMEs and dashboards
@@ -47,7 +47,7 @@ does not reduce uptime.
 - **Frontend:** React + TypeScript + Vite + Tailwind CSS v4 (PWA)
 - **Backend:** Cloudflare Worker (Hono router, Zod), scheduled handler every 12 min
 - **Storage:** Cloudflare D1 + Worker secrets
-- **External:** GitHub OAuth · Resend · Web Push · Discord
+- **External:** GitHub OAuth · Resend · Web Push · Slack · Microsoft Teams · Discord · Telegram
 
 ## Local development
 
@@ -84,6 +84,7 @@ secret, custom domains, and a verify-it's-working checklist.
 - [Install](./docs/INSTALL.md) - from clone to a deployed install (plus a local-dev quickstart)
 - [Hosted plan](./docs/HOSTED_PLAN.md) - the staged plan for OpenPing Hosted and its waitlist
 - [Monitor types](./docs/MONITOR_TYPES.md) - every check type, its config, and what the runtime can't do
+- [Alert channels](./docs/ALERT_CHANNELS.md) - set up Slack, Teams, Telegram, Discord, email and webhook alerts
 - [Status pages](./docs/STATUS_PAGES.md) - categories and multiple per-category public status pages
 - [Status widget & badge](./docs/WIDGET.md) - embed the live status widget or an SVG badge on another site
 - [Free tools](./docs/TOOLS.md) - the public `/tools` suite and the "Is it down?" API

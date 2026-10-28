@@ -72,7 +72,7 @@ API failures exit with code 1 and print the HTTP status and any validation messa
 | `op report [--month YYYY-MM] [--csv]` | The monthly uptime report per monitor; last month by default, the CSV with `--csv`. |
 | `op uptime [--monitor <id>]` | Uptime over 24h, 7d, 30d and 90d. |
 | `op diagnostics [--runs N]` | Recent scheduler runs, including D1 queries per run, and table counts. |
-| `op channels list` | Notification channels and their delivery health (webhook URLs and secrets are blanked). |
+| `op channels list` | Notification channels of every type and their delivery health (webhook URLs, secrets and Telegram bot tokens are never shown). |
 | `op categories list` | Monitor categories. |
 | `op pages list` | Status pages and their URLs. |
 | `op pages update <id> ...` | Changes only the flags you pass. |

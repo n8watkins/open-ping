@@ -230,7 +230,7 @@ release-kit ignores flags it doesn't know, so `npm run release -- --help` cuts a
 - `src/worker/db/` contains D1 access and persistence boundaries.
 - `src/worker/lib/secret-config.ts` and `src/worker/lib/crypto.ts` implement sealed configuration storage.
 - `src/worker/lib/ssrf.ts` implements outbound target validation.
-- `src/worker/notifications/` contains outbox dispatch, email, Discord, webhook, and Web Push behavior.
+- `src/worker/notifications/` contains outbox dispatch, email, Discord, Slack, Teams, Telegram, webhook, and Web Push behavior; `src/shared/channel-targets.ts` holds the provider destination checks.
 - `test/integration/` contains workerd route tests backed by an isolated migrated D1 database; `mcp.test.ts` drives `/mcp` over JSON-RPC.
 - `vitest.integration.config.ts` defines explicit test-only Worker bindings and does not load `.dev.vars`.
 - `src/client/pages/Monitors.tsx` is the UptimeRobot-inspired monitoring workspace.
