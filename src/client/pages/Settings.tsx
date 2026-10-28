@@ -48,7 +48,7 @@ interface SchedulerRun {
   notificationFailures: number | null;
   durationMs: number | null;
   d1Queries: number | null;
-  /** Confirmation re-checks made, passed (blips) and deferred; null before migration 0013. */
+  /** Confirmation re-checks made, passed (blips) and deferred; null before migration 0014. */
   confirmations: number | null;
   confirmationsCleared: number | null;
   confirmationsDeferred: number | null;

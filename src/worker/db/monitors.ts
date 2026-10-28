@@ -64,7 +64,7 @@ export interface MonitorRow {
   paused: number;
   interval_seconds: number;
   grace_seconds: number | null;
-  /** 'retry' | 'off'; NULL (rows before migration 0013) means 'retry'. */
+  /** 'retry' | 'off'; NULL (rows before migration 0014) means 'retry'. */
   confirm_failures?: string | null;
   config: string;
   schedule: string;

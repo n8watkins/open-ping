@@ -1,4 +1,4 @@
--- 0013: Confirm a failure with a second check before opening an incident.
+-- 0014: Confirm a failure with a second check before opening an incident.
 -- monitors.confirm_failures: 'retry' (re-check once before alerting, the
 -- default) or 'off' (alert on the first failed check). NULL means 'retry', so
 -- monitors created before this migration keep confirming.

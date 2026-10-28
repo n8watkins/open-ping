@@ -133,7 +133,7 @@ function mapRun(r: SchedulerRunRow) {
     // for runs recorded before migration 0011).
     durationMs: r.duration_ms,
     d1Queries: r.d1_queries,
-    // Confirmation re-checks (null for runs before migration 0013): made,
+    // Confirmation re-checks (null for runs before migration 0014): made,
     // passed (a blip that opened no incident), and left for the next run.
     confirmations: r.confirmations,
     confirmationsCleared: r.confirmations_cleared,
