@@ -54,10 +54,17 @@ describe("landing click counts", () => {
   });
 
   it("rate limits one visitor", async () => {
+    // The limiter (30 a minute) resets on fixed minute boundaries, so requests
+    // that straddle one can all pass with 35; with 61 one minute always gets
+    // past 30. Stop at the first refusal.
     const statuses: number[] = [];
-    for (let i = 0; i < 35; i++) statuses.push((await count("hero_tools", "10.9.9.9")).status);
+    for (let i = 0; i < 61 && !statuses.includes(429); i++) {
+      statuses.push((await count("hero_tools", "10.9.9.9")).status);
+    }
     expect(statuses).toContain(429);
-    expect(await stored("hero_tools")).toBeLessThanOrEqual(30);
+    const accepted = statuses.filter((s) => s !== 429).length;
+    expect(await stored("hero_tools")).toBeLessThanOrEqual(accepted);
+    expect(accepted).toBeLessThanOrEqual(60);
   });
 
   it("shows the admin 7- and 30-day totals for every event, and nobody else", async () => {
