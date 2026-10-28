@@ -10,6 +10,7 @@
  */
 
 import type { AssetsConfig, DurableObjectMigrationStep, WorkerModule } from "./cloudflare/api";
+import { PermanentError } from "./errors";
 
 /** One static asset of the SPA. */
 export interface BundleAsset {
@@ -62,7 +63,7 @@ const MIGRATION_STEP_KEYS = ["new_sqlite_classes", "new_classes", "renamed_class
  */
 export function workerConfigFromWrangler(config: Record<string, unknown>): BundleWorkerConfig {
   const str = (v: unknown, what: string) => {
-    if (typeof v !== "string" || !v) throw new Error(`wrangler config: ${what} must be a string`);
+    if (typeof v !== "string" || !v) throw new PermanentError(`wrangler config: ${what} must be a string`);
     return v;
   };
   const assets = (config.assets ?? {}) as Record<string, unknown>;
@@ -76,7 +77,7 @@ export function workerConfigFromWrangler(config: Record<string, unknown>): Bundl
   }
   const durable = ((config.durable_objects as { bindings?: unknown[] } | undefined)?.bindings ?? []).map((b, i) => {
     const binding = b as Record<string, unknown>;
-    if (binding.script_name !== undefined) throw new Error(`wrangler config: durable_objects.bindings[${i}] points at another script`);
+    if (binding.script_name !== undefined) throw new PermanentError(`wrangler config: durable_objects.bindings[${i}] points at another script`);
     return { name: str(binding.name, `durable_objects.bindings[${i}].name`), className: str(binding.class_name, `durable_objects.bindings[${i}].class_name`) };
   });
   const migrations = ((config.migrations ?? []) as Record<string, unknown>[]).map((m, i) => {
@@ -143,19 +144,19 @@ export class R2BundleSource implements BundleSource {
 
   private async text(key: string): Promise<string> {
     const object = await this.bucket.get(key);
-    if (!object) throw new Error(`tenant bundle: ${key} is missing`);
+    if (!object) throw new PermanentError(`tenant bundle: ${key} is missing`);
     return object.text();
   }
 
   private async bytes(key: string): Promise<Uint8Array<ArrayBuffer>> {
     const object = await this.bucket.get(key);
-    if (!object) throw new Error(`tenant bundle: ${key} is missing`);
+    if (!object) throw new PermanentError(`tenant bundle: ${key} is missing`);
     return new Uint8Array(await object.arrayBuffer());
   }
 
   async current(): Promise<TenantBundle> {
     const version = (await this.text("releases/current")).trim();
-    if (!VERSION_PATTERN.test(version)) throw new Error("tenant bundle: releases/current is not a version");
+    if (!VERSION_PATTERN.test(version)) throw new PermanentError("tenant bundle: releases/current is not a version");
     let bundle = loaded.get(version);
     if (!bundle) {
       if (loaded.size >= 2) loaded.delete(loaded.keys().next().value!);
@@ -170,7 +171,7 @@ export class R2BundleSource implements BundleSource {
   private async load(version: string): Promise<TenantBundle> {
     const prefix = `releases/${version}`;
     const manifest = JSON.parse(await this.text(`${prefix}/bundle.json`)) as BundleManifest;
-    if (manifest.version !== version) throw new Error("tenant bundle: bundle.json names another version");
+    if (manifest.version !== version) throw new PermanentError("tenant bundle: bundle.json names another version");
     const modules = await Promise.all(
       manifest.modules.map(async (m) => ({
         name: m.name,

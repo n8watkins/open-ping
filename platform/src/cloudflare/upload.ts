@@ -24,6 +24,7 @@ import type {
   WorkerMigrations,
   WorkerUploadMetadata,
 } from "./api";
+import { PermanentError } from "../errors";
 
 /** Cloudflare's limit on one static asset. https://developers.cloudflare.com/workers/platform/limits/#static-assets */
 export const MAX_ASSET_BYTES = 25 * 1024 * 1024;
@@ -56,7 +57,7 @@ export async function assetHash(content: Uint8Array, path: string): Promise<stri
 /** Refuses an asset path Cloudflare would reject or that could escape the asset root. */
 function checkAssetPath(path: string): void {
   if (!path.startsWith("/") || path.includes("//") || path.split("/").some((s) => s === ".." || s === ".")) {
-    throw new Error(`tenant bundle: bad asset path ${JSON.stringify(path)}`);
+    throw new PermanentError(`tenant bundle: bad asset path ${JSON.stringify(path)}`);
   }
 }
 
@@ -67,7 +68,7 @@ export async function buildAssetManifest(
   const byHash = new Map<string, BundleAsset>();
   for (const asset of assets) {
     checkAssetPath(asset.path);
-    if (asset.content.byteLength > MAX_ASSET_BYTES) throw new Error(`tenant bundle: ${asset.path} is over 25 MiB`);
+    if (asset.content.byteLength > MAX_ASSET_BYTES) throw new PermanentError(`tenant bundle: ${asset.path} is over 25 MiB`);
     const hash = await assetHash(asset.content, asset.path);
     manifest[asset.path] = { hash, size: asset.content.byteLength };
     byHash.set(hash, asset);
@@ -123,9 +124,9 @@ export interface UserWorkerUpload {
  */
 export function migrationsAfter(migrations: BundleMigration[], previousTag: string | null): WorkerMigrations | undefined {
   const tags = migrations.map((m) => m.tag);
-  if (new Set(tags).size !== tags.length) throw new Error("tenant bundle: duplicate migration tags");
+  if (new Set(tags).size !== tags.length) throw new PermanentError("tenant bundle: duplicate migration tags");
   const from = previousTag === null ? 0 : tags.indexOf(previousTag) + 1;
-  if (previousTag !== null && from === 0) throw new Error(`tenant bundle: has no migration tag ${previousTag}`);
+  if (previousTag !== null && from === 0) throw new PermanentError(`tenant bundle: has no migration tag ${previousTag}`);
   const pending = migrations.slice(from);
   if (pending.length === 0) return undefined;
   const steps = pending.map(({ tag: _tag, ...step }): DurableObjectMigrationStep => step);
@@ -134,12 +135,12 @@ export function migrationsAfter(migrations: BundleMigration[], previousTag: stri
 
 /** The script upload's metadata, built separately so it is testable without uploading. */
 export function userWorkerMetadata(input: UserWorkerUpload, assetsJwt: string): WorkerUploadMetadata {
-  if (input.tags.length > MAX_SCRIPT_TAGS) throw new Error("too many tags for one script");
+  if (input.tags.length > MAX_SCRIPT_TAGS) throw new PermanentError("too many tags for one script");
   const vars = { ...input.bundle.vars, ...input.vars };
   const names = new Set<string>(["ASSETS"]);
   const bindings: WorkerBinding[] = [{ type: "assets", name: "ASSETS" }];
   const add = (binding: WorkerBinding) => {
-    if (names.has(binding.name)) throw new Error(`binding ${binding.name} is set twice`);
+    if (names.has(binding.name)) throw new PermanentError(`binding ${binding.name} is set twice`);
     names.add(binding.name);
     bindings.push(binding);
   };

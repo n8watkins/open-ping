@@ -66,8 +66,13 @@ describe("HttpCloudflareApi requests", () => {
     expect(await gone.api.deleteDatabase("db-1")).toBe(false);
     expect(gone.seen[0]!.method).toBe("DELETE");
     expect(gone.seen[0]!.url).toBe(`${ACC}/d1/database/db-1`);
-    const done = recorder(() => ok(null));
+    // D1's own "not found" code, whatever the status.
+    const coded = recorder(() => fail(400, 7404, "The database could not be found"));
+    expect(await coded.api.deleteDatabase("db-1")).toBe(false);
+    const done = recorder(() => ok({}));
     expect(await done.api.deleteDatabase("db-1")).toBe(true);
+    const other = recorder(() => fail(400, 7500, "bad request"));
+    await expect(other.api.deleteDatabase("db-1")).rejects.toThrow(/7500/);
   });
 
   it("opens an assets upload session on the namespace script with the manifest", async () => {

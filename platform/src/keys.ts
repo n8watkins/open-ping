@@ -16,6 +16,7 @@
 
 import { base64urlDecode, base64urlEncode } from "../../src/shared/hosted-contract";
 import { b64decode, b64encode, isValidMasterKey, keyIdFor } from "../../src/worker/lib/crypto";
+import { PermanentError } from "./errors";
 
 const ESCROW_VERSION = "v1";
 const AAD_LABEL = "openping/escrowed-master-key/v1";
@@ -31,7 +32,7 @@ export function isValidPlatformKey(value: string | undefined): value is string {
 }
 
 async function importPlatformKey(platformKey: string): Promise<CryptoKey> {
-  if (!isValidPlatformKey(platformKey)) throw new Error("PLATFORM_KEY must be 32 bytes, base64-encoded");
+  if (!isValidPlatformKey(platformKey)) throw new PermanentError("PLATFORM_KEY must be 32 bytes, base64-encoded");
   const raw = b64decode(platformKey);
   return crypto.subtle.importKey("raw", new Uint8Array(raw), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }
@@ -64,19 +65,19 @@ export async function openEscrowedKey(escrowed: EscrowedKey, tenantId: string, p
   const iv = ivPart ? base64urlDecode(ivPart) : null;
   const ct = ctPart ? base64urlDecode(ctPart) : null;
   if (version !== ESCROW_VERSION || rest.length || !iv || iv.length !== 12 || !ct) {
-    throw new Error("escrowed key: unknown format");
+    throw new PermanentError("escrowed key: unknown format");
   }
   const key = await importPlatformKey(platformKey);
   let plain: ArrayBuffer;
   try {
     plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: additionalData(tenantId, escrowed.kid) }, key, ct);
   } catch {
-    throw new Error("escrowed key: does not decrypt with this PLATFORM_KEY for this tenant");
+    throw new PermanentError("escrowed key: does not decrypt with this PLATFORM_KEY for this tenant");
   }
   const masterKey = new TextDecoder().decode(plain);
   // The kid is derived from the key itself, so a row whose kid disagrees was not written by escrowMasterKey.
   if (!isValidMasterKey(masterKey) || (await keyIdFor(masterKey)) !== escrowed.kid) {
-    throw new Error("escrowed key: key id mismatch");
+    throw new PermanentError("escrowed key: key id mismatch");
   }
   return masterKey;
 }
@@ -93,8 +94,10 @@ export async function activeEscrowedKey(db: D1Database, tenantId: string): Promi
 
 /**
  * The tenant's MASTER_KEY: the escrowed one, or a new one escrowed now.
- * Safe to call again after a failure: a key is generated only while none is
- * stored, and the INSERT is keyed by (tenant, kid).
+ * Two runs racing here can't end up with different keys: at most one active
+ * key per tenant (a partial unique index, migration 0002), the INSERT does
+ * nothing on a conflict, and the key answered is always the one re-read
+ * from the table, so what is uploaded is what is escrowed.
  */
 export async function ensureMasterKey(
   db: D1Database,
@@ -104,11 +107,12 @@ export async function ensureMasterKey(
 ): Promise<{ masterKey: string; kid: string; created: boolean }> {
   const existing = await activeEscrowedKey(db, tenantId);
   if (existing) return { masterKey: await openEscrowedKey(existing, tenantId, platformKey), kid: existing.kid, created: false };
-  const masterKey = generateMasterKey();
-  const escrowed = await escrowMasterKey(masterKey, tenantId, platformKey);
-  await db
-    .prepare("INSERT INTO escrowed_keys (tenant_id, kid, ciphertext, created_at) VALUES (?, ?, ?, ?)")
-    .bind(tenantId, escrowed.kid, escrowed.ciphertext, now)
+  const candidate = await escrowMasterKey(generateMasterKey(), tenantId, platformKey);
+  const inserted = await db
+    .prepare("INSERT INTO escrowed_keys (tenant_id, kid, ciphertext, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING")
+    .bind(tenantId, candidate.kid, candidate.ciphertext, now)
     .run();
-  return { masterKey, kid: escrowed.kid, created: true };
+  const stored = await activeEscrowedKey(db, tenantId);
+  if (!stored) throw new Error("escrowed key: not stored");
+  return { masterKey: await openEscrowedKey(stored, tenantId, platformKey), kid: stored.kid, created: (inserted.meta.changes ?? 0) > 0 };
 }

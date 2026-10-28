@@ -22,6 +22,9 @@ import {
 
 export const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4";
 
+/** D1's error code for a database that doesn't exist. */
+export const D1_NOT_FOUND = 7404;
+
 export interface HttpCloudflareApiOptions {
   accountId: string;
   /** CF_API_TOKEN: Workers Scripts Write and D1 Write on this account (README, owner setup). */
@@ -135,13 +138,19 @@ export class HttpCloudflareApi implements CloudflareApi {
   }
 
   async deleteDatabase(id: string): Promise<boolean> {
-    const { status } = await this.call(
-      "d1.delete",
-      this.account(`/d1/database/${encodeURIComponent(id)}`),
-      { method: "DELETE" },
-      (s) => (s >= 200 && s < 300) || s === 404,
-    );
-    return status !== 404;
+    try {
+      await this.call("d1.delete", this.account(`/d1/database/${encodeURIComponent(id)}`), { method: "DELETE" });
+      return true;
+    } catch (error) {
+      // The API reference documents only the success answer. For a database
+      // that doesn't exist (never made, or already deleted) D1 answers error
+      // code 7404, which Wrangler itself treats as "not found"
+      // (workers-sdk, d1 getDatabaseByName); a bare 404 means the same.
+      if (error instanceof CloudflareApiError && (error.status === 404 || error.errors.some((e) => e.code === D1_NOT_FOUND))) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async createAssetUploadSession(namespace: string, scriptName: string, manifest: AssetManifest): Promise<AssetUploadSession> {
