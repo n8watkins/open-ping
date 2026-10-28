@@ -1,7 +1,8 @@
 # The public pages (landing, status pages, tools) may be indexed. The admin
-# app, the API and the embed widget have nothing for a search engine.
+# app, the API, the MCP endpoint and the embed widget have nothing for a search engine.
 User-agent: *
 Disallow: /api/
+Disallow: /mcp
 Disallow: /embed
 Disallow: /login
 Disallow: /setup
