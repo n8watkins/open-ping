@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.0 - 2026-10-28
+
+_Maintenance release: no user-facing changes._
+
 ## 0.11.0 - 2026-10-28
 
 ### New
