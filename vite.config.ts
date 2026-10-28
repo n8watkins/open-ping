@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { cloudflare } from "@cloudflare/vite-plugin";
+import pkg from "./package.json";
 
 // The landing's GitHub button shows the repo's star count. The Worker's CSP
 // keeps the page to same-origin requests, so the count is read once at build
@@ -31,5 +32,6 @@ export default defineConfig(async () => ({
   ],
   define: {
     __OP_STARS__: JSON.stringify(await starCount()),
+    __OP_VERSION__: JSON.stringify(pkg.version),
   },
 }));

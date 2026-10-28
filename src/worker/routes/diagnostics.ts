@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
+import pkg from "../../../package.json";
 import { getJSON } from "../db/settings";
 
 /**
@@ -16,7 +17,6 @@ export const diagnostics = new Hono<AppEnv>();
 
 diagnostics.use("*", requireAuth);
 
-const VERSION = "0.1.0";
 
 /** Cron fires every 12 minutes (PRD §25). */
 const CRON_INTERVAL_MINUTES = 12;
@@ -221,7 +221,7 @@ export async function buildDiagnostics(env: Env) {
   ]);
 
   return {
-    version: VERSION,
+    version: pkg.version,
     dbOk,
     lastSuccessfulRun: lastSuccessful ? mapRun(lastSuccessful) : null,
     lastFailedRun: lastFailed ? mapRun(lastFailed) : null,
