@@ -102,6 +102,7 @@ D1 necessarily retains operational and account metadata in plaintext, including:
   A public key can only verify signatures; it can't be used to sign in.
 - Authentication-token metadata such as a magic-link email address, even though the bearer token itself is hashed.
 - Rate-limit keys and counters, which can include client IP addresses.
+- On OpenPing Hosted only, the nonces of used sign-in hand-offs (`used_handoff_nonces`), kept about two minutes ([OpenPing Hosted sign-in](#openping-hosted-sign-in)).
 - Push device labels, user agents, platform names, timestamps, and delivery health.
 
 Treat D1 exports as sensitive records even when encrypted fields remain sealed.
@@ -372,6 +373,23 @@ The **Developers** page creates named administrator tokens for the CLI, MCP clie
 - Revoking deletes the row, so the token stops working on the next request.
 - `last_used_at` is updated at most every five minutes per token.
 - Tokens are not in the JSON export, and signing out everywhere or recovering access does not revoke them: revoke any you no longer trust under **Developers**.
+
+## OpenPing Hosted sign-in
+
+A self-hosted install never uses this: it applies only when the platform runs OpenPing with `HOSTED_MODE` set to `"1"` ([the contract](./hosted/CONTRACT.md#7-the-sign-in-hand-off)).
+
+- First-run setup, `SETUP_TOKEN` recovery, GitHub OAuth and the email magic link answer 404 `managed_by_platform`, so neither a setup token nor a GitHub app can be used to take over a hosted install.
+- The customer signs in on the platform, which redirects to `/auth/hosted?t=<token>`.
+  The token is Ed25519-signed by the platform and verified with the `HANDOFF_PUBLIC_KEY` var, so the tenant holds no signing secret.
+  It must name this tenant (`aud` equals `TENANT_ID`), come from the platform (`iss`), and be at most 60 seconds old, with 5 seconds of clock skew allowed.
+- Each token works once: its nonce is inserted into `used_handoff_nonces` only after the signature checks out, with an insert that does nothing for a nonce already there, so a replay (or two racing requests) can't sign in twice.
+  Nonces are deleted 65 seconds after the token expires, by the scheduler's expired-auth cleanup.
+- Every refusal shows the same page with no reason on it; the reason goes to the Worker's logs.
+  The page and the redirect carry `Cache-Control: no-store` and `Referrer-Policy: no-referrer`, and a successful sign-in redirects to `/`, so the token leaves the address bar.
+- A sign-in creates the same session as every other method (`identity_kind` `hosted`, the account's email as the identity).
+  A support sign-in by the owner (`hosted_support`) lasts an hour and is refused unless the platform's audit log recorded it.
+- Props from the platform are read per request and never stored; in hosted mode a request without valid props for this tenant gets 503 and nothing else.
+- Customers' own passkeys work as on a self-hosted install, and signing out also signs out of the platform.
 
 ## Response headers
 

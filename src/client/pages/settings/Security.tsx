@@ -9,19 +9,28 @@ import { PasskeysCard } from "../../components/PasskeysCard";
 import { EncryptionCard } from "./EncryptionCard";
 import { ErrorBanner, SecondaryButton, errMessage, plural } from "./shared";
 
-const KIND_LABEL: Record<string, string> = { github: "GitHub", email: "an email link", passkey: "a passkey" };
+const KIND_LABEL: Record<string, string> = {
+  github: "GitHub",
+  email: "an email link",
+  passkey: "a passkey",
+  hosted: "OpenPing Hosted",
+  hosted_support: "OpenPing Hosted, as support",
+};
 
 /** Settings > Sign-in & security: passkeys, sessions, API tokens and encryption keys. */
 export default function SecuritySettings() {
-  const { csrf } = useBootstrap();
+  const { csrf, me } = useBootstrap();
   return (
     <div className="stagger space-y-6 [&>*]:animate-enter">
       <PasskeysCard csrf={csrf ?? undefined} />
       <SessionsCard csrf={csrf ?? undefined} />
       <ApiTokensPointer />
-      <section id="encryption" className="scroll-mt-6">
-        <EncryptionCard csrf={csrf ?? undefined} />
-      </section>
+      {/* On OpenPing Hosted the platform holds and rotates the encryption key. */}
+      {!me?.hosted && (
+        <section id="encryption" className="scroll-mt-6">
+          <EncryptionCard csrf={csrf ?? undefined} />
+        </section>
+      )}
     </div>
   );
 }
@@ -65,6 +74,15 @@ function SessionsCard({ csrf }: { csrf: string | undefined }) {
               </>
             ) : (
               "Signed in."
+            )}
+            {me?.hosted && (
+              <span className="block text-xs text-ink-faint">
+                Your OpenPing Hosted account signs you in here.{" "}
+                <a href={me.hosted.accountUrl} className="underline underline-offset-2 hover:text-ink">
+                  Manage your account
+                </a>
+                .
+              </span>
             )}
             {me?.expiresAt ? (
               <span className="block text-xs text-ink-faint">

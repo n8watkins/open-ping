@@ -3,6 +3,8 @@ import { DateTime } from "luxon";
 import type { AppEnv } from "../types";
 import { requireAuth } from "../middleware/auth";
 import { getExportableSettings, setSetting } from "../db/settings";
+import { hostedMode } from "../lib/hosted";
+import { HOSTED_ERRORS } from "../../shared/hosted-contract";
 
 /**
  * General settings API mounted at /api/settings. Reads/writes non-secret app
@@ -153,6 +155,10 @@ settings.put("/", async (c) => {
   const pending: Array<{ key: string; value: string }> = [];
   for (const [key, value] of Object.entries(input)) {
     if (!WRITABLE.has(key)) continue;
+    // Hosted mode: the platform gives this OpenPing its address.
+    if (key === "app_url" && hostedMode(c.env)) {
+      return c.json({ error: HOSTED_ERRORS.managedByPlatform, key }, 400);
+    }
     const str = typeof value === "string" ? value : JSON.stringify(value);
     const validate = VALIDATORS[key];
     const error = validate ? validate(str) : null;

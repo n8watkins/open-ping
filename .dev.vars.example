@@ -58,3 +58,12 @@ SETUP_TOKEN=
 # VAPID_PUBLIC_KEY=
 # VAPID_PRIVATE_KEY=
 # VAPID_SUBJECT=
+
+# --- OpenPing Hosted mode, for working on it locally (optional) ---
+# Runs this OpenPing the way the Hosted platform does (docs/hosted/CONTRACT.md).
+# Leave these out for a normal install. HOSTED_DEV_TENANT stands in for the
+# props the platform passes; only `npm run dev` reads it, never a deployment.
+# HOSTED_MODE=1
+# TENANT_ID=abcdefgh12345678
+# HANDOFF_PUBLIC_KEY=
+# HOSTED_DEV_TENANT={"id":"abcdefgh12345678","slug":"acme","status":"trial","plan":"trial","limits":{"monitors":5,"statusPages":1,"minIntervalMinutes":12,"channelKinds":["email"],"emailsPerDay":50},"trialEndsAt":null,"urls":{"account":"http://localhost:5173/","billing":"http://localhost:5173/","upgrade":"http://localhost:5173/","signIn":"http://localhost:5173/login","signOut":"http://localhost:5173/"}}

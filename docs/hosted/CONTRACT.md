@@ -43,7 +43,10 @@ It has no `SETUP_TOKEN`, no GitHub OAuth app, no `RESEND_API_KEY` and no `API_TO
 In hosted mode OpenPing:
 
 - refuses `/setup`, `/recover`, the setup token and the GitHub OAuth configuration with 404 `managed_by_platform`, and hides them in the UI;
+  the email magic link is refused the same way, since the platform's own sign-in replaces it;
 - signs in only through the hand-off (section 7) and the customer's own passkeys;
+- reports setup as complete to the app, so no wizard is ever shown;
+- refuses a change to the install's address (`app_url`, HTTP 400 `managed_by_platform`) and hides it and the email sender in Settings, since the platform gives each tenant its address and sends its email;
 - takes its limits from `props.tenant.limits` instead of `WORKERS_PLAN`;
 - sends email only through `props.platform.sendEmail`;
 - shows "Managed by OpenPing Hosted" in Settings, with links to `props.tenant.urls.account` and `props.tenant.urls.billing`;
@@ -51,6 +54,7 @@ In hosted mode OpenPing:
 - keeps every other feature identical to a plain install.
 
 A plain install never reads props, never answers an internal path, and behaves exactly as it does today.
+The switch and the gate live in `src/worker/lib/hosted.ts`; `test/integration/hosted-mode.test.ts` checks both modes against the real Worker.
 
 ## 3. Props on every call
 
@@ -70,6 +74,8 @@ The shape is `TenantProps`:
 Props are fresh on every call, so a plan change, a suspension or a new limit reaches the tenant on its next request without a release.
 The user Worker must not cache props, and above all must not keep the `platform` stub past the call that received it: Workers rejects that as cross-request I/O.
 When hosted mode is on and props are missing or `contract` is not a version it understands, the user Worker answers 503 and does nothing else.
+It checks props with `isTenantProps(props, env.TENANT_ID)`, so props for another tenant, or a `TENANT_ID` that isn't a tenant id, get the same answer.
+The body is `{ "error": "hosted_unavailable" }`, and the reason goes to the Worker's logs.
 
 `status` is billing state only.
 A tenant that is still being provisioned is never dispatched to, so the user Worker never sees it.
@@ -218,7 +224,29 @@ Any failure shows one plain page, "This sign-in link has expired", with a button
 The reason is never shown to the visitor.
 The answer carries `Referrer-Policy: no-referrer` and `Cache-Control: no-store`, so the token does not leak.
 
+How OpenPing does each step (`src/worker/routes/hosted-auth.ts`):
+
+- A request with no `t`, an empty one, or more than one is `malformed`.
+- The single-use insert is `INSERT ... ON CONFLICT(nonce) DO NOTHING`, refused as `replayed` when it changes no row; it runs only after step 1, so nothing unsigned reaches the table.
+  `used_handoff_nonces` (migration 0018) holds `nonce`, `used_at` and `expires_at` (epoch ms, `(exp + HANDOFF_NONCE_RETENTION_SECONDS) * 1000`), and the scheduler's expired-auth cleanup deletes expired rows.
+- The session's identity is the token's `email`, with `identity_kind` `hosted` for a customer and `hosted_support` for support.
+  A customer's session lasts 30 days, like every other sign-in; a support session lasts one hour.
+  Any session the browser already had is ended first.
+- `session.created` is recorded with `actor` `customer` or `support` and `detail` `{ method: "handoff", role, account: sub }`.
+  A support sign-in that the platform can't record is refused; a customer's still signs in, and the failure is logged.
+- The failure page answers 400 for a refused token, 429 when the hand-off's rate limit (30 a minute per IP, 600 in total) is hit, and 503 when `HANDOFF_PUBLIC_KEY` is missing or invalid or a support audit failed.
+
 Signing out ends the tenant's session and redirects to `props.tenant.urls.signOut`, which ends the platform session too.
+`POST /api/auth/logout` and `/api/auth/logout-all` answer `{ ok: true, signOutUrl }` in hosted mode and leave a two-minute `op_signed_out` cookie (path `/login`), so the app's usual next step, loading `/login`, is redirected once to `signOutUrl`.
+
+### Testing and local development
+
+Props reach a user Worker only as `ctx.props`, which only the dispatcher sets.
+Tests pass them the same way, by calling the Worker's `fetch(request, env, ctx)` with a context that carries `props`, so no header, cookie or query parameter can ever stand in for props.
+
+`npm run dev` has no dispatcher, so for local work only, the `HOSTED_DEV_TENANT` var (TenantInfo JSON) stands in for `props.tenant`, with a platform capability that logs and sends nothing.
+It is read only when Vite's compile-time `import.meta.env.DEV` is true, which a production build replaces with false, so a deployed Worker ignores it whatever its vars say.
+`.dev.vars.example` has an example.
 
 ## 8. Error codes
 
@@ -226,8 +254,10 @@ Signing out ends the tenant's session and redirects to `props.tenant.urls.signOu
 | --- | --- | --- |
 | 402 | `plan_limit` | a create or update over the plan (section 5) |
 | 403 | `tenant_suspended` | a write while `tenant.status` is `suspended` (reads and exports still work) |
-| 404 | `managed_by_platform` | `/setup`, `/recover`, the GitHub OAuth configuration in hosted mode |
+| 400 | `managed_by_platform` | a change to `app_url` in hosted mode (section 2) |
+| 404 | `managed_by_platform` | `/setup`, `/recover`, the GitHub OAuth configuration and the email magic link in hosted mode |
 | 404 | `not_found` | an internal path without a valid platform call, the same as any unknown route |
+| 503 | `hosted_unavailable` | hosted mode without valid props for this tenant (section 3) |
 
 The constants are in `HOSTED_ERRORS`.
 

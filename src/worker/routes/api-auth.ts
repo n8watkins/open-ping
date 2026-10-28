@@ -10,6 +10,7 @@ import { homePage } from "../lib/home-page";
 import { waitlistEnabled } from "./waitlist";
 import { countPasskeys, getPasskey } from "../db/passkeys";
 import { relyingParty } from "../lib/passkey-ceremony";
+import { hostedAccount, hostedProps, hostedStatus, markSignedOut } from "../lib/hosted";
 
 /** Session/identity endpoints mounted at /api/auth. */
 export const apiAuth = new Hono<AppEnv>();
@@ -23,12 +24,15 @@ apiAuth.get("/me", async (c) => {
     session.identity_kind === "passkey"
       ? ((await getPasskey(c.env, session.identity))?.name ?? "Passkey")
       : session.identity;
+  const hosted = hostedProps(c);
   return c.json({
     authenticated: true,
     identity,
     identityKind: session.identity_kind,
     csrf: session.csrf_secret,
     expiresAt: session.expires_at,
+    // Hosted mode only: the plan and the links into the platform for Settings.
+    ...(hosted ? { hosted: hostedAccount(hosted) } : {}),
   });
 });
 
@@ -39,6 +43,25 @@ apiAuth.get("/me", async (c) => {
  */
 apiAuth.get("/status", async (c) => {
   const rp = await relyingParty(c);
+  const hosted = hostedProps(c);
+  if (hosted) {
+    // Hosted mode: the platform set this OpenPing up and signs its customer
+    // in, so there is no wizard, GitHub app or email link to offer; the
+    // customer's own passkeys still work.
+    return c.json({
+      setupComplete: true,
+      encryptionConfigured: isValidMasterKey(c.env.MASTER_KEY),
+      githubEnabled: false,
+      githubAdminConfigured: false,
+      emailAdminConfigured: false,
+      passkeyConfigured: (await countPasskeys(c.env)) > 0,
+      passkeyRpId: rp.rpId,
+      passkeyOrigin: rp.origin,
+      homePage: homePage(c.env),
+      waitlistEnabled: waitlistEnabled(c.env),
+      hosted: hostedStatus(hosted),
+    });
+  }
   return c.json({
     setupComplete: (await getSetting(c.env, "setup_complete")) === "true",
     encryptionConfigured: isValidMasterKey(c.env.MASTER_KEY),
@@ -64,7 +87,9 @@ apiAuth.post("/logout", async (c) => {
     return c.json({ error: "csrf_failed" }, 403);
   }
   await destroySession(c);
-  return c.json({ ok: true });
+  // Hosted mode: the sign-out continues to the platform's (lib/hosted.ts).
+  const signOutUrl = markSignedOut(c);
+  return c.json(signOutUrl ? { ok: true, signOutUrl } : { ok: true });
 });
 
 /**
@@ -81,5 +106,6 @@ apiAuth.post("/logout-all", async (c) => {
   }
   await revokeAllSessions(c.env);
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
-  return c.json({ ok: true });
+  const signOutUrl = markSignedOut(c);
+  return c.json(signOutUrl ? { ok: true, signOutUrl } : { ok: true });
 });

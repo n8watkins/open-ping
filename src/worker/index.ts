@@ -9,6 +9,9 @@ import { heartbeats } from "./routes/heartbeats";
 import { feeds } from "./routes/feeds";
 import { mcp, MCP_MAX_BODY_BYTES } from "./mcp/handler";
 import { runScheduled } from "./scheduler";
+import { hostedAuth } from "./routes/hosted-auth";
+import { hostedGate, refuseWhenHosted, signOutRedirect } from "./lib/hosted";
+import { HANDOFF_PATH } from "../shared/hosted-contract";
 import { homePage, withLandingHead } from "./lib/home-page";
 import {
   BASE_SECURITY_HEADERS,
@@ -72,6 +75,23 @@ app.use("*", async (c, next) => {
   if (c.res) c.res = new Response(c.res.body, c.res);
 });
 
+// Hosted mode (docs/hosted/CONTRACT.md): every call must carry the platform's
+// props, which are kept on this request's context. A plain install passes
+// straight through. The paths the platform manages instead (first-run setup,
+// SETUP_TOKEN recovery, GitHub OAuth and the email magic link) answer 404
+// managed_by_platform there.
+app.use("*", hostedGate({ dev: isViteDev }));
+for (const path of [
+  "/api/setup",
+  "/api/setup/*",
+  "/api/auth/passkeys/recover/*",
+  "/api/auth/magic/*",
+  "/auth/github/*",
+  "/auth/magic/*",
+]) {
+  app.use(path, refuseWhenHosted);
+}
+
 // Bound attacker-controlled request bodies before any route parses JSON. Public
 // probe/auth/heartbeat endpoints need only tiny payloads; authenticated import
 // and configuration routes get a larger ceiling for legitimate backups.
@@ -91,6 +111,9 @@ app.use("/api/*", bodyLimit({ maxSize: API_BODY_LIMIT, onError: payloadTooLarge 
 // JSON API (auth, monitors, incidents, settings, …). Mounted before the SPA
 // fallback so API routes never get swallowed by the asset handler.
 app.route("/api", api);
+
+// The OpenPing Hosted sign-in hand-off (hosted mode only; passes through otherwise).
+app.route(HANDOFF_PATH, hostedAuth);
 
 // Browser-facing OAuth / magic-link redirect flows.
 app.route("/auth", auth);
@@ -113,6 +136,9 @@ app.all("/.well-known/*", async (c, next) => {
   if (c.req.path.startsWith("/.well-known/oauth-")) return c.json({ error: "not_found" }, 404);
   await next();
 });
+
+// Hosted mode: a browser that just signed out goes on to the platform's sign-out.
+app.get("/login", signOutRedirect);
 
 // Everything else: serve the built SPA. `not_found_handling: single-page-application`
 // in wrangler.jsonc makes ASSETS return index.html for client-side routes.

@@ -20,7 +20,7 @@ interface PasskeysResponse {
   rpId: string;
   origin: string;
   currentPasskeyId: string | null;
-  otherSignIn: { github: boolean; email: boolean };
+  otherSignIn: { github: boolean; email: boolean; hosted?: boolean };
 }
 
 /** "MacBook" from a user agent, as a default passkey name. */
@@ -101,7 +101,13 @@ export function PasskeysCard({ csrf }: { csrf: string | undefined }) {
   }
 
   const others = data
-    ? [data.otherSignIn.github && "GitHub", data.otherSignIn.email && "an email link"].filter(Boolean).join(" and ")
+    ? [
+        data.otherSignIn.hosted && "your OpenPing Hosted account",
+        data.otherSignIn.github && "GitHub",
+        data.otherSignIn.email && "an email link",
+      ]
+        .filter(Boolean)
+        .join(" and ")
     : "";
 
   return (
@@ -237,11 +243,16 @@ export function PasskeysCard({ csrf }: { csrf: string | undefined }) {
 
             <p className="border-t border-line pt-3 text-xs leading-relaxed text-ink-faint">
               {others ? `You can also sign in with ${others}. ` : "Passkeys are your only way to sign in. "}
-              Lost every passkey? Set a new <span className="font-mono">SETUP_TOKEN</span> in Cloudflare and use it at{" "}
-              <a href="/recover" className="underline underline-offset-2 hover:text-ink">
-                /recover
-              </a>
-              .
+              {/* On OpenPing Hosted the account is the way back in; there is no SETUP_TOKEN. */}
+              {!data.otherSignIn.hosted && (
+                <>
+                  Lost every passkey? Set a new <span className="font-mono">SETUP_TOKEN</span> in Cloudflare and use it at{" "}
+                  <a href="/recover" className="underline underline-offset-2 hover:text-ink">
+                    /recover
+                  </a>
+                  .
+                </>
+              )}
             </p>
           </div>
         ) : null}

@@ -65,7 +65,12 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.set("admin", {
     id: session.id,
     login: session.identity_kind === "github" ? session.identity : undefined,
-    email: session.identity_kind === "email" ? session.identity : undefined,
+    email:
+      session.identity_kind === "email" ||
+      session.identity_kind === "hosted" ||
+      session.identity_kind === "hosted_support"
+        ? session.identity
+        : undefined,
   });
 
   await touchSession(c.env, session);

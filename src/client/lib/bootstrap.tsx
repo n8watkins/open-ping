@@ -27,14 +27,34 @@ export interface AuthStatus {
   homePage?: "status" | "landing";
   /** Whether this install collects the Hosted waitlist (WAITLIST_ENABLED). */
   waitlistEnabled?: boolean;
+  /**
+   * Present only when this OpenPing runs on OpenPing Hosted, which sets it up
+   * and signs its customer in (docs/hosted/CONTRACT.md).
+   */
+  hosted?: { signInUrl: string };
+}
+
+/** The OpenPing Hosted account a signed-in customer sees in Settings (hosted mode only). */
+export interface HostedAccount {
+  slug: string;
+  plan: "trial" | "hosted" | "hosted_fast";
+  status: "trial" | "active" | "past_due" | "suspended";
+  /** End of the trial (epoch ms) while the status is "trial". */
+  trialEndsAt: number | null;
+  accountUrl: string;
+  billingUrl: string;
+  upgradeUrl: string;
+  signOutUrl: string;
 }
 
 export interface Me {
   authenticated: boolean;
   identity?: string;
-  identityKind?: "github" | "email" | "passkey";
+  identityKind?: "github" | "email" | "passkey" | "hosted" | "hosted_support";
   csrf?: string;
   expiresAt?: number;
+  /** Hosted mode only. */
+  hosted?: HostedAccount;
 }
 
 interface BootstrapValue {

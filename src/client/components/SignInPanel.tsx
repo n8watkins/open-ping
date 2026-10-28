@@ -82,7 +82,7 @@ function errorMessage(error: string, landing: boolean): ReactNode {
  * where it supports conditional mediation. One request at a time: the button
  * aborts a pending autofill request before it starts its own.
  */
-function usePasskeySignIn(enabled: boolean, autofill: boolean) {
+export function usePasskeySignIn(enabled: boolean, autofill: boolean) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef<AbortController | null>(null);
