@@ -37,7 +37,7 @@ Works the same for self-hosted installs, the owner's install and Hosted customer
 ### M1 as built (2026-10-28)
 
 - Icons: `node scripts/build-icons.mjs` renders the PNGs in `public/` from `icon.svg` and `maskable-icon.svg` (plus the white notification badge); commit them after changing an SVG.
-- Manifest screenshots (`public/screenshots/`) are the real Overview at 390x844 (2x) and 1440x900; retake them when the Overview changes a lot.
+- Manifest screenshots (`public/screenshots/`) are the Overview at 390x844 (2x) and 1440x900, taken on throwaway demo data in a local D1 (Website, API degraded, Payments, Docs), never an owner's real monitors; retake them the same way when the Overview changes a lot.
 - Install: `src/client/lib/install.ts` keeps the `beforeinstallprompt` event; `components/InstallApp.tsx` has the sidebar and More-menu entry, the iPhone steps sheet and the Settings > General card.
 - Offline: `public/sw.js` keeps the last `/api/overview` and `/api/overview/history` answers (network first) and no other API answer.
   A signed-out answer (401 or 403) or signing out clears them.
@@ -51,7 +51,7 @@ Works the same for self-hosted installs, the owner's install and Hosted customer
 **Checking it by hand.**
 Lighthouse no longer has a PWA category (removed in Lighthouse 12), and adding it to CI would mean a headless Chrome and Lighthouse as new dependencies, so it isn't in CI.
 To check a build: `npm run build`, `npx vite preview --port 5212`, sign in, then in Chrome DevTools run Lighthouse for Mobile, and look at Application > Manifest (no installability errors) and Application > Service workers.
-The 2026-10-28 run on the Overview scored Accessibility 98, Best Practices 100 and SEO 100; the two accessibility findings (heading order on the Overview, the range buttons' labels) predate M1.
+The 2026-10-28 run scored Accessibility 100, Best Practices 100 and SEO 100 on the Overview, and Accessibility 100 on a monitor page (whose SEO score is low on purpose: admin pages aren't indexed).
 For offline, stop the server (DevTools' offline switch doesn't reach the worker's own requests) and reload.
 
 ## Stage M2: OpenPing for Android in Google Play
