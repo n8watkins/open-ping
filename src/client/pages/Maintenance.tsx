@@ -1,662 +1,266 @@
-import {
-  useEffect,
-  useMemo,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
-import {
-  Loader2,
-  Plus,
-  Pencil,
-  Trash2,
-  X,
-  Wrench,
-  Globe,
-  Server,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { CalendarPlus, CalendarRange } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
-import { Card, CardHeader, CardTitle } from "../components/ui/Card";
-import { EmptyState } from "../components/ui/EmptyState";
-import { formatDateTime } from "../lib/format";
-import { cn } from "../lib/cn";
+import { PageTitle } from "../components/ui/PageTitle";
+import { MaintenanceExplainer } from "../components/maintenance/Explainer";
+import { QuickPause } from "../components/maintenance/QuickPause";
+import { WindowForm } from "../components/maintenance/WindowForm";
+import { ActiveWindowCard, PastWindows, UpcomingRow } from "../components/maintenance/WindowLists";
+import { choiceSummary, type MonitorOption } from "../components/maintenance/MonitorPicker";
+import { partitionWindows, type MaintenanceWindowItem } from "../components/maintenance/windows";
 
-// ---------------------------------------------------------------------------
-// Types (mirror the server records; the client owns its view)
-// ---------------------------------------------------------------------------
-
-type MaintenanceScope = "global" | "monitors";
-
-interface MaintenanceWindow {
-  id: string;
-  title: string;
-  scope: MaintenanceScope | string;
-  monitorIds: string[] | null;
-  startsAt: number;
-  endsAt: number;
-  recurrence: unknown;
-  publicMessage: string | null;
-  privateNotes: string | null;
-}
-
-interface MonitorOption {
-  id: string;
-  name: string;
-}
-
-type WindowState = "active" | "upcoming" | "ended";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+/**
+ * Maintenance: what it is for, "pause alerts now", a scheduler for planned
+ * windows, and the active (live countdown), upcoming and past windows. Reads
+ * and writes the /api/maintenance routes as they are; the Overview reads the
+ * same list.
+ */
 
 function errMessage(e: unknown, fallback: string): string {
   if (e instanceof ApiError) {
-    const d = e.data as { error?: string } | null;
+    const d = e.data as { message?: string; error?: string } | null;
+    if (d && typeof d.message === "string") return d.message;
     if (d && typeof d.error === "string") return d.error;
   }
   return e instanceof Error ? e.message : fallback;
 }
 
-/**
- * The list route is expected to return `{ windows: [...] }`, but tolerate a
- * `{ maintenance: [...] }` envelope or a bare array so the page renders
- * regardless of the final server shape.
- */
-function extractWindows(data: unknown): MaintenanceWindow[] {
-  if (!data) return [];
-  if (Array.isArray(data)) return data as MaintenanceWindow[];
-  if (typeof data === "object") {
-    const obj = data as Record<string, unknown>;
-    if (Array.isArray(obj.windows)) return obj.windows as MaintenanceWindow[];
-    if (Array.isArray(obj.maintenance))
-      return obj.maintenance as MaintenanceWindow[];
-  }
-  return [];
+function SectionHeading({ children, count }: { children: string; count?: number }) {
+  return (
+    <h2 className="mb-2 flex items-baseline gap-2 px-1 text-sm font-semibold text-ink">
+      {children}
+      {count != null && count > 0 && <span className="text-xs font-normal text-ink-faint">{count}</span>}
+    </h2>
+  );
 }
 
-function windowState(w: MaintenanceWindow, now: number): WindowState {
-  if (now >= w.startsAt && now < w.endsAt) return "active";
-  if (now < w.startsAt) return "upcoming";
-  return "ended";
+function ListSkeleton() {
+  return (
+    <div aria-hidden className="space-y-3">
+      <div className="skeleton h-4 w-24" />
+      <div className="overflow-hidden rounded-card border border-line bg-surface">
+        {[0, 1].map((i) => (
+          <div key={i} className="flex items-center gap-4 border-b border-line px-4 py-3 last:border-b-0">
+            <div className="skeleton h-11 w-12 shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="skeleton h-3.5 w-40" />
+              <div className="skeleton h-3 w-64 max-w-full" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
-
-const STATE_RANK: Record<WindowState, number> = {
-  active: 0,
-  upcoming: 1,
-  ended: 2,
-};
-
-/** Convert epoch ms to a `datetime-local` value in the browser's local tz. */
-function toLocalInput(ts: number): string {
-  const d = new Date(ts);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours(),
-  )}:${pad(d.getMinutes())}`;
-}
-
-function scopeSummary(
-  w: MaintenanceWindow,
-  byId: Map<string, string>,
-): string {
-  if (w.scope !== "monitors") return "All monitors";
-  const ids = w.monitorIds ?? [];
-  if (ids.length === 0) return "No monitors";
-  const names = ids.map((id) => byId.get(id) ?? "Unknown monitor");
-  if (names.length <= 2) return names.join(", ");
-  return `${names.slice(0, 2).join(", ")} +${names.length - 2} more`;
-}
-
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
 
 export default function Maintenance() {
   const { csrf } = useBootstrap();
+  const { data, loading, error, reload } = useFetch<{ windows: MaintenanceWindowItem[] }>("/api/maintenance");
+  const { data: monData } = useFetch<{ monitors: MonitorOption[] }>("/api/monitors");
 
-  const {
-    data,
-    loading,
-    error,
-    reload,
-  } = useFetch<unknown>("/api/maintenance");
-  const { data: monData } = useFetch<{ monitors: MonitorOption[] }>(
-    "/api/monitors",
+  const monitors = useMemo(
+    () =>
+      (monData?.monitors ?? [])
+        .map((m) => ({ id: m.id, name: m.name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [monData?.monitors],
   );
+  const monitorsById = useMemo(() => new Map(monitors.map((m) => [m.id, m.name])), [monitors]);
+  const scopeText = (w: MaintenanceWindowItem) =>
+    choiceSummary(w.scope === "monitors" && w.monitorIds?.length ? w.monitorIds : "all", monitorsById);
 
-  const monitors = useMemo(() => monData?.monitors ?? [], [monData?.monitors]);
-  const monitorsById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const mon of monitors) m.set(mon.id, mon.name);
-    return m;
-  }, [monitors]);
+  const windows = useMemo(() => data?.windows ?? [], [data?.windows]);
 
-  // Drive `now` from state on an interval so the per-row Active/Upcoming/Ended
-  // badges advance with wall-clock time instead of freezing until an unrelated
-  // re-render happens.
+  // Wall clock: every second while a window is active (the countdown), else
+  // every 30 s so upcoming windows move to active on time.
   const [now, setNow] = useState(() => Date.now());
+  const parts = useMemo(() => partitionWindows(windows, now), [windows, now]);
+  const hasActive = parts.active.length > 0;
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30_000);
+    const id = setInterval(() => setNow(Date.now()), hasActive ? 1000 : 30_000);
     return () => clearInterval(id);
-  }, []);
+  }, [hasActive]);
 
-  const windows = useMemo(() => {
-    const list = extractWindows(data);
-    // The sort only needs to re-run when data changes; it reads a fresh
-    // timestamp here while the live badges track `now`. (Keying the memo on a
-    // per-render `now` would defeat memoization entirely.)
-    const t = Date.now();
-    return [...list].sort((a, b) => {
-      const ra = STATE_RANK[windowState(a, t)];
-      const rb = STATE_RANK[windowState(b, t)];
-      if (ra !== rb) return ra - rb;
-      // Upcoming: soonest first. Active/ended: most recent start first.
-      return ra === 1 ? a.startsAt - b.startsAt : b.startsAt - a.startsAt;
-    });
-  }, [data]);
+  const [mode, setMode] = useState<{ kind: "none" } | { kind: "new" } | { kind: "edit"; id: string }>({
+    kind: "none",
+  });
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [rowError, setRowError] = useState<string | null>(null);
 
-  const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({});
-
-  async function deleteWindow(w: MaintenanceWindow) {
-    if (!window.confirm(`Delete maintenance window "${w.title}"?`)) return;
-    setRowBusy((m) => ({ ...m, [w.id]: true }));
+  async function act(w: MaintenanceWindowItem, run: () => Promise<unknown>, fallback: string) {
+    setBusy((b) => ({ ...b, [w.id]: true }));
+    setRowError(null);
     try {
-      await api(`/api/maintenance/${w.id}`, {
-        method: "DELETE",
-        csrf: csrf ?? undefined,
-      });
+      await run();
       await reload();
-    } catch {
-      /* surfaced on next load */
+      setNow(Date.now());
+    } catch (e) {
+      setRowError(errMessage(e, fallback));
     } finally {
-      setRowBusy((m) => ({ ...m, [w.id]: false }));
+      setBusy((b) => ({ ...b, [w.id]: false }));
     }
   }
+
+  const endNow = (w: MaintenanceWindowItem) =>
+    act(w, () => api(`/api/maintenance/${w.id}/end`, { method: "POST", csrf: csrf ?? undefined }), "Could not end the window.");
+  const extend = (w: MaintenanceWindowItem) =>
+    act(
+      w,
+      () =>
+        api(`/api/maintenance/${w.id}`, {
+          method: "PUT",
+          csrf: csrf ?? undefined,
+          json: { endsAt: w.endsAt + 30 * 60_000 },
+        }),
+      "Could not extend the window.",
+    );
+  const remove = (w: MaintenanceWindowItem) => {
+    if (!window.confirm(`Delete "${w.title ?? "this maintenance window"}"?`)) return;
+    void act(
+      w,
+      () => api(`/api/maintenance/${w.id}`, { method: "DELETE", csrf: csrf ?? undefined }),
+      "Could not delete the window.",
+    );
+  };
+
+  const editing = mode.kind === "edit" ? windows.find((w) => w.id === mode.id) ?? null : null;
+  const exampleMonitor = monitors[0]?.name ?? "your app";
+  const formOpen = mode.kind === "new" || editing != null;
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Maintenance<span className="text-accent">.</span></h1>
-        <p className="mt-1 text-sm text-ink-muted">
-          Schedule maintenance windows to suppress alerts and show planned
-          downtime on your status page.
-        </p>
-      </div>
-
-      <section className="mt-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Maintenance windows</CardTitle>
-            {!adding && (
-              <button
-                type="button"
-                onClick={() => {
-                  setAdding(true);
-                  setEditingId(null);
-                }}
-                className="inline-flex items-center gap-2 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
-              >
-                <Plus className="size-4" />
-                Schedule maintenance
-              </button>
-            )}
-          </CardHeader>
-
-          {adding && (
-            <div className="mb-4">
-              <MaintenanceForm
-                existing={null}
-                monitors={monitors}
-                csrf={csrf ?? undefined}
-                onSaved={() => {
-                  setAdding(false);
-                  void reload();
-                }}
-                onCancel={() => setAdding(false)}
-              />
-            </div>
-          )}
-
-          {loading && !data ? (
-            <div className="grid place-items-center py-10">
-              <Loader2 className="size-5 animate-spin text-ink-faint" />
-            </div>
-          ) : error ? (
-            <p className="rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
-              Could not load maintenance windows: {error}
-            </p>
-          ) : windows.length === 0 && !adding ? (
-            <EmptyState
-              icon={<Wrench className="size-6 text-accent" />}
-              title="No maintenance scheduled"
-              description="Schedule a maintenance window to pause alerting and let visitors know about planned work."
-            />
-          ) : (
-            <div className="divide-y divide-line overflow-hidden rounded-lg border border-line">
-              {windows.map((w) =>
-                editingId === w.id ? (
-                  <div key={w.id} className="p-3">
-                    <MaintenanceForm
-                      existing={w}
-                      monitors={monitors}
-                      csrf={csrf ?? undefined}
-                      onSaved={() => {
-                        setEditingId(null);
-                        void reload();
-                      }}
-                      onCancel={() => setEditingId(null)}
-                    />
-                  </div>
-                ) : (
-                  <WindowRow
-                    key={w.id}
-                    win={w}
-                    state={windowState(w, now)}
-                    scopeText={scopeSummary(w, monitorsById)}
-                    busy={!!rowBusy[w.id]}
-                    onEdit={() => {
-                      setEditingId(w.id);
-                      setAdding(false);
-                    }}
-                    onDelete={() => void deleteWindow(w)}
-                  />
-                ),
-              )}
-            </div>
-          )}
-        </Card>
-      </section>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Window row
-// ---------------------------------------------------------------------------
-
-function WindowRow({
-  win: w,
-  state,
-  scopeText,
-  busy,
-  onEdit,
-  onDelete,
-}: {
-  win: MaintenanceWindow;
-  state: WindowState;
-  scopeText: string;
-  busy: boolean;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  const global = w.scope !== "monitors";
-  return (
-    <div className="flex flex-col gap-2 p-3 sm:flex-row sm:items-start sm:justify-between">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-sm font-medium">{w.title}</span>
-          <StateBadge state={state} />
-          {w.recurrence ? (
-            <span className="rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[10px] text-ink-faint">
-              Recurring
-            </span>
-          ) : null}
-        </div>
-        <div className="mt-1 flex items-center gap-1.5 text-xs text-ink-muted">
-          {global ? (
-            <Globe className="size-3.5 text-ink-faint" />
-          ) : (
-            <Server className="size-3.5 text-ink-faint" />
-          )}
-          {scopeText}
-        </div>
-        <div className="mt-0.5 text-xs text-ink-faint">
-          {formatDateTime(w.startsAt)} to {formatDateTime(w.endsAt)}
-        </div>
-        {w.publicMessage && (
-          <p className="mt-1 max-w-prose text-xs text-ink-muted">
-            {w.publicMessage}
-          </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <PageTitle description="Pause alerts during planned work, and tell visitors it's planned.">
+          Maintenance
+        </PageTitle>
+        {!formOpen && (
+          <button
+            type="button"
+            onClick={() => setMode({ kind: "new" })}
+            className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-canvas transition-colors duration-(--duration-fast) hover:bg-accent-hover"
+          >
+            <CalendarPlus className="size-4" />
+            Plan maintenance
+          </button>
         )}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1">
-        <IconButton title="Edit" onClick={onEdit} disabled={busy}>
-          <Pencil className="size-4" />
-        </IconButton>
-        <IconButton title="Delete" onClick={onDelete} disabled={busy} danger>
-          {busy ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Trash2 className="size-4" />
-          )}
-        </IconButton>
-      </div>
-    </div>
-  );
-}
-
-function StateBadge({ state }: { state: WindowState }) {
-  if (state === "active") {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-maint/40 bg-maint/10 px-2.5 py-0.5 text-[11px] font-medium text-maint">
-        <span className="size-1.5 rounded-full bg-maint" />
-        Active now
-      </span>
-    );
-  }
-  if (state === "upcoming") {
-    return (
-      <span className="inline-flex items-center rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-ink-muted">
-        Scheduled
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-ink-faint">
-      Ended
-    </span>
-  );
-}
-
-function IconButton({
-  children,
-  title,
-  onClick,
-  disabled,
-  danger,
-}: {
-  children: ReactNode;
-  title: string;
-  onClick: () => void;
-  disabled?: boolean;
-  danger?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      aria-label={title}
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        "grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40",
-        danger && "hover:text-down",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Schedule / edit form
-// ---------------------------------------------------------------------------
-
-function MaintenanceForm({
-  existing,
-  monitors,
-  csrf,
-  onSaved,
-  onCancel,
-}: {
-  existing: MaintenanceWindow | null;
-  monitors: MonitorOption[];
-  csrf: string | undefined;
-  onSaved: () => void;
-  onCancel: () => void;
-}) {
-  const isEdit = existing != null;
-
-  const [title, setTitle] = useState(existing?.title ?? "");
-  const [scope, setScope] = useState<MaintenanceScope>(
-    existing?.scope === "monitors" ? "monitors" : "global",
-  );
-  const [monitorIds, setMonitorIds] = useState<string[]>(
-    existing?.monitorIds ?? [],
-  );
-  const [startsAt, setStartsAt] = useState(
-    existing ? toLocalInput(existing.startsAt) : "",
-  );
-  const [endsAt, setEndsAt] = useState(
-    existing ? toLocalInput(existing.endsAt) : "",
-  );
-  const [publicMessage, setPublicMessage] = useState(
-    existing?.publicMessage ?? "",
-  );
-  const [privateNotes, setPrivateNotes] = useState(existing?.privateNotes ?? "");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  function toggleMonitor(id: string) {
-    setMonitorIds((prev) =>
-      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id],
-    );
-  }
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    const startMs = startsAt ? new Date(startsAt).getTime() : NaN;
-    const endMs = endsAt ? new Date(endsAt).getTime() : NaN;
-
-    if (!title.trim()) {
-      setError("Title is required.");
-      return;
-    }
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
-      setError("Start and end times are required.");
-      return;
-    }
-    if (endMs <= startMs) {
-      setError("End time must be after the start time.");
-      return;
-    }
-    if (scope === "monitors" && monitorIds.length === 0) {
-      setError("Select at least one monitor, or switch to all monitors.");
-      return;
-    }
-
-    const payload = {
-      title: title.trim(),
-      scope,
-      monitorIds: scope === "monitors" ? monitorIds : undefined,
-      startsAt: startMs,
-      endsAt: endMs,
-      publicMessage: publicMessage.trim() || undefined,
-      privateNotes: privateNotes.trim() || undefined,
-    };
-
-    setSaving(true);
-    setError(null);
-    try {
-      if (isEdit && existing) {
-        await api(`/api/maintenance/${existing.id}`, {
-          method: "PUT",
-          csrf,
-          json: payload,
-        });
-      } else {
-        await api("/api/maintenance", {
-          method: "POST",
-          csrf,
-          json: payload,
-        });
-      }
-      onSaved();
-    } catch (err) {
-      setError(errMessage(err, "Could not save maintenance window."));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <form
-      onSubmit={submit}
-      className="space-y-3 rounded-lg border border-line bg-surface-2/40 p-4"
-    >
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium">
-          {isEdit ? "Edit maintenance window" : "Schedule maintenance"}
-        </h4>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="grid size-7 place-items-center rounded-lg text-ink-muted hover:bg-surface-2 hover:text-ink"
-          aria-label="Cancel"
-        >
-          <X className="size-4" />
-        </button>
-      </div>
-
-      <Field label="Title">
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="e.g. Database upgrade"
-          className="input"
-          required
-        />
-      </Field>
-
-      <Field label="Scope">
-        <select
-          value={scope}
-          onChange={(e) => setScope(e.target.value as MaintenanceScope)}
-          className="input"
-        >
-          <option value="global">All monitors</option>
-          <option value="monitors">Specific monitors</option>
-        </select>
-      </Field>
-
-      {scope === "monitors" && (
-        <Field label="Monitors">
-          {monitors.length === 0 ? (
-            <p className="text-xs text-ink-faint">No monitors available.</p>
-          ) : (
-            <div className="max-h-48 space-y-1.5 overflow-y-auto rounded-lg border border-line bg-surface p-2.5">
-              {monitors.map((m) => (
-                <label
-                  key={m.id}
-                  className="flex cursor-pointer items-center gap-2 text-sm text-ink"
-                >
-                  <input
-                    type="checkbox"
-                    checked={monitorIds.includes(m.id)}
-                    onChange={() => toggleMonitor(m.id)}
-                    className="size-4 accent-accent"
-                  />
-                  <span className="truncate">{m.name}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </Field>
+      {formOpen && (
+        <div className="mt-5">
+          <WindowForm
+            key={editing?.id ?? "new"}
+            existing={editing}
+            monitors={monitors}
+            csrf={csrf ?? undefined}
+            errorMessage={errMessage}
+            onSaved={() => {
+              setMode({ kind: "none" });
+              void reload();
+            }}
+            onCancel={() => setMode({ kind: "none" })}
+          />
+        </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Starts">
-          <input
-            type="datetime-local"
-            value={startsAt}
-            onChange={(e) => setStartsAt(e.target.value)}
-            className="input"
-            required
-          />
-        </Field>
-        <Field label="Ends">
-          <input
-            type="datetime-local"
-            value={endsAt}
-            onChange={(e) => setEndsAt(e.target.value)}
-            className="input"
-            required
-          />
-        </Field>
+      <div className="stagger mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <MaintenanceExplainer exampleMonitor={exampleMonitor} />
+        <QuickPause
+          monitors={monitors}
+          csrf={csrf ?? undefined}
+          errorMessage={errMessage}
+          onCreated={async () => {
+            await reload();
+            setNow(Date.now());
+          }}
+        />
       </div>
 
-      <Field
-        label="Public message (optional)"
-        hint="Shown to visitors on your public status page."
-      >
-        <textarea
-          value={publicMessage}
-          onChange={(e) => setPublicMessage(e.target.value)}
-          placeholder="We're performing scheduled maintenance and expect brief downtime."
-          rows={2}
-          className="input resize-y"
-        />
-      </Field>
-
-      <Field
-        label="Private notes (optional)"
-        hint="Internal only, never shown publicly."
-      >
-        <textarea
-          value={privateNotes}
-          onChange={(e) => setPrivateNotes(e.target.value)}
-          placeholder="Runbook link, on-call owner, rollback plan…"
-          rows={2}
-          className="input resize-y"
-        />
-      </Field>
-
-      {error && (
-        <p
-          role="alert"
-          className="rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down"
-        >
-          {error}
+      {rowError && (
+        <p role="alert" className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
+          {rowError}
         </p>
       )}
 
-      <div className="flex items-center gap-2">
-        <button
-          type="submit"
-          disabled={saving}
-          className="inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover disabled:opacity-60"
-        >
-          {saving && <Loader2 className="size-4 animate-spin" />}
-          {isEdit ? "Save changes" : "Schedule"}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-lg px-3 py-2 text-sm text-ink-muted transition-colors hover:text-ink"
-        >
-          Cancel
-        </button>
+      <div className="mt-8 space-y-8">
+        {loading && !data ? (
+          <>
+            <ListSkeleton />
+            <span className="sr-only" role="status">Loading maintenance windows</span>
+          </>
+        ) : error ? (
+          <p className="rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-sm text-down">
+            Could not load maintenance windows: {error}
+          </p>
+        ) : (
+          <>
+            {parts.active.length > 0 && (
+              <section aria-label="Active maintenance">
+                <SectionHeading count={parts.active.length}>Active now</SectionHeading>
+                <div className="space-y-3">
+                  {parts.active.map((entry) => (
+                    <ActiveWindowCard
+                      key={entry.win.id}
+                      entry={entry}
+                      now={now}
+                      scopeText={scopeText(entry.win)}
+                      busy={!!busy[entry.win.id]}
+                      onEnd={() => void endNow(entry.win)}
+                      onExtend={entry.win.recurrence ? undefined : () => void extend(entry.win)}
+                      onEdit={() => setMode({ kind: "edit", id: entry.win.id })}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section aria-label="Upcoming maintenance">
+              <SectionHeading count={parts.upcoming.length}>Upcoming</SectionHeading>
+              {parts.upcoming.length === 0 ? (
+                <div className="flex flex-col items-start gap-3 rounded-card border border-dashed border-line bg-surface/40 px-4 py-6 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="grid size-9 shrink-0 place-items-center rounded-full bg-maint/15 text-maint">
+                      <CalendarRange className="size-4" />
+                    </span>
+                    <div>
+                      <p className="text-sm font-medium text-ink">Nothing planned</p>
+                      <p className="text-xs text-ink-muted">
+                        Plan the next upgrade or migration here, so nobody gets paged for it.
+                      </p>
+                    </div>
+                  </div>
+                  {!formOpen && (
+                    <button
+                      type="button"
+                      onClick={() => setMode({ kind: "new" })}
+                      className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-xs font-medium text-ink transition-colors duration-(--duration-fast) hover:bg-surface-2"
+                    >
+                      <CalendarPlus className="size-3.5" /> Plan maintenance
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <ul className="stagger divide-y divide-line overflow-hidden rounded-card border border-line bg-surface">
+                  {parts.upcoming.map((entry) => (
+                    <UpcomingRow
+                      key={entry.win.id}
+                      entry={entry}
+                      now={now}
+                      scopeText={scopeText(entry.win)}
+                      busy={!!busy[entry.win.id]}
+                      onEdit={() => setMode({ kind: "edit", id: entry.win.id })}
+                      onDelete={() => remove(entry.win)}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <PastWindows entries={parts.past} scopeText={scopeText} busyIds={busy} onDelete={remove} />
+          </>
+        )}
       </div>
-    </form>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Shared field wrapper
-// ---------------------------------------------------------------------------
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-medium text-ink-muted">
-        {label}
-      </span>
-      {children}
-      {hint && <span className="mt-1 block text-xs text-ink-faint">{hint}</span>}
-    </label>
+    </div>
   );
 }
