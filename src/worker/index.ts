@@ -10,8 +10,9 @@ import { feeds } from "./routes/feeds";
 import { mcp, MCP_MAX_BODY_BYTES } from "./mcp/handler";
 import { runScheduled } from "./scheduler";
 import { hostedAuth } from "./routes/hosted-auth";
-import { hostedGate, refuseWhenHosted, signOutRedirect } from "./lib/hosted";
-import { HANDOFF_PATH } from "../shared/hosted-contract";
+import { platformRoutes } from "./routes/platform";
+import { hostedGate, hostedSchemaGate, refuseWhenHosted, signOutRedirect } from "./lib/hosted";
+import { HANDOFF_PATH, INTERNAL_PATH_PREFIX } from "../shared/hosted-contract";
 import { homePage, withLandingHead } from "./lib/home-page";
 import {
   BASE_SECURITY_HEADERS,
@@ -79,8 +80,10 @@ app.use("*", async (c, next) => {
 // props, which are kept on this request's context. A plain install passes
 // straight through. The paths the platform manages instead (first-run setup,
 // SETUP_TOKEN recovery, GitHub OAuth and the email magic link) answer 404
-// managed_by_platform there.
+// managed_by_platform there. The first call after an update applies the
+// bundled migrations the database is missing (lib/migrate.ts).
 app.use("*", hostedGate({ dev: isViteDev }));
+app.use("*", hostedSchemaGate);
 for (const path of [
   "/api/setup",
   "/api/setup/*",
@@ -114,6 +117,10 @@ app.route("/api", api);
 
 // The OpenPing Hosted sign-in hand-off (hosted mode only; passes through otherwise).
 app.route(HANDOFF_PATH, hostedAuth);
+
+// The platform's internal calls: the scheduler entry and health (hosted mode
+// only, and only from the platform; passes through otherwise).
+app.route(INTERNAL_PATH_PREFIX.slice(0, -1), platformRoutes);
 
 // Browser-facing OAuth / magic-link redirect flows.
 app.route("/auth", auth);

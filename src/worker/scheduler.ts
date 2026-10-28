@@ -100,6 +100,14 @@ async function mapLimit<T>(
   await Promise.all(workers);
 }
 
+/**
+ * How a run ended, for the hosted scheduler entry (routes/platform.ts), which
+ * answers the platform with it. The cron handler ignores it.
+ */
+export type RunResult =
+  | { outcome: "lease_busy"; startedAt: number; d1Queries: number }
+  | { outcome: "ran" | "failed"; startedAt: number; stats: RunStats; deferred: number };
+
 /** Settings a run reads up front, in its first round trip. */
 const RUN_SETTINGS = [
   ...new Set(["retention", ...WEEKLY_GATE_SETTINGS, ...MONTHLY_GATE_SETTINGS]),
@@ -136,7 +144,7 @@ export async function runScheduled(
     rdapSpacingMs?: number;
     regional?: RegionalOptions;
   } = {},
-): Promise<void> {
+): Promise<RunResult> {
   // Every D1 query this run makes is counted against the plan's budget.
   const usage: UsageCounter = { d1: 0 };
   const env: Env = { ...baseEnv, DB: countingD1(baseEnv.DB, usage) };
@@ -162,7 +170,7 @@ export async function runScheduled(
   const holder = (holderRes?.results?.[0] as { holder?: string } | undefined)?.holder;
   if (holder !== lease.holder) {
     console.log("[scheduler] another run holds the lease; skipping");
-    return;
+    return { outcome: "lease_busy", startedAt: run.startedAt, d1Queries: usage.d1 };
   }
 
   const tally = {
@@ -172,6 +180,8 @@ export async function runScheduled(
     confirmations: 0,
     confirmationsCleared: 0,
     confirmationsDeferred: 0,
+    /** Due monitors left for the next run (the budget, or a re-check it couldn't afford). */
+    deferred: 0,
   };
   let stats: RunStats;
   try {
@@ -365,6 +375,7 @@ export async function runScheduled(
         ticket.end(fetchesSpent);
       }
     });
+    tally.deferred = deferred;
     if (deferred > 0) {
       tally.skipped += deferred;
       console.log(
@@ -581,4 +592,5 @@ export async function runScheduled(
   console.log(
     `[scheduler] cron=${controller.cron} checked=${stats.monitorsChecked} skipped=${stats.monitorsSkipped} failures=${stats.checkFailures} confirmations=${stats.confirmations ?? 0} cleared=${stats.confirmationsCleared ?? 0} deferred=${stats.confirmationsDeferred ?? 0} d1=${stats.d1Queries} ms=${Date.now() - run.startedAt}`,
   );
+  return { outcome: stats.ok ? "ran" : "failed", startedAt: run.startedAt, stats, deferred: tally.deferred };
 }

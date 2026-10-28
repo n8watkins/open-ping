@@ -1,16 +1,20 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
+import { openpingBundle } from "./scripts/bundle-module";
 
 const TEST_MASTER_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 
 export default defineConfig({
   plugins: [
+    // The Worker imports virtual:openping-bundle (its version and migrations).
+    openpingBundle(),
     cloudflareTest(async () => ({
       main: "./src/worker/index.ts",
       miniflare: {
         compatibilityDate: "2024-12-30",
         compatibilityFlags: ["nodejs_compat"],
-        d1Databases: ["DB"],
+        // FRESH_DB stays empty until a test migrates it (hosted self-migration).
+        d1Databases: ["DB", "FRESH_DB"],
         // Second-region confirmation's re-checkers (wrangler.jsonc durable_objects).
         // CONFIRM_REGIONS stays unset, so only the tests that turn it on use them.
         durableObjects: { REGION_PROBE: { className: "RegionProbe", useSQLite: true } },

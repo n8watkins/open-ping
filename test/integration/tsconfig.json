@@ -7,5 +7,5 @@
       "vitest/globals"
     ]
   },
-  "include": ["./**/*.ts", "../../src/worker/types.ts"]
+  "include": ["./**/*.ts", "../../src/worker/types.ts", "../../src/worker/bundle.d.ts"]
 }

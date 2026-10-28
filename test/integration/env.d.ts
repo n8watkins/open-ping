@@ -4,6 +4,8 @@ declare global {
   namespace Cloudflare {
     interface Env extends WorkerEnv {
       TEST_MIGRATIONS: D1Migration[];
+      /** A second database no test setup migrates (hosted-platform.test.ts). */
+      FRESH_DB: D1Database;
     }
 
     interface GlobalProps {

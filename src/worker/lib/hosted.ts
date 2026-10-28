@@ -4,6 +4,7 @@ import {
   HOSTED_CONTRACT_VERSION,
   HOSTED_ERRORS,
   isHostedMode,
+  isInternalPath,
   isTenantId,
   isTenantProps,
   type PlatformCapability,
@@ -11,6 +12,7 @@ import {
   type TenantProps,
 } from "../../shared/hosted-contract";
 import type { AppEnv, Env } from "../types";
+import { ensureSchema } from "./migrate";
 
 /**
  * Hosted mode: OpenPing running as a customer's user Worker in the OpenPing
@@ -111,6 +113,24 @@ export function hostedGate({ dev }: { dev: boolean }): MiddlewareHandler<AppEnv>
     return next();
   };
 }
+
+/**
+ * Self-migration, right after the hosted gate: the first call after an update
+ * applies the bundled migrations the database is missing before anything reads
+ * it (lib/migrate.ts; contract, section 6). When they can't be applied the
+ * call answers 503 and does nothing else. The internal paths migrate on their
+ * own, to answer in their own shape (routes/platform.ts). A plain install
+ * passes straight through: its migrations run from `npm run deploy`.
+ */
+export const hostedSchemaGate: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (!hostedProps(c) || isInternalPath(c.req.path)) return next();
+  const schema = await ensureSchema(c.env.DB);
+  if (!schema.ok) {
+    console.error(`[hosted] the database could not be migrated (${schema.reason}): ${schema.error}`);
+    return c.json({ error: HOSTED_ERRORS.unavailable }, 503);
+  }
+  return next();
+};
 
 /** The 404 every platform-managed path answers in hosted mode (contract, section 8). */
 export function managedByPlatform(c: Ctx): Response {

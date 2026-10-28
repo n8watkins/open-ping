@@ -190,6 +190,23 @@ A public call never migrates, so a visitor's request (which the browser may canc
 When it finds the schema older than its bundle, it answers 503 `hosted_updating` with `Retry-After: 10` and does nothing else: JSON `{ "error": "hosted_updating" }` for the API, MCP and heartbeats, and a short "This OpenPing is updating" page for a browser's page load.
 The next platform call migrates, so this lasts about a minute at most after an update.
 
+### How OpenPing does it
+
+The internal paths are `src/worker/routes/platform.ts`, and self-migration is `src/worker/lib/migrate.ts`.
+
+- On a plain install every internal path passes through to what it answered before (the app shell), even when a caller passes props and the header, and nothing migrates: a plain install's migrations run from `npm run deploy`.
+- The migrations are compiled into the bundle at build time (`virtual:openping-bundle`, from `scripts/bundle-module.ts`), each file split into statements by Wrangler's own SQL splitter, with the version from `package.json`.
+- Applied migrations are rows of Wrangler's own `d1_migrations` table, by file name, so the Worker and `wrangler d1 migrations apply` always agree on what a database has.
+  `schemaVersion` is the highest number among those names (`0019_incident_alert_repair.sql` is 19).
+- Each migration and its `d1_migrations` row go in one batch, which D1 runs as one transaction, so a migration is applied whole or not at all; `d1_migrations.name` is unique, so none is applied twice.
+- The lock is a row in `d1_migrations_lock` with a 60-second expiry, pushed on with each migration, so a call that dies mid-migration frees it on its own.
+  A call that finds it held looks again every 250 ms for up to 8 seconds; health doesn't wait.
+- Each isolate remembers that it saw the schema current, so only its first call costs the one query that checks.
+- `POST /__platform/scheduled` passes `cron` and `scheduledTime` to the same `runScheduled` the cron handler calls, then reports usage through `props.platform.reportUsage`.
+  A malformed body answers 400 `invalid_request`.
+  `d1Queries` counts the run's queries plus the migration check and the usage report.
+- `lastRun` is the latest finished row of `scheduler_runs` (`at` is when it started); a `lease_busy` call writes no row.
+
 ## 7. The sign-in hand-off
 
 A signed-in customer reaches their OpenPing through a redirect to `https://<slug>.<domain>/auth/hosted?t=<token>` (`HANDOFF_PATH`, `HANDOFF_QUERY_PARAM`).
