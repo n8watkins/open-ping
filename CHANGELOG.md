@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1 - 2026-10-28
+
+### Fixed
+
+- A weekly summary that fails to send retries hourly, not every run
+
 ## 0.8.0 - 2026-10-28
 
 Incident updates now reach your alert channels, and a review pass fixed passkey edge cases, big status pages and the monthly report.
