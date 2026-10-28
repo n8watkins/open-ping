@@ -17,6 +17,7 @@ export const EVENT_NAMES = [
   "cta_deploy",
   "cta_waitlist",
   "install_view",
+  "install_deploy",
   "signin_open",
   "signin_not_admin",
 ] as const;
