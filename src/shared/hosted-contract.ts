@@ -436,6 +436,8 @@ export const HOSTED_ERRORS = {
    * the bundle: only platform calls migrate, and the next one will.
    */
   updating: "hosted_updating",
+  /** 403 for a change a support sign-in may not make (section 7). */
+  supportRestricted: "support_restricted",
 } as const;
 
 // ---------------------------------------------------------------------------
