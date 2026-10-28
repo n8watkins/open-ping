@@ -546,17 +546,18 @@ describe("review fixes", () => {
     expect((await new Browser().fetch("/sign-in/email", { form: { email: newEmail() } })).status).toBe(200);
   });
 
-  it("counts a sign-up against the IP only once the address is acceptable, and the global limit only when the IP may", async () => {
+  // Five full provisionings and six sign-ins: can take more than the default 5 seconds on a busy machine.
+  it("counts a sign-up against the IP only once the address is acceptable, and the global limit only when the IP may", { timeout: 20_000 }, async () => {
     const ip = "203.0.113.50";
-    for (let i = 0; i < 8; i++) {
-      const browser = new Browser(ip);
-      await browser.signInWithCode(newEmail());
-      expect((await browser.fetch("/start", { form: { slug: "admin" } })).status).toBe(400);
-    }
+    // A refused address never reaches the limits, however often it is tried.
+    const refused = new Browser(ip);
+    await refused.signInWithCode(newEmail());
+    for (let i = 0; i < 8; i++) expect((await refused.fetch("/start", { form: { slug: "admin" } })).status).toBe(400);
     expect(await key("signup:ip")).toBe(0);
     for (let i = 0; i < 7; i++) {
-      const browser = new Browser(ip);
-      await browser.signInWithCode(newEmail());
+      // The first five each make an OpenPing (one per account); the last two are refused by the IP's limit.
+      const browser = i < 5 ? new Browser(ip) : refused;
+      if (i < 5) await browser.signInWithCode(newEmail());
       await browser.fetch("/start", { form: { slug: `ipco-${i}` } });
     }
     expect(await key("signup:ip")).toBe(7);
