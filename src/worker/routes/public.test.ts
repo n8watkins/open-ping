@@ -61,6 +61,31 @@ describe("computeOverall", () => {
     );
   });
 
+  it("returns all_off when every service is scheduled off", () => {
+    expect(computeOverall([svc("scheduled_off")], false)).toBe("all_off");
+    expect(
+      computeOverall([svc("scheduled_off"), svc("scheduled_off")], false),
+    ).toBe("all_off");
+  });
+
+  it("keeps a page with some services off-hours and the rest up operational", () => {
+    expect(
+      computeOverall([svc("operational"), svc("scheduled_off")], false),
+    ).toBe("operational");
+  });
+
+  it("lets maintenance and outages win over an all-off page", () => {
+    expect(
+      computeOverall([svc("scheduled_off"), svc("scheduled_off")], true),
+    ).toBe("maintenance");
+    expect(
+      computeOverall([svc("down"), svc("scheduled_off"), svc("scheduled_off")], false),
+    ).toBe("partial_outage");
+    expect(
+      computeOverall([svc("degraded"), svc("scheduled_off")], false),
+    ).toBe("degraded");
+  });
+
   it("treats maintenance/scheduled_off/unknown as non-outage states", () => {
     expect(
       computeOverall(
@@ -229,7 +254,6 @@ function makeMonitor(
     showUptime: false,
     showResponseTime: false,
     showIncidentDetails: true,
-    showScheduledOff: false,
     ...opts.public,
   };
   return {
@@ -306,6 +330,7 @@ function makeIncident(
 interface FakeState {
   monitor_id: string;
   state: MonitorState;
+  state_since?: number | null;
   last_duration_ms?: number | null;
   last_checked_at?: number | null;
   last_error?: string;
@@ -535,6 +560,120 @@ describe("GET /status per-page resolution + scoping", () => {
   });
 });
 
+describe("GET /status off-hours (scheduled_off)", () => {
+  beforeEach(() => {
+    vi.mocked(getSetting).mockResolvedValue(null);
+    vi.mocked(listMonitors).mockResolvedValue([]);
+    vi.mocked(publicMaintenance).mockResolvedValue({ active: [], upcoming: [] });
+    vi.mocked(getDefaultPage).mockResolvedValue(makePage());
+    vi.mocked(getStatusPageBySlug).mockResolvedValue(null);
+  });
+
+  const FRI_4_48_PM = Date.UTC(2026, 9, 23, 23, 48); // Fri 16:48 in Los Angeles
+
+  it("reports an off-hours monitor as scheduled_off with the time it went off", async () => {
+    vi.mocked(listMonitors).mockResolvedValue([
+      makeMonitor("mon-echo", { name: "Echo" }),
+      makeMonitor("mon-scout", { name: "Scout" }),
+    ]);
+    const env = makeDb({
+      states: [
+        {
+          monitor_id: "mon-echo",
+          state: "scheduled_off",
+          state_since: FRI_4_48_PM + 60_000,
+          last_checked_at: FRI_4_48_PM,
+        },
+        {
+          monitor_id: "mon-scout",
+          state: "up",
+          state_since: 5,
+          last_checked_at: FRI_4_48_PM,
+        },
+      ],
+    });
+
+    const res = await publicStatus.request("/status", {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    const services = body.groups.flatMap((g: any) => g.services);
+    const echo = services.find((s: any) => s.name === "Echo");
+    const scout = services.find((s: any) => s.name === "Scout");
+
+    expect(echo.state).toBe("scheduled_off");
+    expect(echo.since).toBe(FRI_4_48_PM + 60_000);
+    // Only off-hours carries a time: a "down since" would leak an outage that
+    // was never made public as an incident.
+    expect(scout.state).toBe("operational");
+    expect(scout.since).toBeNull();
+    // Some off, the rest up: off-hours never count as an outage.
+    expect(body.overall).toBe("operational");
+  });
+
+  it("falls back to the last check time when state_since is missing", async () => {
+    vi.mocked(listMonitors).mockResolvedValue([makeMonitor("mon-echo", { name: "Echo" })]);
+    const env = makeDb({
+      states: [
+        { monitor_id: "mon-echo", state: "scheduled_off", last_checked_at: FRI_4_48_PM },
+      ],
+    });
+    const body = (await (await publicStatus.request("/status", {}, env)).json()) as any;
+    expect(body.groups[0].services[0].since).toBe(FRI_4_48_PM);
+  });
+
+  it("reads all_off and still lists the services when every monitor is off", async () => {
+    vi.mocked(listMonitors).mockResolvedValue([
+      makeMonitor("mon-echo", { name: "Echo" }),
+      makeMonitor("mon-scout", { name: "Scout" }),
+    ]);
+    const env = makeDb({
+      states: [
+        { monitor_id: "mon-echo", state: "scheduled_off", state_since: 10 },
+        { monitor_id: "mon-scout", state: "scheduled_off", state_since: 20 },
+      ],
+    });
+
+    const body = (await (await publicStatus.request("/status", {}, env)).json()) as any;
+    expect(body.overall).toBe("all_off");
+    const services = body.groups.flatMap((g: any) => g.services);
+    expect(services.map((s: any) => [s.name, s.state])).toEqual([
+      ["Echo", "scheduled_off"],
+      ["Scout", "scheduled_off"],
+    ]);
+  });
+
+  it("ignores a legacy showScheduledOff: false and still reports scheduled_off", async () => {
+    // Monitors saved before the option was removed may still carry it.
+    vi.mocked(listMonitors).mockResolvedValue([
+      makeMonitor("mon-echo", {
+        name: "Echo",
+        public: { showScheduledOff: false } as Partial<PublicConfig>,
+      }),
+    ]);
+    const env = makeDb({
+      states: [{ monitor_id: "mon-echo", state: "scheduled_off", state_since: 10 }],
+    });
+    const body = (await (await publicStatus.request("/status", {}, env)).json()) as any;
+    expect(body.groups[0].services[0].state).toBe("scheduled_off");
+    expect(body.overall).toBe("all_off");
+  });
+
+  it("applies the same projection on a per-category page (?slug=)", async () => {
+    vi.mocked(getStatusPageBySlug).mockResolvedValue(
+      makePage({ slug: "apps", includeMode: "categories", categoryIds: ["cat-apps"] }),
+    );
+    vi.mocked(listMonitors).mockResolvedValue([
+      makeMonitor("mon-echo", { name: "Echo", categoryId: "cat-apps" }),
+    ]);
+    const env = makeDb({
+      states: [{ monitor_id: "mon-echo", state: "scheduled_off", state_since: 10 }],
+    });
+    const body = (await (await publicStatus.request("/status?slug=apps", {}, env)).json()) as any;
+    expect(body.groups[0].services[0].state).toBe("scheduled_off");
+    expect(body.overall).toBe("all_off");
+  });
+});
+
 describe("GET /badge.svg per-page resolution", () => {
   beforeEach(() => {
     vi.mocked(getSetting).mockResolvedValue(null);
@@ -564,6 +703,45 @@ describe("GET /badge.svg per-page resolution", () => {
     const svg = await res.text();
     expect(svg).toContain("operational");
     expect(svg).not.toContain("outage");
+  });
+
+  it("reads off hours when every service on the page is scheduled off", async () => {
+    vi.mocked(getDefaultPage).mockResolvedValue(makePage());
+    vi.mocked(listMonitors).mockResolvedValue([
+      makeMonitor("mon-echo", { name: "Echo" }),
+      makeMonitor("mon-scout", { name: "Scout" }),
+    ]);
+    const env = makeDb({
+      states: [
+        { monitor_id: "mon-echo", state: "scheduled_off" },
+        { monitor_id: "mon-scout", state: "scheduled_off" },
+      ],
+    });
+    const svg = await (await publicStatus.request("/badge.svg", {}, env)).text();
+    expect(svg).toContain("status: off hours");
+    expect(svg).not.toContain("operational");
+  });
+
+  it("stays operational when only some services are scheduled off", async () => {
+    vi.mocked(getDefaultPage).mockResolvedValue(makePage());
+    vi.mocked(listMonitors).mockResolvedValue([
+      makeMonitor("mon-echo", { name: "Echo" }),
+      makeMonitor("mon-scout", { name: "Scout" }),
+    ]);
+    const env = makeDb({
+      states: [
+        { monitor_id: "mon-echo", state: "scheduled_off" },
+        { monitor_id: "mon-scout", state: "up" },
+      ],
+    });
+    const svg = await (await publicStatus.request("/badge.svg", {}, env)).text();
+    expect(svg).toContain("status: operational");
+  });
+
+  it("keeps the no services badge for a page with no public services", async () => {
+    vi.mocked(getDefaultPage).mockResolvedValue(makePage());
+    const svg = await (await publicStatus.request("/badge.svg", {}, makeDb({}))).text();
+    expect(svg).toContain("status: no services");
   });
 
   it("renders the neutral unknown badge for an unknown slug", async () => {

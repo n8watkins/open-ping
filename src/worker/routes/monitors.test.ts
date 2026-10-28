@@ -25,7 +25,6 @@ function heartbeatMonitor(): MonitorRecord {
       showUptime: true,
       showResponseTime: false,
       showIncidentDetails: true,
-      showScheduledOff: false,
     },
     categoryId: null,
     heartbeatToken: "raw-ingestion-token",

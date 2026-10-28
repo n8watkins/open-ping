@@ -563,9 +563,11 @@ export default function MonitorEditor() {
     const schedule = buildSchedule();
     // Set public.visible from the toggle while preserving the other public.*
     // fields (sortOrder, showUptime, showResponseTime, showIncidentDetails,
-    // showScheduledOff, name/description/group) round-tripped from the load. On
-    // create there's nothing to preserve, so zod fills the rest from defaults.
-    const publicBase =
+    // name/description/group) round-tripped from the load. On create there's
+    // nothing to preserve, so zod fills the rest from defaults. The removed
+    // showScheduledOff setting is never sent back: off-hours always show as
+    // "Scheduled off" on the public page.
+    const { showScheduledOff: _removed, ...publicBase } =
       preserved.public && typeof preserved.public === "object"
         ? (preserved.public as Record<string, unknown>)
         : {};

@@ -171,7 +171,11 @@ export const publicConfigSchema = z.object({
   showUptime: z.boolean().default(true),
   showResponseTime: z.boolean().default(false),
   showIncidentDetails: z.boolean().default(true),
-  showScheduledOff: z.boolean().default(false),
+  // `showScheduledOff` was removed: off-hours services are always shown as
+  // "Scheduled off". Older backups and API clients may still send it; z.object
+  // strips unknown keys, so those payloads still validate and the value is
+  // dropped (public.test.ts and data.test.ts pin this). Do not make this schema
+  // .strict() without keeping that compatibility.
 });
 
 export const heartbeatConfigSchema = z.object({
