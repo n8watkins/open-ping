@@ -23,6 +23,7 @@ Last updated: 2026-10-28.
   `HOME_PAGE` (wrangler var) picks what signed-out visitors see at `/`: `"status"` (default) for the install's own status page, `"landing"` for the marketing page, which only openping.n8builds.dev sets.
   Landing click counts go to `POST /api/events` (allow-listed names, daily totals in `page_events`, migration 0012, rate limited by the `EVENT_LIMITER` binding) and show in Settings; only a `"landing"` install counts.
   Before deploying it: add `"HOME_PAGE": "landing"` to `vars` in `deploy.local.json`, and run `npm run db:migrate:prod` for 0012.
+- **Status communication (branch `feat/incident-updates-feeds`, not yet deployed):** incident status updates on the public page, RSS/Atom feeds per status page, the monthly uptime report (Settings > Reports, CSV, opt-in email, REST, MCP, CLI), never-checked services show "No data yet", and hourly rollups are kept 64 days; migration 0013 adds `incident_updates` ([STATUS_PAGES.md](./STATUS_PAGES.md)).
 - Tagline everywhere: "Uptime monitoring on your own Cloudflare".
 - `v0.1.0` is a baseline tag at `5ff032c`; releases since then are cut with release-kit.
 

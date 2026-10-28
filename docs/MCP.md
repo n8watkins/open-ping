@@ -91,8 +91,9 @@ Read-only tools (annotated `readOnlyHint`):
 | `get_status` | Overall state, every monitor's state, last check, latency and 24h uptime, open incidents, the last scheduler run. |
 | `list_monitors` | Every monitor with id, type, target, schedule and current state; filter by `type`. |
 | `get_monitor` | One monitor's full configuration and current state, with secrets blanked. |
-| `list_incidents` | Incidents, newest first; filter by `status` (open, resolved, all), `monitorId`, `since`, `limit`. |
+| `list_incidents` | Incidents, newest first, each with its status updates and whether it is public; filter by `status` (open, resolved, all), `monitorId`, `since`, `limit`. |
 | `get_uptime` | Uptime per monitor over 24h, 7d, 30d and 90d from the rollups; optional `monitorId`. |
+| `get_monthly_report` | One calendar month's [uptime report](./STATUS_PAGES.md#monthly-uptime-report) per monitor (uptime, downtime and monitored minutes, incidents, average response) in the install's timezone; `month` (YYYY-MM) defaults to last month. |
 | `get_diagnostics` | Recent scheduler runs (checked, skipped, failures, duration, D1 queries) and table counts. |
 | `get_key_status` | `MASTER_KEY` rotation status: key ids, protected values per storage class by key, unreadable values by location, and whether `MASTER_KEY_PREVIOUS` is safe to delete ([runbook](./SECURITY.md#rotating-master_key)). |
 | `list_channels` | Notification channels and their delivery health, with webhook URLs and secrets blanked. |
@@ -110,6 +111,7 @@ Tools that change things:
 | `create_maintenance_window` | Schedules maintenance from `startsAt` (ISO 8601 or `now`) with `endsAt` or `durationMinutes`, for every monitor or a list of them, optionally weekly. |
 | `end_maintenance_window` | Ends an active window now; a weekly window also stops recurring. |
 | `update_status_page` | Changes only the fields you pass; `null` clears an optional text field. |
+| `post_incident_update` | Posts a status update (`investigating`, `identified`, `monitoring` or `resolved`, with a message) to an incident's public timeline. It shows publicly only while the incident is public, and it never opens or closes the incident. |
 
 Destructive tools (annotated `destructiveHint`) do nothing unless called with `confirm: true`.
 Their descriptions tell the model to set it only after you have agreed, and without it they return an error asking for confirmation:
@@ -120,7 +122,7 @@ Their descriptions tell the model to set it only after you have agreed, and with
 | `delete_maintenance_window` | Deletes a maintenance window, for example one that has not started yet. |
 | `rotate_heartbeat_token` | Gives a heartbeat monitor a new ping URL, shown once; the old URL stops working. |
 
-The same operations are available in the terminal through the [CLI](./CLI.md) and over REST, including `PATCH /api/monitors/:id`, `PATCH /api/status-pages/:id`, `GET /api/monitors/uptime` and `POST /api/maintenance/:id/end`.
+The same operations are available in the terminal through the [CLI](./CLI.md) and over REST, including `PATCH /api/monitors/:id`, `PATCH /api/status-pages/:id`, `GET /api/monitors/uptime`, `POST /api/maintenance/:id/end`, `POST /api/incidents/:id/updates` and `GET /api/reports/monthly`.
 
 ## Security
 

@@ -117,6 +117,78 @@ The older `public.showScheduledOff` field is no longer used: OpenPing still acce
 
 ---
 
+## Services that haven't been checked yet
+
+A new monitor shows **Unknown** until its first check, and its uptime reads **No data yet** instead of a figure it hasn't earned.
+Services without a state (never checked, warming up or paused) never count toward the banner, so they can't make a page read "All systems operational".
+A page where every service is still waiting says **Waiting for the first checks**.
+In the public feed such a service has `"uptime90d": null`, and a page of them has `"overall": "awaiting_data"` (the badge reads "no data yet").
+
+---
+
+## Incident updates
+
+An incident can carry a timeline of status updates, as Instatus and Better Stack status pages do.
+Each update has a status (**Investigating**, **Identified**, **Monitoring** or **Resolved**) and a message, and is stamped with the time it was posted.
+
+- Post, edit and delete updates in the incident's panel under **Incidents**, from the CLI (`op incidents update <id> --status identified --message "..."`), from an MCP client (`post_incident_update`), or over REST (`POST /api/incidents/:id/updates`, `PATCH` and `DELETE /api/incidents/:id/updates/:updateId`).
+- The public page lists them under the incident, newest first, each with its relative and absolute time.
+- Updates appear publicly only while the incident is marked **Show on public status page**, and only on pages that show its monitor.
+- The incident's **Public summary** (the older single public message) stays as a one-line summary above the timeline, so incidents published before updates existed look the same.
+  It isn't turned into an update, because it has no time of its own and is edited in place.
+- An update describes the incident; it never opens or closes it.
+  OpenPing resolves an incident when its monitor recovers, and you may want to post "Resolved" before or after that.
+- An incident holds at most 100 updates of up to 2,000 characters each.
+
+Posting an update does not send alerts to your notification channels yet.
+
+---
+
+## Feeds (RSS and Atom)
+
+Every status page has an RSS 2.0 and an Atom 1.0 feed of its public incidents and their updates, so people can follow it in a feed reader without an account:
+
+| Page | RSS | Atom |
+| --- | --- | --- |
+| Default page | `/status/feed.rss` | `/status/feed.atom` |
+| Any page | `/status/<slug>/feed.rss` | `/status/<slug>/feed.atom` |
+
+- Each public incident is one item, titled with its newest status, for example "Checkout incident (Identified)".
+  Its body holds the summary, when it started and ended, and every update, newest first.
+  A new update changes the item's updated time; its id stays the same.
+- A feed lists the 50 most recent public incidents on that page, with the same rules as the page itself.
+- An unknown slug or a page that is turned off answers 404.
+- Feeds are cached for 60 seconds and answer a conditional request with `304 Not Modified`.
+- The status page links both feeds with `<link rel="alternate">` and shows a **Subscribe (RSS)** link next to **Recent incidents**.
+
+---
+
+## Monthly uptime report
+
+**Settings > Reports** shows, for any of the last 13 calendar months, each monitor's:
+
+- **Uptime**: successful checks out of all checks, or "No data" when it wasn't checked;
+- **Downtime** in minutes;
+- **Monitored minutes**: the time its checks covered;
+- **Incidents** that started in the month;
+- **Average response time** of its successful checks.
+
+Months are calendar months in the install's timezone (Settings > General), including daylight saving changes.
+Off-hours are never counted: a monitor outside its schedule isn't checked, so that time is neither uptime nor downtime, and it isn't in the monitored minutes either.
+The current month is reported so far.
+
+Download it as CSV from the same card, or get it from `GET /api/reports/monthly?month=YYYY-MM&format=csv|json`, `op report --month YYYY-MM [--csv]` or the MCP tool `get_monthly_report`.
+`month` defaults to last month.
+
+Tick **Email me this report every month** to get it by email on the 1st, from 09:00 in the install's timezone, at the admin email (it needs `RESEND_API_KEY`).
+
+The report comes from the hourly and daily rollups, never from raw samples, in one database round trip.
+Hourly rollups are kept for 64 days by default, so last month is exact until this month ends.
+For older months, or with a shorter custom retention, a UTC day that straddles the month's start or end counts in proportion to its overlap.
+A monthly email costs the scheduler two D1 queries on the run that sends it, and it waits one run if the weekly summary went out on the same one.
+
+---
+
 ## What a public page never exposes
 
 Public pages (and their widget/badge) are built from a strictly redacted payload.
@@ -124,5 +196,6 @@ They never expose a monitor's URL, request body, auth/credentials, headers, its
 heartbeat token, or any internal error text.
 Service copy comes only from the public display name (falling back to the monitor
 name), and incident/maintenance text comes only from the admin-authored public
-message.
+message and the incident's posted updates.
 An incident for a monitor that isn't on a given page can never appear on it.
+The RSS and Atom feeds are built from the same redacted data and follow the same rules.

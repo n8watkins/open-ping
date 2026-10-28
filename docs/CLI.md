@@ -67,6 +67,9 @@ API failures exit with code 1 and print the HTTP status and any validation messa
 | `op monitors pause <id>`, `op monitors resume <id>` | Pauses or resumes checks and alerts. |
 | `op monitors rotate-token <id> --yes` | Gives a heartbeat monitor a new ping URL; the old one stops working. |
 | `op incidents list` | Incidents, newest first; `--status open\|resolved\|all`, `--monitor <id>`, `--since <ISO time>`, `--limit N`. |
+| `op incidents get <id>` | One incident with its public summary and status updates, newest first. |
+| `op incidents update <id> --status S --message "..."` | Posts a status update (`investigating`, `identified`, `monitoring` or `resolved`) to the incident's public timeline. |
+| `op report [--month YYYY-MM] [--csv]` | The monthly uptime report per monitor; last month by default, the CSV with `--csv`. |
 | `op uptime [--monitor <id>]` | Uptime over 24h, 7d, 30d and 90d. |
 | `op diagnostics [--runs N]` | Recent scheduler runs, including D1 queries per run, and table counts. |
 | `op channels list` | Notification channels and their delivery health (webhook URLs and secrets are blanked). |
@@ -126,8 +129,21 @@ op maintenance end mw_123
 
 While a window is active, the monitors it covers show Maintenance and open no incidents or alerts.
 
+## Incident updates and the monthly report
+
+```sh
+op incidents update inc_123 --status identified --message "A bad deploy; rolling it back."
+op incidents update inc_123 --status resolved --message "Back to normal since 14:05."
+op report                          # last month, in the install's timezone
+op report --month 2026-10 --csv > uptime-2026-10.csv
+```
+
+An update shows on the public status page and its feeds only while the incident is public, and it never opens or closes the incident.
+The report counts off-hours as neither uptime nor downtime; see [the monthly uptime report](./STATUS_PAGES.md#monthly-uptime-report).
+
 ## REST endpoints used
 
 Everything goes through the authenticated `/api` routes the web app uses, validated with the same schemas, so the CLI cannot store an invalid configuration.
 Partial updates use `PATCH /api/monitors/:id` and `PATCH /api/status-pages/:id`, which merge the change into the stored record and validate the result exactly like a full `PUT`.
 `op uptime` reads `GET /api/monitors/uptime`, and `op maintenance end` calls `POST /api/maintenance/:id/end`.
+`op incidents update` calls `POST /api/incidents/:id/updates`, and `op report` reads `GET /api/reports/monthly`.
