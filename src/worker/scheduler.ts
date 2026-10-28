@@ -7,6 +7,8 @@ import {
 } from "./db/monitors";
 import { isActiveAt } from "./lib/schedule";
 import { probeFetchLimit, runMonitorCheck } from "./checks/runner";
+import { parseDomainCache } from "./checks/domain";
+import { pacer } from "./lib/pace";
 import {
   applyCheckResult,
   setScheduledOff,
@@ -51,6 +53,10 @@ const CONCURRENCY = 6;
 // is run now rather than slipping to the following tick (which would otherwise
 // double its effective interval whenever a run takes a moment to reach it).
 const DUE_SLACK_MS = 6 * 60 * 1000;
+// Space a run's RDAP lookups (domain monitors) this far apart: rdap.org and the
+// registries rate limit bursts (lib/pace.ts). Most domain cycles are judged from
+// the cached read and make no lookup, so this rarely costs a run any time.
+const RDAP_SPACING_MS = 2_000;
 
 /** The preloaded row: what the scheduler needs, plus what a check reads (STATE_COLUMNS). */
 interface SchedulerStateRow extends CheckStateRow {
@@ -101,8 +107,8 @@ const RUN_SETTINGS = [
 export async function runScheduled(
   controller: ScheduledController,
   baseEnv: Env,
-  /** Tests only: a different budget than the plan's, a shorter re-check pause. */
-  opts: { budget?: PlanBudget; confirmDelayMs?: number } = {},
+  /** Tests only: a different budget than the plan's, a shorter re-check pause or RDAP spacing. */
+  opts: { budget?: PlanBudget; confirmDelayMs?: number; rdapSpacingMs?: number } = {},
 ): Promise<void> {
   // Every D1 query this run makes is counted against the plan's budget.
   const usage: UsageCounter = { d1: 0 };
@@ -263,14 +269,22 @@ export async function runScheduled(
         (states.get(a.id)?.next_check_at ?? 0) - (states.get(b.id)?.next_check_at ?? 0),
     );
     let deferred = 0;
+    const paceLookup = pacer(opts.rdapSpacingMs ?? RDAP_SPACING_MS);
     await mapLimit(duePolled, CONCURRENCY, async (m) => {
+      const st = states.get(m.id);
+      // A domain cycle judged from its cached read (checks/domain.ts) makes no
+      // request, so it reserves no fetch; plannedAt keeps that decision and the
+      // check's own the same.
+      const plannedAt = Date.now();
+      const domainCache = m.type === "domain" ? parseDomainCache(st?.domain_cache) : null;
       // Out of budget for this run: leave it due for the next tick.
-      const ticket = await budget.startCheck(probeFetchLimit(m));
+      const ticket = await budget.startCheck(
+        probeFetchLimit(m, m.type === "domain" ? { cache: domainCache, now: plannedAt } : undefined),
+      );
       if (!ticket) {
         deferred++;
         return;
       }
-      const st = states.get(m.id);
       // Warm-up applies on a cold start (never checked) or the first check after
       // the monitor comes back on schedule or out of maintenance. A monitor
       // already in `warming_up` is NOT warmed up again: the next check is a
@@ -293,11 +307,15 @@ export async function runScheduled(
           warmup,
           confirm,
           ...(opts.confirmDelayMs !== undefined ? { confirmDelayMs: opts.confirmDelayMs } : {}),
-          // The re-check costs another probe. When the run can't afford it the
-          // failure is not written at all (no state, sample or alert): the
-          // monitor stays due and is first in line next run, so an
+          // The re-check costs another probe. When the run can't afford it (or
+          // RDAP rate limited the lookup, so a re-check now would be refused
+          // too) the failure is not written at all (no state, sample or alert):
+          // the monitor stays due and is first in line next run, so an
           // unconfirmed failure never alerts.
           allowConfirm: () => ticket.tryConfirm(),
+          domainCache,
+          plannedAt,
+          paceLookup,
           now: Date.now(),
         });
         fetchesSpent = outcome.fetches;

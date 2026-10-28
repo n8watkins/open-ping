@@ -1140,7 +1140,7 @@ function recheckTitle(run: SchedulerRun): string | undefined {
     `${run.confirmationsCleared ?? 0} passed (no incident)`,
   ];
   if ((run.confirmationsDeferred ?? 0) > 0) {
-    parts.push(`${run.confirmationsDeferred} left for the next run (budget)`);
+    parts.push(`${run.confirmationsDeferred} left for the next run (budget or RDAP rate limit)`);
   }
   return parts.join(", ");
 }

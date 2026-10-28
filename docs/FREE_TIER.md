@@ -21,7 +21,10 @@ OpenPing's footprint has three parts:
    **DNS** and **domain-expiry** checks are ordinary outbound `fetch`
    subrequests (to Cloudflare's DNS-over-HTTPS resolver and to RDAP,
    respectively), and **TCP** checks open a `connect()` socket instead of a
-   `fetch`. Each still counts as roughly one check, and each run checks only as
+   `fetch`. A domain-expiry monitor asks RDAP only every 6 hours (hourly
+   near expiry) and judges the checks in between from the date it last read,
+   with no fetch at all ([MONITOR_TYPES.md](./MONITOR_TYPES.md#how-often-rdap-is-asked)).
+   Each still counts as roughly one check, and each run checks only as
    many monitors as fit its plan's per-run budget (about 8 on Free, up to 200 on
    Paid; see below), most overdue first, with the rest deferred to the next tick.
 3. **D1 reads/writes.** Each run does light database work: reading which monitors
@@ -85,6 +88,7 @@ The re-check costs another probe's fetches (one, plus any redirects it follows) 
 D1 queries, not fetches, decide how many checks fit on Free, so re-checks don't reduce the number of monitors a run can check.
 If a run has no fetch left for a re-check, it does not record the failure at all: the monitor keeps its state, no incident opens, and it stays due, so the next run checks it first and confirms it then.
 OpenPing chooses a 12-minute delay over an alert that wasn't confirmed; Settings > Diagnostics counts these as deferred re-checks.
+A domain monitor whose RDAP lookup was rate limited (HTTP 429), with no recent read to fall back on, is handled the same way: a re-check 5 seconds later would only be refused again, so the failure isn't recorded and the next run asks first; it counts as a deferred re-check too.
 A monitor that is already down gets no re-check, so a long outage costs one fetch per run, and heartbeats are never re-checked.
 A run with a re-check takes about 5 seconds longer (it waits before the second check); that is wall-clock time, not CPU time.
 

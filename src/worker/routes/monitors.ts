@@ -13,7 +13,8 @@ import {
   updateMonitor,
 } from "../db/monitors";
 import { runMonitorCheck } from "../checks/runner";
-import { applyCheckResult } from "../checks/state";
+import { applyCheckResult, readState } from "../checks/state";
+import { parseDomainCache } from "../checks/domain";
 import { firstCheckWithin, type FirstCheckResult } from "../checks/first-check";
 import {
   computeUptime,
@@ -307,11 +308,21 @@ monitors.get("/:id/detail", async (c) => {
     .first<{ avg: number | null; min: number | null; max: number | null }>();
 
   const samplesRes = await c.env.DB.prepare(
-    `SELECT at, ok, state, duration_ms AS durationMs, status_code AS statusCode, error
+    `SELECT at, ok, state, duration_ms AS durationMs, status_code AS statusCode, error, meta
      FROM samples WHERE monitor_id = ? AND at >= ? ORDER BY at`,
   )
     .bind(id, now - DAY)
-    .all();
+    .all<Record<string, unknown> & { meta: string | null }>();
+  // Only the latest sample carries its type-specific meta (resolved DNS records,
+  // domain expiry), which the page shows next to the target.
+  const samples = (samplesRes.results ?? []).map(({ meta, ...sample }, i, all) => {
+    if (i !== all.length - 1 || !meta) return sample;
+    try {
+      return { ...sample, meta: JSON.parse(meta) as unknown };
+    } catch {
+      return sample;
+    }
+  });
 
   const incidentsRes = await c.env.DB.prepare(
     `SELECT id, status, title, started_at AS startedAt, resolved_at AS resolvedAt,
@@ -329,7 +340,7 @@ monitors.get("/:id/detail", async (c) => {
     uptime: { d1: d1.uptimePct, d7: d7.uptimePct, d30: d30.uptimePct, d365: d365.uptimePct },
     latency: { avg: latency?.avg ?? null, min: latency?.min ?? null, max: latency?.max ?? null },
     incidentMetrics,
-    recentSamples: samplesRes.results ?? [],
+    recentSamples: samples,
     recentIncidents: incidentsRes.results ?? [],
   });
 });
@@ -379,7 +390,10 @@ monitors.post("/:id/rotate-heartbeat-token", async (c) => {
  * Manual test (PRD §9). Runs a check now and returns the outcome. By default it
  * does NOT affect stored history/state; pass ?apply=1 to persist the result.
  * Available for all polled types (http/dns/tcp/domain); heartbeats are
- * push-driven and cannot be actively probed.
+ * push-driven and cannot be actively probed. A domain monitor always asks RDAP,
+ * falling back to its cached read if that fails, like a scheduled check. An
+ * outcome whose confirmation was deferred (RDAP rate limited the lookup) is
+ * returned but never applied: it is the scheduler's to retry.
  */
 monitors.post("/:id/test", async (c) => {
   const monitor = await getMonitor(c.env, c.req.param("id"));
@@ -388,10 +402,15 @@ monitors.post("/:id/test", async (c) => {
     return c.json({ error: "not_testable", message: "Heartbeat monitors are push-driven." }, 400);
   }
   const apply = c.req.query("apply") === "1" || c.req.query("apply") === "true";
+  const known = monitor.type === "domain" || apply ? await readState(c.env, monitor.id) : undefined;
   const outcome = await runMonitorCheck(monitor, {
     confirm: monitor.confirmFailures !== "off",
+    ...(monitor.type === "domain"
+      ? { domainCache: parseDomainCache(known?.domain_cache), refreshDomain: true }
+      : {}),
     now: Date.now(),
   });
-  if (apply) await applyCheckResult(c.env, monitor, outcome);
-  return c.json({ outcome, applied: apply });
+  const applied = apply && outcome.confirmation !== "deferred";
+  if (applied) await applyCheckResult(c.env, monitor, outcome, known);
+  return c.json({ outcome, applied });
 });
