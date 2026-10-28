@@ -33,7 +33,8 @@ export const ADMIN_STYLE = `
 main.admin { max-width: 72rem; margin: 0 auto; padding: 16px 16px 24px; }
 @media (min-width: 640px) { main.admin { padding: 24px 32px 32px; } }
 .admin-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; margin: 0 0 8px; }
-.admin-head .brand { margin: 0; min-height: 44px; }
+.admin-head .brand { margin: 0; min-height: 44px; white-space: nowrap; }
+@media (max-width: 374px) { .narrow-hide { display: none; } }
 .tag { font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
 .head-link { display: flex; align-items: center; min-height: 44px; padding: 0 4px; font-size: 0.875rem; color: var(--ink-muted); text-decoration: none; white-space: nowrap; }
 .head-link:hover { color: var(--ink); }
@@ -60,16 +61,18 @@ select:focus-visible, textarea:focus-visible, input[type=file]:focus-visible { o
 .filters .wide-field { grid-column: 1 / -1; }
 .filters .go { display: flex; align-items: flex-end; gap: 8px; }
 .filters .go .button { width: 100%; }
+.filters.audit .go { grid-column: 1 / -1; }
 @media (min-width: 900px) {
   .filters { grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr)) auto; align-items: end; }
-  .filters .wide-field { grid-column: auto; }
+  .filters .wide-field, .filters.audit .go { grid-column: auto; }
   .filters.audit { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1.5fr) auto; }
 }
 .filters .go .button.small { min-height: 48px; }
 .result-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 0 0 8px; font-size: 0.875rem; color: var(--ink-muted); }
 .result-line a { display: inline-flex; align-items: center; min-height: 44px; }
 .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 0 20px; }
-@media (min-width: 640px) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } .stats.three { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.stats.three .stat:last-child { grid-column: 1 / -1; }
+@media (min-width: 640px) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } .stats.three { grid-template-columns: repeat(3, minmax(0, 1fr)); } .stats.three .stat:last-child { grid-column: auto; } }
 .stat { display: block; min-height: 64px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 0.625rem; background: var(--surface-2); color: inherit; text-decoration: none; }
 a.stat:hover { border-color: var(--ink-faint); }
 .stat strong { display: block; font-size: 1.375rem; line-height: 1.3; font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -86,6 +89,8 @@ a.stat:hover { border-color: var(--ink-faint); }
 .table .primary a:hover { text-decoration: underline; }
 .table .primary span { display: block; font-size: 0.8125rem; color: var(--ink-faint); overflow-wrap: anywhere; }
 .table .badge { margin: 0; white-space: nowrap; }
+.table td a { text-decoration: none; }
+.table td a:hover { text-decoration: underline; }
 .table .nowrap { white-space: nowrap; }
 .empty { padding: 24px 0; text-align: center; color: var(--ink-faint); }
 @media (max-width: 767px) {
@@ -103,7 +108,7 @@ a.stat:hover { border-color: var(--ink-faint); }
 .pager { display: flex; justify-content: space-between; gap: 12px; margin: 16px 0 0; }
 .pager .button { width: auto; }
 .panels { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 40px; }
-@media (min-width: 900px) { .panels { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .panels { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
 .facts { margin: 8px 0 0; }
 .facts div { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 9px 0; border-top: 1px solid var(--line); }
 .facts div:first-child { border-top: 0; }
@@ -142,7 +147,7 @@ const TABS: { id: Tab; href: string; label: string }[] = [
 
 function header(current: Tab | null): Html {
   return html`<header class="admin-head">
-<a class="brand" href="/admin"><span class="dot" aria-hidden="true"></span>OpenPing Hosted <span class="tag">Admin</span></a>
+<a class="brand" href="/admin"><span class="dot" aria-hidden="true"></span><span>OpenPing<span class="narrow-hide"> Hosted</span></span><span class="tag">Admin</span></a>
 <a class="head-link" href="/account">Your account</a>
 </header>
 ${
@@ -240,10 +245,10 @@ export function tenantListPage(input: { list: TenantList; counts: TenantCounts; 
     (t) => html`<tr>
 <td class="primary"><a href="/admin/tenants/${t.id}">${t.slug}</a><span>${t.email}</span></td>
 <td data-label="Status">${statusBadge(t.status)}</td>
-<td data-label="Plan">${PLAN_LABELS[t.plan]}</td>
+<td data-label="Plan" class="nowrap">${PLAN_LABELS[t.plan]}</td>
 <td data-label="Setup">${setupBadge(t.provisionState, t.paused)}</td>
 <td data-label="Version" class="mono">${t.version ?? "None yet"}</td>
-<td data-label="Monitors" class="num">${t.monitors ?? "Not reported"}</td>
+<td data-label="Monitors" class="num">${t.monitors ?? "None yet"}</td>
 <td data-label="Created" class="nowrap">${dateText(t.createdAt)}</td>
 </tr>`,
   );
@@ -358,11 +363,11 @@ function actions(input: TenantPageInput): Html {
     cards.push(html`<div class="action"><h3>Resume</h3>
 <p>Puts it back to ${STATUS_LABELS[d.statusBeforeSuspend ?? "trial"].toLowerCase()}. Visitors reach it again within 30 seconds.</p>
 <form method="post" action="${base}/resume"><button class="button primary" type="submit">Resume ${t.slug}</button></form></div>`);
-  } else if (t.provisionState !== "deleting") {
+  } else if (t.provisionState === "ready") {
     cards.push(html`<div class="action danger"><h3>Suspend</h3>
 <p>Stops its checks and takes its status page and dashboard offline; nothing is deleted. Other servers take up to 30 seconds to notice.</p>
 <form method="post" action="${base}/suspend">
-${reasonField("suspend-reason", "Reason", "Monitoring sites it doesn't own", "Kept in the audit log.")}
+${reasonField("suspend-reason", "Reason", "Phishing on its status page", "Kept in the audit log.")}
 <button class="button danger" type="submit">Suspend ${t.slug}</button></form></div>`);
   }
 
@@ -372,13 +377,17 @@ ${reasonField("suspend-reason", "Reason", "Monitoring sites it doesn't own", "Ke
         ? html`<div class="action"><h3>Sign in to help</h3>
 <p>Opens their OpenPing as support for one hour. The customer sees each support sign-in and its reason on their account page and in their Settings.</p>
 <form method="post" action="${base}/support">
-${reasonField("support-reason", "Reason the customer will see", "Your email about a failing monitor", "One plain sentence.")}
+${reasonField("support-reason", "Reason the customer will see", "Your email about a monitor", "One plain sentence.")}
 <button class="button secondary" type="submit">Sign in as support</button></form></div>`
         : html`<div class="action"><h3>Sign in to help</h3><p>Not available: HANDOFF_SIGNING_KEY isn't set.</p></div>`,
     );
   }
 
-  if (!cards.length) return html`<p class="detail-text">Nothing to do while it is being removed.</p>`;
+  if (!cards.length) {
+    return html`<p class="detail-text">${
+      t.provisionState === "deleting" ? "Nothing to do while it is being removed." : "Nothing to do until it is ready; provisioning keeps trying on its own."
+    }</p>`;
+  }
   return html`${
     input.recent
       ? ""
@@ -405,7 +414,7 @@ ${input.flash ? notice(input.flash.message, input.flash.tone) : ""}
 ${paused ? html`<p class="notice error" role="status"><strong>Provisioning is paused</strong> at ${SETUP_LABELS[t.provisionState].toLowerCase()} after ${d.provision.attempts} ${d.provision.attempts === 1 ? "try" : "tries"}, since ${timeText(d.provision.pausedAt)}.<br>${d.provision.error ?? "No error was recorded."}</p>` : ""}
 ${t.status === "suspended" ? notice(`Suspended ${timeText(d.suspendedAt)}${d.suspendedReason ? `: ${d.suspendedReason}` : ""}.`, "info") : ""}
 <div class="panels">
-<section><h2>OpenPing</h2><dl class="facts">
+<div><section><h2>OpenPing</h2><dl class="facts">
 ${fact("Address", t.provisionState === "ready" ? html`<a href="${input.tenantUrl}" rel="noreferrer">${input.tenantUrl.replace(/^https?:\/\//, "")}</a>` : input.tenantUrl.replace(/^https?:\/\//, ""))}
 ${fact("Tenant id", t.id, true)}
 ${fact("Account id", t.accountId, true)}
@@ -417,8 +426,8 @@ ${fact("Status", STATUS_LABELS[t.status])}
 ${t.status === "trial" && t.trialEndsAt ? fact("Trial ends", timeText(t.trialEndsAt)) : ""}
 ${fact("Version", t.version ?? "None yet", true)}
 ${fact("Ready since", d.provisionedAt ? timeText(d.provisionedAt) : "Not ready")}
-</dl></section>
-<section><h2>Health</h2>${healthFacts(input.health)}</section>
+</dl></section></div>
+<div><section><h2>Health</h2>${healthFacts(input.health)}</section>
 <section><h2>Usage</h2>${usageFacts(d)}</section>
 <section><h2>Provisioning</h2><dl class="facts">
 ${fact("State", SETUP_LABELS[t.provisionState])}
@@ -427,7 +436,7 @@ ${fact("Last error", d.provision.error ?? "None")}
 ${d.provision.nextAt && !paused && t.provisionState !== "ready" ? fact("Next try", timeText(d.provision.nextAt)) : ""}
 ${d.provision.leaseUntil && d.provision.leaseUntil > Date.now() ? fact("Running", `until ${timeText(d.provision.leaseUntil)}`) : ""}
 ${fact("Requested", timeText(d.createdAt))}
-</dl></section>
+</dl></section></div>
 </div>
 <section><h2>Actions</h2>${actions(input)}</section>
 <section><h2>History</h2>${history}</section>`;
@@ -443,8 +452,8 @@ export function auditPage(input: { events: AuditEvent[]; more: boolean; filters:
   const filtered = Boolean(f.tenant || f.actor || f.action);
   const rows = input.events.map(
     (e) => html`<tr>
-<td class="primary"><strong>${e.action}</strong><span>${timeText(e.at)}</span></td>
-<td data-label="Who">${ACTOR_LABELS[e.actor]}</td>
+<td class="primary"><strong>${e.action}</strong><span class="nowrap">${timeText(e.at)}</span></td>
+<td data-label="Who" class="nowrap">${ACTOR_LABELS[e.actor]}</td>
 <td data-label="Tenant">${e.tenantId ? html`<a href="/admin/tenants/${e.tenantId}">${e.slug ?? e.tenantId}</a>` : "None"}</td>
 <td data-label="Account">${e.email ?? e.accountId ?? "None"}</td>
 <td data-label="Detail" class="block">${detailText(e.detail) || "None"}</td>

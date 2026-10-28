@@ -79,7 +79,7 @@ main {
 }
 main.wide { max-width: 40rem; }
 @media (min-width: 640px) { main { padding: 32px; } }
-.brand { display: flex; align-items: center; gap: 8px; color: var(--ink-muted); font-size: 0.875rem; font-weight: 600; margin: 0 0 20px; text-decoration: none; }
+.brand { display: flex; align-items: center; gap: 8px; color: var(--ink-muted); font-size: 0.875rem; font-weight: 600; margin: -12px 0 8px; padding: 12px 0; width: fit-content; text-decoration: none; }
 .dot { width: 10px; height: 10px; border-radius: 999px; background: var(--accent); flex: none; }
 .badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--tone, var(--link)); margin: 0 0 12px; }
 h1 { font-size: 1.375rem; line-height: 1.3; margin: 0 0 8px; font-weight: 650; overflow-wrap: anywhere; }
