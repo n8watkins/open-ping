@@ -30,6 +30,9 @@ export const LIMITS = {
   emailGlobal: { scope: "signin-email:all", limit: 1_000, windowMs: HOUR },
   codePerIp: { scope: "signin-code:ip", limit: 30, windowMs: 10 * MINUTE },
   linkPerIp: { scope: "signin-link:ip", limit: 30, windowMs: 10 * MINUTE },
+  /** Wrong codes for one address in a day, across all its sign-ins; past it, only the link works. */
+  codeFailuresPerAddress: { scope: "signin-code-fail:address", limit: 10, windowMs: DAY },
+  passkeyStartPerIp: { scope: "signin-passkey-start:ip", limit: 60, windowMs: 10 * MINUTE },
   passkeyPerIp: { scope: "signin-passkey:ip", limit: 30, windowMs: 10 * MINUTE },
   githubPerIp: { scope: "signin-github:ip", limit: 30, windowMs: 10 * MINUTE },
   signUpPerIp: { scope: "signup:ip", limit: 5, windowMs: DAY },
@@ -50,14 +53,45 @@ export async function hit(db: D1Database, rule: RateLimitRule, subject: string, 
   return decideRateLimit(row?.count ?? 1, rule.limit, now, rule.windowMs);
 }
 
-/** Hits every rule (all of them count, even after one refuses) and answers the first refusal, if any. */
-export async function hitAll(
-  db: D1Database,
-  hits: [RateLimitRule, string][],
-  now: number,
-): Promise<RateLimitDecision | null> {
-  const decisions = await Promise.all(hits.map(([rule, subject]) => hit(db, rule, subject, now)));
-  return decisions.find((d) => !d.allowed) ?? null;
+/**
+ * Hits the rules in order and stops at the first that refuses, so a refused
+ * request counts only against the rule that refused it. Callers put the
+ * narrow rules (an address, an IP) before the wide one (everyone): one IP
+ * hammering away is stopped by its own rule and never uses up the global
+ * budget that everyone else shares.
+ */
+export async function hitInOrder(db: D1Database, hits: [RateLimitRule, string][], now: number): Promise<RateLimitDecision | null> {
+  for (const [rule, subject] of hits) {
+    const decision = await hit(db, rule, subject, now);
+    if (!decision.allowed) return decision;
+  }
+  return null;
+}
+
+/** True when `subject` is already over `rule` in this window (counts nothing). */
+export async function isOverLimit(db: D1Database, rule: RateLimitRule, subject: string, now: number): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT count FROM rate_limits WHERE key = ?")
+    .bind(rateLimitKey(`${rule.scope}:${subject}`, now, rule.windowMs))
+    .first<{ count: number }>();
+  return (row?.count ?? 0) >= rule.limit;
+}
+
+/**
+ * The subject for per-IP rules: the IPv4 address as is, and an IPv6
+ * address's /64, since one customer line or cloud machine usually holds a
+ * whole /64 and could otherwise use a new address per request.
+ */
+export function ipSubject(ip: string | null | undefined): string {
+  if (!ip) return "unknown";
+  const value = ip.trim().toLowerCase();
+  if (!value.includes(":")) return value;
+  const [head = "", tail = ""] = value.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups = value.includes("::") ? [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right] : left;
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return value;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
 }
 
 /** Old windows, for the cron's cleanup: nothing newer than a day is touched. */
