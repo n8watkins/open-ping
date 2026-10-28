@@ -11,6 +11,8 @@ import { waitlistEnabled } from "./waitlist";
 import { countPasskeys, getPasskey } from "../db/passkeys";
 import { relyingParty } from "../lib/passkey-ceremony";
 import { hostedAccount, hostedProps, hostedStatus, markSignedOut } from "../lib/hosted";
+import { requireAuth } from "../middleware/auth";
+import { SUPPORT_RESTRICTED, auditSupportChange, isSupportSession, listSupportActivity, recordSupportActivity } from "../lib/support";
 
 /** Session/identity endpoints mounted at /api/auth. */
 export const apiAuth = new Hono<AppEnv>();
@@ -112,8 +114,23 @@ apiAuth.post("/logout-all", async (c) => {
   if (!csrf || !(await timingSafeEqual(csrf, session.csrf_secret))) {
     return c.json({ error: "csrf_failed" }, 403);
   }
+  // Support can't sign the customer out of everything (lib/support.ts).
+  if (isSupportSession(session)) {
+    await recordSupportActivity(c.env, { kind: "refused", identity: session.identity, method: "POST", path: c.req.path, status: 403 });
+    await auditSupportChange(c, { method: "POST", path: c.req.path, status: 403, refused: "sessions" });
+    return c.json(SUPPORT_RESTRICTED, 403);
+  }
   await revokeAllSessions(c.env);
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
   const signOutUrl = markSignedOut(c);
   return c.json(signOutUrl ? { ok: true, signOutUrl } : { ok: true });
+});
+
+/**
+ * What OpenPing Hosted support did here (lib/support.ts): its sign-ins, its
+ * changes and the changes it was refused, newest first. Empty on a plain
+ * install, where support never signs in.
+ */
+apiAuth.get("/support-activity", requireAuth, async (c) => {
+  return c.json({ entries: await listSupportActivity(c.env) });
 });

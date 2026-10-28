@@ -60,4 +60,10 @@ describe("csvField", () => {
     expect(csvField("a@b.co")).toBe("a@b.co");
     expect(csvField('a,"b"')).toBe('"a,""b"""');
   });
+
+  it("keeps a spreadsheet from running a value as a formula", () => {
+    expect(csvField("=HYPERLINK(\"https://evil.example\")@x.co")).toBe(`"'=HYPERLINK(""https://evil.example"")@x.co"`);
+    for (const start of ["+", "-", "@", "\t", "\r"]) expect(csvField(`${start}1`).replace(/^"/, "").startsWith(`'${start}`)).toBe(true);
+    expect(csvField("a-b@example.com")).toBe("a-b@example.com");
+  });
 });

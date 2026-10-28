@@ -10,6 +10,7 @@ import {
 import type { AppEnv } from "../types";
 import { hitRateLimit } from "../db/rate-limit";
 import { recordHandoffNonce } from "../db/handoff-nonces";
+import { recordSupportActivity } from "../lib/support";
 import { setSetting } from "../db/settings";
 import { createSession, endCurrentSession } from "../lib/sessions";
 import { hostedProps } from "../lib/hosted";
@@ -124,7 +125,10 @@ async function handOff(c: Ctx, props: TenantProps): Promise<Outcome> {
 
   // 4. The normal session, rotated: whatever session this browser had ends.
   await endCurrentSession(c);
-  if (support) await createSession(c, claims.email, "hosted_support", SUPPORT_SESSION_TTL_MS);
+  if (support) {
+    await createSession(c, claims.email, "hosted_support", SUPPORT_SESSION_TTL_MS);
+    await recordSupportActivity(c.env, { kind: "signed_in", identity: claims.email });
+  }
   else await createSession(c, claims.email, "hosted");
   return { ok: true, claims };
 }

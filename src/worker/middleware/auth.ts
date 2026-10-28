@@ -3,6 +3,7 @@ import type { AppEnv, Env } from "../types";
 import { findApiToken } from "../db/api-tokens";
 import { CSRF_HEADER, getSession, touchSession } from "../lib/sessions";
 import { timingSafeEqual } from "../lib/timing";
+import { SUPPORT_RESTRICTED, auditSupportChange, isSupportSession, recordSupportActivity, supportRestriction } from "../lib/support";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -74,5 +75,29 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   });
 
   await touchSession(c.env, session);
+
+  // OpenPing Hosted support (an hour-long hand-off sign-in): no credential or
+  // destructive changes, and every change recorded where the customer sees it.
+  const method = c.req.method.toUpperCase();
+  if (isSupportSession(session) && !SAFE_METHODS.has(method)) {
+    const path = c.req.path;
+    const json = (c.req.header("content-type") ?? "").includes("json")
+      ? await c.req.raw.clone().json().catch(() => undefined)
+      : undefined;
+    const refused = supportRestriction(method, path, json);
+    if (refused) {
+      await recordSupportActivity(c.env, { kind: "refused", identity: session.identity, method, path, status: 403 });
+      await auditSupportChange(c, { method, path, status: 403, refused });
+      return c.json(SUPPORT_RESTRICTED, 403);
+    }
+    await next();
+    const status = c.res.status;
+    if (status < 400) {
+      await recordSupportActivity(c.env, { kind: "change", identity: session.identity, method, path, status });
+      await auditSupportChange(c, { method, path, status });
+    }
+    return;
+  }
+
   await next();
 };
