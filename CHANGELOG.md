@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0 - 2026-10-28
+
+OpenPing installs as an app on your phone, opens offline on your last known status, and refreshes with a pull.
+
+### New
+
+- Install OpenPing as an app, with offline status and pull to refresh ([#45](https://github.com/n8watkins/open-ping/pull/45))
+
 ## 0.9.0 - 2026-10-28
 
 A redesigned app: week, month and quarter history with clearer charts, grouped incidents, a Maintenance page that explains itself, shorter Settings, and a Developers page with API tokens and one-step Claude setup.
