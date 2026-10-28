@@ -8,7 +8,7 @@ import { decryptValue, encryptValue } from "../lib/crypto";
  * `secret` option.
  */
 
-interface SettingRow {
+export interface SettingRow {
   value: string | null;
   encrypted: number;
 }
@@ -21,6 +21,40 @@ export async function getSetting(env: Env, key: string): Promise<string | null> 
     .first<SettingRow>();
   if (!row || row.value == null) return null;
   return row.encrypted ? decryptValue(env, row.value) : row.value;
+}
+
+/** Several settings in one query (for a caller that batches its reads). */
+export function settingsStatement(env: Env, keys: readonly string[]): D1PreparedStatement {
+  return env.DB.prepare(
+    `SELECT key, value, encrypted FROM settings WHERE key IN (${keys.map(() => "?").join(", ")})`,
+  ).bind(...keys);
+}
+
+/**
+ * Decode the rows of {@link settingsStatement}: every requested key is present,
+ * null when it is unset, exactly as getSetting would return it.
+ */
+export async function settingsFromRows(
+  env: Env,
+  keys: readonly string[],
+  rows: (SettingRow & { key: string })[],
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>(keys.map((k) => [k, null]));
+  for (const row of rows) {
+    if (row.value == null) continue;
+    out.set(row.key, row.encrypted ? await decryptValue(env, row.value) : row.value);
+  }
+  return out;
+}
+
+/** Parse a JSON setting value; null when unset or not valid JSON (as getJSON). */
+export function parseJSONSetting<T>(raw: string | null | undefined): T | null {
+  if (raw == null) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
 }
 
 export async function setSetting(
@@ -48,13 +82,7 @@ export async function deleteSetting(env: Env, key: string): Promise<void> {
 }
 
 export async function getJSON<T>(env: Env, key: string): Promise<T | null> {
-  const raw = await getSetting(env, key);
-  if (raw == null) return null;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
+  return parseJSONSetting<T>(await getSetting(env, key));
 }
 
 export async function setJSON<T>(

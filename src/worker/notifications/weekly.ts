@@ -1,6 +1,5 @@
 import type { Env } from "../types";
 import { getSetting, setSetting } from "../db/settings";
-import { getAdminEmail } from "../lib/admin";
 import { sendResendEmail } from "./channels/resend";
 import { listMonitors } from "../db/monitors";
 import { escapeHtml, renderEmailLayout, renderEmailText } from "./email-layout";
@@ -284,6 +283,15 @@ export async function gatherWeeklyStats(
 // Orchestration
 // ---------------------------------------------------------------------------
 
+/** The settings {@link sendWeeklySummary} reads to decide whether it is due. */
+export const WEEKLY_GATE_SETTINGS = [
+  "weekly_summary_enabled",
+  "admin_email",
+  "weekly_summary_day",
+  "weekly_summary_hour",
+  "weekly_summary_last_sent",
+] as const;
+
 /**
  * Send the weekly summary if it is enabled, has a recipient and is due. Safe to
  * call once per scheduled run: it self-guards and records the send timestamp so
@@ -295,11 +303,21 @@ export async function gatherWeeklyStats(
 export async function sendWeeklySummary(
   env: Env,
   now: number,
+  /**
+   * Settings the caller already read (the scheduler loads
+   * {@link WEEKLY_GATE_SETTINGS} in its first D1 round trip), so a run where
+   * the summary isn't due costs no queries. A key not in the map is read here.
+   */
+  preloaded?: ReadonlyMap<string, string | null>,
 ): Promise<{ sent: boolean; reason?: string }> {
-  const enabled = await getSetting(env, "weekly_summary_enabled");
+  const read = (key: string): Promise<string | null> =>
+    preloaded?.has(key) ? Promise.resolve(preloaded.get(key) ?? null) : getSetting(env, key);
+
+  const enabled = await read("weekly_summary_enabled");
   if (enabled !== "true") return { sent: false, reason: "disabled" };
 
-  const recipient = await getAdminEmail(env);
+  // The same precedence as getAdminEmail (lib/admin.ts): the env var, then the setting.
+  const recipient = env.ADMIN_EMAIL ?? (await read("admin_email"));
   if (!recipient) return { sent: false, reason: "no_recipient" };
 
   // Anchor to a target weekday + hour (UTC) so the summary actually lands once a
@@ -308,11 +326,11 @@ export async function sendWeeklySummary(
   // Read the raw string first: Number(null) === 0 would make an UNSET setting
   // look like a valid in-range value (Sunday / midnight) and silently defeat the
   // documented Monday-09:00 defaults. Only coerce when a value is actually set.
-  const rawDayStr = await getSetting(env, "weekly_summary_day");
+  const rawDayStr = await read("weekly_summary_day");
   const rawDay = rawDayStr == null || rawDayStr === "" ? NaN : Number(rawDayStr);
   const targetDay =
     Number.isInteger(rawDay) && rawDay >= 0 && rawDay <= 6 ? rawDay : 1;
-  const rawHourStr = await getSetting(env, "weekly_summary_hour");
+  const rawHourStr = await read("weekly_summary_hour");
   const rawHour = rawHourStr == null || rawHourStr === "" ? NaN : Number(rawHourStr);
   const targetHour =
     Number.isInteger(rawHour) && rawHour >= 0 && rawHour <= 23 ? rawHour : 9;
@@ -322,7 +340,7 @@ export async function sendWeeklySummary(
   }
 
   // De-dup within the open day/hour window so it sends at most once per week.
-  const lastSentAt = Number(await getSetting(env, "weekly_summary_last_sent")) || null;
+  const lastSentAt = Number(await read("weekly_summary_last_sent")) || null;
   if (!isWeeklyDue(now, lastSentAt)) return { sent: false, reason: "not_due" };
 
   const sinceMs = now - WEEK_MS;

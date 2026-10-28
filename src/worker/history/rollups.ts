@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { getJSON } from "../db/settings";
+import type { LabeledStatement } from "../lib/batch";
 
 /**
  * Historical compaction (PRD §17). Check results land as recent `samples` and
@@ -21,7 +21,7 @@ const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
 /** Retention horizons. Defaults MUST match DEFAULT_RETENTION in routes/diagnostics. */
-interface RetentionConfig {
+export interface RetentionConfig {
   sampleHours: number;
   hourlyDays: number;
   dailyDays: number;
@@ -194,84 +194,89 @@ const UPSERT_TOTALS = `ON CONFLICT(monitor_id, period, bucket_start) DO UPDATE S
   min_latency_ms = excluded.min_latency_ms, max_latency_ms = excluded.max_latency_ms,
   monitored_seconds = excluded.monitored_seconds, down_seconds = excluded.down_seconds`;
 
+/** The `retention` setting over the defaults (a partial or unset setting keeps the rest). */
+export function resolveRetention(stored: Partial<RetentionConfig> | null | undefined): RetentionConfig {
+  return { ...DEFAULT_RETENTION, ...(stored ?? {}) };
+}
+
 /**
- * Periodic compaction pass. Idempotent and resilient: a failure recomputing one
- * monitor/bucket is logged and skipped so the rest still run.
+ * The periodic compaction pass as statements, so the scheduler can send them in
+ * the same D1 round trip as its other end-of-run work (lib/batch.ts). Each is
+ * one set-based statement for every monitor at once, so the pass costs the same
+ * however many monitors and buckets there are.
  *
  *  1. Recompute DAY summaries from their constituent HOUR rows.
  *  2. Recompute MONTH summaries from their constituent DAY rows.
- *  3. Prune expired tiers per DEFAULT_RETENTION: samples > 24h, hour > 35d,
- *     day > 400d. Months are kept forever. (Horizons are overridable via the
- *     `retention` setting.)
+ *  3. Prune expired tiers per the retention horizons: samples > 24h, hour > 35d,
+ *     day > 400d by default (overridable via the `retention` setting). Months
+ *     are kept forever. Closed status intervals and scheduler-run diagnostics
+ *     past the daily horizon go too (open intervals are always kept).
+ *
+ * A derived bucket is recomputed only while ALL of its source rows are still
+ * retained; older buckets are sealed at their last full value, so the prune in
+ * the same pass can never shrink them. Days and months are UTC, as bucketStart.
  */
-export async function rollupAndCompact(env: Env, now: number): Promise<void> {
-  const stored = await getJSON<Partial<RetentionConfig>>(env, "retention").catch(() => null);
-  const retention: RetentionConfig = { ...DEFAULT_RETENTION, ...(stored ?? {}) };
+export function compactionStatements(
+  env: Env,
+  now: number,
+  retention: RetentionConfig,
+): LabeledStatement[] {
   const sampleMs = retention.sampleHours * HOUR_MS;
   const hourlyMs = retention.hourlyDays * DAY_MS;
   const dailyMs = retention.dailyDays * DAY_MS;
-
-  // Each pass is one set-based statement for every monitor at once, so a run
-  // spends the same few D1 queries however many monitors there are (the Free
-  // plan allows 50 per invocation; see lib/budget.ts).
-
-  // (1) HOUR → DAY -----------------------------------------------------------
-  // Recompute only days whose hour rows are ALL still retained (dayStart within
-  // the hourly horizon). Older days are sealed at their last full value so the
-  // hour prune below can't shrink them. Days are UTC, as bucketStart("day").
-  try {
-    await env.DB.prepare(
-      `INSERT INTO summaries (id, monitor_id, period, bucket_start, ${TOTALS_COLUMNS})
-       SELECT monitor_id || ':day:' || day_start, monitor_id, 'day', day_start, ${SUM_TOTALS}
-         FROM (SELECT *, bucket_start - (bucket_start % ${DAY_MS}) AS day_start
-                 FROM summaries WHERE period = 'hour' AND bucket_start >= ?1)
-        WHERE day_start >= ?1
-        GROUP BY monitor_id, day_start
-       ${UPSERT_TOTALS}`,
-    )
-      .bind(now - hourlyMs)
-      .run();
-  } catch (e) {
-    console.error("[rollups] hour→day pass failed", e);
-  }
-
-  // (2) DAY → MONTH ----------------------------------------------------------
-  // Recompute only months whose day rows are ALL still retained; older months
-  // are sealed at their last full value. Months are UTC calendar months.
-  try {
-    await env.DB.prepare(
-      `INSERT INTO summaries (id, monitor_id, period, bucket_start, ${TOTALS_COLUMNS})
-       SELECT monitor_id || ':month:' || month_start, monitor_id, 'month', month_start, ${SUM_TOTALS}
-         FROM (SELECT *,
-                      CAST(strftime('%s', bucket_start / 1000, 'unixepoch', 'start of month') AS INTEGER) * 1000
-                        AS month_start
-                 FROM summaries WHERE period = 'day' AND bucket_start >= ?1)
-        WHERE month_start >= ?1
-        GROUP BY monitor_id, month_start
-       ${UPSERT_TOTALS}`,
-    )
-      .bind(now - dailyMs)
-      .run();
-  } catch (e) {
-    console.error("[rollups] day→month pass failed", e);
-  }
-
-  // (3) Prune ----------------------------------------------------------------
-  // One batch (a single D1 query): expired samples, hour and day summaries,
-  // closed status intervals past the daily horizon (the longest window any view
-  // reads; open intervals are always kept), and scheduler-run diagnostics past
-  // it (~120 rows/day; only recent runs are read).
-  try {
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM samples WHERE at < ?").bind(now - sampleMs),
-      env.DB.prepare("DELETE FROM summaries WHERE period = 'hour' AND bucket_start < ?").bind(now - hourlyMs),
-      env.DB.prepare("DELETE FROM summaries WHERE period = 'day' AND bucket_start < ?").bind(now - dailyMs),
-      env.DB.prepare("DELETE FROM status_intervals WHERE ended_at IS NOT NULL AND ended_at < ?").bind(
+  return [
+    {
+      label: "hour→day pass",
+      stmt: env.DB.prepare(
+        `INSERT INTO summaries (id, monitor_id, period, bucket_start, ${TOTALS_COLUMNS})
+         SELECT monitor_id || ':day:' || day_start, monitor_id, 'day', day_start, ${SUM_TOTALS}
+           FROM (SELECT *, bucket_start - (bucket_start % ${DAY_MS}) AS day_start
+                   FROM summaries WHERE period = 'hour' AND bucket_start >= ?1)
+          WHERE day_start >= ?1
+          GROUP BY monitor_id, day_start
+         ${UPSERT_TOTALS}`,
+      ).bind(now - hourlyMs),
+    },
+    {
+      label: "day→month pass",
+      stmt: env.DB.prepare(
+        `INSERT INTO summaries (id, monitor_id, period, bucket_start, ${TOTALS_COLUMNS})
+         SELECT monitor_id || ':month:' || month_start, monitor_id, 'month', month_start, ${SUM_TOTALS}
+           FROM (SELECT *,
+                        CAST(strftime('%s', bucket_start / 1000, 'unixepoch', 'start of month') AS INTEGER) * 1000
+                          AS month_start
+                   FROM summaries WHERE period = 'day' AND bucket_start >= ?1)
+          WHERE month_start >= ?1
+          GROUP BY monitor_id, month_start
+         ${UPSERT_TOTALS}`,
+      ).bind(now - dailyMs),
+    },
+    {
+      label: "sample prune",
+      stmt: env.DB.prepare("DELETE FROM samples WHERE at < ?").bind(now - sampleMs),
+    },
+    {
+      label: "hour prune",
+      stmt: env.DB.prepare("DELETE FROM summaries WHERE period = 'hour' AND bucket_start < ?").bind(
+        now - hourlyMs,
+      ),
+    },
+    {
+      label: "day prune",
+      stmt: env.DB.prepare("DELETE FROM summaries WHERE period = 'day' AND bucket_start < ?").bind(
         now - dailyMs,
       ),
-      env.DB.prepare("DELETE FROM scheduler_runs WHERE started_at < ?").bind(now - dailyMs),
-    ]);
-  } catch (e) {
-    console.error("[rollups] prune failed", e);
-  }
+    },
+    {
+      label: "interval prune",
+      stmt: env.DB.prepare(
+        "DELETE FROM status_intervals WHERE ended_at IS NOT NULL AND ended_at < ?",
+      ).bind(now - dailyMs),
+    },
+    {
+      // ~120 rows/day; only recent runs are read.
+      label: "run-record prune",
+      stmt: env.DB.prepare("DELETE FROM scheduler_runs WHERE started_at < ?").bind(now - dailyMs),
+    },
+  ];
 }

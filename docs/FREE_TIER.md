@@ -22,7 +22,7 @@ OpenPing's footprint has three parts:
    subrequests (to Cloudflare's DNS-over-HTTPS resolver and to RDAP,
    respectively), and **TCP** checks open a `connect()` socket instead of a
    `fetch`. Each still counts as roughly one check, and each run checks only as
-   many monitors as fit its plan's per-run budget (about 7 on Free, up to 200 on
+   many monitors as fit its plan's per-run budget (about 8 on Free, up to 200 on
    Paid; see below), most overdue first, with the rest deferred to the next tick.
 3. **D1 reads/writes.** Each run does light database work: reading which monitors
    are due and their state, then writing samples, state updates, interval/summary
@@ -79,10 +79,10 @@ dropped; it just waits 12 minutes.
 
 Measured in `test/integration/scheduler-budget.test.ts` (30 HTTP monitors):
 
-- **Free plan: about 7 checks per run** when checks pass (about 5 D1 queries
+- **Free plan: about 8 checks per run** when checks pass (about 5 D1 queries
   each), and about 3 per run while checks are failing and opening incidents
   (about 9 each). Polled monitors are checked every 12 minutes, so the Free plan
-  comfortably runs **about 7 monitors that are on at the same time**.
+  comfortably runs **about 8 monitors that are on at the same time**.
 - Monitors outside their operating hours cost nothing, so a set of
   business-hours monitors that don't all overlap goes further, and a monitor
   that misses a tick is simply checked on the next one.
@@ -93,6 +93,24 @@ The CPU limit (10 ms per cron run on Free) counts only time spent computing, not
 waiting on the network or D1, so it isn't usually the constraint for a few
 checks; watch the Worker's logs in the Cloudflare dashboard if you push the
 Free plan hard.
+
+### How long a run takes
+
+A run's **Duration** (in Settings > Diagnostics, and `durationMs` in `/api/diagnostics`) is wall-clock time, not CPU time.
+Almost all of it is spent waiting on D1, so it is set by how many round trips the run makes and how far each one travels.
+Cron Triggers run on whichever Cloudflare machine has spare capacity, which is often far from your database.
+In production a D1 round trip from a cron run measured about 160 ms on most ticks and about 12 ms on a good one, while the same queries from a dashboard request take a few milliseconds.
+
+So the scheduler sends its work in as few round trips as it can (`src/worker/scheduler.ts`):
+
+1. one batch takes the lease, opens the run record and reads the monitors, their state, maintenance windows and settings;
+2. each due check adds its own queries;
+3. one batch does the end-of-run work: claiming queued notifications, the rollups, retention and expired-login cleanup;
+4. one batch records the finish and releases the lease.
+
+A run that checks nothing (every monitor paused or outside its hours) makes exactly 3 round trips and finishes in well under a second even at 160 ms each.
+The **DB calls** column (`d1Queries`) shows each run's count, so duration divided by DB calls is roughly that run's latency to D1.
+Builds before this change rolled history up with one query per monitor and day, about 160 round trips per run, which is why off-hours runs on those builds took 25 to 40 seconds while checking nothing.
 
 ### Telling OpenPing your plan
 
@@ -115,5 +133,5 @@ authoritative limits.
 - Lean on **schedule-aware monitoring**: outside operating hours a monitor is
   `Scheduled off` and isn't checked.
 - Pause monitors you don't currently need.
-- Keep the monitor count modest on the Free plan (about 7 on at once); each
+- Keep the monitor count modest on the Free plan (about 8 on at once); each
   added monitor adds up to 120 checks a day.

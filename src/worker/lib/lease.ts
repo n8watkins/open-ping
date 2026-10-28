@@ -1,5 +1,4 @@
 import type { Env } from "../types";
-import { newId } from "./ids";
 
 /**
  * Lightweight execution lease + scheduler-run diagnostics (PRD §19). The lease
@@ -8,29 +7,31 @@ import { newId } from "./ids";
  * existing lease has expired, so a live lease is never stolen.
  */
 
-export async function acquireLease(
+/** The lease upsert: takes the lease only if it is free or its holder's TTL expired. */
+export function acquireLeaseStatement(
   env: Env,
   name: string,
+  holder: string,
+  now: number,
   ttlMs: number,
-): Promise<string | null> {
-  const holder = newId("lease");
-  const now = Date.now();
+): D1PreparedStatement {
   const expiresAt = now + ttlMs;
-
-  await env.DB.prepare(
+  return env.DB.prepare(
     `INSERT INTO locks (name, holder, acquired_at, expires_at)
        VALUES (?, ?, ?, ?)
      ON CONFLICT(name) DO UPDATE SET
        holder = ?, acquired_at = ?, expires_at = ?
        WHERE locks.expires_at <= ?`,
-  )
-    .bind(name, holder, now, expiresAt, holder, now, expiresAt, now)
-    .run();
+  ).bind(name, holder, now, expiresAt, holder, now, expiresAt, now);
+}
 
-  const row = await env.DB.prepare("SELECT holder FROM locks WHERE name = ?")
-    .bind(name)
-    .first<{ holder: string }>();
-  return row?.holder === holder ? holder : null;
+/** Who holds the lease now (read after the upsert to learn whether it won). */
+export function leaseHolderStatement(env: Env, name: string): D1PreparedStatement {
+  return env.DB.prepare("SELECT holder FROM locks WHERE name = ?").bind(name);
+}
+
+export function releaseLeaseStatement(env: Env, name: string, holder: string): D1PreparedStatement {
+  return env.DB.prepare("DELETE FROM locks WHERE name = ? AND holder = ?").bind(name, holder);
 }
 
 export async function releaseLease(
@@ -38,9 +39,7 @@ export async function releaseLease(
   name: string,
   holder: string,
 ): Promise<void> {
-  await env.DB.prepare("DELETE FROM locks WHERE name = ? AND holder = ?")
-    .bind(name, holder)
-    .run();
+  await releaseLeaseStatement(env, name, holder).run();
 }
 
 export interface RunStats {
@@ -49,43 +48,54 @@ export interface RunStats {
   monitorsSkipped: number;
   checkFailures: number;
   notificationFailures: number;
+  /**
+   * D1 round trips the run made, its own run record included (a batch counts
+   * as one, as D1 counts it). A cron run that checks nothing spends its whole
+   * duration on these, so duration divided by this is the run's D1 latency.
+   */
+  d1Queries?: number;
   error?: string;
 }
 
-export async function recordRunStart(env: Env, cron: string | null): Promise<{ id: string; startedAt: number }> {
-  const id = newId("run");
-  const startedAt = Date.now();
-  await env.DB.prepare(
-    "INSERT INTO scheduler_runs (id, cron, started_at) VALUES (?, ?, ?)",
-  )
-    .bind(id, cron, startedAt)
-    .run();
-  return { id, startedAt };
+/**
+ * Write the run's start row, but only while `holder` holds the lease: batched
+ * with the lease upsert, a run that loses the lease records nothing.
+ */
+export function recordRunStartStatement(
+  env: Env,
+  run: { id: string; startedAt: number },
+  cron: string | null,
+  lease: { name: string; holder: string },
+): D1PreparedStatement {
+  return env.DB.prepare(
+    `INSERT INTO scheduler_runs (id, cron, started_at)
+       SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM locks WHERE name = ? AND holder = ?)`,
+  ).bind(run.id, cron, run.startedAt, lease.name, lease.holder);
 }
 
-export async function recordRunFinish(
+/** The run's finish row: its outcome, counts and wall-clock duration. */
+export function recordRunFinishStatement(
   env: Env,
   id: string,
   startedAt: number,
   stats: RunStats,
-): Promise<void> {
-  const finishedAt = Date.now();
-  await env.DB.prepare(
+  finishedAt: number = Date.now(),
+): D1PreparedStatement {
+  return env.DB.prepare(
     `UPDATE scheduler_runs SET
        finished_at = ?, ok = ?, monitors_checked = ?, monitors_skipped = ?,
-       check_failures = ?, notification_failures = ?, duration_ms = ?, error = ?
+       check_failures = ?, notification_failures = ?, duration_ms = ?, d1_queries = ?, error = ?
      WHERE id = ?`,
-  )
-    .bind(
-      finishedAt,
-      stats.ok ? 1 : 0,
-      stats.monitorsChecked,
-      stats.monitorsSkipped,
-      stats.checkFailures,
-      stats.notificationFailures,
-      finishedAt - startedAt,
-      stats.error ?? null,
-      id,
-    )
-    .run();
+  ).bind(
+    finishedAt,
+    stats.ok ? 1 : 0,
+    stats.monitorsChecked,
+    stats.monitorsSkipped,
+    stats.checkFailures,
+    stats.notificationFailures,
+    finishedAt - startedAt,
+    stats.d1Queries ?? null,
+    stats.error ?? null,
+    id,
+  );
 }

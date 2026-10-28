@@ -111,8 +111,11 @@ export function countingD1(db: D1Database, counter: UsageCounter): D1Database {
  */
 export const CHECK_COST = { d1: 10, subrequests: 2 } as const;
 
-/** What a run keeps back for the work after its checks: rollups, the weekly
- * summary, session cleanup, the run record and the lease. */
+/** What a run keeps back for the work after its checks. Normally that is two
+ * batches (the end-of-run work, then the run record and the lease), but if the
+ * end-of-run batch fails its ten statements are retried one by one
+ * (lib/batch.ts), and the weekly summary may need a few reads, so the reserve
+ * covers that worst case. */
 export const TAIL_RESERVE = { d1: 12 } as const;
 
 /** D1 queries one notification delivery spends (mark sent or failed, plus slack). */
