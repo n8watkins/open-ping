@@ -6,7 +6,7 @@ import type { CategoryInput } from "../../shared/schemas";
  * Category CRUD data layer. The `categories` table groups monitors and drives
  * per-category public status pages (migration 0006). Rows are mapped to/from a
  * camelCase `CategoryRecord`; timestamps are epoch milliseconds. Categories are
- * not secret, so — unlike channels/monitors — nothing here is encrypted or
+ * not secret, so - unlike channels/monitors - nothing here is encrypted or
  * redacted.
  *
  * `slug` is UNIQUE. Duplicate-slug attempts are surfaced as a typed
@@ -119,7 +119,7 @@ export async function createCategory(
       .run();
   } catch (err) {
     // Belt-and-suspenders: a concurrent insert can win between the pre-check
-    // and here — the UNIQUE index still protects us, so map it to a 409 too.
+    // and here - the UNIQUE index still protects us, so map it to a 409 too.
     if (isUniqueViolation(err)) throw new SlugConflictError(input.slug);
     throw err;
   }

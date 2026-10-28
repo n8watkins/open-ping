@@ -6,26 +6,20 @@ Last updated: 2026-10-28.
 
 ## Current state (2026-10-28): start here
 
-- `main` has round 2 (rebuilt landing page, signed-in app UI, a scheduler that stays inside Cloudflare's free-plan limits, Cloudflare Web Analytics allowed in the CSP, no em dashes) and Hosted stage 1 (PR #12: "Runs in your own Cloudflare account" wording, a pricing section, a waitlist at `/api/waitlist`, the `/install` guide, the waitlist count and CSV in Settings).
-- **Live:** v0.2.0 was deployed to https://openping.n8builds.dev on 2026-10-28, with migrations through 0011 applied and the waitlist on.
-  It adds the off-hours fix (#15), one strict security header policy for every page and the widget on the bare n8builds.dev (#16), idle scheduler runs of 3 database calls instead of about 160 (#17), and the `deploy:prod` flow (#14).
-  A D1 export taken just before the deploy is in `../open-ping-backups/` on the owner's machine.
-- The paid hosted version is planned in [the Hosted plan](./HOSTED_PLAN.md): stages 0 to 7, each with a go/no-go gate.
-  Chosen pricing: $24 a year (20 monitors, 12-minute checks, 2 status pages), plus $12 a year for 1-minute checks; no free hosted plan.
-  Gate after stage 1: about 20 waitlist sign-ups within 8 weeks.
-- **MCP server and wider CLI (branch `feat/mcp-and-cli`, not yet deployed):** `/mcp` is a stateless Streamable HTTP MCP server built on the official `@modelcontextprotocol/server` SDK (v2), with 20 tools that reuse the REST API's validation and data functions; see [MCP.md](./MCP.md).
-  It needs `API_TOKEN` (404 without it), accepts only the bearer token, refuses cross-origin browser requests and allows 120 authenticated requests a minute.
-  `scripts/op.mjs` now covers status, monitors, incidents, uptime, diagnostics, channels, pages, categories and maintenance, with `--json`, per-command `--help`, errors on unknown flags and `--yes` for deletes; see [CLI.md](./CLI.md).
-  New REST routes back both: `PATCH /api/monitors/:id`, `PATCH /api/status-pages/:id`, `GET /api/monitors/uptime` and `POST /api/maintenance/:id/end`.
-  The Worker grew from 173 KiB to 272 KiB gzipped (Free plan limit: 3 MB).
-  After deploying, connect with `claude mcp add --transport http openping https://openping.n8builds.dev/mcp --header "Authorization: Bearer $OPENPING_TOKEN"` and call `get_status`.
-- **Confirm before alerting and first check right away (branch `feat/confirm-before-alert`, not yet deployed, migration 0014):** a failed check is re-checked once 5 seconds later before it opens an incident ("Confirm failures", per monitor, default on), and a new monitor is checked as it is created; SSL expiry research is in [SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md).
-- **Landing and sign-in, stage 1 (branch `feat/landing-two-paths`, not yet deployed):** the hero shows both paths (free in your own Cloudflare, Hosted at $24 a year, "Not open yet"), sign-in is out of the header and is "Owner sign-in" in the footer, and every sign-in screen says whose OpenPing it is ([the landing plan](./LANDING_AND_LOGIN_PLAN.md), section 6, items 1.0 to 1.9).
-  `HOME_PAGE` (wrangler var) picks what signed-out visitors see at `/`: `"status"` (default) for the install's own status page, `"landing"` for the marketing page, which only openping.n8builds.dev sets.
-  Landing click counts go to `POST /api/events` (allow-listed names, daily totals in `page_events`, migration 0012, rate limited by the `EVENT_LIMITER` binding) and show in Settings; only a `"landing"` install counts.
-  Before deploying it: add `"HOME_PAGE": "landing"` to `vars` in `deploy.local.json`, and run `npm run db:migrate:prod` for 0012.
-- **Status communication (branch `feat/incident-updates-feeds`, not yet deployed):** incident status updates on the public page, RSS/Atom feeds per status page, the monthly uptime report (Settings > Reports, CSV, opt-in email, REST, MCP, CLI), never-checked services show "No data yet", and hourly rollups are kept 64 days; migration 0013 adds `incident_updates` ([STATUS_PAGES.md](./STATUS_PAGES.md)).
-- Tagline everywhere: "Uptime monitoring on your own Cloudflare".
+- **Live:** v0.5.0 on https://openping.n8builds.dev, migrations through 0014 applied, waitlist on, `HOME_PAGE` "landing".
+  Before each deploy a D1 export goes to `../open-ping-backups/` on the owner's machine.
+- **Roadmap:** [ROADMAP.md](./ROADMAP.md) is the one staged checklist.
+  Stage 1 (solid and honest) is done except the owner's `MASTER_KEY` backup ([owner to-dos](./DEFERRED_INPUTS.md)).
+  Stage 2 (feature gaps) has Slack, Telegram and Teams alerts (#29), confirm-before-alert and first check right away (#31), incident updates, RSS/Atom feeds and the monthly report (#30); next are passkeys, the "Deploy to Cloudflare" spike and the SSL expiry probe ([SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md)).
+  Stage 3, the Hosted waitlist test, started 2026-10-28: about 20 sign-ups by about 2026-12-23, read from Settings (waitlist count and landing click counts).
+- **Operating it:** the MCP server at `/mcp` ([MCP.md](./MCP.md)) and `scripts/op.mjs` ([CLI.md](./CLI.md)) cover status, monitors, incidents, uptime, reports, diagnostics, channels, pages and maintenance.
+  In this checkout Claude Code has it registered as `openping` (local scope); the CLI reads the gitignored `.op.env`.
+- **Landing and sign-in:** the hero shows both paths (free in your own Cloudflare, Hosted at $24 a year, "Not open yet"); sign-in is "Owner sign-in" in the footer ([the landing plan](./LANDING_AND_LOGIN_PLAN.md)).
+  `HOME_PAGE` picks what signed-out visitors see at `/`: `"status"` (default, the install's own status page) or `"landing"` (only openping.n8builds.dev).
+- **Encryption:** values are `v2:<kid>:<iv>:<ct>`; `MASTER_KEY_PREVIOUS` allows an online key change ([SECURITY.md](./SECURITY.md)).
+  Releases before v0.4.0 cannot read v2 values, so never roll production back below v0.4.0.
+- The paid hosted version is planned in [the Hosted plan](./HOSTED_PLAN.md): $24 a year (20 monitors, 12-minute checks, 2 status pages), plus $12 a year for 1-minute checks; no free hosted plan.
+- Tagline: "Uptime monitoring on your own Cloudflare".
 - `v0.1.0` is a baseline tag at `5ff032c`; releases since then are cut with release-kit.
 
 ### How production is deployed
@@ -218,7 +212,9 @@ Do not push or deploy unless the user authorizes that external change.
 Do not edit generated changelogs.
 Keep every full sentence on its own physical line when substantially editing long Markdown documents.
 Use `npm run db:migrate:local` for local D1 migrations and `npm run db:migrate:prod` for the production D1.
-Squash-merge PRs with a body you write (`gh pr merge --squash --body "..."`): the default body lists every commit, and one `Release-note: skip` line in it hides the whole PR from the release notes.
+Squash-merge PRs with a subject and body you write (`gh pr merge --squash --subject "feat(x): ... (#N)" --body "..."`).
+Without `--subject` the PR title becomes the commit subject, and a title that isn't a Conventional Commit fails the commit check on `main` and drops the PR from the release notes (#30 hit this).
+Without `--body` the default body lists every commit, and one `Release-note: skip` line in it hides the whole PR from the release notes.
 release-kit ignores flags it doesn't know, so `npm run release -- --help` cuts a real release; read node_modules/release-kit/README.md instead.
 
 ## File map

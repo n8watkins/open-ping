@@ -64,7 +64,7 @@ function getPath(obj: Record<string, unknown>, path: string): unknown {
 }
 
 /**
- * Write a dotted path. Does NOT create missing intermediate objects — if the
+ * Write a dotted path. Does NOT create missing intermediate objects - if the
  * parent container is absent (e.g. no `auth` object), the write is a no-op.
  */
 function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {

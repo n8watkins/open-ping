@@ -6,7 +6,7 @@ import type { Assertion } from "../../shared/schemas";
  * Pure, dependency-free, and I/O-free so it runs identically in Cloudflare
  * Workers and Node (vitest). Given a list of assertions and a response context
  * it returns whether every assertion passed plus human-readable failure
- * messages (which intentionally never echo secrets — only configured values).
+ * messages (which intentionally never echo secrets - only configured values).
  */
 
 export interface AssertionResult {

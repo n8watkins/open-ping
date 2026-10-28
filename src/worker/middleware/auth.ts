@@ -28,7 +28,7 @@ export async function hasValidApiToken(
 export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   // API-token auth for CLI/automation: a Bearer token matching the API_TOKEN
   // secret grants admin. Bearer tokens aren't sent automatically by browsers, so
-  // there's no CSRF surface — we intentionally skip the cookie/CSRF checks here.
+  // there's no CSRF surface - we intentionally skip the cookie/CSRF checks here.
   // Opt-in: only active when API_TOKEN is configured.
   if (await hasValidApiToken(c.env, c.req.header("authorization"))) {
     c.set("admin", { id: "api-token" });

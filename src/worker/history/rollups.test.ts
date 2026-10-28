@@ -139,7 +139,7 @@ describe("okLatencyMs", () => {
 
   it("keeps the weekly avg numerator/denominator consistent (OK checks only)", () => {
     // 3 OK checks (100/200/300) + 1 failed-but-responded (999): summing over OK
-    // gives 600 against ok_checks=3 ⇒ avg 200 — the 999 never enters either side,
+    // gives 600 against ok_checks=3 ⇒ avg 200 - the 999 never enters either side,
     // which was the bug (all-check latency divided by ok-only count).
     const samples = [
       { ok: true, ms: 100 },

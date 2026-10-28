@@ -2,7 +2,7 @@ import type { Env } from "../types";
 import { newId } from "../lib/ids";
 
 /**
- * Maintenance-window data layer + activity engine (PRD §16 Maintenance, §11 —
+ * Maintenance-window data layer + activity engine (PRD §16 Maintenance, §11 -
  * an active window suppresses incidents/alerts). The `maintenance_windows` table
  * stores `monitor_ids` and `recurrence` as JSON TEXT; this module maps rows
  * to/from a camelCase `MaintenanceWindow` with parsed objects. Timestamps are
@@ -92,12 +92,12 @@ const MINUTES_PER_WEEK = 7 * 24 * 60;
  * One-time (recurrence === null): `startsAt <= now < endsAt`.
  *
  * Weekly recurrence: first gated on the window's [startsAt, endsAt) validity
- * range — a bounded recurring window does not recur before it starts or after it
+ * range - a bounded recurring window does not recur before it starts or after it
  * ends. Within range it is evaluated entirely in UTC: we map both `now` and the
  * rule's start to a "minute of the week" (0..10079, Sunday 00:00 = 0) and test
  * whether `now` falls within [start, start + durationMinutes). The membership
- * test wraps modulo the week length, so windows that cross midnight — or even the
- * Saturday→Sunday week boundary — are handled correctly.
+ * test wraps modulo the week length, so windows that cross midnight - or even the
+ * Saturday→Sunday week boundary - are handled correctly.
  */
 export function isWindowActiveAt(w: MaintenanceWindow, now: number): boolean {
   const r = w.recurrence;
@@ -139,7 +139,7 @@ export function isWindowActiveAt(w: MaintenanceWindow, now: number): boolean {
 
 /**
  * For a weekly recurring window, the next occurrence STRICTLY AFTER `now` that
- * still falls within the window's [startsAt, endsAt) validity range — or null if
+ * still falls within the window's [startsAt, endsAt) validity range - or null if
  * there is none (not weekly, zero duration, malformed start, or no future
  * occurrence before the range ends). Returns the occurrence's absolute start/end
  * in epoch ms, used to surface recurring windows in the public "upcoming" list.
@@ -386,7 +386,7 @@ const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
 /**
  * Public-facing maintenance for the status page: only windows with a non-null
  * `publicMessage`. `active` is what's running now; `upcoming` is the next 14 days
- * of windows that aren't already active (max 10, soonest first) — one-time
+ * of windows that aren't already active (max 10, soonest first) - one-time
  * windows by their `startsAt`, and recurring windows projected to their next
  * occurrence (startsAt/endsAt overridden to that occurrence so the status page
  * shows the right date).

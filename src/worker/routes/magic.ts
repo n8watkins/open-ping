@@ -20,7 +20,7 @@ import {
  *
  * No-disclosure rule: POST /request ALWAYS responds { ok: true } whether or not
  * the address is allowlisted, the link was rate-limited, or Resend is even
- * configured — so the endpoint can never be probed to discover the admin email.
+ * configured - so the endpoint can never be probed to discover the admin email.
  *
  * As with sessions/OAuth state, only the SHA-256 of the raw token is persisted;
  * the raw token lives only in the emailed link.
@@ -68,7 +68,7 @@ async function baseUrl(c: Ctx): Promise<string> {
   return new URL(c.req.url).origin;
 }
 
-// c.redirect (NOT Response.redirect) so any Set-Cookie on c.res survives — see
+// c.redirect (NOT Response.redirect) so any Set-Cookie on c.res survives - see
 // the same note in routes/auth.ts.
 function loginRedirect(c: Ctx, base: string, error?: string): Response {
   const url = error ? `${base}/login?error=${encodeURIComponent(error)}` : `${base}/login`;
@@ -146,7 +146,7 @@ magicApi.post("/request", async (c) => {
   const ip = c.req.header("cf-connecting-ip") ?? UNKNOWN_IP;
 
   // Everything past validation is best-effort and must never disclose whether
-  // `email` is the administrator — neither by body (always { ok: true }) nor by
+  // `email` is the administrator - neither by body (always { ok: true }) nor by
   // TIMING. The token issue + email send (which includes a network round-trip
   // for allowed addresses only) is deferred to ctx.waitUntil so the response
   // returns before that work runs, leaving no latency oracle to probe.
@@ -190,7 +190,7 @@ magicApi.post("/request", async (c) => {
   try {
     c.executionCtx.waitUntil(task);
   } catch {
-    // No execution context (e.g. unit tests) — run inline as a fallback.
+    // No execution context (e.g. unit tests) - run inline as a fallback.
     await task;
   }
 
@@ -206,7 +206,7 @@ magicFlow.get("/verify", async (c) => {
   const id = await sha256hex(token);
   // Single-use, atomically: DELETE ... RETURNING claims the row in one
   // statement, so two concurrent verifies of the same link can't both read it
-  // as unused and each mint a session — only the request whose DELETE returns a
+  // as unused and each mint a session - only the request whose DELETE returns a
   // row proceeds. Consumption is the DELETE itself, so the legacy `used_at`
   // column it used to also check is dead and intentionally dropped here.
   const row = await c.env.DB.prepare(

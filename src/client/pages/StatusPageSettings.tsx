@@ -19,8 +19,8 @@ import type { StatusPage } from "../lib/types";
 
 /**
  * Status-page management screen (PRD §16). Lists the published public pages from
- * GET /api/status-pages — each with its slug, enabled state, default badge, a
- * link to its public view, and edit/delete actions — plus an inline categories
+ * GET /api/status-pages - each with its slug, enabled state, default badge, a
+ * link to its public view, and edit/delete actions - plus an inline categories
  * manager. Per-page branding and monitor selection are edited on the dedicated
  * editor at /status-page/new and /status-page/:id. The default page is served at
  * /status and cannot be deleted, so its delete action is hidden.

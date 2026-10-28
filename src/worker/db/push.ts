@@ -103,7 +103,7 @@ export async function rowToSubscription(
  * Register (or re-register) a subscription, keyed by its unique endpoint. A
  * repeat subscribe from the same device refreshes the keys/metadata, clears the
  * `disabled` flag, and resets the failure bookkeeping (failures/last_failure_at)
- * so a device returning with fresh keys starts clean — rather than creating a
+ * so a device returning with fresh keys starts clean - rather than creating a
  * duplicate row.
  */
 export async function upsertSubscription(

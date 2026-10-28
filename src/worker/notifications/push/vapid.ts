@@ -31,7 +31,7 @@ export async function getVapid(env: Env): Promise<VapidKeys | null> {
  *
  * The two keys were previously written in two separate awaits, so two concurrent
  * first-time callers (each generating its OWN keypair) could interleave and
- * persist a mismatched public/private pair — silently breaking ALL push. Writing
+ * persist a mismatched public/private pair - silently breaking ALL push. Writing
  * both rows in a single D1 batch (one transaction) with ON CONFLICT DO NOTHING
  * means the first complete pair wins and is never half-overwritten by a racing
  * caller. The private key is encrypted exactly as `setSetting` would; the raw

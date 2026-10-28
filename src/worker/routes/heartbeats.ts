@@ -10,7 +10,7 @@ import type { HeartbeatConfig } from "../../shared/schemas";
 /**
  * Public heartbeat ingestion endpoint (PRD §6.3). External cron jobs / scripts
  * POST (or GET) to /hb/:token to report that they ran. This router is mounted
- * UNAUTHENTICATED — it is intentionally not behind requireAuth; access control
+ * UNAUTHENTICATED - it is intentionally not behind requireAuth; access control
  * is the unguessable token plus an optional per-monitor secret.
  */
 export const heartbeats = new Hono<AppEnv>();
@@ -18,13 +18,13 @@ export const heartbeats = new Hono<AppEnv>();
 // With no explicit per-monitor allowlist we accept POST and HEAD only. GET is
 // the method link-preview/prefetch bots and browser address-bar probes use, so
 // allowing it by default lets them fire false success beats. NOTE: this is an
-// intentional behavior change — heartbeats that previously relied on a bare GET
+// intentional behavior change - heartbeats that previously relied on a bare GET
 // must now configure `acceptedMethods` (e.g. ["GET"]) or switch to POST.
 const DEFAULT_ACCEPTED_METHODS = ["POST", "HEAD"];
 
 // Minimum spacing between beats we actually persist for a given token. Heartbeat
 // monitors have a schema-enforced minimum interval of 60s, so this floor never
-// throttles a legitimate beat (or a quick client retry) — it only caps abusive
+// throttles a legitimate beat (or a quick client retry) - it only caps abusive
 // tight-loop spam on a leaked token from exhausting the D1 write budget. A
 // throttled beat returns 200 (the monitor's liveness was already just recorded);
 // only the redundant follow-on writes are skipped.
@@ -187,7 +187,7 @@ heartbeats.all("/:token", async (c) => {
 
   const payload = parseHeartbeatPayload(c.req.query(), body);
   // Suppress incidents/alerts and uptime accrual for beats that land during a
-  // maintenance window OR outside the monitor's schedule window — the scheduler
+  // maintenance window OR outside the monitor's schedule window - the scheduler
   // already does this for HTTP checks (PRD §16/§7). The beat is still recorded
   // so deadline tracking stays sane; it just must not count against uptime or
   // page anyone for an off-hours run.

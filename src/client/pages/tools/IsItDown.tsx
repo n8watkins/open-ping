@@ -18,7 +18,7 @@ interface Outcome extends CheckResponse {
 /**
  * Ensure the input is a fetchable http(s) URL: add a scheme when the user typed
  * a bare host ("example.com"), and reject anything that still won't parse. Kept
- * lenient — the worker re-validates and applies the SSRF guard authoritatively.
+ * lenient - the worker re-validates and applies the SSRF guard authoritatively.
  */
 function normalizeUrl(raw: string): string | null {
   const trimmed = raw.trim();

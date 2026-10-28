@@ -65,7 +65,7 @@ export const TOOLS: ToolMeta[] = [
 ];
 
 /* ------------------------------------------------------------------ *
- * Page shell — header + footer shared across every tool page.
+ * Page shell - header + footer shared across every tool page.
  * ------------------------------------------------------------------ */
 
 function ToolsHeader() {

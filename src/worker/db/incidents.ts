@@ -8,7 +8,7 @@ import { newId } from "../lib/ids";
  * it stays down, and resolved on recovery. Each lifecycle transition appends a
  * row to `incident_events` (the public/private timeline); plain observations do
  * NOT add events, to avoid timeline spam. All timestamps are epoch milliseconds
- * (`duration_seconds` is the one exception — whole seconds, per the schema).
+ * (`duration_seconds` is the one exception - whole seconds, per the schema).
  * Booleans (public/is_flapping/notified) are stored as 0/1 integers and mapped
  * to/from a camelCase `IncidentRecord`.
  */
@@ -167,7 +167,7 @@ export async function openIncident(
 
 /**
  * Refresh an open incident with the latest down observation. Updates the
- * last-observed timestamp / error / http status only — no timeline event, so a
+ * last-observed timestamp / error / http status only - no timeline event, so a
  * long outage does not produce one event per check.
  */
 export async function recordObservation(
@@ -186,7 +186,7 @@ export async function recordObservation(
 
 /**
  * Resolve an incident on recovery: stamp `resolved_at`, compute the duration in
- * whole seconds, and append a `recovered` timeline event. Idempotent — only the
+ * whole seconds, and append a `recovered` timeline event. Idempotent - only the
  * open → resolved transition mutates the row and writes the event, so a repeat
  * resolve is a no-op. Returns the (resolved) record, or null if no such incident
  * exists.
@@ -203,7 +203,7 @@ export async function resolveIncident(
 
   // Guard on `status = 'open'` so only the first resolve transitions the row.
   // A double-resolve (e.g. the unlocked heartbeat route racing the scheduler)
-  // matches zero rows here and becomes a no-op — resolved_at/duration stay put
+  // matches zero rows here and becomes a no-op - resolved_at/duration stay put
   // and no second `recovered` timeline event is written.
   const res = await env.DB.prepare(
     `UPDATE incidents

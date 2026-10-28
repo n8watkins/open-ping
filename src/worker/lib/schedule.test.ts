@@ -41,7 +41,7 @@ const businessNY: Schedule = {
   timezone: NY,
 };
 
-describe("isActiveAt — always", () => {
+describe("isActiveAt - always", () => {
   it("is always active", () => {
     const s: Schedule = { mode: "always" };
     expect(isActiveAt(s, new Date("2024-01-01T00:00:00Z"))).toBe(true);
@@ -49,7 +49,7 @@ describe("isActiveAt — always", () => {
   });
 });
 
-describe("isActiveAt — business_hours Mon–Fri 08:00–17:00 NY", () => {
+describe("isActiveAt - business_hours Mon–Fri 08:00–17:00 NY", () => {
   it("active Wednesday 10:00 local", () => {
     // 2024-06-26 is a Wednesday.
     expect(
@@ -80,7 +80,7 @@ describe("isActiveAt — business_hours Mon–Fri 08:00–17:00 NY", () => {
   });
 });
 
-describe("isActiveAt — overnight custom period 22:00–06:00 NY", () => {
+describe("isActiveAt - overnight custom period 22:00–06:00 NY", () => {
   // Monday (weekday 1) window 22:00–06:00 spilling into Tuesday morning.
   const overnight: Schedule = {
     mode: "custom",
@@ -138,7 +138,7 @@ describe("excludedDates × overnight windows (opening-day rule)", () => {
   // Monday (weekday 1) overnight window 22:00–06:00 spilling into Tuesday.
   // 2024-06-24 is a Monday; the window spills into Tuesday 2024-06-25. The
   // exclusion rule must anchor the whole window to its OPENING day (Monday) so
-  // isActiveAt and nextActivePeriod never disagree — disagreement is what let
+  // isActiveAt and nextActivePeriod never disagree - disagreement is what let
   // setScheduledOff write a next_check_at in the past.
   const overnightMon = (excludedDates: string[]): Schedule => ({
     mode: "custom",
@@ -180,7 +180,7 @@ describe("excludedDates × overnight windows (opening-day rule)", () => {
   it("excluding the opening day makes nextActivePeriod skip to a future window", () => {
     // With Monday excluded, isActiveAt(tueMorning) is false; the next active
     // window must therefore start strictly AFTER the instant (never the past
-    // start of the excluded, already-open window) — the basis for the
+    // start of the excluded, already-open window) - the basis for the
     // setScheduledOff next_check_at clamp.
     const s = overnightMon(["2024-06-24"]);
     const period = nextActivePeriod(s, tueMorning);
@@ -189,7 +189,7 @@ describe("excludedDates × overnight windows (opening-day rule)", () => {
   });
 });
 
-describe("DST correctness — America/New_York spring-forward 2024-03-10", () => {
+describe("DST correctness - America/New_York spring-forward 2024-03-10", () => {
   // Include Sunday so the DST-transition day itself is a scheduled day.
   const everyDayNY: Schedule = {
     mode: "business_hours",
@@ -213,7 +213,7 @@ describe("DST correctness — America/New_York spring-forward 2024-03-10", () =>
 
   it("nextActivePeriod skips the weekend across DST to Monday 08:00 local", () => {
     // Friday 2024-03-08 18:00 local: after close. Sat/Sun are not weekdays, so
-    // the next active window is Monday 2024-03-11 08:00 local — and the DST
+    // the next active window is Monday 2024-03-11 08:00 local - and the DST
     // transition (Sun 2024-03-10) sits in between.
     const inactiveFridayEvening = at(NY, {
       year: 2024,
@@ -278,7 +278,7 @@ describe("nextCheckAt", () => {
   });
 
   it("when inactive returns the next window start (active there)", () => {
-    // Saturday 2024-06-29 10:00 local — inactive. Next: Monday 07-01 08:00.
+    // Saturday 2024-06-29 10:00 local - inactive. Next: Monday 07-01 08:00.
     const instant = at(NY, { year: 2024, month: 6, day: 29, hour: 10 });
     const check = nextCheckAt(businessNY, instant, 600);
     expect(check.getTime()).toBeGreaterThan(instant.getTime());

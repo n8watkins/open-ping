@@ -61,8 +61,8 @@ app.use(
 );
 
 // secureHeaders (above) sets headers in its post-`next()` phase, but several
-// responses in this app have IMMUTABLE headers — Response.redirect() (OAuth /
-// magic-link flows) and env.ASSETS.fetch() (the SPA / static assets) — and
+// responses in this app have IMMUTABLE headers - Response.redirect() (OAuth /
+// magic-link flows) and env.ASSETS.fetch() (the SPA / static assets) - and
 // modifying those throws "Can't modify immutable headers" → 500. This inner
 // middleware runs after the handler but BEFORE secureHeaders' post-phase, and
 // replaces the response with a mutable clone so the security headers always apply
@@ -115,7 +115,7 @@ app.all("/.well-known/*", async (c, next) => {
 
 // Everything else: serve the built SPA. `not_found_handling: single-page-application`
 // in wrangler.jsonc makes ASSETS return index.html for client-side routes.
-// Unmatched /api paths must return JSON, not the HTML shell — Hono's route()
+// Unmatched /api paths must return JSON, not the HTML shell - Hono's route()
 // merge means a sub-app's own notFound never fires for the parent, so guard here.
 app.all("*", async (c) => {
   if (c.req.path === "/api" || c.req.path.startsWith("/api/")) {

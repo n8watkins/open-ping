@@ -4,7 +4,7 @@
  * for missing values and surface a clear "not configured" error.
  */
 export interface Env {
-  /** D1 — the only operational datastore. */
+  /** D1 - the only operational datastore. */
   DB: D1Database;
   /** Static asset server (built SPA). */
   ASSETS: Fetcher;
@@ -37,7 +37,7 @@ export interface Env {
 
   /**
    * Optional admin API token for CLI/automation. When set, a request bearing
-   * `Authorization: Bearer <API_TOKEN>` is treated as the admin (no cookie/CSRF —
+   * `Authorization: Bearer <API_TOKEN>` is treated as the admin (no cookie/CSRF -
    * a Bearer header isn't ambient, so there's no CSRF surface). Opt-in: unset =
    * no token auth. Rotate by changing the secret; treat it like a password.
    */

@@ -24,7 +24,7 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Dynamic endpoints must never be cached — always hit the network.
+// Dynamic endpoints must never be cached - always hit the network.
 function isPassthrough(url) {
   return (
     url.pathname === "/api" ||
@@ -142,7 +142,7 @@ self.addEventListener("notificationclick", (event) => {
         }
       }
 
-      // No matching client open — fall back to focusing any window, else open one.
+      // No matching client open - fall back to focusing any window, else open one.
       for (const client of all) {
         if ("focus" in client) return client.focus();
       }

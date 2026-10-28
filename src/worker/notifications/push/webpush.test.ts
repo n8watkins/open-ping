@@ -103,7 +103,7 @@ describe("buildVapidJwt", () => {
 
 describe("sendWebPush validation (no network)", () => {
   // These paths return before any crypto or fetch, so a placeholder VAPID
-  // identity is fine — it is never used here.
+  // identity is fine - it is never used here.
   const vapid: VapidKeys = {
     publicKey: "x",
     privateKey: "y",

@@ -104,7 +104,7 @@ export function isBlockedIPv6(host: string): boolean {
   const compatHex = h.match(/^::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
   if (compatHex) return isBlockedIPv4(hextetsToV4(compatHex[1]!, compatHex[2]!));
   // Single-hextet IPv4-compatible tail: `::x` (all high bits zero) embeds only
-  // the low 16 bits, i.e. 0.0.(x>>8).(x&0xff) — always within 0.0.0.0/8 ("this"
+  // the low 16 bits, i.e. 0.0.(x>>8).(x&0xff) - always within 0.0.0.0/8 ("this"
   // network). `::` and `::1` are handled above, so any remaining `::x` is routed
   // through the IPv4 denylist rather than slipping past as "not an IP literal".
   const compatSingle = h.match(/^::([0-9a-f]{1,4})$/);
@@ -113,7 +113,7 @@ export function isBlockedIPv6(host: string): boolean {
     return isBlockedIPv4(`0.0.${(x >> 8) & 0xff}.${x & 0xff}`);
   }
 
-  // 6to4: 2002:<v4>::/16 — the two hextets after `2002:` are the embedded v4.
+  // 6to4: 2002:<v4>::/16 - the two hextets after `2002:` are the embedded v4.
   const sixToFour = h.match(/^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})/);
   if (sixToFour) return isBlockedIPv4(hextetsToV4(sixToFour[1]!, sixToFour[2]!));
 

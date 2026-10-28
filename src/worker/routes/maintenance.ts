@@ -40,7 +40,7 @@ export const maintenanceCreateSchema = z
     privateNotes: z.string().max(2000).optional(),
   })
   // A window with endsAt <= startsAt would pass validation but never activate
-  // (isWindowActiveAt is startsAt <= now < endsAt) — the operator believes
+  // (isWindowActiveAt is startsAt <= now < endsAt) - the operator believes
   // maintenance is scheduled while it silently never fires.
   .refine((v) => v.endsAt > v.startsAt, {
     message: "endsAt must be after startsAt",

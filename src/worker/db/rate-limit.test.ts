@@ -8,7 +8,7 @@ import {
 import { assertSafeUrl } from "../lib/ssrf";
 
 // Pure pieces of the rate limiter (window math + allow/deny decision) plus the
-// SSRF rejection the "Is it down?" endpoint relies on. No D1 — matching the
+// SSRF rejection the "Is it down?" endpoint relies on. No D1 - matching the
 // repo's node test env, which mirrors db/categories.test.ts.
 
 const W = RATE_LIMIT_WINDOW_MS;

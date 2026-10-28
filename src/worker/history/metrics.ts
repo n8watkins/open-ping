@@ -7,7 +7,7 @@ import type { Env } from "../types";
  *
  * Scheduled-off time is never recorded as a check/summary in the first place
  * (the scheduler simply skips those windows), so summing `summaries` rows
- * inherently excludes scheduled-off time — there is nothing to subtract here.
+ * inherently excludes scheduled-off time - there is nothing to subtract here.
  */
 
 // ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ interface SummaryUptimeRow {
 /**
  * Pure reducer over summary rows. Sums the counters and derives uptime %.
  * uptimePct = checks > 0 ? okChecks / checks * 100 : 100 (no checks ⇒ treated
- * as fully up, since there was nothing to observe — e.g. scheduled-off only).
+ * as fully up, since there was nothing to observe - e.g. scheduled-off only).
  */
 export function computeUptimeFromRows(
   rows: {
@@ -218,7 +218,7 @@ function effectiveDuration(inc: IncidentInput, now: number): number {
   return Math.max(0, Math.floor((end - inc.startedAt) / 1000));
 }
 
-/** Pure reducer over incident rows — see field docs on IncidentMetrics. */
+/** Pure reducer over incident rows - see field docs on IncidentMetrics. */
 export function computeIncidentMetricsFromRows(
   incidents: IncidentInput[],
   now: number,

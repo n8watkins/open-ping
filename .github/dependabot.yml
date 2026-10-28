@@ -7,6 +7,11 @@ updates:
       interval: daily
     allow:
       - dependency-name: release-kit
+    # Dependabot misorders this git dependency's tags and once proposed
+    # v2.0.0 -> v1.0.3; never offer anything older than the current major.
+    ignore:
+      - dependency-name: release-kit
+        versions: ["< 2"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

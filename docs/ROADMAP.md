@@ -21,13 +21,13 @@ The only shared things are the source code on GitHub and, if an install chooses 
 - [x] Repeatable releases and production deploys (`deploy:prod`, release-kit, CI on every PR) (#14, #16).
 - [x] Missing files return 404, a real robots.txt, readable widget footer, wide-screen header (#21).
 - [x] Plan for the landing page, Hosted and sign-in ([LANDING_AND_LOGIN_PLAN.md](./LANDING_AND_LOGIN_PLAN.md)) (#22).
-- [ ] MCP server at `/mcp` and a full admin CLI, so Claude and scripts can run OpenPing.
-- [ ] Safe `MASTER_KEY` rotation (two keys during a re-encryption pass, then a verified switch).
+- [x] MCP server at `/mcp` and a full admin CLI, so Claude and scripts can run OpenPing (#24).
+- [x] Safe `MASTER_KEY` rotation (two keys during a re-encryption pass, then a verified switch) (#25).
 - [ ] Back up the production `MASTER_KEY` or set a fresh one ([owner to-do 1](./DEFERRED_INPUTS.md)).
 - [x] Landing page shows both paths (free in your own Cloudflare, or Hosted), honest waitlist, owner-only sign-in in the footer, click counts (plan section 6, items 1.0 to 1.8).
 - [x] Other people's installs show their own status page at `/`, not OpenPing's marketing page (plan item 1.9, `HOME_PAGE` setting).
-- [ ] Sweep the remaining em dashes out of code comments.
-- [ ] Dependency upkeep: release-kit 2.0.1, `@cloudflare/vitest-pool-workers` renamed to `@cloudflare/vitest-plugin`.
+- [x] Sweep the remaining em dashes out of code comments (this PR).
+- [x] Dependency upkeep: release-kit 2.0.1, `@cloudflare/vitest-pool-workers` renamed to `@cloudflare/vitest-plugin` (this PR).
 
 ## Stage 2: close the feature gaps that matter
 
@@ -61,6 +61,8 @@ ICMP ping isn't possible from Workers; TCP and HTTP checks cover the same need.
 ## Stage 3: run the stage 1 waitlist test
 
 - [ ] Watch click counts and waitlist sign-ups for 8 weeks after the landing page ships.
+  Started 2026-10-28 with v0.4.0; read the counts in Settings (waitlist and landing page counts) or ask the agent.
+  Decision date: about 2026-12-23.
 - [ ] Gate: about 20 sign-ups.
   Under that, keep OpenPing a free self-hosted project and skip stage 4.
 

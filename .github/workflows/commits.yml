@@ -13,4 +13,4 @@ permissions:
 
 jobs:
   check:
-    uses: n8watkins/release-kit/.github/workflows/commits.yml@v2.0.0
+    uses: n8watkins/release-kit/.github/workflows/commits.yml@v2.0.1
