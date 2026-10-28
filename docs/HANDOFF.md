@@ -2,7 +2,8 @@
 
 This document is the current zero-context handoff for continuing work on OpenPing.
 
-Last updated: 2026-07-15.
+Last updated: 2026-10-27.
+The October work (round 2 and Hosted stage 1) is summarised in [the Hosted plan](./HOSTED_PLAN.md); this file's sections below still describe the July pass.
 
 ## Project summary
 
@@ -133,6 +134,11 @@ git status --short --branch
 Commit future work on a feature branch, then run `no-mistakes axi run --intent "..."` before merging it into `main`.
 
 ## Known gaps and recommended next work
+
+0. Fix the off-hours status bug (open, found 2026-10-25).
+   During scheduled off-hours the public feed, status page and widget report a monitor as "operational", because `mapPublicState` in `src/worker/routes/public.ts` hides `scheduled_off` unless `showScheduledOff` is on, which defaults to off and has no control in the monitor editor.
+   The landing page promises the opposite, and the developer portfolio, which reads the feed, shows sleeping Render apps as up.
+   Repro, cause and fix direction: [docs/BUG-public-scheduled-off.md](./BUG-public-scheduled-off.md).
 
 1. Implement dual-key `MASTER_KEY` rotation.
    The storage inventory and safety requirements are documented, but an online rotation still needs dual-key reads, an idempotent re-encryption pass over every protected storage class, and a proof that the previous key is no longer required.
