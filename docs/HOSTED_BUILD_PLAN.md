@@ -1,6 +1,7 @@
 # OpenPing Hosted: the build plan
 
-Status: planning, 2026-10-28.
+Status: building, 2026-10-28.
+Done: C0 (contract) and B1 (platform skeleton) in #40; the contract itself is [docs/hosted/CONTRACT.md](./hosted/CONTRACT.md).
 The owner decided on 2026-10-28 to start building Hosted now instead of waiting for the waitlist gate (about 20 sign-ups by about 2026-12-23).
 The waitlist keeps running; it becomes the launch list.
 The offer, the prices and the cost model stay as in [the Hosted plan](./HOSTED_PLAN.md); this document is how to build it, in what order, and what can run at the same time.
@@ -87,8 +88,8 @@ The pieces:
   It owns everything that is about customers rather than monitoring: accounts, sign-up, billing, provisioning, routing, scheduling, releases and the owner's admin console.
 - **The platform database** (`PLATFORM_DB`) holds accounts, sign-in methods, tenants (slug, script name, D1 id, status, plan, version), subscriptions, the escrowed tenant keys, audit events, and rate-limit counters.
   It never holds monitoring data.
-- **A customer's OpenPing** is today's OpenPing built with hosted mode, uploaded as a user Worker named `t_<id>`, with its own D1 database, its own `MASTER_KEY`, and no `SETUP_TOKEN`, GitHub app or Resend key of its own.
-- **Scheduling:** the platform's cron runs every minute and puts each due customer on a Queue; the queue consumer calls each customer's scheduler through the namespace.
+- **A customer's OpenPing** is today's OpenPing built with hosted mode, uploaded as a user Worker named `t-<id>` (from the permanent tenant id, never the slug, which can be renamed), with its own D1 database, its own `MASTER_KEY`, and no `SETUP_TOKEN`, GitHub app or Resend key of its own.
+- **Scheduling:** the platform's cron runs every minute and puts each due customer on a Queue; the queue consumer calls each customer's scheduler through the namespace, building fresh props (and a fresh platform capability) for every call, since an RPC stub in props only lives for the request that received it.
   One message per customer means one slow or broken customer can't delay the others, and Queues retry on failure.
 - **Email:** the platform owns one Resend account and one verified sending domain; a customer's OpenPing sends email through a platform capability (an RPC stub passed in props), so no customer holds the Resend key and the platform can cap sends per customer.
 
@@ -232,8 +233,8 @@ With three lanes the build is about 10 working days of agent time plus the 7-day
 ## 10. Security and abuse
 
 - **Isolation:** one database and one secret set per customer; the platform database holds no monitoring data; props and hand-off tokens are the only channel from platform to customer, and both are signed or set by the dispatcher.
-- **Internal paths** (`/__platform/*`) are reachable only from the dispatch Worker: it strips the internal header from public requests and adds it with a per-release secret.
-- **Keys:** `PLATFORM_KEY` and the hand-off signing key are platform secrets with a written rotation procedure; customer `MASTER_KEY`s are escrowed only encrypted.
+- **Internal paths** (`/__platform/*`) are reachable only from the dispatch Worker: it strips every `x-openping-*` header from public requests, and a platform call carries a header that must equal the per-call id in props, which only the dispatcher can set (no per-release secret needed; [CONTRACT.md](./hosted/CONTRACT.md) section 6).
+- **Keys:** `PLATFORM_KEY` and `HANDOFF_SIGNING_KEY` are platform secrets, and every tenant carries `HANDOFF_PUBLIC_KEY` as a var, so rotating the hand-off key is a release; customer `MASTER_KEY`s are escrowed only encrypted.
 - **Abuse:** sign-up rate limits per IP and per email domain, disposable-email blocking, trial monitors limited to 12-minute checks, per-tenant caps on email sends and outbound requests through custom limits, an acceptable-use rule in the terms, and the owner's suspend button.
 - **Payment safety:** Stripe webhooks verified by signature and processed idempotently; plan changes apply from webhook state only, never from the browser.
 - **A security review** of the hand-off, internal paths, provisioning and billing in wave 4, by a separate review agent, before launch.
