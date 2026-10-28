@@ -313,7 +313,8 @@ Sign in with **GitHub** or an **email magic link**, then:
 
 > **Prefer automation?** Once you've set an `API_TOKEN` secret, you can manage
 > monitors entirely from a terminal with the admin CLI (`scripts/op.mjs`) - see
-> [`CLI.md`](./CLI.md). Handy for scripting, bulk setup, or CI.
+> [`CLI.md`](./CLI.md). Handy for scripting, bulk setup, or CI. The same token
+> connects Claude Code or another MCP client to `/mcp` - see [`MCP.md`](./MCP.md).
 
 ---
 

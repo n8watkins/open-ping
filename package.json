@@ -21,6 +21,7 @@
     "test:unit": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
+    "op": "node scripts/op.mjs",
     "cf-typegen": "wrangler types",
     "db:create": "wrangler d1 create open-ping",
     "db:migrate:local": "wrangler d1 migrations apply open-ping --local",
@@ -31,6 +32,7 @@
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
     "clsx": "^2.1.1",
     "hono": "^4.6.14",
     "lucide-react": "^0.469.0",

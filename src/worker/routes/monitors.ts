@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import type { AppEnv } from "../types";
+import { z } from "zod";
+import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
 import { createMonitorSchema } from "../../shared/schemas";
 import {
@@ -13,7 +14,12 @@ import {
 } from "../db/monitors";
 import { runMonitorCheck } from "../checks/runner";
 import { applyCheckResult } from "../checks/state";
-import { computeUptime, computeIncidentMetrics } from "../history/metrics";
+import {
+  computeUptime,
+  computeIncidentMetrics,
+  computeUptimeWindows,
+  UPTIME_WINDOWS,
+} from "../history/metrics";
 import { redactConfig } from "../lib/secret-config";
 import type { MonitorRecord } from "../db/monitors";
 
@@ -36,6 +42,175 @@ export function presentCreatedMonitor(m: MonitorRecord): MonitorRecord {
     : redacted;
 }
 
+
+/**
+ * A partial monitor update: only the fields present change. `config` and
+ * `public` are merged key by key into the stored values (a config key set to
+ * null is removed); every other field replaces the stored value. The merged
+ * result is then validated with the same `createMonitorSchema` as a full PUT.
+ * `type` may be sent but must match the stored type.
+ */
+export const monitorPatchSchema = z
+  .object({
+    type: z.string().optional(),
+    name: z.unknown().optional(),
+    enabled: z.unknown().optional(),
+    schedule: z.unknown().optional(),
+    config: z.record(z.string(), z.unknown()).optional(),
+    assertions: z.unknown().optional(),
+    notify: z.unknown().optional(),
+    public: z.record(z.string(), z.unknown()).optional(),
+    categoryId: z.unknown().optional(),
+  })
+  .strict();
+export type MonitorPatch = z.infer<typeof monitorPatchSchema>;
+
+/**
+ * PURE. Apply a {@link MonitorPatch} to a stored (decrypted, unredacted)
+ * monitor, giving a full create/update body. Secrets never leave the server on
+ * this path: the merge starts from the stored config, so a patch that does not
+ * mention a credential keeps it.
+ */
+export function mergeMonitorPatch(
+  existing: MonitorRecord,
+  patch: MonitorPatch,
+): Record<string, unknown> {
+  const config: Record<string, unknown> = {
+    ...(existing.config as Record<string, unknown>),
+  };
+  for (const [key, value] of Object.entries(patch.config ?? {})) {
+    if (value === null) delete config[key];
+    else config[key] = value;
+  }
+  const pick = <T>(value: T | undefined, fallback: unknown) =>
+    value !== undefined ? value : fallback;
+  return {
+    type: existing.type,
+    name: pick(patch.name, existing.name),
+    enabled: pick(patch.enabled, existing.enabled),
+    schedule: pick(patch.schedule, existing.schedule),
+    notify: pick(patch.notify, existing.notify),
+    public: patch.public ? { ...existing.public, ...patch.public } : existing.public,
+    categoryId: pick(patch.categoryId, existing.categoryId),
+    config,
+    ...(existing.type === "http"
+      ? { assertions: pick(patch.assertions, existing.assertions) }
+      : {}),
+  };
+}
+
+/** Outcome of a monitor write, mapped to a response by each caller. */
+export type MonitorWriteResult =
+  | { ok: true; monitor: MonitorRecord }
+  | {
+      ok: false;
+      status: 400 | 404;
+      error: "validation" | "not_found" | "type_immutable";
+      issues?: z.core.$ZodIssue[];
+    };
+
+/** Validate and create a monitor (POST /api/monitors and the MCP tool). */
+export async function createMonitorFromBody(
+  env: Env,
+  body: unknown,
+): Promise<MonitorWriteResult> {
+  const parsed = createMonitorSchema.safeParse(body);
+  if (!parsed.success) {
+    return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
+  }
+  return { ok: true, monitor: await createMonitor(env, parsed.data) };
+}
+
+/** Validate and fully replace a monitor (PUT /api/monitors/:id). */
+export async function replaceMonitor(
+  env: Env,
+  id: string,
+  body: unknown,
+): Promise<MonitorWriteResult> {
+  const parsed = createMonitorSchema.safeParse(body);
+  if (!parsed.success) {
+    return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
+  }
+  const existing = await getMonitor(env, id);
+  if (!existing) return { ok: false, status: 404, error: "not_found" };
+  if (existing.type !== parsed.data.type) {
+    return { ok: false, status: 400, error: "type_immutable" };
+  }
+  const monitor = await updateMonitor(env, id, parsed.data);
+  if (!monitor) return { ok: false, status: 404, error: "not_found" };
+  return { ok: true, monitor };
+}
+
+/** Validate and partially update a monitor (PATCH /api/monitors/:id and MCP). */
+export async function patchMonitor(
+  env: Env,
+  id: string,
+  body: unknown,
+): Promise<MonitorWriteResult> {
+  const patch = monitorPatchSchema.safeParse(body);
+  if (!patch.success) {
+    return { ok: false, status: 400, error: "validation", issues: patch.error.issues };
+  }
+  const existing = await getMonitor(env, id);
+  if (!existing) return { ok: false, status: 404, error: "not_found" };
+  if (patch.data.type !== undefined && patch.data.type !== existing.type) {
+    return { ok: false, status: 400, error: "type_immutable" };
+  }
+  const parsed = createMonitorSchema.safeParse(mergeMonitorPatch(existing, patch.data));
+  if (!parsed.success) {
+    return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
+  }
+  const monitor = await updateMonitor(env, id, parsed.data);
+  if (!monitor) return { ok: false, status: 404, error: "not_found" };
+  return { ok: true, monitor };
+}
+
+/** Uptime of every monitor over 24h, 7d, 30d and 90d (three D1 reads). */
+export async function listMonitorUptime(env: Env, now: number = Date.now()) {
+  const [list, windows] = await Promise.all([
+    listMonitors(env),
+    computeUptimeWindows(env, now),
+  ]);
+  return {
+    windows: UPTIME_WINDOWS.map((w) => ({ key: w.key, label: w.label })),
+    monitors: list.map((m) => {
+      const uptime = windows.get(m.id);
+      return {
+        id: m.id,
+        name: m.name,
+        type: m.type,
+        paused: m.paused,
+        ...Object.fromEntries(
+          UPTIME_WINDOWS.map((w) => {
+            const r = uptime?.[w.key];
+            return [
+              w.key,
+              {
+                uptimePct: r?.uptimePct ?? 100,
+                checks: r?.checks ?? 0,
+                downSeconds: r?.downSeconds ?? 0,
+              },
+            ];
+          }),
+        ),
+      } as {
+        id: string;
+        name: string;
+        type: MonitorRecord["type"];
+        paused: boolean;
+      } & Record<
+        (typeof UPTIME_WINDOWS)[number]["key"],
+        { uptimePct: number; checks: number; downSeconds: number }
+      >;
+    }),
+  };
+}
+
+/** Map a failed write to the JSON error body the REST API has always used. */
+function writeError(r: Extract<MonitorWriteResult, { ok: false }>) {
+  return r.issues ? { error: r.error, issues: r.issues } : { error: r.error };
+}
+
 /**
  * Monitor CRUD API mounted at /api/monitors. All routes require an
  * authenticated session; the auth middleware also enforces CSRF on mutations.
@@ -55,13 +230,13 @@ monitors.get("/", async (c) => {
 
 monitors.post("/", async (c) => {
   const body = await c.req.json().catch(() => undefined);
-  const parsed = createMonitorSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ error: "validation", issues: parsed.error.issues }, 400);
-  }
-  const monitor = await createMonitor(c.env, parsed.data);
-  return c.json({ monitor: presentCreatedMonitor(monitor) }, 201);
+  const r = await createMonitorFromBody(c.env, body);
+  if (!r.ok) return c.json(writeError(r), r.status);
+  return c.json({ monitor: presentCreatedMonitor(r.monitor) }, 201);
 });
+
+// Registered before /:id so the static path wins.
+monitors.get("/uptime", async (c) => c.json(await listMonitorUptime(c.env)));
 
 monitors.get("/:id", async (c) => {
   const monitor = await getMonitor(c.env, c.req.param("id"));
@@ -129,20 +304,18 @@ monitors.get("/:id/detail", async (c) => {
 });
 
 monitors.put("/:id", async (c) => {
-  const id = c.req.param("id");
   const body = await c.req.json().catch(() => undefined);
-  const parsed = createMonitorSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ error: "validation", issues: parsed.error.issues }, 400);
-  }
-  const existing = await getMonitor(c.env, id);
-  if (!existing) return c.json({ error: "not_found" }, 404);
-  if (existing.type !== parsed.data.type) {
-    return c.json({ error: "type_immutable" }, 400);
-  }
-  const monitor = await updateMonitor(c.env, id, parsed.data);
-  if (!monitor) return c.json({ error: "not_found" }, 404);
-  return c.json({ monitor: redactMonitor(monitor) });
+  const r = await replaceMonitor(c.env, c.req.param("id"), body);
+  if (!r.ok) return c.json(writeError(r), r.status);
+  return c.json({ monitor: redactMonitor(r.monitor) });
+});
+
+/** Partial update: see {@link monitorPatchSchema}. */
+monitors.patch("/:id", async (c) => {
+  const body = await c.req.json().catch(() => undefined);
+  const r = await patchMonitor(c.env, c.req.param("id"), body);
+  if (!r.ok) return c.json(writeError(r), r.status);
+  return c.json({ monitor: redactMonitor(r.monitor) });
 });
 
 monitors.delete("/:id", async (c) => {

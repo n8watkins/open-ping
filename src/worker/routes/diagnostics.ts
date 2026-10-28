@@ -191,9 +191,14 @@ async function gatherCounts(env: Env) {
   };
 }
 
-diagnostics.get("/", async (c) => {
-  const env = c.env;
+diagnostics.get("/", async (c) => c.json(await buildDiagnostics(c.env)));
 
+/**
+ * Scheduler health: the last successful and failed runs, the 20 most recent
+ * runs (with their D1 query counts) and table counts. Shared by
+ * GET /api/diagnostics and the MCP `get_diagnostics` tool.
+ */
+export async function buildDiagnostics(env: Env) {
   let dbOk = false;
   try {
     await env.DB.prepare("SELECT 1 AS one").first();
@@ -215,15 +220,15 @@ diagnostics.get("/", async (c) => {
     gatherCounts(env),
   ]);
 
-  return c.json({
+  return {
     version: VERSION,
     dbOk,
     lastSuccessfulRun: lastSuccessful ? mapRun(lastSuccessful) : null,
     lastFailedRun: lastFailed ? mapRun(lastFailed) : null,
     recentRuns: (recent.results ?? []).map(mapRun),
     counts,
-  });
-});
+  };
+}
 
 diagnostics.get("/usage", async (c) => {
   const env = c.env;

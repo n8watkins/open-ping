@@ -22,7 +22,7 @@ export const incidents = new Hono<AppEnv>();
 incidents.use("*", requireAuth);
 
 /** An incident plus the joined monitor name (null if the monitor is gone). */
-type IncidentWithMonitor = IncidentRecord & { monitorName: string | null };
+export type IncidentWithMonitor = IncidentRecord & { monitorName: string | null };
 
 /** Raw `incidents` row (optionally with the joined `monitor_name`). */
 interface IncidentRow {
@@ -235,21 +235,31 @@ async function queryIncidents(
 }
 
 // GET / — filtered list (status, monitorId, rootCause, from, to, q, sort, limit).
-incidents.get("/", async (c) => {
-  const query = c.req.query();
+incidents.get("/", async (c) => c.json(await listIncidents(c.env, c.req.query())));
+
+/**
+ * One filtered page of incidents (newest first) plus the total matching count.
+ * `query` takes the same string filters as GET /api/incidents (status,
+ * monitorId, rootCause, from, to, q, sort, limit), which the MCP
+ * `list_incidents` tool also passes, so both filter identically.
+ */
+export async function listIncidents(
+  env: AppEnv["Bindings"],
+  query: Record<string, string | undefined>,
+): Promise<{ incidents: IncidentWithMonitor[]; total: number }> {
   const limit = resolveLimit(query.limit);
-  const list = await queryIncidents(c.env, query, limit);
+  const list = await queryIncidents(env, query, limit);
 
   const { where, binds } = buildFilter(query);
   const whereSql = where ? ` WHERE ${where}` : "";
-  const countRow = await c.env.DB.prepare(
+  const countRow = await env.DB.prepare(
     `SELECT COUNT(*) AS c FROM incidents i${whereSql}`,
   )
     .bind(...binds)
     .first<{ c: number }>();
 
-  return c.json({ incidents: list, total: countRow?.c ?? 0 });
-});
+  return { incidents: list, total: countRow?.c ?? 0 };
+}
 
 // GET /export.json — full filtered array as a downloadable JSON attachment.
 // Registered before /:id so the static path wins.

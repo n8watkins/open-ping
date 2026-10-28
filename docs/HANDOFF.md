@@ -13,6 +13,12 @@ Last updated: 2026-10-28.
 - The paid hosted version is planned in [the Hosted plan](./HOSTED_PLAN.md): stages 0 to 7, each with a go/no-go gate.
   Chosen pricing: $24 a year (20 monitors, 12-minute checks, 2 status pages), plus $12 a year for 1-minute checks; no free hosted plan.
   Gate after stage 1: about 20 waitlist sign-ups within 8 weeks.
+- **MCP server and wider CLI (branch `feat/mcp-and-cli`, not yet deployed):** `/mcp` is a stateless Streamable HTTP MCP server built on the official `@modelcontextprotocol/server` SDK (v2), with 20 tools that reuse the REST API's validation and data functions; see [MCP.md](./MCP.md).
+  It needs `API_TOKEN` (404 without it), accepts only the bearer token, refuses cross-origin browser requests and allows 120 authenticated requests a minute.
+  `scripts/op.mjs` now covers status, monitors, incidents, uptime, diagnostics, channels, pages, categories and maintenance, with `--json`, per-command `--help`, errors on unknown flags and `--yes` for deletes; see [CLI.md](./CLI.md).
+  New REST routes back both: `PATCH /api/monitors/:id`, `PATCH /api/status-pages/:id`, `GET /api/monitors/uptime` and `POST /api/maintenance/:id/end`.
+  The Worker grew from 173 KiB to 272 KiB gzipped (Free plan limit: 3 MB).
+  After deploying, connect with `claude mcp add --transport http openping https://openping.n8builds.dev/mcp --header "Authorization: Bearer $OPENPING_TOKEN"` and call `get_status`.
 - Tagline everywhere: "Uptime monitoring on your own Cloudflare".
 - `v0.1.0` is a baseline tag at `5ff032c`; releases since then are cut with release-kit.
 
@@ -196,6 +202,7 @@ See [Deferred operator inputs](./DEFERRED_INPUTS.md) for the authoritative check
 - Do not commit a real Cloudflare D1 database identifier, `.dev.vars`, `.op-token`, or any production credential.
 - Use explicit Tailwind class maps instead of interpolated class names so Tailwind v4 can extract them.
 - Preserve the top-level API 404 handling because Hono sub-application `notFound` handlers do not run after route merging.
+- Keep `/mcp` mounted before the SPA catch-all in `src/worker/index.ts`, keep MCP tool output at least as redacted as backups (`redactMonitorForMcp`), and keep destructive tools behind `confirm: true`.
 
 ## Working conventions
 
@@ -213,11 +220,13 @@ release-kit ignores flags it doesn't know, so `npm run release -- --help` cuts a
 - `src/worker/index.ts` contains Worker entry points, route mounting, scheduled execution, security headers, and SPA fallback behavior.
 - `src/worker/scheduler.ts` orchestrates monitoring checks, maintenance, incidents, notifications, compaction, summaries, and cleanup.
 - `src/worker/routes/` contains authenticated, public, setup, heartbeat, push, and import/export APIs.
+- `src/worker/mcp/` is the MCP server: `handler.ts` (auth, origin, rate limit, transport), `tools.ts` (the tools) and `format.ts` (ISO times, redaction, result shape).
+- `scripts/op.mjs` is the zero-dependency admin CLI; `scripts/op.test.mjs` tests its parser and commands.
 - `src/worker/db/` contains D1 access and persistence boundaries.
 - `src/worker/lib/secret-config.ts` and `src/worker/lib/crypto.ts` implement sealed configuration storage.
 - `src/worker/lib/ssrf.ts` implements outbound target validation.
 - `src/worker/notifications/` contains outbox dispatch, email, Discord, webhook, and Web Push behavior.
-- `test/integration/` contains workerd route tests backed by an isolated migrated D1 database.
+- `test/integration/` contains workerd route tests backed by an isolated migrated D1 database; `mcp.test.ts` drives `/mcp` over JSON-RPC.
 - `vitest.integration.config.ts` defines explicit test-only Worker bindings and does not load `.dev.vars`.
 - `src/client/pages/Monitors.tsx` is the UptimeRobot-inspired monitoring workspace.
 - `src/client/pages/Setup.tsx` is the protected first-run wizard.

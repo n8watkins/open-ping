@@ -1,8 +1,10 @@
 import { Hono } from "hono";
-import type { AppEnv } from "../types";
+import { z } from "zod";
+import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
 import { statusPageSchema } from "../../shared/schemas";
 import {
+  type StatusPageRecord,
   createStatusPage,
   deleteStatusPage,
   getStatusPage,
@@ -20,6 +22,86 @@ import {
  * cannot be deleted (→ 400). A slug already owned by another page → 409.
  */
 export const statusPages = new Hono<AppEnv>();
+
+/** The fields a status page update may set (every key of `statusPageSchema`). */
+const STATUS_PAGE_FIELDS = Object.keys(statusPageSchema.shape) as (keyof typeof statusPageSchema.shape)[];
+
+/**
+ * A partial status page update: only the fields present change, and null
+ * clears an optional text or URL field. The merged page is validated with the
+ * same `statusPageSchema` as a full PUT.
+ */
+export const statusPagePatchSchema = z
+  .object(
+    Object.fromEntries(STATUS_PAGE_FIELDS.map((k) => [k, z.unknown().optional()])) as Record<
+      (typeof STATUS_PAGE_FIELDS)[number],
+      z.ZodOptional<z.ZodUnknown>
+    >,
+  )
+  .strict();
+
+/** PURE. A stored page as a full `statusPageSchema` input (nulls become absent). */
+export function statusPageToInput(page: StatusPageRecord): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of STATUS_PAGE_FIELDS) {
+    const value = (page as unknown as Record<string, unknown>)[key];
+    if (value !== null && value !== undefined) out[key] = value;
+  }
+  return out;
+}
+
+/** PURE. Apply a validated patch to a stored page, giving a full input body. */
+export function mergeStatusPagePatch(
+  page: StatusPageRecord,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = statusPageToInput(page);
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (value === null) delete out[key];
+    else out[key] = value;
+  }
+  return out;
+}
+
+/** Outcome of a status page update, mapped to a response by each caller. */
+export type StatusPageWriteResult =
+  | { ok: true; statusPage: StatusPageRecord }
+  | {
+      ok: false;
+      status: 400 | 404 | 409;
+      error: "validation" | "not_found" | "slug_conflict";
+      issues?: z.core.$ZodIssue[];
+      message?: string;
+    };
+
+/** Validate and partially update a page (PATCH /api/status-pages/:id and MCP). */
+export async function patchStatusPage(
+  env: Env,
+  id: string,
+  body: unknown,
+): Promise<StatusPageWriteResult> {
+  const patch = statusPagePatchSchema.safeParse(body);
+  if (!patch.success) {
+    return { ok: false, status: 400, error: "validation", issues: patch.error.issues };
+  }
+  const existing = await getStatusPage(env, id);
+  if (!existing) return { ok: false, status: 404, error: "not_found" };
+  const parsed = statusPageSchema.safeParse(mergeStatusPagePatch(existing, patch.data));
+  if (!parsed.success) {
+    return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
+  }
+  try {
+    const statusPage = await updateStatusPage(env, id, parsed.data);
+    if (!statusPage) return { ok: false, status: 404, error: "not_found" };
+    return { ok: true, statusPage };
+  } catch (err) {
+    if (err instanceof StatusPageError && err.code === "slug_conflict") {
+      return { ok: false, status: 409, error: "slug_conflict", message: err.message };
+    }
+    throw err;
+  }
+}
 
 statusPages.use("*", requireAuth);
 
@@ -68,6 +150,15 @@ statusPages.put("/:id", async (c) => {
     }
     throw err;
   }
+});
+
+/** Partial update: see {@link statusPagePatchSchema}. */
+statusPages.patch("/:id", async (c) => {
+  const body = await c.req.json().catch(() => undefined);
+  const r = await patchStatusPage(c.env, c.req.param("id"), body);
+  if (r.ok) return c.json({ statusPage: r.statusPage });
+  const { ok: _ok, status, ...error } = r;
+  return c.json(error, status);
 });
 
 statusPages.delete("/:id", async (c) => {

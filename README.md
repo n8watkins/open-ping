@@ -39,6 +39,7 @@ does not reduce uptime.
 - A free **`/tools` suite** (uptime & subnet calculators, cron tester, DNS/MX lookup, and an **"Is it down?" checker**)
 - A marketing **landing page** at `/` for signed-out visitors
 - Admin **CLI** (`scripts/op.mjs`) + opt-in Bearer API-token auth for scripting/automation
+- A built-in **MCP server** at `/mcp`, so Claude Code or any MCP client can check status and manage monitors ([docs/MCP.md](./docs/MCP.md))
 - Data import/export and transparent Cloudflare usage estimates
 
 ## Tech stack
@@ -87,6 +88,7 @@ secret, custom domains, and a verify-it's-working checklist.
 - [Status widget & badge](./docs/WIDGET.md) - embed the live status widget or an SVG badge on another site
 - [Free tools](./docs/TOOLS.md) - the public `/tools` suite and the "Is it down?" API
 - [CLI](./docs/CLI.md) - manage an instance from a terminal/automation via an API token
+- [MCP server](./docs/MCP.md) - connect Claude Code or another MCP client to your install
 - [Upgrade](./docs/UPGRADE.md) - pull, migrate, redeploy
 - [Backup & restore](./docs/BACKUP.md) - JSON export/import and full D1 dumps
 - [Security & secret storage](./docs/SECURITY.md) - encryption, hashing, plaintext metadata, legacy upgrades, and backup boundaries
