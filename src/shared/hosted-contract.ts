@@ -312,12 +312,20 @@ export interface ScheduledRunSummary {
   error?: string;
 }
 
-/** Answer of `GET /__platform/health`. HTTP 200 when ok, 503 when not. */
+/**
+ * Answer of `GET /__platform/health`. HTTP 200 when ok, 503 when not. `ok`:
+ * the database answers, schemaVersion >= bundledSchemaVersion, and no
+ * migration is in progress.
+ */
 export interface HealthResponse {
   ok: boolean;
   version: string;
   schemaVersion: number;
-  /** The highest migration the bundle carries; equal to schemaVersion once migrated. */
+  /**
+   * The highest migration the bundle carries. schemaVersion is at least this
+   * once migrated, and higher after a rollback to an older bundle (migrations
+   * are additive, so that is still healthy).
+   */
   bundledSchemaVersion: number;
   migrating: boolean;
   lastRun: { at: number; outcome: ScheduledOutcome; durationMs: number } | null;

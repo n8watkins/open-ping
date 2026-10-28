@@ -174,9 +174,17 @@ Any other status (or a thrown RPC error, or a timeout) means the platform could 
 ### `GET /__platform/health`
 
 The release runner and the platform's monitoring call this.
+Like any call after an update, it first applies the bundled migrations the database is missing; it still answers when that fails.
 It answers `HealthResponse` with HTTP 200 when `ok`, 503 when not:
 `{ "ok": boolean, "version": string, "schemaVersion": number, "bundledSchemaVersion": number, "migrating": boolean, "lastRun": { "at", "outcome", "durationMs" } | null }`.
-`ok` means the database answers, `schemaVersion` equals `bundledSchemaVersion`, and no migration is in progress.
+`ok` means the database answers, `schemaVersion` is at least `bundledSchemaVersion`, and no migration is in progress.
+"At least", because migrations are additive: after a rollback, an older bundle runs on the newer schema and is still healthy.
+
+### Self-migration on other calls
+
+Every other call in hosted mode, public or platform, also applies the missing migrations before it does anything else, so the first call after an update migrates the database whatever it is.
+Only one call migrates at a time; the others wait for it, for a few seconds at most.
+When the migrations can't be applied (one failed, or another call is still applying them after the wait), a public call answers 503 `hosted_unavailable`, `POST /__platform/scheduled` answers `outcome: "failed"`, and health answers `ok: false`.
 
 ## 7. The sign-in hand-off
 
