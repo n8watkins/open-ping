@@ -54,6 +54,14 @@ describe("the landing page while Hosted is a waitlist (switch unset)", () => {
     expect(html).not.toContain("/sign-in");
   });
 
+  it("states today's facts: passkey sign-in for self-host, and no Hosted address before one is chosen", () => {
+    expect(copy).toContain("who signs in with a passkey, GitHub or an email link");
+    expect(copy).toContain("Passkey, GitHub or an email link, for you as the only admin");
+    expect(copy).toContain("Sign in with a passkey, GitHub or an email link");
+    expect(copy).toContain("Hosted accounts will have an address of their own");
+    expect(copy).not.toContain("app.openping.n8builds.dev");
+  });
+
   it("puts the free path first, before Pricing", () => {
     expect(html.indexOf('id="how-it-works"')).toBeLessThan(html.indexOf('id="pricing"'));
     expect(copy.indexOf("Run it yourself")).toBeLessThan(copy.indexOf("Let me run it"));

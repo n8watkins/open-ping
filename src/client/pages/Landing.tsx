@@ -1122,7 +1122,7 @@ const INTERNALS = [
   "MTBF and MTTR per monitor",
   "History rolls up so storage never grows unbounded",
   "Monitor secrets encrypted with AES-GCM",
-  "Single admin: GitHub or email magic-link sign-in",
+  "Single admin: passkey, GitHub or email magic-link sign-in",
   "Admin CLI and API tokens",
 ];
 
@@ -1392,7 +1392,7 @@ const COMPARISON_STATS: { value: ReactNode; label: string; aria?: string }[] = [
   { value: "12 min", label: "Between checks" },
   { value: "$0", label: "Per month" },
   { value: <StatNumber value={90} suffix="-day" />, label: "Uptime history" },
-  { value: <StatNumber value={4} />, label: "Alert channels" },
+  { value: <StatNumber value={CHANNEL_KINDS.length} />, label: "Alert channels" },
 ];
 
 /** Once Hosted opens: both prices up front, then the same history and channels. */
@@ -1448,7 +1448,7 @@ function Comparison() {
 
 const STEPS: { n: string; title: string; body: string }[] = [
   { n: "1", title: "Clone and deploy", body: "Wrangler creates the Worker, the D1 database and the schedule in your Cloudflare account." },
-  { n: "2", title: "Sign in and add monitors", body: "Sign in with GitHub or an email link, then add checks and their schedules." },
+  { n: "2", title: "Sign in and add monitors", body: "Sign in with a passkey, GitHub or an email link, then add checks and their schedules." },
   { n: "3", title: "Publish and get alerted", body: "Turn on a status page and connect email, Discord, webhooks or your phone." },
 ];
 
@@ -1752,14 +1752,13 @@ function Pricing() {
               </a>
             </p>
           ) : (
-            <p className="text-sm leading-relaxed text-ink-muted">
+            <p className="text-pretty text-sm leading-relaxed text-ink-muted">
               Hosted is run by{" "}
               <a href={N8BUILDS_URL} target="_blank" rel="noreferrer" className="font-semibold text-ink underline decoration-line underline-offset-4 hover:decoration-accent">
                 Nathan Watkins (n8builds)
               </a>
-              , the person who writes OpenPing. Hosted accounts will live at{" "}
-              <span className="font-mono text-xs text-ink">app.openping.n8builds.dev</span>, separate from any install
-              you run yourself.
+              , the person who writes OpenPing. Hosted accounts will have an address of their own, separate from any
+              install you run yourself.
             </p>
           )}
         </div>
@@ -1922,7 +1921,7 @@ const FAQS: FaqItem[] = [
   },
   {
     q: "Who can sign in?",
-    a: "In your own Cloudflare account, only you: OpenPing has one administrator, who signs in with GitHub or an email link, and the OpenPing project never sees that install. OpenPing Hosted, when it opens, will have normal accounts with email, Google or GitHub sign-in, kept separate from any install you run yourself.",
+    a: "In your own Cloudflare account, only you: OpenPing has one administrator, who signs in with a passkey, GitHub or an email link, and the OpenPing project never sees that install. OpenPing Hosted, when it opens, will have normal accounts with email, passkey or GitHub sign-in, kept separate from any install you run yourself.",
   },
   {
     q: "Can I automate it?",
