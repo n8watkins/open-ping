@@ -18,6 +18,7 @@ import { data } from "./data";
 import { isItDown } from "./is-it-down";
 import { waitlist } from "./waitlist";
 import { rekey } from "./rekey";
+import { events } from "./events";
 
 export const api = new Hono<AppEnv>();
 
@@ -46,6 +47,10 @@ api.route("/tools/is-it-down", isItDown);
 // The OpenPing Hosted waitlist: public sign-up, admin list and CSV export.
 // Only accepts entries where WAITLIST_ENABLED is "true" (the canonical install).
 api.route("/waitlist", waitlist);
+
+// Landing page click counts (HOME_PAGE="landing" installs only): a public,
+// allow-listed counter and the admin totals Settings shows.
+api.route("/events", events);
 
 /** Liveness/readiness probe. Reports whether core wiring is present. */
 api.get("/health", (c) => {

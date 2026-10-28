@@ -7,6 +7,8 @@ import { createSession } from "../lib/sessions";
 import { timingSafeEqual } from "../lib/timing";
 import { getSetting } from "../db/settings";
 import { hitRateLimit } from "../db/rate-limit";
+import { homePage } from "../lib/home-page";
+import { countEvent } from "./events";
 
 /**
  * Browser-facing auth flows mounted at /auth. GitHub OAuth (PRD §13):
@@ -170,6 +172,9 @@ auth.get("/github/callback", async (c) => {
   }
 
   if (!(await isAllowedGithubLogin(c.env, login))) {
+    // On the canonical install, count visitors who tried to sign in here
+    // thinking it was an account (docs/LANDING_AND_LOGIN_PLAN.md, item 1.5).
+    if (homePage(c.env) === "landing") await countEvent(c.env, "signin_not_admin").catch(() => {});
     return loginRedirect(c, base, "not_authorized");
   }
 
