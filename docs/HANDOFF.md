@@ -19,25 +19,30 @@ Last updated: 2026-10-28.
   New REST routes back both: `PATCH /api/monitors/:id`, `PATCH /api/status-pages/:id`, `GET /api/monitors/uptime` and `POST /api/maintenance/:id/end`.
   The Worker grew from 173 KiB to 272 KiB gzipped (Free plan limit: 3 MB).
   After deploying, connect with `claude mcp add --transport http openping https://openping.n8builds.dev/mcp --header "Authorization: Bearer $OPENPING_TOKEN"` and call `get_status`.
+- **Landing and sign-in, stage 1 (branch `feat/landing-two-paths`, not yet deployed):** the hero shows both paths (free in your own Cloudflare, Hosted at $24 a year, "Not open yet"), sign-in is out of the header and is "Owner sign-in" in the footer, and every sign-in screen says whose OpenPing it is ([the landing plan](./LANDING_AND_LOGIN_PLAN.md), section 6, items 1.0 to 1.9).
+  `HOME_PAGE` (wrangler var) picks what signed-out visitors see at `/`: `"status"` (default) for the install's own status page, `"landing"` for the marketing page, which only openping.n8builds.dev sets.
+  Landing click counts go to `POST /api/events` (allow-listed names, daily totals in `page_events`, migration 0012, rate limited by the `EVENT_LIMITER` binding) and show in Settings; only a `"landing"` install counts.
+  Before deploying it: add `"HOME_PAGE": "landing"` to `vars` in `deploy.local.json`, and run `npm run db:migrate:prod` for 0012.
 - Tagline everywhere: "Uptime monitoring on your own Cloudflare".
 - `v0.1.0` is a baseline tag at `5ff032c`; releases since then are cut with release-kit.
 
 ### How production is deployed
 
-Production's own values live in a gitignored `deploy.local.json` in the main checkout: the real D1 `database_id` and `"vars": { "WAITLIST_ENABLED": "true" }`.
+Production's own values live in a gitignored `deploy.local.json` in the main checkout: the real D1 `database_id` and `"vars": { "WAITLIST_ENABLED": "true", "HOME_PAGE": "landing" }`.
+Without `HOME_PAGE` "landing", openping.n8builds.dev would show its status page at `/` instead of the marketing page.
 `wrangler.jsonc` keeps the template's placeholder, so never run the plain `db:migrate` or `deploy` scripts for production.
 
 1. Cut a release from an up-to-date `main`: `npm run release -- --dry-run`, then `npm run release -- --push` (see RELEASING.md).
 2. `npm run db:migrate:prod` applies any pending migrations to the remote D1.
 3. `npm run deploy:prod` builds and deploys with the generated `.wrangler.prod.jsonc`.
-4. Verify: `/api/public/status`, `/status`, `/embed`, `/install`, `POST /api/waitlist`, sign-in at https://openping.n8builds.dev/login, and `GET /api/diagnostics` with the bearer token after the next cron run.
+4. Verify: `/` shows the marketing page signed out, `/api/public/status`, `/status`, `/embed`, `/install`, `POST /api/waitlist`, sign-in at https://openping.n8builds.dev/login, and `GET /api/diagnostics` with the bearer token after the next cron run.
    Off-hours, check that https://portfolio.n8builds.dev shows the three Render apps as "Asleep"; it reads the public feed.
 5. Optional: `RESEND_API_KEY` for waitlist confirmations; `WORKERS_PLAN` "paid" if on Workers Paid.
 
 ### Next
 
 1. During operating hours (weekdays 08:00 to 17:00 Los Angeles), check that the three Render monitors return to `operational` within one cron run, and that `GET /api/diagnostics` shows `d1Queries` per run.
-2. Watch the waitlist; start stage 2 (batched writes, second-region confirmation) and stage 3 (a Workers for Platforms prototype) only when the owner says so.
+2. Watch the waitlist and the landing counts in Settings for 8 weeks; start stage 2 (batched writes, second-region confirmation) and stage 3 (a Workers for Platforms prototype) only when the owner says so.
 
 The sections below describe the July pass and are still accurate for architecture, verification and conventions.
 

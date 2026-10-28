@@ -38,7 +38,8 @@ Nothing past stage 2 starts until the stage 1 gate passes.
 - **Scope:**
   - "Runs in your own Cloudflare account" instead of "self-hosted" where it misleads.
   - A Pricing section on the landing page: the free own-account path with the step-by-step guide, and "OpenPing Hosted, $24 a year, coming soon" with a waitlist form.
-  - The waitlist: email only, a honeypot, per-IP and global rate limits, a confirmation email when Resend is set up, stored in D1 (migration 0010), and only on the canonical install (`WAITLIST_ENABLED`); every other install's landing page posts to it.
+  - The waitlist: email only, a honeypot, per-IP and global rate limits, a confirmation email when Resend is set up, stored in D1 (migration 0010), and only on the canonical install (`WAITLIST_ENABLED`).
+    Since the landing page plan's item 1.9, only the canonical install shows the landing page (`HOME_PAGE` "landing"); every other install shows its own status page at `/`.
   - An admin view in Settings with the count, the latest sign-ups and a CSV download.
   - A public `/install` guide.
 - **Acceptance:** a sign-up from any install's landing page lands on openping.n8builds.dev once per email; a repeat or a bot gets the same answer and adds nothing; the admin sees the count and can download the CSV; unit and integration tests cover validation, rate limiting, the honeypot, the migration and admin-only access.

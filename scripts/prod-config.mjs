@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 //
 // deploy.local.json:
 //   { "database_id": "<uuid from `wrangler d1 create`>",
-//     "vars": { "WAITLIST_ENABLED": "true" } }
+//     "vars": { "WAITLIST_ENABLED": "true", "HOME_PAGE": "landing" } }
 
 export const OVERRIDES_PATH = "deploy.local.json";
 export const OUTPUT_PATH = ".wrangler.prod.jsonc";

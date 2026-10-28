@@ -24,8 +24,8 @@ The only shared things are the source code on GitHub and, if an install chooses 
 - [ ] MCP server at `/mcp` and a full admin CLI, so Claude and scripts can run OpenPing.
 - [ ] Safe `MASTER_KEY` rotation (two keys during a re-encryption pass, then a verified switch).
 - [ ] Back up the production `MASTER_KEY` or set a fresh one ([owner to-do 1](./DEFERRED_INPUTS.md)).
-- [ ] Landing page shows both paths (free in your own Cloudflare, or Hosted), honest waitlist, owner-only sign-in in the footer, click counts (plan section 6, items 1.0 to 1.8).
-- [ ] Other people's installs show their own status page at `/`, not OpenPing's marketing page (plan item 1.9, `HOME_PAGE` setting).
+- [x] Landing page shows both paths (free in your own Cloudflare, or Hosted), honest waitlist, owner-only sign-in in the footer, click counts (plan section 6, items 1.0 to 1.8).
+- [x] Other people's installs show their own status page at `/`, not OpenPing's marketing page (plan item 1.9, `HOME_PAGE` setting).
 - [ ] Sweep the remaining em dashes out of code comments.
 - [ ] Dependency upkeep: release-kit 2.0.1, `@cloudflare/vitest-pool-workers` renamed to `@cloudflare/vitest-plugin`.
 

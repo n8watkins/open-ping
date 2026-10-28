@@ -532,18 +532,29 @@ Metrics need the existing Cloudflare Web Analytics plus a few named click events
 
 ### Now, during stage 1 (Hosted is a waitlist)
 
-| # | Change | Effort | Metric that shows it worked |
-|---|---|---|---|
-| 1.0 | Count clicks on each hero and pricing button, and visits to `/install` | S | Baseline exists within a week |
-| 1.1 | Hero: both paths, small-print prices, primary button to `/install` (copy in question 1) | S | Share of visitors who click a hero button; share of `/install` visits from the hero |
-| 1.2 | Nav: Pricing third, "Sign in" out of the nav into the footer as "Owner sign-in", Ko-fi to the footer, primary "Deploy free" on phones | S | Sign-in modal opens by non-admins drop to near zero; hero-to-`/install` clicks on phones rise |
-| 1.3 | Pricing: "Not open yet" badge, honest small print, "Where Hosted is up to" link, the Self-host vs Hosted table, who runs it | S | Waitlist sign-ups per 100 visitors to `#pricing` |
-| 1.4 | Section order (question 1), merge features, status pages and alerts | M | Scroll depth to Pricing on phones |
-| 1.5 | Sign-in modal and `/login` wording, the "Not the admin?" links, non-admin error with next steps, hide unconfigured providers, back link on `/login` | S | Fewer `not_authorized` errors per week, which can be counted from the redirect |
-| 1.6 | Email path polish: "Email me a sign-in link", an "or" divider, confirmation that says 15 minutes, same device, check spam | S | Fewer repeat link requests per sign-in |
-| 1.7 | Pixel fixes: nav gap after n8builds, hero checks wrap, waitlist button enabled until submit | S | Screenshots at 1440 and 390 look right |
-| 1.8 | FAQ: rewrite "Who can sign in?", add "Is there a hosted version?" | S | Fewer sign-in questions in GitHub issues or email |
-| 1.9 | Decide what guests see at `/` on other installs (owner decision), then build the setting | M | Waitlist sign-ups from non-canonical installs vs canonical, before and after |
+| # | Change | Effort | Metric that shows it worked | Status |
+|---|---|---|---|---|
+| 1.0 | Count clicks on each hero and pricing button, and visits to `/install` | S | Baseline exists within a week | Done |
+| 1.1 | Hero: both paths, small-print prices, primary button to `/install` (copy in question 1) | S | Share of visitors who click a hero button; share of `/install` visits from the hero | Done |
+| 1.2 | Nav: Pricing third, "Sign in" out of the nav into the footer as "Owner sign-in", Ko-fi to the footer, primary "Deploy free" on phones | S | Sign-in modal opens by non-admins drop to near zero; hero-to-`/install` clicks on phones rise | Done |
+| 1.3 | Pricing: "Not open yet" badge, honest small print, "Where Hosted is up to" link, the Self-host vs Hosted table, who runs it | S | Waitlist sign-ups per 100 visitors to `#pricing` | Done |
+| 1.4 | Section order (question 1), merge features, status pages and alerts | M | Scroll depth to Pricing on phones | Done |
+| 1.5 | Sign-in modal and `/login` wording, the "Not the admin?" links, non-admin error with next steps, hide unconfigured providers, back link on `/login` | S | Fewer `not_authorized` errors per week, which can be counted from the redirect | Done |
+| 1.6 | Email path polish: "Email me a sign-in link", an "or" divider, confirmation that says 15 minutes, same device, check spam | S | Fewer repeat link requests per sign-in | Done |
+| 1.7 | Pixel fixes: nav gap after n8builds, hero checks wrap, waitlist button enabled until submit | S | Screenshots at 1440 and 390 look right | Done |
+| 1.8 | FAQ: rewrite "Who can sign in?", add "Is there a hosted version?" | S | Fewer sign-in questions in GitHub issues or email | Done |
+| 1.9 | Decide what guests see at `/` on other installs (owner decision), then build the setting | M | Waitlist sign-ups from non-canonical installs vs canonical, before and after | Done |
+
+Notes on how stage 1 was built (branch `feat/landing-two-paths`):
+
+- 1.0: Cloudflare Web Analytics has no custom events ([its FAQ](https://developers.cloudflare.com/web-analytics/faq/), checked 2026-10-28), so clicks go to a first-party counter, `POST /api/events`.
+  It takes a fixed list of event names, keeps daily totals only (migration 0012, `page_events`), sets no cookies, stores nothing about the visitor, and rate limits with the Workers Rate Limiting binding instead of a database write.
+  Settings shows 7- and 30-day totals beside the waitlist.
+- 1.4: checks, status pages and alerts are one section with tabs; the trust strip under the hero is gone, since the hero and How it works say the same things.
+- 1.5: the GitHub callback counts non-admin sign-ins as `signin_not_admin`, so the metric is in the same table.
+- 1.9: decided by the owner (other installs show their own status page); built as the `HOME_PAGE` var.
+  The default, `"status"`, shows the install's default status page at `/`, or a short "no public status page" screen with an owner sign-in link when it's off; only openping.n8builds.dev sets `"landing"`.
+  Status pages' "Powered by OpenPing" now links to openping.n8builds.dev, which keeps the referral.
 
 These all fit inside stage 1: they make the waitlist test fairer, because a visitor who never finds the Hosted card can't join it.
 Ship 1.0 first so the stage 1 gate (about 20 sign-ups in 8 weeks) is measured against a known number of pricing views.
@@ -597,14 +608,12 @@ Ship 1.0 first so the stage 1 gate (about 20 sign-ups in 8 weeks) is measured ag
 
 ## Open decisions for the owner
 
-1. Whether other installs keep showing the OpenPing marketing page to guests (item 1.9).
-   I recommend the status page as the default for new installs.
-2. The Hosted address (the Hosted plan asks this at stage 4).
-   I recommend `app.openping.n8builds.dev`.
-3. Whether to keep the first-person voice ("let me run it") for Hosted.
-   I recommend keeping it, with your name next to it.
-4. Whether to move Ko-fi off the top bar.
-   I recommend the footer.
+All four were decided on 2026-10-28:
+
+1. Other installs show their own status page to guests, not the marketing page (item 1.9, the `HOME_PAGE` var).
+2. The Hosted address is `app.openping.n8builds.dev`.
+3. The first-person voice for Hosted stays, with Nathan Watkins (n8builds) named next to it.
+4. Ko-fi moves off the top bar to the footer.
 
 ## Sources
 
