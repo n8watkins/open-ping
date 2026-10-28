@@ -3,13 +3,13 @@
 This is the platform Worker for OpenPing Hosted: the code that owns customers rather than monitoring.
 It is planned in [the build plan](../docs/HOSTED_BUILD_PLAN.md), and it talks to each customer's OpenPing only through [the contract](../docs/hosted/CONTRACT.md).
 
-**Status: skeleton (B1) and provisioning (B3), not deployed anywhere.**
+**Status: skeleton (B1), provisioning (B3) and accounts (B2), not deployed anywhere.**
 Nothing here has been created in a Cloudflare account yet; see [Owner setup](#owner-setup-not-done-yet).
 
 ## What it does today
 
 - Routes by hostname, with the domain taken from the `HOSTED_DOMAIN` var (decision D2, [DECISIONS.md](../docs/hosted/DECISIONS.md)):
-  - `app.<domain>`: the platform's own pages; for now a placeholder home page and `GET /healthz`;
+  - `app.<domain>`: the platform's own pages (sign-up, sign-in, the account) and `GET /healthz`;
   - `<domain>` and `www.<domain>`: a 301 to `app.<domain>`;
   - `<slug>.<domain>`: that customer's OpenPing, dispatched to its user Worker `t-<tenant id>`;
   - anything else: a plain 404.
@@ -32,6 +32,15 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   `removeTenant` deletes the script, the database (D1's "not found", code 7404, counts as done), the key and the row, and holds a ready tenant's slug for 90 days so nobody else picks up its address.
 - Caches each tenant's row per isolate for routing: 30 seconds for a ready tenant, 5 seconds for an unknown slug, never for one still being set up.
 - Checks slugs at sign-up (`checkSlugAvailability`): the rules and reserved names in `src/slugs.ts`, existing tenants, and held slugs.
+- Runs customer accounts on `app.<domain>` (B2, `src/account-routes.ts`), designed phone first in OpenPing's tokens:
+  - sign-up and sign-in with an email that carries both a 6-digit code and a link (15 minutes, single use, 5 tries per code; the link opens a confirm button so mail scanners can't spend it), a passkey (OpenPing's own `src/worker/lib/webauthn.ts`, discoverable, relying party `app.<domain>`), or GitHub (matched by user id, joined to an account only by its verified primary email);
+  - sessions in a `__Host-` cookie that never reaches a customer's subdomain, stored as hashes, 30 days;
+  - rate limits per address, per IP and in total, and a short list of throwaway mail domains refused;
+  - every post checked to come from `app.<domain>`, no inline script (the passkey helper is served from `/static/passkeys.js`);
+  - the account page: the customer's OpenPing and its state, passkeys, GitHub, sign-out;
+  - choosing an address (`/start`) creates the tenant and starts provisioning after the answer;
+  - `/open?tenant=<slug>` mints the Ed25519 hand-off (`src/handoff.ts`, only the contract's helpers) and redirects to `https://<slug>.<domain>/auth/hosted?t=...`;
+  - `SIGN_UPS` stays `closed` until launch: existing accounts sign in, no new ones are made.
 - Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit` is real; `sendEmail` and `reportUsage` are stubs until A5, B2 and B6).
 
 ## Layout
@@ -47,7 +56,11 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 | `src/slugs.ts` | Slug rules and the reserved names |
 | `src/tenants.ts` | Tenant rows, limit overrides, and the `TenantInfo` the contract hands a tenant |
 | `src/capability.ts` | The platform capability, bound to one tenant |
-| `src/pages.ts` | The platform's own HTML pages, in OpenPing's design tokens |
+| `src/pages.ts` | The status pages a visitor sees instead of a tenant (not found, paused, setting up, unavailable) |
+| `src/ui.ts` | The HTML shell, the stylesheet in OpenPing's tokens, and the escaping `html` template |
+| `src/account-routes.ts`, `src/account-pages.ts` | Sign-up, sign-in, the account page, `/start` and `/open` |
+| `src/auth/` | Sessions, email codes and links, passkeys, GitHub OAuth, ceremonies and rate limits |
+| `src/accounts.ts`, `src/mail.ts`, `src/handoff.ts` | Accounts and identities, the Resend mailer, minting hand-off tokens |
 | `src/provisioning.ts` | The provisioning state machine: `requestTenant`, `runProvisioning`, `removeTenant`, and `provisionDue` (the retry sweep) |
 | `src/provisioning-env.ts` | Builds provisioning's dependencies from the env, or names the settings that are missing |
 | `src/cloudflare/api.ts` | `CloudflareApi`: the D1 and Workers for Platforms calls provisioning makes, with links to Cloudflare's docs |
@@ -75,6 +88,7 @@ The tests run with the same Cloudflare Vitest plugin as OpenPing's integration t
 The dispatch namespace and the queue exist only in a Cloudflare account, so the tests inject `FakeDispatcher` instead; the real `NamespaceDispatcher` is tested against a stand-in for the binding.
 Provisioning runs against `FakeCloudflareApi`, which keeps databases, scripts and uploaded assets in memory, enforces the rules provisioning relies on, and can fail any call on demand.
 `HttpCloudflareApi` is tested with a recording `fetch`, which checks every URL, header and multipart part it builds.
+Sign-in runs against an in-memory outbox, a stand-in for GitHub's API, and OpenPing's software authenticator (`test/support/soft-authenticator.ts`), and `test/integration/platform-handoff.test.ts` (in the root suite) checks that a token the platform mints signs a customer in to the real OpenPing Worker.
 No test makes a network request or needs a Cloudflare login.
 
 ## Owner setup (not done yet)
@@ -89,10 +103,12 @@ They are needed before staging in wave 3 ([build plan, section 12](../docs/HOSTE
 4. **The platform database:** `wrangler d1 create openping-platform`, then put its id in a gitignored local config (as `deploy.local.json` does for OpenPing), and apply `migrations/` with `wrangler d1 migrations apply PLATFORM_DB --remote`.
 5. **The queues:** `wrangler queues create openping-provision` (provisioning; this Worker is its consumer) and `wrangler queues create openping-schedule` (B4 adds its consumer).
 6. **The bundle bucket:** `wrangler r2 bucket create openping-tenant-bundles`; the release runner (C1) writes each release there in the layout `src/bundle.ts` describes.
-7. **Secrets**, with `wrangler secret put` from the owner's machine and a copy of each in the password manager:
+7. **Mail and GitHub for sign-in:** verify a sending domain in Resend and set `MAIL_FROM`; create a GitHub OAuth app with the callback `https://app.<domain>/auth/github/callback` and set `GITHUB_CLIENT_ID`; set `SIGN_UPS` to `open` at launch.
+8. **Secrets**, with `wrangler secret put` from the owner's machine and a copy of each in the password manager:
    - `HANDOFF_SIGNING_KEY`: the hand-off private key; `generateHandoffKeyPair()` in the contract makes the pair, and the public half goes in the `HANDOFF_PUBLIC_KEY` var in `wrangler.jsonc`, which provisioning copies to every tenant (O6);
    - `PLATFORM_KEY`: 32 random bytes in base64 (`openssl rand -base64 32`), encrypts the escrowed tenant keys (decision D4, O6); losing it means no tenant backup can be restored;
    - `CF_ACCOUNT_ID`: the account's 32 hex character id, a secret only to keep it out of this public config;
    - `CF_API_TOKEN`: a custom API token for that one account with **Account, Workers Scripts, Edit** and **Account, D1, Edit**, nothing else (O5); the dispatch namespace's scripts are Workers Scripts;
+   - `RESEND_API_KEY` and `GITHUB_CLIENT_SECRET`, for sign-in;
    - `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`, in test mode first (O3).
-8. **Support address:** support@n8builds.dev, decided; forward it with Cloudflare Email Routing (O4).
+9. **Support address:** support@n8builds.dev, decided; forward it with Cloudflare Email Routing (O4).

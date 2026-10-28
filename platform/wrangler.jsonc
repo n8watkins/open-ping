@@ -30,7 +30,16 @@
     // base64url of the raw 32-byte Ed25519 public key every tenant verifies
     // hand-off tokens with. Public by design; empty until the owner makes the
     // pair (owner action O6), and provisioning stays off until it is set.
-    "HANDOFF_PUBLIC_KEY": ""
+    "HANDOFF_PUBLIC_KEY": "",
+    // "open" lets new accounts be made at app.<domain>/sign-up; anything else
+    // lets only existing accounts sign in (staging testers, then launch).
+    "SIGN_UPS": "closed",
+    // The From of sign-in emails, on a domain verified in Resend; email
+    // sign-in is off while it (or the RESEND_API_KEY secret) is empty.
+    "MAIL_FROM": "",
+    // The platform's GitHub OAuth app; GitHub sign-in is off while it (or the
+    // GITHUB_CLIENT_SECRET secret) is empty.
+    "GITHUB_CLIENT_ID": ""
   },
   // Every minute: the safety net for provisioning (src/provisioning.ts);
   // the scheduler (B4) runs from the same trigger.
@@ -88,7 +97,7 @@
     ]
   }
   // Secrets, set later with `wrangler secret put` from the owner's machine,
-  // never in this file: HANDOFF_SIGNING_KEY (B2), PLATFORM_KEY (B3),
-  // CF_ACCOUNT_ID and CF_API_TOKEN (B3), STRIPE_SECRET_KEY and
-  // STRIPE_WEBHOOK_SECRET (B5).
+  // never in this file: HANDOFF_SIGNING_KEY, RESEND_API_KEY and
+  // GITHUB_CLIENT_SECRET (B2), PLATFORM_KEY, CF_ACCOUNT_ID and CF_API_TOKEN
+  // (B3), STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (B5).
 }
