@@ -72,7 +72,7 @@ export function classifyCheck(input: ClassifyInput): Omit<CheckOutcome, "at"> {
 
   let state: CheckOutcome["state"];
   // A Render-suspended response is a definitive outage (the app is turned off),
-  // so it is reported as `suspended` even during a warm-up cycle — there is no
+  // so it is reported as `suspended` even during a warm-up cycle - there is no
   // cold start to grant grace for. A failed warm-up otherwise reports
   // `warming_up`, not `down`, granting one grace cycle (PRD §8 warm-up).
   if (!ok) state = result.suspended ? "suspended" : warmup ? "warming_up" : "down";

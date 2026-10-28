@@ -206,8 +206,8 @@ export async function runScheduled(
 
       if (m.type === "heartbeat") {
         // First in-window tick after an off-schedule gap (or a never-beaten cold
-        // start): the pre-gap last_beat_at is stale — potentially hours/days old
-        // — so the deadline below would be instantly overdue → a false miss the
+        // start): the pre-gap last_beat_at is stale - potentially hours/days old
+        // - so the deadline below would be instantly overdue → a false miss the
         // moment monitoring resumes. Grant one warm-up cycle that re-bases the
         // deadline on `now`; genuine misses are detected from the next tick on.
         if (!st || st.state === "scheduled_off" || st.state === "unknown") {
@@ -257,7 +257,7 @@ export async function runScheduled(
     // batch: an unbounded fan-out at CONCURRENCY can exceed the Worker
     // subrequest/CPU budget and overrun the 12-min cadence / 5-min lease. The
     // remainder carries over to the next tick, where its already-past
-    // next_check_at keeps it due — logged, never silently dropped.
+    // next_check_at keeps it due - logged, never silently dropped.
     duePolled.sort(
       (a, b) =>
         (states.get(a.id)?.next_check_at ?? 0) - (states.get(b.id)?.next_check_at ?? 0),

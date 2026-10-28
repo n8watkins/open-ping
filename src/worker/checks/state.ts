@@ -94,7 +94,7 @@ function sampleStatement(env: Env, monitorId: string, s: SampleInput): D1Prepare
 /**
  * Open/observe/resolve the active incident for a failed/recovered check.
  * Returns the incident pointer + flapping flag to store on monitor_state.
- * Tolerant of errors — incident bookkeeping must not abort a check.
+ * Tolerant of errors - incident bookkeeping must not abort a check.
  */
 async function applyIncidentTransition(
   env: Env,
@@ -120,7 +120,7 @@ async function applyIncidentTransition(
         });
         return { activeIncidentId: active.id, isFlapping: active.isFlapping };
       }
-      // Opening a new incident — flag flapping if too many recently.
+      // Opening a new incident - flag flapping if too many recently.
       const recent = await countRecentIncidents(env, monitor.id, p.at - FLAP_WINDOW_MS);
       const flapping = recent + 1 >= FLAP_THRESHOLD;
       const inc = await openIncident(env, monitor, {
@@ -138,7 +138,7 @@ async function applyIncidentTransition(
     }
     if (active) {
       const resolved = await resolveIncident(env, active.id, { at: p.at });
-      // Suppress the per-incident recovery alert while flapping — a single
+      // Suppress the per-incident recovery alert while flapping - a single
       // flapping notification already fired when the incident opened, so rapid
       // flaps don't spam paired down/recovered messages (PRD §14).
       if (!active.isFlapping) {
@@ -180,7 +180,7 @@ export async function applyCheckResult(
   const lastSuccessAt = outcome.ok ? now : (cur?.last_success_at ?? null);
   const next = nextCheckAt(monitor.schedule, new Date(now), monitor.intervalSeconds).getTime();
 
-  // A failed warm-up cycle does NOT open an incident — it is the one grace cycle
+  // A failed warm-up cycle does NOT open an incident - it is the one grace cycle
   // a cold start gets. Preserve any existing incident pointer untouched.
   // A passing check on a monitor with no open incident has nothing to resolve,
   // so it skips the incident lookup (the common case, and one query saved).
@@ -463,7 +463,7 @@ export async function recordHeartbeat(
     // interval of monitored time: markHeartbeatMissed already accrued that
     // wall-clock span (monitored + down) on each overdue cron cycle. Crediting
     // another interval here would overlap those seconds and inflate uptime. (A
-    // recovery from a *received* failing beat — exit_status != 0 — is genuinely
+    // recovery from a *received* failing beat - exit_status != 0 - is genuinely
     // one interval later, so it still credits a full interval.)
     const recoveringFromMissed =
       ok && cur?.state === "down" && cur?.last_error === "heartbeat_missed";
@@ -484,14 +484,14 @@ export async function recordHeartbeat(
 /**
  * Grant one grace cycle to a heartbeat monitor re-entering its schedule window
  * (snapshot state `scheduled_off`, or a never-beaten `unknown` start). The
- * pre-gap last_beat_at is stale — potentially hours or days old — so the first
+ * pre-gap last_beat_at is stale - potentially hours or days old - so the first
  * in-window tick would otherwise be instantly overdue and falsely marked missed
  * (opening an incident + firing an alert) the moment monitoring resumes.
  *
  * Re-base the deadline on `now` and mark the monitor `warming_up` (a non-down,
  * uptime-excluded state, mirroring an HTTP cold start). Because the state is no
  * longer scheduled_off/unknown, the scheduler does NOT warm it up again on the
- * next tick — it resumes ordinary overdue detection from the fresh base, so a
+ * next tick - it resumes ordinary overdue detection from the fresh base, so a
  * genuinely missed beat is still caught.
  */
 export async function warmHeartbeat(env: Env, monitor: MonitorRecord, now: number): Promise<void> {
@@ -517,7 +517,7 @@ export async function markHeartbeatMissed(
 
   // Freshness re-check (closes the heartbeat-ingestion vs scheduler race): if a
   // beat arrived after the scheduler snapshotted state and decided this monitor
-  // was overdue, last_beat_at is now within interval+grace — so a beat IS
+  // was overdue, last_beat_at is now within interval+grace - so a beat IS
   // arriving. Skip marking it missed and let the ingestion path's state stand;
   // otherwise we'd clobber the real exit_status error and double-count downtime.
   const graceWindowMs =

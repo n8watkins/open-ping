@@ -11,7 +11,7 @@ export interface ProbeResult {
   durationMs: number;
   /** Short machine code (e.g. "timeout", "dns_nxdomain", "tcp_refused"). */
   error?: string;
-  /** Human-readable detail (safe — never contains secrets). */
+  /** Human-readable detail (safe - never contains secrets). */
   errorMessage?: string;
   /** True when the target responded but slower/closer-to-limit than desired. */
   degraded?: boolean;
