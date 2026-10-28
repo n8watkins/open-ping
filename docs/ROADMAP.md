@@ -26,8 +26,8 @@ The only shared things are the source code on GitHub and, if an install chooses 
 - [ ] Back up the production `MASTER_KEY` or set a fresh one ([owner to-do 1](./DEFERRED_INPUTS.md)).
 - [x] Landing page shows both paths (free in your own Cloudflare, or Hosted), honest waitlist, owner-only sign-in in the footer, click counts (plan section 6, items 1.0 to 1.8).
 - [x] Other people's installs show their own status page at `/`, not OpenPing's marketing page (plan item 1.9, `HOME_PAGE` setting).
-- [x] Sweep the remaining em dashes out of code comments (this PR).
-- [x] Dependency upkeep: release-kit 2.0.1, `@cloudflare/vitest-pool-workers` renamed to `@cloudflare/vitest-plugin` (this PR).
+- [x] Sweep the remaining em dashes out of code comments (#32).
+- [x] Dependency upkeep: release-kit 2.0.1, `@cloudflare/vitest-pool-workers` renamed to `@cloudflare/vitest-plugin` (#32).
 
 ## Stage 2: close the feature gaps that matter
 
@@ -37,7 +37,7 @@ These are the gaps a buyer is likely to notice, most valuable first:
 
 - [x] **Slack, Telegram and Microsoft Teams alerts** (S each) (#29).
   Native channels with setup help, a test button, encrypted capabilities and provider rate-limit handling ([Alert channels](./ALERT_CHANNELS.md)).
-- [x] **Confirm before alerting** (M, overlaps Hosted stage 2) (this PR).
+- [x] **Confirm before alerting** (M, overlaps Hosted stage 2) (#31).
   A failure is re-checked once, 5 seconds later, before it opens an incident, so one bad request doesn't page anyone; "Confirm failures" per monitor, on by default.
   The re-check runs from the same Cloudflare location; a second-location check (a Durable Object with a location hint) stays in Hosted stage 2.
 - [ ] **SSL certificate expiry monitor** (M, spike done in this PR).
@@ -51,12 +51,12 @@ These are the gaps a buyer is likely to notice, most valuable first:
   Do this after the feeds, and only if people ask.
 - [x] **Monthly uptime report** (S): a CSV and an email per monitor, for SLAs and clients (#30).
 - [ ] Notify channels when an incident update is posted (the outbox has no event for it yet).
-- [x] **Passkeys for the admin sign-in** (M, landing plan item 2.1), which makes the GitHub OAuth app optional (2.2) (this PR).
+- [x] **Passkeys for the admin sign-in** (M, landing plan item 2.1), which makes the GitHub OAuth app optional (2.2) (#34).
   Created in the setup wizard or Settings > Passkeys, usernameless sign-in with autofill, recovery with a new `SETUP_TOKEN` at `/recover`; verified with Web Crypto, no dependency ([SECURITY.md](./SECURITY.md#passkeys)).
-- [ ] **"Deploy to Cloudflare" button** (M spike, plan items 2.3 and 2.4), to cut the 20-minute install.
-  Built in this PR: the button on the README and `/install`, a deploy that creates the database and applies migrations, and setup-page help for a missing secret.
+- [x] **"Deploy to Cloudflare" button** (M spike, plan items 2.3 and 2.4), to cut the 20-minute install (#33); the owner's one-time click test is in [DEFERRED_INPUTS.md](./DEFERRED_INPUTS.md).
+  Built in #33: the button on the README and `/install`, a deploy that creates the database and applies migrations, and setup-page help for a missing secret.
   Left: one real click by the owner ([Deferred inputs](./DEFERRED_INPUTS.md), item 5), then the button in the landing hero.
-- [x] **First check right away** when a monitor is added (S, plan item 2.5) (this PR): from the editor, API, MCP and CLI, with off-hours monitors showing Scheduled off at once.
+- [x] **First check right away** when a monitor is added (S, plan item 2.5) (#31): from the editor, API, MCP and CLI, with off-hours monitors showing Scheduled off at once.
 
 Deliberately not on the list, because others do them better and they don't fit a $24-a-year product: free hosted tiers, 30-second checks from dozens of regions, on-call rotations and phone calls, browser (Playwright) monitoring, white-label status pages as the main product, SOC 2 and SAML.
 ICMP ping isn't possible from Workers; TCP and HTTP checks cover the same need.

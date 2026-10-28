@@ -201,3 +201,14 @@ export async function registerPasskey<T>(
   const credential = await createPasskey(options);
   return api<T>(`${base}/verify`, { method: "POST", json: { credential }, ...request });
 }
+
+/** How many passkeys a new Installation URL would strand (bound to another hostname). */
+export function strandedPasskeys(appUrl: string, passkeys: { rpId: string }[]): number {
+  let host: string;
+  try {
+    host = new URL(appUrl).hostname;
+  } catch {
+    return 0; // Not a URL yet; the server rejects it on save.
+  }
+  return passkeys.filter((p) => p.rpId !== host).length;
+}

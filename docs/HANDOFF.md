@@ -6,11 +6,11 @@ Last updated: 2026-10-28.
 
 ## Current state (2026-10-28): start here
 
-- **Live:** v0.5.0 on https://openping.n8builds.dev, migrations through 0014 applied, waitlist on, `HOME_PAGE` "landing".
+- **Live:** v0.7.0 on https://openping.n8builds.dev, migrations through 0015 applied, waitlist on, `HOME_PAGE` "landing".
   Before each deploy a D1 export goes to `../open-ping-backups/` on the owner's machine.
 - **Roadmap:** [ROADMAP.md](./ROADMAP.md) is the one staged checklist.
   Stage 1 (solid and honest) is done except the owner's `MASTER_KEY` backup ([owner to-dos](./DEFERRED_INPUTS.md)).
-  Stage 2 (feature gaps) has Slack, Telegram and Teams alerts (#29), confirm-before-alert and first check right away (#31), incident updates, RSS/Atom feeds and the monthly report (#30); passkeys sign-in with GitHub optional (this PR, [SECURITY.md](./SECURITY.md#passkeys)); next are the "Deploy to Cloudflare" spike and the SSL expiry probe ([SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md)).
+  Stage 2 (feature gaps) has Slack, Telegram and Teams alerts (#29), confirm-before-alert and first check right away (#31), incident updates, RSS/Atom feeds and the monthly report (#30); passkey sign-in with GitHub optional (#34, [SECURITY.md](./SECURITY.md#passkeys)) and the "Deploy to Cloudflare" button (#33, owner click test pending in [DEFERRED_INPUTS.md](./DEFERRED_INPUTS.md)); next is the SSL expiry probe on a deployed test Worker, which needs the owner's go-ahead ([SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md)).
   Stage 3, the Hosted waitlist test, started 2026-10-28: about 20 sign-ups by about 2026-12-23, read from Settings (waitlist count and landing click counts).
 - **Operating it:** the MCP server at `/mcp` ([MCP.md](./MCP.md)) and `scripts/op.mjs` ([CLI.md](./CLI.md)) cover status, monitors, incidents, uptime, reports, diagnostics, channels, pages and maintenance.
   In this checkout Claude Code has it registered as `openping` (local scope); the CLI reads the gitignored `.op.env`.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  strandedPasskeys,
   authenticationToJSON,
   base64urlToBytes,
   bytesToBase64url,
@@ -88,5 +89,23 @@ describe("passkeyErrorMessage", () => {
     expect(passkeyErrorMessage(new Error("challenge_invalid"))).toMatch(/expired/);
     expect(passkeyErrorMessage(new Error("unknown_passkey"))).toMatch(/isn't registered/);
     expect(passkeyErrorMessage(new Error("whatever"))).toMatch(/went wrong/);
+  });
+});
+
+describe("strandedPasskeys", () => {
+  const keys = [{ rpId: "status.example.com" }, { rpId: "status.example.com" }, { rpId: "old.example.com" }];
+
+  it("counts passkeys bound to a hostname other than the new address", () => {
+    expect(strandedPasskeys("https://status.example.com/", keys)).toBe(1);
+    expect(strandedPasskeys("https://new.example.com", keys)).toBe(3);
+  });
+
+  it("ignores the port, path and scheme, which passkeys don't depend on", () => {
+    expect(strandedPasskeys("http://status.example.com:8443/app", keys.slice(0, 2))).toBe(0);
+  });
+
+  it("says nothing for an address that isn't a URL yet, or with no passkeys", () => {
+    expect(strandedPasskeys("status.example", keys)).toBe(0);
+    expect(strandedPasskeys("https://new.example.com", [])).toBe(0);
   });
 });
