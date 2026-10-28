@@ -97,6 +97,93 @@ export async function computeUptime(
   return computeUptimeFromRows(res.results ?? []);
 }
 
+/** The uptime windows reported for every monitor by {@link computeUptimeWindows}. */
+export const UPTIME_WINDOWS = [
+  { key: "d1", label: "24h", ms: 24 * 60 * 60 * 1000 },
+  { key: "d7", label: "7d", ms: 7 * 24 * 60 * 60 * 1000 },
+  { key: "d30", label: "30d", ms: 30 * 24 * 60 * 60 * 1000 },
+  { key: "d90", label: "90d", ms: 90 * 24 * 60 * 60 * 1000 },
+] as const;
+
+export type UptimeWindowKey = (typeof UPTIME_WINDOWS)[number]["key"];
+
+/**
+ * Uptime of every monitor over each of {@link UPTIME_WINDOWS}, in two D1 reads
+ * whatever the monitor count (a per-monitor {@link computeUptime} loop would
+ * cost 4 reads a monitor and break the Free plan's 50-query limit at 13).
+ *
+ * Same windowing as computeUptime: windows up to 30 days sum 'hour' summaries,
+ * longer ones sum 'day' summaries, and a window with no checks reports 100%
+ * (check `checks` to tell "no data" from "always up"). Monitors with no
+ * summaries in any window are absent from the map.
+ */
+export async function computeUptimeWindows(
+  env: Env,
+  now: number,
+): Promise<Map<string, Record<UptimeWindowKey, UptimeResult>>> {
+  const hourly = UPTIME_WINDOWS.filter((w) => w.ms <= HOURLY_WINDOW_MS);
+  const daily = UPTIME_WINDOWS.filter((w) => w.ms > HOURLY_WINDOW_MS);
+
+  const query = (
+    period: "hour" | "day",
+    windows: readonly (typeof UPTIME_WINDOWS)[number][],
+  ) => {
+    // One SUM(CASE ...) column set per window; window bounds are bound, never
+    // interpolated. The outer WHERE spans the widest window.
+    const cols = windows
+      .map(
+        (w) =>
+          `SUM(CASE WHEN bucket_start >= ? THEN checks ELSE 0 END) AS ${w.key}_checks,
+           SUM(CASE WHEN bucket_start >= ? THEN ok_checks ELSE 0 END) AS ${w.key}_ok,
+           SUM(CASE WHEN bucket_start >= ? THEN monitored_seconds ELSE 0 END) AS ${w.key}_monitored,
+           SUM(CASE WHEN bucket_start >= ? THEN down_seconds ELSE 0 END) AS ${w.key}_down`,
+      )
+      .join(",\n");
+    const binds = windows.flatMap((w) => Array(4).fill(now - w.ms) as number[]);
+    const widest = Math.max(...windows.map((w) => w.ms));
+    return env.DB.prepare(
+      `SELECT monitor_id, ${cols}
+         FROM summaries
+        WHERE period = ? AND bucket_start >= ? AND bucket_start <= ?
+        GROUP BY monitor_id`,
+    ).bind(...binds, period, now - widest, now);
+  };
+
+  const [hourRes, dayRes] = await Promise.all([
+    query("hour", hourly).all<Record<string, number | string | null>>(),
+    query("day", daily).all<Record<string, number | string | null>>(),
+  ]);
+
+  const out = new Map<string, Record<UptimeWindowKey, UptimeResult>>();
+  const empty = (): UptimeResult => computeUptimeFromRows([]);
+  for (const [res, windows] of [
+    [hourRes, hourly],
+    [dayRes, daily],
+  ] as const) {
+    for (const row of res.results ?? []) {
+      const id = String(row.monitor_id);
+      const entry =
+        out.get(id) ??
+        ({ d1: empty(), d7: empty(), d30: empty(), d90: empty() } as Record<
+          UptimeWindowKey,
+          UptimeResult
+        >);
+      for (const w of windows) {
+        entry[w.key] = computeUptimeFromRows([
+          {
+            checks: Number(row[`${w.key}_checks`] ?? 0),
+            ok_checks: Number(row[`${w.key}_ok`] ?? 0),
+            monitored_seconds: Number(row[`${w.key}_monitored`] ?? 0),
+            down_seconds: Number(row[`${w.key}_down`] ?? 0),
+          },
+        ]);
+      }
+      out.set(id, entry);
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Incident metrics (MTBF / MTTR / longest / most-recent)
 // ---------------------------------------------------------------------------

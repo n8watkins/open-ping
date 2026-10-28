@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { MonitorRecord } from "../db/monitors";
-import { presentCreatedMonitor, redactMonitor } from "./monitors";
+import {
+  mergeMonitorPatch,
+  monitorPatchSchema,
+  presentCreatedMonitor,
+  redactMonitor,
+} from "./monitors";
 
 function heartbeatMonitor(): MonitorRecord {
   return {
@@ -47,5 +52,36 @@ describe("heartbeat token presentation", () => {
 
     expect(presented.heartbeatToken).toBe("raw-ingestion-token");
     expect("secret" in presented.config && presented.config.secret).toBe("");
+  });
+});
+
+describe("mergeMonitorPatch", () => {
+  it("merges config and public key by key and replaces other fields", () => {
+    const merged = mergeMonitorPatch(heartbeatMonitor(), {
+      name: "Nightly backup",
+      config: { graceSeconds: 600 },
+      public: { visible: true },
+    });
+    expect(merged).toMatchObject({
+      type: "heartbeat",
+      name: "Nightly backup",
+      enabled: true,
+      schedule: { mode: "always" },
+      config: { intervalSeconds: 3600, graceSeconds: 600, secret: "secondary-secret" },
+      public: { visible: true, showUptime: true },
+    });
+    expect(merged).not.toHaveProperty("assertions");
+  });
+
+  it("removes a config key set to null and can clear the category", () => {
+    const monitor = { ...heartbeatMonitor(), categoryId: "cat_1" };
+    const merged = mergeMonitorPatch(monitor, { config: { secret: null }, categoryId: null });
+    expect(merged.config).toEqual({ intervalSeconds: 3600, graceSeconds: 300 });
+    expect(merged.categoryId).toBeNull();
+  });
+
+  it("rejects unknown fields in a patch", () => {
+    expect(monitorPatchSchema.safeParse({ nmae: "typo" }).success).toBe(false);
+    expect(monitorPatchSchema.safeParse({ name: "ok" }).success).toBe(true);
   });
 });

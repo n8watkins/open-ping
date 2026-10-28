@@ -5,6 +5,7 @@ import { requireAuth } from "../middleware/auth";
 import {
   createMaintenanceWindow,
   deleteMaintenanceWindow,
+  endMaintenanceWindow,
   getMaintenanceWindow,
   listMaintenanceWindows,
   updateMaintenanceWindow,
@@ -27,7 +28,7 @@ const recurrenceSchema = z.object({
   durationMinutes: z.number().int().positive(),
 });
 
-const maintenanceCreateSchema = z
+export const maintenanceCreateSchema = z
   .object({
     title: z.string().min(1).max(200).optional(),
     scope: z.enum(["global", "monitors"]),
@@ -51,7 +52,7 @@ const maintenanceCreateSchema = z
     path: ["monitorIds"],
   });
 
-const maintenanceUpdateSchema = z
+export const maintenanceUpdateSchema = z
   .object({
     title: z.string().min(1).max(200).nullable().optional(),
     scope: z.enum(["global", "monitors"]).optional(),
@@ -122,6 +123,26 @@ maintenance.put("/:id", async (c) => {
   const window = await updateMaintenanceWindow(c.env, id, parsed.data);
   if (!window) return c.json({ error: "not_found" }, 404);
   return c.json({ window });
+});
+
+/**
+ * End a window now (see endMaintenanceWindow). 409 when the window has not
+ * started yet; ending an already finished window is a harmless no-op.
+ */
+maintenance.post("/:id/end", async (c) => {
+  const result = await endMaintenanceWindow(c.env, c.req.param("id"));
+  if (!result) return c.json({ error: "not_found" }, 404);
+  if (result.outcome === "not_started") {
+    return c.json(
+      {
+        error: "not_started",
+        message: "This window has not started yet; delete it to cancel it.",
+        window: result.window,
+      },
+      409,
+    );
+  }
+  return c.json(result);
 });
 
 maintenance.delete("/:id", async (c) => {

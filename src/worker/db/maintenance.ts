@@ -329,6 +329,32 @@ export async function deleteMaintenanceWindow(
     .run();
 }
 
+/** What {@link endMaintenanceWindow} did. */
+export type EndMaintenanceOutcome = "ended" | "already_ended" | "not_started";
+
+/**
+ * End a maintenance window now: its `endsAt` moves to `now`, so monitors leave
+ * maintenance on the next check. For a weekly recurring window this also stops
+ * every later occurrence (its validity range ends). A window that has not
+ * started yet is left alone ("not_started": delete it to cancel it), and one
+ * that is already over is a no-op ("already_ended"). Null when `id` is unknown.
+ */
+export async function endMaintenanceWindow(
+  env: Env,
+  id: string,
+  now: number = Date.now(),
+): Promise<{ outcome: EndMaintenanceOutcome; window: MaintenanceWindow } | null> {
+  const existing = await getMaintenanceWindow(env, id);
+  if (!existing) return null;
+  if (now >= existing.endsAt) return { outcome: "already_ended", window: existing };
+  if (now < existing.startsAt) return { outcome: "not_started", window: existing };
+  // endsAt must stay after startsAt (the create/update invariant).
+  const window = await updateMaintenanceWindow(env, id, {
+    endsAt: Math.max(now, existing.startsAt + 1),
+  });
+  return window ? { outcome: "ended", window } : null;
+}
+
 /** All windows that are active at `now`. */
 export async function activeWindowsAt(
   env: Env,
