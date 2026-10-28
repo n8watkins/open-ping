@@ -9,6 +9,9 @@ import { ArrowLeft, Loader2, Save } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { useFetch } from "../lib/useFetch";
+import { planLimitFromError, statusPageLimitReached, usePlan } from "../lib/plan-limits";
+import { PlanLimitNotice } from "../components/PlanLimitNotice";
+import type { PlanLimitBody } from "../../shared/hosted-contract";
 import { Card } from "../components/ui/Card";
 import { cn } from "../lib/cn";
 import type { Category, StatusPage } from "../lib/types";
@@ -148,6 +151,12 @@ export default function StatusPageEditor() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  // Hosted mode: a new page the plan has no room for, known up front
+  // (atLimit) or answered by the server (refused, 402).
+  const plan = usePlan();
+  const { data: existingPages } = useFetch<{ statusPages: unknown[] }>(plan && !isEdit ? "/api/status-pages" : null);
+  const atLimit = existingPages ? statusPageLimitReached(plan, existingPages.statusPages.length) : null;
+  const [refused, setRefused] = useState<PlanLimitBody | null>(null);
 
   // Selection sources (cheap lists; fetched regardless of the current mode so
   // switching modes is instant).
@@ -231,6 +240,7 @@ export default function StatusPageEditor() {
 
     setSaving(true);
     setErrors([]);
+    setRefused(null);
     try {
       await api<{ statusPage: { id: string } }>(
         isEdit ? `/api/status-pages/${id}` : "/api/status-pages",
@@ -242,7 +252,9 @@ export default function StatusPageEditor() {
       );
       navigate("/status-page");
     } catch (err) {
-      setErrors(errorMessages(err));
+      const limit = planLimitFromError(err);
+      if (limit) setRefused(limit);
+      else setErrors(errorMessages(err));
       window.scrollTo({ top: 0, behavior: "smooth" });
     } finally {
       setSaving(false);
@@ -276,24 +288,40 @@ export default function StatusPageEditor() {
     );
   }
 
+  const header = (
+    <div className="mb-6">
+      <Link
+        to="/status-page"
+        className="inline-flex items-center gap-1.5 text-xs text-ink-muted transition-colors hover:text-ink"
+      >
+        <ArrowLeft className="size-3.5" />
+        Back to status pages
+      </Link>
+      <h1 className="mt-2 text-xl font-semibold tracking-tight">
+        {isEdit ? "Edit status page" : "New status page"}
+      </h1>
+      <p className="mt-1 text-sm text-ink-muted">
+        Configure a public status page: its branding and which monitors it
+        shows.
+      </p>
+    </div>
+  );
+
+  // Hosted mode, no room on the plan: say so instead of a form that can't be saved.
+  if (atLimit) {
+    return (
+      <div className="mx-auto max-w-3xl">
+        {header}
+        <PlanLimitNotice limit={atLimit} />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-3xl">
-      <div className="mb-6">
-        <Link
-          to="/status-page"
-          className="inline-flex items-center gap-1.5 text-xs text-ink-muted transition-colors hover:text-ink"
-        >
-          <ArrowLeft className="size-3.5" />
-          Back to status pages
-        </Link>
-        <h1 className="mt-2 text-xl font-semibold tracking-tight">
-          {isEdit ? "Edit status page" : "New status page"}
-        </h1>
-        <p className="mt-1 text-sm text-ink-muted">
-          Configure a public status page: its branding and which monitors it
-          shows.
-        </p>
-      </div>
+      {header}
+
+      {refused && <PlanLimitNotice limit={refused} className="mb-5" />}
 
       {errors.length > 0 && (
         <div

@@ -13,8 +13,7 @@ import type { ChannelKind } from "../../shared/notifications";
 import type { AppEnv, Env } from "../types";
 import { hostedProps } from "./hosted";
 import { reportUsage } from "../db/usage";
-import { intervalSecondsOf } from "../db/monitors";
-import type { CreateMonitorInput } from "../../shared/schemas";
+import { intervalSecondsOf, type CreateMonitorInput } from "../../shared/schemas";
 
 /**
  * Plan limits, in hosted mode only (docs/hosted/CONTRACT.md, section 5).

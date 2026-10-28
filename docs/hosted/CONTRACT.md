@@ -139,6 +139,22 @@ A refused change is HTTP 402 with `planLimitBody(details, props.tenant)`:
 `message` is one plain sentence the UI shows as is, next to a button to `upgradeUrl`.
 A downgrade never deletes anything: existing monitors over the limit keep running, and only new ones are refused.
 
+### How OpenPing does it
+
+The checks are `src/worker/lib/plan-limits.ts`; on a plain install there is no plan, so none of them runs or costs a query.
+
+- `POST /api/monitors` (the dashboard and the CLI), MCP `create_monitor` and a backup import (`POST /api/data/import`) all go through the same monitor check; an import counts the monitors it would create and refuses before creating any.
+- The monitor count includes paused monitors, and the status page count includes the default page.
+- A body is validated first, so an invalid one is still a 400 at the limit.
+- Polled monitors are checked every 12 minutes, so `checkIntervalLimit` sees 12 for them; a heartbeat's interval is how often its job pings, not a check, so it never counts.
+  An edit is held to the interval only when it changes it, so a monitor kept from a bigger plan can still be renamed.
+- Push devices are not channels (they are `push_subscriptions`), so `channelKinds` doesn't apply to them.
+- The check and the insert are separate queries, so two creates at the same instant could both pass at the last free place; the next create is refused.
+- MCP answers a refusal as a tool error with the message and the upgrade link, and `structuredContent.planLimit` holding the body; the CLI prints both.
+- `/api/auth/me` adds `limits` to `hosted`, and the app shows the usage ("3 of 5 monitors on your plan") and, at the limit, the same sentence with an Upgrade button instead of a form that can't be saved.
+- `reportUsage` runs after every successful create or delete through the API and MCP, after the response (`waitUntil`).
+- A hosted scheduler run gets its own budget (`PLAN_BUDGETS.hosted` in `src/worker/lib/budget.ts`: 300 D1 queries and 600 fetches), under the 1,000 subrequests the platform allows a platform call.
+
 ## 6. Internal paths
 
 Every path under `/__platform/` is internal (`isInternalPath`).

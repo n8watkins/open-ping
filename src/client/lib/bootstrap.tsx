@@ -1,3 +1,4 @@
+import type { PlanLimits } from "../../shared/hosted-contract";
 import {
   createContext,
   useContext,
@@ -47,6 +48,8 @@ export interface HostedAccount {
   billingUrl: string;
   upgradeUrl: string;
   signOutUrl: string;
+  /** What the plan includes (the server enforces it; lib/plan-limits.ts shows it). */
+  limits?: PlanLimits;
 }
 
 export interface Me {

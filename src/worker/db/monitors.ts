@@ -2,6 +2,7 @@ import type { Env } from "../types";
 import { newId, randomToken, sha256hex } from "../lib/ids";
 import { encryptConfig, decryptConfig, mergeSecrets } from "../lib/secret-config";
 import { MONITOR_TYPES, type MonitorType } from "../../shared/states";
+import { intervalSecondsOf } from "../../shared/schemas";
 import type {
   Assertion,
   ConfirmFailures,
@@ -224,14 +225,6 @@ export async function rotateHeartbeatToken(
     .bind(await sha256hex(rawToken), Date.now(), id)
     .run();
   return result.meta.changes > 0 ? rawToken : null;
-}
-
-/** Polled monitors (http, dns, tcp, domain) are checked on every 12-minute run. */
-export const POLLED_INTERVAL_SECONDS = 720;
-
-/** A monitor's interval: how often a polled one is checked, or how often a heartbeat's job pings. */
-export function intervalSecondsOf(input: CreateMonitorInput): number {
-  return input.type === "heartbeat" ? input.config.intervalSeconds : POLLED_INTERVAL_SECONDS;
 }
 
 export async function createMonitor(

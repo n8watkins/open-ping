@@ -235,6 +235,23 @@ describe("run", () => {
     expect(r.stderr).toContain("config.url: Invalid URL");
   });
 
+  it("reports a plan limit with its sentence and where to upgrade", async () => {
+    const r = await cli(["monitors", "create", "--name", "Sixth", "--url", "https://a.test"], {
+      "POST /api/monitors": [
+        402,
+        {
+          error: "plan_limit",
+          limit: "monitors",
+          message: "Your plan includes 5 monitors. Remove one or upgrade to add more.",
+          upgradeUrl: "https://app.hosted.test/billing/upgrade",
+        },
+      ],
+    });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("HTTP 402 plan_limit - Your plan includes 5 monitors. Remove one or upgrade to add more.");
+    expect(r.stderr).toContain("Upgrade: https://app.hosted.test/billing/upgrade");
+  });
+
   it("exits 2 with a message on an unknown flag", async () => {
     const r = await cli(["uptime", "--montior", "mon_1"]);
     expect(r.code).toBe(2);

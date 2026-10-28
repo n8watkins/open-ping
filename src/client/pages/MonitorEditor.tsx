@@ -15,6 +15,10 @@ import {
 import { ArrowLeft, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
+import { useFetch } from "../lib/useFetch";
+import { monitorLimitReached, planLimitFromError, usePlan } from "../lib/plan-limits";
+import { PlanLimitNotice } from "../components/PlanLimitNotice";
+import type { PlanLimitBody } from "../../shared/hosted-contract";
 import { Card } from "../components/ui/Card";
 import { cn } from "../lib/cn";
 import type { Category } from "../lib/types";
@@ -398,6 +402,12 @@ export default function MonitorEditor() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  // Hosted mode: a create the plan has no room for. Known before the form is
+  // filled in (atLimit), or answered by the server (refused, 402).
+  const plan = usePlan();
+  const { data: existing } = useFetch<{ monitors: unknown[] }>(plan && !isEdit ? "/api/monitors" : null);
+  const atLimit = existing ? monitorLimitReached(plan, existing.monitors.length) : null;
+  const [refused, setRefused] = useState<PlanLimitBody | null>(null);
   // Focused on submit so screen-reader + keyboard users land on the error
   // summary (which also carries role="alert").
   const errorSummaryRef = useRef<HTMLDivElement>(null);
@@ -686,6 +696,7 @@ export default function MonitorEditor() {
     e.preventDefault();
     setSaving(true);
     setErrors([]);
+    setRefused(null);
     try {
       const payload = buildPayload();
       const result = await api<{
@@ -704,7 +715,9 @@ export default function MonitorEditor() {
           : undefined,
       });
     } catch (err) {
-      setErrors(errorMessages(err));
+      const limit = planLimitFromError(err);
+      if (limit) setRefused(limit);
+      else setErrors(errorMessages(err));
       window.scrollTo({ top: 0, behavior: "smooth" });
       // Defer to after the summary renders, then move focus to it.
       requestAnimationFrame(() => errorSummaryRef.current?.focus());
@@ -737,23 +750,39 @@ export default function MonitorEditor() {
     );
   }
 
+  const header = (
+    <div className="mb-6">
+      <Link
+        to={cancelTo}
+        className="inline-flex items-center gap-1.5 text-xs text-ink-muted transition-colors hover:text-ink"
+      >
+        <ArrowLeft className="size-3.5" />
+        {isEdit ? "Back to monitor" : "Back to monitors"}
+      </Link>
+      <h1 className="mt-2 text-xl font-semibold tracking-tight">
+        {isEdit ? "Edit monitor" : "New monitor"}
+      </h1>
+      <p className="mt-1 text-sm text-ink-muted">
+        {TYPE_DESCRIPTIONS[form.type]}
+      </p>
+    </div>
+  );
+
+  // Hosted mode, no room on the plan: say so instead of a form that can't be saved.
+  if (atLimit) {
+    return (
+      <div className="mx-auto max-w-3xl">
+        {header}
+        <PlanLimitNotice limit={atLimit} />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-3xl">
-      <div className="mb-6">
-        <Link
-          to={cancelTo}
-          className="inline-flex items-center gap-1.5 text-xs text-ink-muted transition-colors hover:text-ink"
-        >
-          <ArrowLeft className="size-3.5" />
-          {isEdit ? "Back to monitor" : "Back to monitors"}
-        </Link>
-        <h1 className="mt-2 text-xl font-semibold tracking-tight">
-          {isEdit ? "Edit monitor" : "New monitor"}
-        </h1>
-        <p className="mt-1 text-sm text-ink-muted">
-          {TYPE_DESCRIPTIONS[form.type]}
-        </p>
-      </div>
+      {header}
+
+      {refused && <PlanLimitNotice limit={refused} className="mb-5" />}
 
       {errors.length > 0 && (
         <div

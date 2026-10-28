@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
-import { createMonitorSchema } from "../../shared/schemas";
+import { createMonitorSchema, intervalSecondsOf, type CreateMonitorInput } from "../../shared/schemas";
 import {
   createMonitor,
   deleteMonitor,
@@ -26,8 +26,7 @@ import { redactConfig } from "../lib/secret-config";
 import { downtimeBreakdown, loadRangeHistory } from "../history/range";
 import { parseTimeRange, type MonitorHistoryResponse } from "../../shared/time-range";
 import { computeListStats } from "../history/list-stats";
-import { intervalSecondsOf, type MonitorRecord } from "../db/monitors";
-import type { CreateMonitorInput } from "../../shared/schemas";
+import type { MonitorRecord } from "../db/monitors";
 import { hostedPlan, intervalLimit, monitorLimit, type HostedPlan, type PlanLimitRefusal } from "../lib/plan-limits";
 
 /** Strip secret config fields and ingestion credentials from normal responses. */

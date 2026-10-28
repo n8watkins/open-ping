@@ -20,6 +20,8 @@ import { PageTitle } from "../components/ui/PageTitle";
 import { PullToRefresh } from "../components/PullToRefresh";
 import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
+import { monitorLimitReached, usageLabel, usePlan } from "../lib/plan-limits";
+import { PlanLimitNotice } from "../components/PlanLimitNotice";
 import type { Schedule } from "../../shared/schemas";
 import type { MonitorState } from "../../shared/states";
 import {
@@ -56,6 +58,7 @@ export default function Monitors() {
   const { data: statsData, reload: reloadStats } =
     useFetch<MonitorStatsResponse>("/api/monitors?include=stats");
   const { csrf } = useBootstrap();
+  const plan = usePlan();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | MonitorState>("all");
   const [sort, setSort] = useState<MonitorSortMode>("status");
@@ -183,14 +186,25 @@ export default function Monitors() {
   }
 
   const initialLoading = loading && !data;
+  // Hosted mode: how many of the plan's monitors are in use (paused ones count).
+  const atLimit = data ? monitorLimitReached(plan, monitors.length) : null;
 
   return (
     <div className="mx-auto max-w-6xl">
       <PullToRefresh onRefresh={refresh} />
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <PageTitle>Monitors</PageTitle>
-        <NewMonitorControl />
+        <div className="min-w-0">
+          <PageTitle>Monitors</PageTitle>
+          {plan && data && !atLimit && (
+            <p className="mt-1 text-sm text-ink-muted tabular-nums">
+              {usageLabel(monitors.length, plan.limits.monitors, "monitor", "monitors")} on your plan
+            </p>
+          )}
+        </div>
+        {/* At the plan's limit the notice below is the way on, not a second button. */}
+        {!atLimit && <NewMonitorControl />}
       </div>
+      {atLimit && <PlanLimitNotice limit={atLimit} className="mt-4" />}
 
       {!initialLoading && monitors.length === 0 ? (
         <div className="mt-6">
