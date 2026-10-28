@@ -1,7 +1,7 @@
 # OpenPing Hosted: the build plan
 
 Status: building, 2026-10-28.
-Done: C0 (contract) and B1 (platform skeleton) in #40; A1 (hosted mode switch) and A2 (hand-off sign-in); the contract itself is [docs/hosted/CONTRACT.md](./hosted/CONTRACT.md).
+Done: C0 (contract) and B1 (platform skeleton) in #40; A1 (hosted mode switch) and A2 (hand-off sign-in) in #44; the contract itself is [docs/hosted/CONTRACT.md](./hosted/CONTRACT.md).
 The owner decided on 2026-10-28 to start building Hosted now instead of waiting for the waitlist gate (about 20 sign-ups by about 2026-12-23).
 The waitlist keeps running; it becomes the launch list.
 The offer, the prices and the cost model stay as in [the Hosted plan](./HOSTED_PLAN.md); this document is how to build it, in what order, and what can run at the same time.
