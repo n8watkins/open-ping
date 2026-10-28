@@ -156,9 +156,9 @@ export async function runHttpCheck(
 
   const startedAt = Date.now();
   let res: Response;
-  let finalUrl = config.url;
+  let finalUrl: string;
   let redirected = false;
-  let durationMs = 0;
+  let durationMs: number;
   let body: string | undefined;
   // Every hop is its own fetch, and each counts against the run's subrequest
   // limit (lib/budget.ts), so the result reports how many were made.

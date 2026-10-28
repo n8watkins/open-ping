@@ -1005,7 +1005,7 @@ export async function run(argv, io = {}) {
         body: body ? JSON.stringify(body) : undefined,
       });
     } catch (err) {
-      throw new Error(`Could not reach ${config.url}: ${err.cause?.message ?? err.message}`);
+      throw new Error(`Could not reach ${config.url}: ${err.cause?.message ?? err.message}`, { cause: err });
     }
     const text = await res.text();
     if (raw && res.ok) return text;

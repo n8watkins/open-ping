@@ -68,7 +68,9 @@ export function useFetch<T>(path: string | null): FetchState<T> {
       });
     return () => {
       // Invalidate this effect's request and any in-flight `reload` so neither
-      // commits after the path changes or the component unmounts.
+      // commits after the path changes or the component unmounts. The ref is a
+      // request counter, not a DOM node: bumping its latest value is the point.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       tokenRef.current++;
     };
   }, [path]);

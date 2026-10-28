@@ -93,7 +93,7 @@ export default function Monitors() {
   const [pendingAction, setPendingAction] = useState<MonitorAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const monitors = data?.monitors ?? [];
+  const monitors = useMemo(() => data?.monitors ?? [], [data?.monitors]);
   const counts = data?.counts;
 
   const visibleMonitors = useMemo(() => {

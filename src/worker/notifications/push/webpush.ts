@@ -388,7 +388,7 @@ export async function sendWebPush(opts: {
     return { ok: false, status: res.status, expired: true };
   }
 
-  let detail = "";
+  let detail: string;
   try {
     detail = (await res.text()).slice(0, 200);
   } catch {

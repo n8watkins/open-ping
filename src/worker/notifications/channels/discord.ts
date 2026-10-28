@@ -60,7 +60,7 @@ export async function sendDiscordMessage(
     return { ok: true, status: res.status };
   }
 
-  let detail = "";
+  let detail: string;
   try {
     detail = (await res.text()).slice(0, 200);
   } catch {
