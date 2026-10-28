@@ -14,6 +14,7 @@ import { defaultPasskeyName } from "../components/PasskeysCard";
 import { useBootstrap } from "../lib/bootstrap";
 import { Logo } from "../components/Logo";
 import { AddSecretHelp } from "../components/AddSecretHelp";
+import { HostedManagedScreen } from "../components/HostedManaged";
 import { cn } from "../lib/cn";
 
 interface SetupStatus {
@@ -68,7 +69,30 @@ function timezones(): string[] {
   return ["UTC", "America/New_York", "America/Los_Angeles", "Europe/London"];
 }
 
+/**
+ * /setup: the first-run wizard. On OpenPing Hosted the platform sets the
+ * install up, so the page says so instead (the API refuses the wizard too).
+ */
 export default function Setup() {
+  const { status, me } = useBootstrap();
+  if (status?.hosted) {
+    return (
+      <HostedManagedScreen
+        title="There's nothing to set up"
+        action={
+          me?.authenticated
+            ? { label: "Go to the dashboard", to: "/" }
+            : { label: "Sign in with OpenPing Hosted", href: status.hosted.signInUrl }
+        }
+      >
+        <p>OpenPing Hosted set this OpenPing up for you, so it has no setup wizard or setup token.</p>
+      </HostedManagedScreen>
+    );
+  }
+  return <SetupWizard />;
+}
+
+function SetupWizard() {
   const navigate = useNavigate();
   const {
     loading: bootstrapLoading,

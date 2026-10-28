@@ -1,7 +1,7 @@
 # OpenPing Hosted: the build plan
 
 Status: building, 2026-10-28.
-Done: C0 (contract) and B1 (platform skeleton) in #40; the contract itself is [docs/hosted/CONTRACT.md](./hosted/CONTRACT.md).
+Done: C0 (contract) and B1 (platform skeleton) in #40; A1 (hosted mode switch) and A2 (hand-off sign-in) in #44; the contract itself is [docs/hosted/CONTRACT.md](./hosted/CONTRACT.md).
 The owner decided on 2026-10-28 to start building Hosted now instead of waiting for the waitlist gate (about 20 sign-ups by about 2026-12-23).
 The waitlist keeps running; it becomes the launch list.
 The offer, the prices and the cost model stay as in [the Hosted plan](./HOSTED_PLAN.md); this document is how to build it, in what order, and what can run at the same time.
@@ -141,8 +141,8 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
 
 ### A. Hosted mode in OpenPing (`src/`)
 
-- **A1 Hosted mode switch (M).** `HOSTED_MODE`, `TENANT_ID`, props typing, the "managed" UI states; `/setup` and `/recover` refuse; tests that a plain install is unchanged. Needs: C0.
-- **A2 Hand-off sign-in (M).** `/auth/hosted`, Ed25519 verification with Web Crypto, nonce store (migration), session creation, sign-out back to the platform. Needs: C0.
+- [x] **A1 Hosted mode switch (M), done.** `HOSTED_MODE`, `TENANT_ID`, props typing, the "managed" UI states; `/setup` and `/recover` refuse; tests that a plain install is unchanged. Needs: C0.
+- [x] **A2 Hand-off sign-in (M), done.** `/auth/hosted`, Ed25519 verification with Web Crypto, nonce store (migration), session creation, sign-out back to the platform. Needs: C0.
 - **A3 Platform scheduler entry and self-migration (M).** `/__platform/scheduled`, `/__platform/health`, bundled migrations with a lock and a schema version. Needs: C0.
 - **A4 Plan limits (S).** 402 responses with an upgrade link on create routes, UI states, and the budget profile for hosted plans. Needs: C0.
 - **A5 Mail through the platform (S).** A mail transport interface with today's Resend sender and a platform-capability sender. Needs: C0.

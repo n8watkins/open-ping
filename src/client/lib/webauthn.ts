@@ -211,7 +211,8 @@ export interface PasskeySignIn {
   origin: string;
   /** The APP_URL Worker variable sets the address, so the Installation URL setting can't move it. */
   appUrlFromEnv: boolean;
-  otherSignIn: { github: boolean; email: boolean };
+  /** `hosted`: OpenPing Hosted's sign-in, always a way in on a hosted install. */
+  otherSignIn: { github: boolean; email: boolean; hosted?: boolean };
 }
 
 /** The passkeys a new Installation URL would stop, and the ways in left afterwards. */

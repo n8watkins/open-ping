@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Fingerprint, Loader2 } from "lucide-react";
 import { Logo } from "../components/Logo";
+import { HostedManagedScreen } from "../components/HostedManaged";
 import { defaultPasskeyName } from "../components/PasskeysCard";
 import { useBootstrap } from "../lib/bootstrap";
 import { setPageMeta } from "../lib/meta";
@@ -35,14 +36,34 @@ function recoveryError(err: unknown): string {
 
 export default function Recover() {
   const { status } = useBootstrap();
+  useEffect(() => {
+    setPageMeta({ title: "Recover access | OpenPing", noindex: true });
+  }, []);
+  // On OpenPing Hosted there is no SETUP_TOKEN: the platform's sign-in is the
+  // way back in, and the API refuses recovery.
+  if (status?.hosted) {
+    return (
+      <HostedManagedScreen
+        title="Recover access through OpenPing Hosted"
+        action={{ label: "Sign in with OpenPing Hosted", href: status.hosted.signInUrl }}
+        back={{ label: "Back to sign-in", to: "/login" }}
+      >
+        <p>
+          Lost your passkeys? Sign in with your OpenPing Hosted account instead, then add a new passkey under Settings,
+          Sign-in &amp; security.
+        </p>
+      </HostedManagedScreen>
+    );
+  }
+  return <RecoverWithToken />;
+}
+
+function RecoverWithToken() {
+  const { status } = useBootstrap();
   const [token, setToken] = useState("");
   const [name, setName] = useState(defaultPasskeyName);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setPageMeta({ title: "Recover access | OpenPing", noindex: true });
-  }, []);
 
   const supported = passkeysSupported();
   const rpId = status?.passkeyRpId;

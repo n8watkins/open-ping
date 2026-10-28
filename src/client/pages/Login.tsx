@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Fingerprint, Loader2 } from "lucide-react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { Logo } from "../components/Logo";
-import { SignInPanel } from "../components/SignInPanel";
-import { useBootstrap } from "../lib/bootstrap";
+import { SignInPanel, usePasskeySignIn } from "../components/SignInPanel";
+import { useBootstrap, type AuthStatus } from "../lib/bootstrap";
 import { setPageMeta } from "../lib/meta";
+import { hostMatchesRpId, passkeysSupported } from "../lib/webauthn";
 
 export default function Login() {
   const { loading, status, me, error: bootstrapError, refresh } = useBootstrap();
@@ -47,6 +48,8 @@ export default function Login() {
   )
     return <Navigate to="/setup" replace />;
   if (me?.authenticated) return <Navigate to="/" replace />;
+  // OpenPing Hosted signs its customer in; their own passkeys work here too.
+  if (status?.hosted) return <HostedSignIn status={status} signInUrl={status.hosted.signInUrl} />;
 
   // A failed bootstrap leaves `status` null, which would otherwise render every
   // provider as disabled ("no sign-in options"). Show a retryable error instead
@@ -94,6 +97,84 @@ export default function Login() {
 
         <p className="mt-6 text-center">
           <Link to="/" className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink">
+            <ArrowLeft className="size-4" aria-hidden />
+            Back to the home page
+          </Link>
+        </p>
+      </main>
+    </div>
+  );
+}
+
+/**
+ * Sign-in on OpenPing Hosted: through the platform's account (which hands the
+ * browser back signed in), or with a passkey the customer added here.
+ */
+function HostedSignIn({ status, signInUrl }: { status: AuthStatus; signInUrl: string }) {
+  const host = typeof window === "undefined" ? "" : window.location.host;
+  const passkeyHere = !!status.passkeyConfigured && passkeysSupported() && hostMatchesRpId(status.passkeyRpId);
+  const passkey = usePasskeySignIn(passkeyHere, false);
+
+  return (
+    <div className="grid min-h-full place-items-center px-4 py-10">
+      <main className="w-full max-w-sm">
+        <div className="mb-8 flex justify-center">
+          <Logo />
+        </div>
+
+        <div className="rounded-card border border-line bg-surface p-6">
+          <h1 className="text-center text-lg font-semibold tracking-tight text-ink">Sign in to this OpenPing</h1>
+          {host && (
+            <p className="mt-2 flex justify-center">
+              <span className="max-w-full truncate rounded-md border border-line bg-canvas/60 px-2 py-0.5 font-mono text-xs text-ink-muted">
+                {host}
+              </span>
+            </p>
+          )}
+          <p className="mt-3 text-center text-sm leading-relaxed text-ink-muted">
+            This OpenPing runs on OpenPing Hosted. Sign in with your OpenPing Hosted account.
+          </p>
+
+          <div className="mt-6 space-y-3">
+            <a
+              href={signInUrl}
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-semibold text-canvas transition-opacity hover:opacity-90"
+            >
+              Sign in with OpenPing Hosted
+            </a>
+
+            {passkeyHere && (
+              <>
+                <div className="flex items-center gap-3 text-xs text-ink-faint" aria-hidden="true">
+                  <span className="h-px flex-1 bg-line" />
+                  or
+                  <span className="h-px flex-1 bg-line" />
+                </div>
+                <button
+                  type="button"
+                  onClick={passkey.signIn}
+                  disabled={passkey.busy}
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-line bg-surface-2 px-4 text-sm font-semibold text-ink transition-colors hover:bg-line disabled:opacity-60"
+                >
+                  {passkey.busy ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Fingerprint className="size-4" aria-hidden />
+                  )}
+                  Sign in with a passkey
+                </button>
+                {passkey.error && (
+                  <p role="alert" className="text-center text-sm text-down">
+                    {passkey.error}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        <p className="mt-6 text-center">
+          <Link to="/" className="inline-flex min-h-11 items-center gap-1.5 text-sm text-ink-muted hover:text-ink">
             <ArrowLeft className="size-4" aria-hidden />
             Back to the home page
           </Link>

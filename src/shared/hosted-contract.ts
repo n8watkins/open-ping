@@ -204,6 +204,46 @@ export interface TenantProps {
   platform: PlatformCapability;
 }
 
+const URL_KEYS = ["account", "billing", "upgrade", "signIn", "signOut"] as const;
+
+function isHttpUrl(value: unknown): boolean {
+  if (typeof value !== "string" || value.length > 2048) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The user Worker's check of `ctx.props` in hosted mode: true only for props
+ * of this contract version with a well-formed tenant, whose id is `tenantId`
+ * (the TENANT_ID var) when given. Props come from the platform and can't be
+ * forged; this guards against a platform and a bundle that disagree (an older
+ * or newer contract, a tenant id mix-up), which the user Worker answers with
+ * 503 `hosted_unavailable`. It never calls the `platform` stub.
+ */
+export function isTenantProps(value: unknown, tenantId?: string): value is TenantProps {
+  if (!value || typeof value !== "object") return false;
+  const p = value as Record<string, unknown>;
+  if (p.contract !== HOSTED_CONTRACT_VERSION) return false;
+  if (!(INVOCATIONS as readonly unknown[]).includes(p.invocation)) return false;
+  if (typeof p.callId !== "string" || p.callId.length < 16) return false;
+  if (!p.platform || (typeof p.platform !== "object" && typeof p.platform !== "function")) return false;
+  const t = p.tenant as Record<string, unknown> | null | undefined;
+  if (!t || typeof t !== "object") return false;
+  if (!isTenantId(t.id) || (tenantId !== undefined && t.id !== tenantId)) return false;
+  if (typeof t.slug !== "string" || !t.slug) return false;
+  if (!(TENANT_STATUSES as readonly unknown[]).includes(t.status)) return false;
+  if (!(PLAN_IDS as readonly unknown[]).includes(t.plan)) return false;
+  if (!t.limits || typeof t.limits !== "object") return false;
+  if (t.trialEndsAt !== null && !Number.isSafeInteger(t.trialEndsAt)) return false;
+  const urls = t.urls as Record<string, unknown> | null | undefined;
+  if (!urls || typeof urls !== "object") return false;
+  return URL_KEYS.every((key) => isHttpUrl(urls[key]));
+}
+
 // ---------------------------------------------------------------------------
 // Internal paths
 // ---------------------------------------------------------------------------
@@ -381,6 +421,8 @@ export const HOSTED_ERRORS = {
   notFound: "not_found",
   /** 403 for every write while the tenant is suspended (reads and exports still work). */
   tenantSuspended: "tenant_suspended",
+  /** 503 in hosted mode when props are missing, of another contract version, or for another tenant. */
+  unavailable: "hosted_unavailable",
 } as const;
 
 // ---------------------------------------------------------------------------

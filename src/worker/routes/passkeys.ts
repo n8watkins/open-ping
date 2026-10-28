@@ -31,6 +31,7 @@ import {
 } from "../lib/passkey-ceremony";
 import { verifyAuthentication, WebAuthnError } from "../lib/webauthn";
 import { checkSetupToken } from "./setup";
+import { hostedMode } from "../lib/hosted";
 
 /**
  * Passkeys (WebAuthn) for the single administrator.
@@ -58,9 +59,14 @@ const authenticationBody = z.object({ credential: authenticationCredentialSchema
 
 /**
  * Which other ways in actually work: GitHub needs the OAuth app and an admin
- * login, email needs an admin address and Resend to send the link.
+ * login, email needs an admin address and Resend to send the link. In hosted
+ * mode the platform's sign-in hand-off is always a way in, and the other two
+ * don't exist.
  */
-export async function otherSignInMethods(env: Env): Promise<{ github: boolean; email: boolean }> {
+export async function otherSignInMethods(
+  env: Env,
+): Promise<{ github: boolean; email: boolean; hosted?: true }> {
+  if (hostedMode(env)) return { github: false, email: false, hosted: true };
   return {
     github: !!env.GITHUB_CLIENT_ID && !!env.GITHUB_CLIENT_SECRET && !!(await getAdminGithubLogin(env)),
     email: !!env.RESEND_API_KEY && !!(await getAdminEmail(env)),
@@ -143,7 +149,7 @@ passkeysAdmin.delete("/:id", async (c) => {
   const { rpId } = await relyingParty(c);
   if (target.rp_id === rpId && !all.some((p) => p.id !== id && p.rp_id === rpId)) {
     const others = await otherSignInMethods(c.env);
-    if (!others.github && !others.email) return c.json({ error: "last_sign_in_method" }, 409);
+    if (!others.github && !others.email && !others.hosted) return c.json({ error: "last_sign_in_method" }, 409);
   }
   await deletePasskey(c.env, id);
   return c.json({ ok: true });

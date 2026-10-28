@@ -87,6 +87,15 @@ export async function touchSession(env: Env, row: SessionRow): Promise<void> {
     .run();
 }
 
+/**
+ * End the caller's current session, if any, without touching the cookie: for
+ * a sign-in that is about to set a new one (rotation).
+ */
+export async function endCurrentSession(c: Ctx): Promise<void> {
+  const token = getCookie(c, SESSION_COOKIE);
+  if (token) await destroySessionById(c.env, await sha256hex(token));
+}
+
 /** Destroy the caller's session and clear the cookie. */
 export async function destroySession(c: Ctx): Promise<void> {
   const token = getCookie(c, SESSION_COOKIE);
@@ -109,11 +118,13 @@ export async function revokeAllSessions(env: Env): Promise<void> {
 }
 
 /**
- * Purge expired sessions and auth_tokens (oauth_state / magic_link), as
+ * Purge expired sessions, auth_tokens (oauth_state / magic_link) and used
+ * hand-off nonces (hosted mode, db/handoff-nonces.ts), as
  * statements the scheduler batches with its other end-of-run work. Auth tokens
  * are otherwise only deleted on a matching callback/verify, so abandoned flows
  * (or scripted hits to /auth/github/start) would accumulate without bound. Both
- * are index-backed (idx_sessions_expires, idx_auth_tokens_expires).
+ * are index-backed (idx_sessions_expires, idx_auth_tokens_expires,
+ * idx_used_handoff_nonces_expires).
  */
 export function expiredAuthCleanupStatements(env: Env, now: number = Date.now()): LabeledStatement[] {
   return [
@@ -124,6 +135,10 @@ export function expiredAuthCleanupStatements(env: Env, now: number = Date.now())
     {
       label: "expired-auth-token cleanup",
       stmt: env.DB.prepare(`DELETE FROM auth_tokens WHERE expires_at <= ?`).bind(now),
+    },
+    {
+      label: "expired-handoff-nonce cleanup",
+      stmt: env.DB.prepare(`DELETE FROM used_handoff_nonces WHERE expires_at <= ?`).bind(now),
     },
   ];
 }

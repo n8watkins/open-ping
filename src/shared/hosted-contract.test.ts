@@ -17,6 +17,7 @@ import {
   isHostedMode,
   isInternalPath,
   isPlatformCall,
+  isTenantProps,
   isTenantId,
   parseHandoffToken,
   planLimitBody,
@@ -26,6 +27,7 @@ import {
   validateHandoffClaims,
   verifyHandoffToken,
   type HostedUrls,
+  type TenantProps,
 } from "./hosted-contract";
 
 const TENANT = "abcdefgh12345678";
@@ -52,6 +54,60 @@ describe("hosted mode switch", () => {
   it("is on only for exactly \"1\"", () => {
     expect(isHostedMode("1")).toBe(true);
     for (const value of [undefined, "", "0", "true", "yes", 1, " 1"]) expect(isHostedMode(value)).toBe(false);
+  });
+});
+
+describe("tenant props", () => {
+  const props = (): TenantProps => ({
+    contract: 1,
+    invocation: "public",
+    callId: "0123456789abcdef0123456789abcdef",
+    tenant: {
+      id: TENANT,
+      slug: "acme",
+      status: "trial",
+      plan: "trial",
+      limits: PLAN_LIMITS.trial,
+      trialEndsAt: NOW + 14 * 86_400_000,
+      urls,
+    },
+    platform: {
+      sendEmail: async () => ({ ok: false, error: "email_unavailable", message: "" }),
+      reportUsage: async () => {},
+      audit: async () => {},
+    },
+  });
+
+  it("accepts well-formed props for this tenant", () => {
+    expect(isTenantProps(props(), TENANT)).toBe(true);
+    expect(isTenantProps(props())).toBe(true);
+    expect(isTenantProps({ ...props(), invocation: "platform" }, TENANT)).toBe(true);
+    expect(isTenantProps({ ...props(), tenant: { ...props().tenant, trialEndsAt: null } }, TENANT)).toBe(true);
+  });
+
+  it("refuses missing props, another contract version and another tenant", () => {
+    for (const value of [undefined, null, "props", 1, {}]) expect(isTenantProps(value, TENANT)).toBe(false);
+    expect(isTenantProps({ ...props(), contract: 2 }, TENANT)).toBe(false);
+    expect(isTenantProps(props(), "zzzzzzzzzzzzzzzz")).toBe(false);
+  });
+
+  it("refuses a malformed tenant, call id, invocation or platform", () => {
+    const tenant = props().tenant;
+    const bad: unknown[] = [
+      { ...props(), invocation: "visitor" },
+      { ...props(), callId: "short" },
+      { ...props(), platform: null },
+      { ...props(), tenant: null },
+      { ...props(), tenant: { ...tenant, id: "ACME" } },
+      { ...props(), tenant: { ...tenant, slug: "" } },
+      { ...props(), tenant: { ...tenant, status: "provisioning" } },
+      { ...props(), tenant: { ...tenant, plan: "free" } },
+      { ...props(), tenant: { ...tenant, limits: null } },
+      { ...props(), tenant: { ...tenant, trialEndsAt: "soon" } },
+      { ...props(), tenant: { ...tenant, urls: { ...urls, signIn: "javascript:alert(1)" } } },
+      { ...props(), tenant: { ...tenant, urls: { ...urls, signOut: undefined } } },
+    ];
+    for (const value of bad) expect(isTenantProps(value, TENANT)).toBe(false);
   });
 });
 
