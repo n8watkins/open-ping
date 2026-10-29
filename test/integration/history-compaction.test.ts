@@ -13,6 +13,7 @@ import { runScheduled } from "../../src/worker/scheduler";
 // and on the Free plan a day's rows are capped (docs/FREE_TIER.md).
 
 const API_ORIGIN = "https://openping.test";
+const HOUR = 3_600_000;
 const MONITORS = 20;
 /** Days of hourly history seeded: just inside the 64 days hour rows are kept. */
 const HISTORY_DAYS = 63;
@@ -155,8 +156,14 @@ describe("history rollups", () => {
   });
 
   it("a scheduler run on a two-month-old install reads and writes only recent rows", async () => {
-    // The first run after an update recomputes everything once (no finished run to start from).
-    await measuredRun();
+    // The first run on this build recomputes everything once (no run has its
+    // rollups recorded yet), which repairs anything an older build left stale
+    // and writes only the buckets that differ.
+    await env.DB.prepare("UPDATE scheduler_runs SET compacted = NULL").run();
+    const full = await measuredRun();
+    // Measured: about 66,000 rows read and 7 written, once.
+    expect(full.read).toBeLessThan(80_000);
+    expect(full.written).toBeLessThan(50);
     const idle = await measuredRun();
     // Before: 1,347 rows written and about 160,000 read by every run, checking
     // nothing, on this install (20 monitors, 63 days of history). That is
@@ -164,5 +171,58 @@ describe("history rollups", () => {
     // cadence, past the Free plan's 100,000 and 5 million.
     expect(idle.written).toBeLessThan(50);
     expect(idle.read).toBeLessThan(5_000);
+  }, 60_000);
+
+  it("recomputes from the last run whose rollups landed, so a long streak of failed passes is repaired", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const t0 = Date.UTC(2026, 9, 20, 6, 0, 0);
+      vi.setSystemTime(t0);
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM summaries"),
+        env.DB.prepare("DELETE FROM scheduler_runs"),
+        env.DB.prepare("DELETE FROM locks"),
+      ]);
+      const monitor = await env.DB.prepare("SELECT id FROM monitors LIMIT 1").first<{ id: string }>();
+      const id = monitor!.id;
+      // An hour of history on day 0, which only a day pass can roll up.
+      await env.DB.prepare(
+        `INSERT INTO summaries (id, monitor_id, period, bucket_start, checks, ok_checks, monitored_seconds)
+         VALUES (?1 || ':hour:' || ?2, ?1, 'hour', ?2, 5, 5, 3600)`,
+      )
+        .bind(id, t0 - 2 * HOUR)
+        .run();
+      // Every day and month write fails for two days, while the runs themselves finish fine.
+      await env.DB.batch([
+        env.DB.prepare(
+          `CREATE TRIGGER broken_day_insert BEFORE INSERT ON summaries WHEN NEW.period <> 'hour'
+             BEGIN SELECT RAISE(ABORT, 'broken for this test'); END`,
+        ),
+        env.DB.prepare(
+          `CREATE TRIGGER broken_day_update BEFORE UPDATE ON summaries WHEN NEW.period <> 'hour'
+             BEGIN SELECT RAISE(ABORT, 'broken for this test'); END`,
+        ),
+      ]);
+      for (const at of [t0, t0 + 26 * HOUR, t0 + 50 * HOUR]) {
+        vi.setSystemTime(at);
+        await runScheduled(controller, env, { budget: PLAN_BUDGETS.paid });
+      }
+      const ok = await env.DB.prepare("SELECT COUNT(*) AS n FROM scheduler_runs WHERE ok = 1").first<{ n: number }>();
+      expect(ok?.n).toBe(3);
+      await env.DB.batch([
+        env.DB.prepare("DROP TRIGGER broken_day_insert"),
+        env.DB.prepare("DROP TRIGGER broken_day_update"),
+      ]);
+      vi.setSystemTime(t0 + 50 * HOUR + 12 * 60_000);
+      await runScheduled(controller, env, { budget: PLAN_BUDGETS.paid });
+      const day = await env.DB.prepare(
+        "SELECT checks FROM summaries WHERE monitor_id = ? AND period = 'day' AND bucket_start = ?",
+      )
+        .bind(id, Date.UTC(2026, 9, 20))
+        .first<{ checks: number }>();
+      expect(day?.checks).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
   }, 60_000);
 });
