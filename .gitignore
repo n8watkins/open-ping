@@ -23,3 +23,7 @@ coverage/
 !.vscode/extensions.json
 worker-configuration.d.ts
 *.tsbuildinfo
+# Android signing keys and Firebase config: never committed (docs/ANDROID.md).
+*.jks
+*.keystore
+google-services.json

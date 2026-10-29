@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- Written by `cap sync` for Cordova plugins, which the app has none of. -->
+    <issue id="UnusedResources">
+        <ignore path="src/main/res/xml/config.xml" />
+    </issue>
+</lint>

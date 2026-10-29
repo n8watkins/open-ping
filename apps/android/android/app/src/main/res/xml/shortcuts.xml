@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the app icon: straight to the list of installs. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="switch"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_switch_short"
+        android:shortcutLongLabel="@string/shortcut_switch_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="dev.n8builds.openping"
+            android:targetClass="dev.n8builds.openping.MainActivity"
+            android:data="dev.n8builds.openping:/switch" />
+    </shortcut>
+</shortcuts>

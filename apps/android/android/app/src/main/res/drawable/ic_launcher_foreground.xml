@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The OpenPing mark (public/maskable-icon.svg), inside the adaptive icon's 66 dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#6D8BFF" android:pathData="M43.875,54 a10.125,10.125 0 1,0 20.250,0 a10.125,10.125 0 1,0 -20.250,0" />
+    <path android:strokeColor="#6D8BFF" android:strokeAlpha="0.5" android:strokeWidth="3.797" android:pathData="M32.062,54 a21.938,21.938 0 1,0 43.875,0 a21.938,21.938 0 1,0 -43.875,0" />
+    <path android:strokeColor="#6D8BFF" android:strokeAlpha="0.2" android:strokeWidth="3.797" android:pathData="M22.359,54 a31.641,31.641 0 1,0 63.281,0 a31.641,31.641 0 1,0 -63.281,0" />
+</vector>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The OpenPing look (src/client/index.css): dark navy. -->
+    <color name="canvas">#0B1220</color>
+    <color name="accent">#6D8BFF</color>
+</resources>

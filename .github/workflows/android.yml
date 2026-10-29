@@ -1,0 +1,92 @@
+# The OpenPing Android app (apps/android, docs/ANDROID.md): checks and builds
+# it on every pull request and push to main that touches it, and keeps the
+# builds as artifacts:
+#
+# - openping-debug-apk: a debug APK to install on a phone (docs/ANDROID.md,
+#   "Installing a build from CI").
+# - openping-release-aab: the release bundle for Google Play. Unsigned here:
+#   the upload key is the owner's and never in this repository; a signed
+#   build reads it from the environment (OPENPING_UPLOAD_KEYSTORE and friends).
+#
+# Nothing is published anywhere.
+name: Android app
+
+on:
+  pull_request:
+    paths:
+      - "apps/android/**"
+      - "src/shared/native-app.ts"
+      - ".github/workflows/android.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/android/**"
+      - "src/shared/native-app.ts"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Check and build the Android app
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/android/package-lock.json
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      # Caches Gradle's downloads and build cache between runs, and checks
+      # the committed gradle-wrapper.jar against Gradle's published checksums.
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - run: npm ci
+      - name: Typecheck the app's screens
+        run: npm run typecheck
+      - name: Unit tests (the app's screens)
+        run: npm test
+      - name: Build the screens and copy them into the native project
+        run: npm run sync
+
+      - name: Unit tests, lint, debug APK and release bundle
+        working-directory: apps/android/android
+        run: ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug bundleRelease
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openping-debug-apk
+          path: apps/android/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openping-release-aab
+          path: apps/android/android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-reports
+          path: |
+            apps/android/android/app/build/reports/
+            apps/android/android/app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
