@@ -109,26 +109,32 @@ public final class AppSignIn {
 
     /**
      * The grant in a callback, or null when it doesn't match the sign-in this
-     * app started (another app's, an old one, or a forged link). Either way the
-     * pending sign-in is used up, at once and on disk, so it can't be used twice.
+     * app started (another app's, an old one, or a forged link). A callback
+     * that doesn't match leaves the pending sign-in alone, so an unsolicited
+     * one can't cancel the real one; the matching one uses it up, at once and
+     * on disk, so it can't be used twice.
      */
     @SuppressLint("ApplySharedPref")
     public Grant finish(Uri data) {
         if (!isCallback(data)) return null;
         String saved = prefs.getString(KEY, null);
-        prefs.edit().remove(KEY).commit();
         if (saved == null) return null;
         try {
             JSONObject pending = new JSONObject(saved);
             String origin = pending.getString("origin");
-            if (System.currentTimeMillis() - pending.getLong("at") > MAX_AGE_MS) return null;
+            if (System.currentTimeMillis() - pending.getLong("at") > MAX_AGE_MS) {
+                prefs.edit().remove(KEY).commit();
+                return null;
+            }
             String state = data.getQueryParameter("state");
             String code = data.getQueryParameter("code");
             String from = Origins.normalize(data.getQueryParameter("origin"));
             if (state == null || code == null || !state.equals(pending.getString("state"))) return null;
             if (from == null || !from.equals(origin)) return null;
+            prefs.edit().remove(KEY).commit();
             return new Grant(origin, code, pending.getString("verifier"));
         } catch (JSONException e) {
+            prefs.edit().remove(KEY).commit();
             return null;
         }
     }

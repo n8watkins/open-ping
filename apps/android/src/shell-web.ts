@@ -23,7 +23,7 @@ export class OpenPingShellWeb extends WebPlugin implements OpenPingShellPlugin {
           { origin: "https://acme.openping.example", hosted: true, addedAt: now, lastOpenedAt: now - 1 },
         ]
       : [];
-    return { installs: demo, active: null, version: "preview" };
+    return { installs: demo, active: null, version: "preview", webviewSupported: !new URLSearchParams(location.search).has("oldwebview") };
   }
 
   private write(state: ShellState): ShellState {
@@ -55,6 +55,8 @@ export class OpenPingShellWeb extends WebPlugin implements OpenPingShellPlugin {
   }
 
   async remove({ origin }: { origin: string }): Promise<ShellState> {
+    // The app signs out on the install first.
+    await new Promise((r) => setTimeout(r, 600));
     const state = this.read();
     state.installs = state.installs.filter((i) => i.origin !== origin);
     if (state.active === origin) state.active = null;

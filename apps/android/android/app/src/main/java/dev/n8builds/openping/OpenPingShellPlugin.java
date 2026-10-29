@@ -33,6 +33,8 @@ public class OpenPingShellPlugin extends Plugin {
         String active = store.active();
         state.put("active", active != null ? active : JSONObject.NULL);
         state.put("version", BuildConfig.VERSION_NAME);
+        // False on a web view too old for installs (MainActivity.showUnsupportedWebView).
+        state.put("webviewSupported", RemoteBridge.supported());
         return state;
     }
 
@@ -84,14 +86,20 @@ public class OpenPingShellPlugin extends Plugin {
     public void remove(PluginCall call) {
         String origin = originOf(call);
         if (origin == null) return;
-        shell().store().remove(origin);
-        getBridge().executeOnMainThread(() -> {
-            // Signed out of it on this phone: its session cookie and its saved data go.
-            CookieManager cookies = CookieManager.getInstance();
-            cookies.setCookie(origin, "op_session=; Max-Age=0; Path=/; Secure; HttpOnly");
-            cookies.flush();
-            WebStorage.getInstance().deleteOrigin(origin);
-            call.resolve(state());
+        String cookie = CookieManager.getInstance().getCookie(origin);
+        String userAgent = getBridge().getWebView().getSettings().getUserAgentString();
+        network.execute(() -> {
+            // Signed out on the install first (best effort: offline, it just
+            // expires there), then forgotten here.
+            ServerSignOut.run(origin, cookie, userAgent, shell().beforeSignOut(origin));
+            shell().store().remove(origin);
+            getBridge().executeOnMainThread(() -> {
+                CookieManager cookies = CookieManager.getInstance();
+                cookies.setCookie(origin, "op_session=; Max-Age=0; Path=/; Secure; HttpOnly");
+                cookies.flush();
+                WebStorage.getInstance().deleteOrigin(origin);
+                call.resolve(state());
+            });
         });
     }
 

@@ -9,6 +9,7 @@ export type Route =
   | { name: "add" }
   | { name: "add-own" }
   | { name: "add-hosted" }
+  | { name: "webview" }
   | { name: "offline"; origin: string | null; path: string; reason: "network" | "certificate" };
 
 export function parseRoute(hash: string): Route {
@@ -22,6 +23,8 @@ export function parseRoute(hash: string): Route {
       return { name: "add-own" };
     case "/add/hosted":
       return { name: "add-hosted" };
+    case "/webview":
+      return { name: "webview" };
     case "/offline": {
       const params = new URLSearchParams(query);
       let origin: string | null = null;

@@ -8,6 +8,7 @@ describe("parseRoute", () => {
     expect(parseRoute("#/add")).toEqual({ name: "add" });
     expect(parseRoute("#/add/own")).toEqual({ name: "add-own" });
     expect(parseRoute("#/add/hosted")).toEqual({ name: "add-hosted" });
+    expect(parseRoute("#/webview")).toEqual({ name: "webview" });
     expect(parseRoute("#/nonsense")).toEqual({ name: "boot" });
   });
 

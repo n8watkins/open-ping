@@ -25,6 +25,8 @@ const ICONS = {
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   remove:
     '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
+  update:
+    '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
   offline:
     '<path d="M12 20h.01"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M5 12.859a10 10 0 0 1 5.17-2.69"/><path d="M19 12.859a10 10 0 0 0-2.007-1.523"/><path d="M2 8.82a15 15 0 0 1 4.177-2.643"/><path d="M22 8.82a15 15 0 0 0-11.288-3.764"/><path d="m2 2 20 20"/>',
   lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
@@ -174,8 +176,11 @@ function confirmRemove(origin: string) {
   cancel.addEventListener("click", () => dialog.close());
   dialog.addEventListener("close", () => dialog.remove());
   confirm.addEventListener("click", async () => {
-    dialog.close();
+    confirm.disabled = true;
+    cancel.disabled = true;
+    confirm.replaceChildren(el("span", { class: "spinner", "aria-hidden": "true" }), "Removing");
     const state = await Shell.remove({ origin });
+    dialog.close();
     render(parseRoute(location.hash), state);
   });
   document.body.append(dialog);
@@ -334,6 +339,26 @@ function offlineScreen(state: ShellState, route: Extract<Route, { name: "offline
   );
 }
 
+/** The phone's web view is too old for installs to open safely. */
+function webviewScreen(state: ShellState) {
+  const update = el("button", { type: "button", class: "button" }, "Update in Google Play", icon("external"));
+  update.addEventListener("click", () =>
+    void Shell.openExternal({ url: "https://play.google.com/store/apps/details?id=com.google.android.webview" }),
+  );
+  show(
+    brand(),
+    el("div", { class: "status-icon" }, icon("update")),
+    el("h1", {}, "Update Android System WebView"),
+    el(
+      "p",
+      { class: "lead" },
+      "OpenPing shows your OpenPing in Android's web view, and this phone's is too old to keep it safely apart from the app. Update it in Google Play, then open OpenPing again.",
+    ),
+    el("div", { class: "stack" }, update),
+    footer(state),
+  );
+}
+
 // --- Flow -------------------------------------------------------------------------
 
 async function openInstall(origin: string) {
@@ -342,7 +367,10 @@ async function openInstall(origin: string) {
 }
 
 function render(route: Route, state: ShellState) {
+  if (!state.webviewSupported) return webviewScreen(state);
   switch (route.name) {
+    case "webview":
+      return webviewScreen(state);
     case "offline":
       return offlineScreen(state, route);
     case "add":
@@ -362,7 +390,9 @@ async function start() {
   const state = await Shell.getState();
   const route = parseRoute(location.hash);
   // A plain launch goes straight to the install used last.
-  if (route.name === "boot" && state.active) return void (await Shell.open({ origin: state.active }));
+  if (route.name === "boot" && state.active && state.webviewSupported) {
+    return void (await Shell.open({ origin: state.active }));
+  }
   render(route, state);
 }
 

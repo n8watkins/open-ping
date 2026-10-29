@@ -20,6 +20,11 @@ export interface ShellState {
   active: string | null;
   /** The app's version name. */
   version: string;
+  /**
+   * False when the phone's Android System WebView is too old to keep an
+   * install's pages away from the app's own bridge: no install opens then.
+   */
+  webviewSupported: boolean;
 }
 
 export type ProbeResult =
@@ -36,6 +41,7 @@ export interface OpenPingShellPlugin {
   /** Check that `origin` answers like an OpenPing new enough for the app. */
   probe(options: { origin: string }): Promise<ProbeResult>;
   add(options: { origin: string; hosted: boolean }): Promise<ShellState>;
+  /** Sign this phone out on the install (best effort), then forget it. */
   remove(options: { origin: string }): Promise<ShellState>;
   /** Load the install (its `path`, default "/") into the web view, replacing this page. */
   open(options: { origin: string; path?: string }): Promise<void>;

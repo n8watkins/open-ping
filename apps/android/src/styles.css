@@ -229,6 +229,7 @@ label { font-size: 0.875rem; font-weight: 600; }
   font-size: 0.9375rem;
   font-weight: 650;
   text-decoration: none;
+  white-space: nowrap;
   cursor: pointer;
 }
 .button:disabled { opacity: 0.6; cursor: default; }

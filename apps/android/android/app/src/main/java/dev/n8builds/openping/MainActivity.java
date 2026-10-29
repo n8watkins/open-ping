@@ -121,6 +121,10 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
                 Toast.makeText(this, R.string.signin_mismatch, Toast.LENGTH_LONG).show();
                 return;
             }
+            if (!RemoteBridge.supported()) {
+                showUnsupportedWebView();
+                return;
+            }
             // The web view's own session: post the code and the verifier.
             show(grant.origin);
             bridge.getWebView().postUrl(grant.exchangeUrl(), grant.exchangeBody());
@@ -136,6 +140,10 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
     /** Load {@code path} of a known install. Main thread. */
     void openInstall(String origin, String path) {
         if (store.get(origin) == null) return;
+        if (!RemoteBridge.supported()) {
+            showUnsupportedWebView();
+            return;
+        }
         show(origin);
         bridge.getWebView().loadUrl(origin + safePath(path));
     }
@@ -154,6 +162,16 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
         pickerFromInstall = installOrigin != null;
         leaveInstall();
         bridge.getWebView().loadUrl(bridge.getLocalUrl() + "/#/picker");
+    }
+
+    /**
+     * This phone's web view is too old to give an install's pages only their
+     * own bridge: Capacitor would then fall back to a JavaScript interface on
+     * every page and frame, so no install loads until it is updated.
+     */
+    private void showUnsupportedWebView() {
+        leaveInstall();
+        bridge.getWebView().loadUrl(bridge.getLocalUrl() + "/#/webview");
     }
 
     private void leaveInstall() {
@@ -252,6 +270,11 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
 
     InstallStore store() {
         return store;
+    }
+
+    /** What to do on an install, signed in, before the app signs out of it (none yet: push adds one). */
+    ServerSignOut.BeforeSignOut beforeSignOut(String origin) {
+        return null;
     }
 
     private static String encode(String value) {
