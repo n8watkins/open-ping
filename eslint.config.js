@@ -8,7 +8,7 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default defineConfig([
-  globalIgnores(["dist/", ".wrangler/", "coverage/", "worker-configuration.d.ts"]),
+  globalIgnores(["dist/", ".tenant-bundle/", ".wrangler/", "coverage/", "worker-configuration.d.ts"]),
   { linterOptions: { reportUnusedDisableDirectives: "error" } },
   js.configs.recommended,
   tseslint.configs.recommended,

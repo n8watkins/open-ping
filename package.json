@@ -23,6 +23,7 @@
     "test:platform": "vitest run --config platform/vitest.config.ts",
     "test:watch": "vitest",
     "op": "node scripts/op.mjs",
+    "tenant-release": "node scripts/tenant-release.mjs",
     "cf-typegen": "wrangler types",
     "db:create": "wrangler d1 create open-ping",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",

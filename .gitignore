@@ -1,5 +1,7 @@
 node_modules
 dist/
+# The OpenPing Hosted tenant bundle (scripts/tenant-release.mjs).
+.tenant-bundle/
 .wrangler/
 .dev.vars
 .dev.vars.*
