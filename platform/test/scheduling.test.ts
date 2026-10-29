@@ -27,6 +27,7 @@ import {
   type ScheduleMessage,
   type SchedulingDeps,
 } from "../src/scheduling";
+import { captureLogs, type LogLine } from "../src/log";
 import { FakeDispatcher, type FakeUserWorker } from "./fake-dispatcher";
 
 const DOMAIN = "openping.test";
@@ -182,6 +183,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await env.PLATFORM_DB.batch([
     env.PLATFORM_DB.prepare("DELETE FROM scheduler_days"),
+    env.PLATFORM_DB.prepare("DELETE FROM scheduler_minutes"),
     env.PLATFORM_DB.prepare("DELETE FROM scheduler_stats"),
     env.PLATFORM_DB.prepare("DELETE FROM tenants"),
     env.PLATFORM_DB.prepare("DELETE FROM accounts"),
@@ -391,6 +393,59 @@ describe("the consumer", () => {
     expect(next.props.tenant.plan).toBe("hosted");
     expect(next.props.tenant.limits.minIntervalMinutes).toBe(12);
     expect(await stats(id)).toMatchObject({ day_runs: 2, day_checked: 8, day_d1_queries: 18 });
+  });
+
+  it("adds the batch's runs to the platform's per-minute totals in one write, and logs one line for the batch", async () => {
+    const w = world();
+    const good = await tenant({ nextAt: T0 });
+    const bad = await tenant({ nextAt: T0 });
+    w.dispatcher.register(`t-${good}`, openPing());
+    w.dispatcher.register(`t-${bad}`, openPing(() => new Response("boom", { status: 500 })));
+    const { messages } = await tick(w);
+    w.clock.now = T0 + 2_000;
+    const lines: LogLine[] = [];
+    const restore = captureLogs((l) => lines.push(l));
+    try {
+      await handleScheduleBatch(w.deps, batchOf(messages).batch);
+    } finally {
+      restore();
+    }
+    const minute = await env.PLATFORM_DB.prepare("SELECT runs, errors, checked, failures, lag_max_ms FROM scheduler_minutes WHERE minute = ?")
+      .bind((T0 + 2_000 - ((T0 + 2_000) % MINUTE)) / MINUTE)
+      .first();
+    expect(minute).toEqual({ runs: 2, errors: 1, checked: 4, failures: 1, lag_max_ms: 2_000 });
+    const batch = lines.filter((l) => l.event === "schedule.batch");
+    expect(batch).toEqual([{ event: "schedule.batch", level: "warn", messages: 2, runs: 2, errors: 1, timeouts: 0, skipped: 0, maxMs: 0, maxLagMs: 2_000 }]);
+    // The tenant that didn't answer cleanly has its own line, with its id and no body.
+    expect(lines.find((l) => l.event === "schedule.no_answer")).toMatchObject({ tenant: bad, outcome: "error", error: "HTTP 500" });
+  });
+
+  it("keeps running tenants when the metrics write fails", async () => {
+    const w = world();
+    const id = await tenant({ nextAt: T0 });
+    w.dispatcher.register(`t-${id}`, openPing());
+    const { messages } = await tick(w);
+    const realBatch = env.PLATFORM_DB.batch.bind(env.PLATFORM_DB);
+    const db = new Proxy(env.PLATFORM_DB, {
+      get(target, prop) {
+        if (prop === "batch") {
+          return (statements: D1PreparedStatement[]) =>
+            // Only the metrics upsert fails; the run's own bookkeeping goes through.
+            statements.length === 1 && String((statements[0] as unknown as { statement?: string }).statement ?? "").includes("scheduler_minutes")
+              ? Promise.reject(new Error("D1 overloaded"))
+              : realBatch(statements);
+        }
+        const value = Reflect.get(target, prop) as unknown;
+        return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    const run = batchOf(messages);
+    expect(await handleScheduleBatch({ ...w.deps, db }, run.batch)).toEqual([{ kind: "ran", tenantId: id, outcome: "ran" }]);
+    expect(run.acks).toEqual([id]);
+    expect(run.retries).toEqual([]);
+    expect(await stats(id)).toMatchObject({ last_outcome: "ran" });
+    // The write really was the one that failed.
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM scheduler_minutes").first("n")).toBe(0);
   });
 
   it("runs a message only once, however often the queue delivers it", async () => {
