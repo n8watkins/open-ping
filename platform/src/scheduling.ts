@@ -214,8 +214,10 @@ const SCHEDULABLE = "provision_state = 'ready' AND status <> 'suspended' AND own
  * The due tenants, earliest first. Its WHERE contains the partial index's
  * (idx_tenants_schedule_due) and ranges over its column, so the plan is an
  * index range scan over the due rows only (test/scheduling.test.ts checks).
+ * INDEXED BY holds SQLite to that index whatever its statistics say later
+ * (it fails the query outright rather than fall back to a scan).
  */
-export const DUE_SQL = `SELECT id, plan, limit_overrides, schedule_next_at FROM tenants
+export const DUE_SQL = `SELECT id, plan, limit_overrides, schedule_next_at FROM tenants INDEXED BY idx_tenants_schedule_due
        WHERE ${SCHEDULABLE}
          AND schedule_next_at <= ?1
          AND (schedule_lease_until IS NULL OR schedule_lease_until <= ?2)
