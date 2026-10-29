@@ -109,7 +109,8 @@ The customer may see an export's key on the account page, after a sign-in from t
 - OpenPing Hosted is $24 a year: 20 monitors checked every 12 minutes, 2 status pages, every alert channel, second-region confirmation.
 - The fast checks add-on is $24 a year more ($48 in total): 1-minute checks on up to 5 of the 20 monitors; the rest stay at 12 minutes.
 - The trial is 30 days with 5 monitors at 12-minute checks, no card.
+- More monitors: a pack of 25 more monitors at 12-minute checks is $24 a year, and a pack of 5 more fast monitors (1-minute checks, with the fast checks add-on) is $36 a year; at launch an account can add at most 4 monitor packs (120 monitors) and 3 fast packs (20 fast monitors), and larger accounts ask support.
 - Yearly billing only.
 
 **Why:** the measured cost per customer (docs/HOSTED_PLAN.md, "Cost per customer, measured" and the margins table): every plan clears a profit even for a customer using everything the plan allows, and the prices are still well under every paid competitor (docs/LANDING_AND_LOGIN_PLAN.md).
-**What changes in code:** a `fastMonitors` plan limit (5) and the contract change for it, the add-on price in billing, and the trial length (14 days to 30 days) in the platform, the landing page's trial copy and the lifecycle emails.
+**What changes in code:** a `fastMonitors` plan limit (5), pack quantities that add to the monitor and fast-monitor limits, and the contract change for it, the add-on price in billing, and the trial length (14 days to 30 days) in the platform, the landing page's trial copy and the lifecycle emails.
