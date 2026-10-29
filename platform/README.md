@@ -57,8 +57,8 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 - Runs every customer's scheduler (B4, `src/scheduling.ts`), since a user Worker in a dispatch namespace has no Cron Trigger:
   - every minute the cron claims the tenants that are due and puts one message per tenant on `SCHEDULE_QUEUE` (`openping-schedule`), in rounds of 100 (one D1 batch and one `sendBatch` each);
   - the due query is a range scan of a partial index (`idx_tenants_schedule_due`, migration 0005) whose WHERE leaves out tenants that aren't ready, are suspended by billing or by the owner, or are being removed, so the cron reads only the tenants due this minute (`test/scheduling.test.ts` checks the query plan and the rows read);
-  - a tenant is due every `minIntervalMinutes` of its effective limits (12 minutes on the trial and the yearly plan, 1 minute with fast checks, or a per-tenant override), keeping its phase so tenants stay spread over the interval; its first run is spread by its id;
-  - when a run's summary carries `nextDueAt` (the tenant's next due monitor, from lane A's contract change), the next run waits for it, but never past 12 minutes and never sooner than the plan allows; without it, the plan's interval applies;
+  - when a tenant is due follows the contract's "When to call next" (section 6), on minute ticks: a new tenant at once (its next run spread over its interval by its id); after a run that answered `ran` with `nextDueAt`, the tick at or just before it (the tenant checks what is due within 30 seconds of a call), never more than 12 minutes on; after `ran` without `nextDueAt` (a bundle older than the field), every `minIntervalMinutes` of its effective limits (12 minutes on the trial and the yearly plan, 1 minute with fast checks, or a per-tenant override), keeping its phase; after `lease_busy`, the next tick; after `failed` or no answer, the next tick, then 2, 4, 8 minutes while it keeps failing, never slower than its interval;
+  - the claim records the interval's next tick, and the consumer writes the due time again only when the run moved it to another tick, so a tenant whose work matches its plan costs no extra write;
   - the consumer calls each tenant's `POST /__platform/scheduled` through the dispatch namespace with fresh props and a new call id (`callTenant`), under a timeout (40 seconds at 1-minute checks, 90 seconds otherwise) that aborts the call;
   - never two runs of one tenant at once: the claim records a run id and a lease, the consumer starts only the claimed run and only once per attempt (a conditional write), and the run's lease (timeout plus 10 seconds) is shorter than the interval, so it is never released by hand; the tenant also keeps its own lease (`lease_busy`);
   - a call that gets no answer (an error, a status other than 200, a timeout, a missing script) is retried through the queue after 15, 60 and 180 seconds, only while the retry can finish before the tenant's next run, which is the retry otherwise; a run the tenant answers as `failed` is not retried;
@@ -129,7 +129,7 @@ What one run costs the platform:
 | Item | Per run |
 | --- | --- |
 | Queue operations | 3 (one message) |
-| D1 rows written in `PLATFORM_DB` | 4: the claim (the row and its due-index entry), the start, the numbers; 2 more when the tenant's `nextDueAt` moves its next run |
+| D1 rows written in `PLATFORM_DB` | 4: the claim (the row and its due-index entry), the start, the numbers; 2 more when the run moves the next one to another tick than the plan's interval |
 | Workers for Platforms requests | 1 (the call to the tenant), counted at full price to be safe |
 | CPU | about 20 ms in the tenant (an assumption until the load test measures it) and about 2 ms in the platform |
 | Platform Worker requests | 1/25 (consumer batches of 25) plus the cron's 43,200 a month |

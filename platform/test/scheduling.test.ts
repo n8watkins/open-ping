@@ -13,7 +13,7 @@ import {
 import {
   DAY_MS,
   DUE_SQL,
-  MAX_IDLE_MS,
+  MAX_GAP_MS,
   QUEUE_LEASE_MS,
   enqueueDue,
   handleScheduleBatch,
@@ -204,26 +204,42 @@ describe("the due query", () => {
 
 describe("when a tenant is due", () => {
   it("keeps a tenant's phase, and skips whole intervals a late cron missed", () => {
-    expect(nextDueAfterClaim("a", T0, T0 + 5_000, 12 * MINUTE)).toBe(T0 + 12 * MINUTE);
+    expect(nextDueAfterClaim("a", T0, T0, 12 * MINUTE)).toBe(T0 + 12 * MINUTE);
     expect(nextDueAfterClaim("a", T0, T0 + 30 * MINUTE, 12 * MINUTE)).toBe(T0 + 36 * MINUTE);
-    expect(nextDueAfterClaim("a", T0, T0 + 5_000, MINUTE)).toBe(T0 + MINUTE);
+    expect(nextDueAfterClaim("a", T0, T0, MINUTE)).toBe(T0 + MINUTE);
+    // A due time off the minute lands on the tick that would claim it.
+    expect(nextDueAfterClaim("a", T0 + 20_000, T0 + MINUTE, 12 * MINUTE)).toBe(T0 + 13 * MINUTE);
   });
 
-  it("spreads first runs over the interval by tenant id", () => {
+  it("spreads first runs over the interval by tenant id, on ticks", () => {
     const offsets = new Set<number>();
     for (let i = 0; i < 200; i++) offsets.add(spreadIndex(`tenant${i}`, 12));
     expect(offsets.size).toBe(12);
-    const next = nextDueAfterClaim("abc", 0, T0 + 5_000, 12 * MINUTE);
+    const next = nextDueAfterClaim("abc", 0, T0, 12 * MINUTE);
     expect(next).toBeGreaterThan(T0);
     expect(next).toBeLessThanOrEqual(T0 + 12 * MINUTE);
+    expect(next % MINUTE).toBe(0);
   });
 
-  it("follows the tenant's nextDueAt later, never sooner than the plan, never past the idle cap", () => {
-    const base = { dueAt: T0, claimedNext: T0 + MINUTE, interval: MINUTE };
-    expect(nextDueAfterRun({ ...base, nextDueAt: null })).toBe(T0 + MINUTE);
-    expect(nextDueAfterRun({ ...base, nextDueAt: T0 + 5 * MINUTE })).toBe(T0 + 5 * MINUTE);
-    expect(nextDueAfterRun({ ...base, nextDueAt: T0 + 10_000 })).toBe(T0 + MINUTE);
-    expect(nextDueAfterRun({ ...base, nextDueAt: T0 + 3 * 3_600_000 })).toBe(T0 + MAX_IDLE_MS);
+  it("follows the contract's rule for the next call", () => {
+    const base = { tick: T0, claimedNext: T0 + 12 * MINUTE, interval: 12 * MINUTE, streak: 0 };
+    const ran = (nextDueAt?: number) => ({ ...base, summary: { outcome: "ran" as const, ...(nextDueAt === undefined ? {} : { nextDueAt }) } });
+    // No nextDueAt (an older bundle): the plan's interval, as claimed.
+    expect(nextDueAfterRun(ran())).toBe(T0 + 12 * MINUTE);
+    // nextDueAt: its tick, sooner or later than the plan's interval...
+    expect(nextDueAfterRun(ran(T0 + 3 * MINUTE))).toBe(T0 + 3 * MINUTE);
+    // A due time just past a tick (the tenant checked a moment after its tick) stays on it; later waits for the next.
+    expect(nextDueAfterRun(ran(T0 + 3 * MINUTE + 1_200))).toBe(T0 + 3 * MINUTE);
+    expect(nextDueAfterRun(ran(T0 + 3 * MINUTE + 20_000))).toBe(T0 + 4 * MINUTE);
+    // ...never this tick again, never past the gap.
+    expect(nextDueAfterRun(ran(T0 - 30_000))).toBe(T0 + MINUTE);
+    expect(nextDueAfterRun(ran(T0 + 3 * 3_600_000))).toBe(T0 + MAX_GAP_MS);
+    // Busy: the next tick. Failed or no answer: the next tick, then backing off to the interval.
+    expect(nextDueAfterRun({ ...base, summary: { outcome: "lease_busy" } })).toBe(T0 + MINUTE);
+    expect(nextDueAfterRun({ ...base, summary: { outcome: "failed" }, streak: 1 })).toBe(T0 + MINUTE);
+    expect(nextDueAfterRun({ ...base, summary: null, streak: 3 })).toBe(T0 + 4 * MINUTE);
+    expect(nextDueAfterRun({ ...base, summary: null, streak: 9 })).toBe(T0 + 12 * MINUTE);
+    expect(nextDueAfterRun({ ...base, interval: MINUTE, summary: null, streak: 9 })).toBe(T0 + MINUTE);
   });
 
   it("reads nextDueAt only when the tenant sends a time", () => {
@@ -519,6 +535,24 @@ describe("the consumer", () => {
     }
     w.clock.now = T0 + 5 * MINUTE;
     expect((await tick(w)).messages).toHaveLength(1);
+  });
+
+  it("calls a 12-minute tenant sooner when it has work sooner, and backs off one that keeps failing", async () => {
+    const w = world();
+    const id = await tenant({ plan: "hosted", nextAt: T0 });
+    w.dispatcher.register(`t-${id}`, openPing(() => ({ nextDueAt: T0 + 3 * MINUTE + 30_000 }) as Partial<ScheduledRunSummary>));
+    await handleScheduleBatch(w.deps, batchOf((await tick(w)).messages).batch);
+    expect((await scheduleRow(id)).schedule_next_at).toBe(T0 + 4 * MINUTE);
+
+    w.dispatcher.register(`t-${id}`, openPing(() => ({ outcome: "failed", error: "migration failed" })));
+    const due: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      w.clock.now = (await scheduleRow(id)).schedule_next_at;
+      await env.PLATFORM_DB.prepare("UPDATE tenants SET schedule_lease_until = NULL WHERE id = ?").bind(id).run();
+      await handleScheduleBatch(w.deps, batchOf((await tick(w)).messages).batch);
+      due.push(((await scheduleRow(id)).schedule_next_at - w.clock.now) / MINUTE);
+    }
+    expect(due).toEqual([1, 2, 4, 8]);
   });
 
   it("keeps a day's totals, and moves them to scheduler_days on the next day", async () => {

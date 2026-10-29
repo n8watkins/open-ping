@@ -17,13 +17,22 @@
  * One message per tenant, so a slow or broken tenant delays nobody else, and
  * a message whose consumer dies is delivered again.
  *
- * When a tenant is due: every `minIntervalMinutes` of its effective limits
- * (12 minutes on the trial and the yearly plan, 1 minute with fast checks),
- * keeping its phase so tenants stay spread over the interval. When a run's
- * summary carries `nextDueAt` (the tenant's own next due monitor), the next
- * run waits for it, but never past MAX_IDLE_MS (alert retries, heartbeats and
- * cleanup need a run at least that often) and never sooner than the plan
- * allows.
+ When a tenant is due (the contract, section 6, "When to call next"), on
+ * minute ticks:
+ *   - a new tenant at once, its next run spread over its interval by its id;
+ *   - after a run that answered `ran` with `nextDueAt` (when the tenant next
+ *     has work): the first tick at or after it, never later than
+ *     SCHEDULED_MAX_GAP_MS (12 minutes) after this run, so alerts, reports
+ *     and cleanup keep at least the self-hosted cadence;
+ *   - after `ran` without `nextDueAt` (a bundle older than the field): every
+ *     `minIntervalMinutes` of its effective limits (12 minutes on the trial
+ *     and the yearly plan, 1 minute with fast checks), keeping its phase;
+ *   - after `lease_busy`: the next tick;
+ *   - after `failed` or no answer: the next tick, then backing off (1, 2, 4,
+ *     8 minutes...) while it keeps failing, never slower than its interval.
+ * The claim records the interval's next tick; the consumer writes the due
+ * time again only when the run moved it to another tick, so a tenant whose
+ * work matches its plan costs no extra write.
  *
  * Never two runs of one tenant at once:
  *   - the claim records a run id and a lease (the wait in the queue), and the
@@ -90,8 +99,9 @@ export interface SchedulingDeps {
 // When a tenant is due
 // ---------------------------------------------------------------------------
 
-/** The longest a tenant goes without a run, whatever its `nextDueAt` says. */
-export const MAX_IDLE_MS = 12 * 60_000;
+/** The longest a tenant goes without a run, whatever its `nextDueAt` says (the contract's SCHEDULED_MAX_GAP_MS). */
+export const MAX_GAP_MS = 12 * 60_000;
+export const MINUTE_MS = 60_000;
 /** A message waits at most this long in the queue before the tenant can be claimed again. */
 export const QUEUE_LEASE_MS = 3 * 60_000;
 /** The run lease is the call's timeout plus this. */
@@ -133,32 +143,64 @@ export function spreadIndex(tenantId: string, n: number): number {
   return (hash >>> 0) % Math.max(1, n);
 }
 
-/**
- * The next due time the claim records. `previous` is the due time being
- * claimed; the next one keeps its phase (previous plus whole intervals, past
- * `cutoff`), so a late cron doesn't bunch tenants together. A tenant's first
- * claim (`previous` 0) runs now and places the next run somewhere in the
- * interval by its id.
- */
-export function nextDueAfterClaim(tenantId: string, previous: number, cutoff: number, interval: number): number {
-  if (previous <= 0) {
-    const minutes = Math.round(interval / 60_000);
-    return cutoff + (1 + spreadIndex(tenantId, minutes)) * 60_000 - DUE_SLACK_MS;
-  }
-  const steps = Math.max(1, Math.ceil((cutoff - previous + 1) / interval));
-  return previous + steps * interval;
+/** The minute tick the cron at `at` stands for (it may fire a moment early or a few seconds late). */
+export function currentTick(at: number): number {
+  return Math.floor((at + DUE_SLACK_MS) / MINUTE_MS) * MINUTE_MS;
 }
 
 /**
- * After a run the tenant answered: when it should run next. `claimedNext`
- * is what the claim recorded. A `nextDueAt` from the tenant moves it later
- * (it has nothing due sooner), up to MAX_IDLE_MS after this run was due, and
- * never earlier than the plan allows. Without one, the claim stands.
+ * A tenant checks what is due within 30 seconds of a call (the contract,
+ * section 6), so a due time this little past a tick is called on that tick
+ * rather than a minute later: a monitor checked a second after its tick
+ * reports its next check a second past the tick, and would otherwise slip a
+ * minute every run.
  */
-export function nextDueAfterRun(input: { dueAt: number; claimedNext: number; interval: number; nextDueAt: number | null }): number {
-  if (input.nextDueAt === null) return input.claimedNext;
-  const latest = input.dueAt + Math.max(MAX_IDLE_MS, input.interval);
-  return Math.min(latest, Math.max(input.claimedNext, input.nextDueAt));
+export const EARLY_CALL_MS = 15_000;
+
+/**
+ * The tick a tenant due at `at` is called on: the first at or after it, or
+ * one up to EARLY_CALL_MS before it. Due times are kept on ticks, so an
+ * unchanged tick means nothing to write.
+ */
+export function tickFor(at: number): number {
+  return Math.ceil((at - EARLY_CALL_MS) / MINUTE_MS) * MINUTE_MS;
+}
+
+/**
+ * The next due time the claim records: the tenant's interval on from the
+ * due time being claimed (`previous`), past this tick, so a late cron
+ * doesn't bunch tenants together. A tenant's first claim (`previous` 0)
+ * runs now and places the next run somewhere in the interval by its id.
+ */
+export function nextDueAfterClaim(tenantId: string, previous: number, tick: number, interval: number): number {
+  if (previous <= 0) return tick + (1 + spreadIndex(tenantId, Math.round(interval / MINUTE_MS))) * MINUTE_MS;
+  const steps = Math.max(1, Math.ceil((tick - previous + 1) / interval));
+  return tickFor(previous + steps * interval);
+}
+
+/**
+ * After a run: when the tenant is due next (see the top of this file).
+ * `claimedNext` is what the claim recorded; `summary` is null when the call
+ * got no answer; `streak` counts the runs in a row, this one included, that
+ * failed or got none.
+ */
+export function nextDueAfterRun(input: {
+  tick: number;
+  claimedNext: number;
+  interval: number;
+  summary: Pick<ScheduledRunSummary, "outcome"> & { nextDueAt?: unknown } | null;
+  streak: number;
+}): number {
+  const nextTick = input.tick + MINUTE_MS;
+  const { summary } = input;
+  if (!summary || summary.outcome === "failed") {
+    const backoff = MINUTE_MS * 2 ** Math.min(10, Math.max(0, input.streak - 1));
+    return input.tick + Math.min(input.interval, backoff);
+  }
+  if (summary.outcome === "lease_busy") return nextTick;
+  const nextDueAt = readNextDueAt(summary);
+  if (nextDueAt === null) return input.claimedNext;
+  return Math.max(nextTick, tickFor(Math.min(nextDueAt, input.tick + MAX_GAP_MS)));
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +259,7 @@ export async function enqueueDue(
   while (result.sent < MAX_CLAIMS_PER_TICK && now() - started < CLAIM_TIME_BUDGET_MS) {
     const at = now();
     const cutoff = at + DUE_SLACK_MS;
+    const thisTick = currentTick(at);
     const due = await deps.db
       .prepare(DUE_SQL)
       .bind(cutoff, at, CLAIM_BATCH)
@@ -225,7 +268,7 @@ export async function enqueueDue(
     result.rounds++;
     const claims = due.results.map((row) => {
       const record = tenantFromRow({ ...emptyRow, id: row.id, plan: row.plan, limit_overrides: row.limit_overrides });
-      const next = nextDueAfterClaim(row.id, row.schedule_next_at, cutoff, intervalMs(record));
+      const next = nextDueAfterClaim(row.id, row.schedule_next_at, thisTick, intervalMs(record));
       return {
         message: { tenantId: row.id, runId: runIdFor(tick, row.id), dueAt: row.schedule_next_at > 0 ? row.schedule_next_at : at, tick },
         previous: row.schedule_next_at,
@@ -366,7 +409,7 @@ async function runOne(deps: SchedulingDeps, message: Message<unknown>): Promise<
 
   const call = await callScheduled(deps, tenant, { runId: msg.runId, scheduledTime: msg.tick, cron: SCHEDULE_CRON }, timeout);
   const finishedAt = now();
-  await recordRun(deps.db, {
+  const streak = await recordRun(deps.db, {
     tenantId: tenant.id,
     runId: msg.runId,
     at: startedAt,
@@ -375,40 +418,44 @@ async function runOne(deps: SchedulingDeps, message: Message<unknown>): Promise<
     call,
   });
 
-  if (call.kind === "answered") {
-    const next = nextDueAfterRun({ dueAt: msg.dueAt, claimedNext: loaded.nextAt, interval, nextDueAt: call.nextDueAt });
-    // A write only when the tenant moved its next run; the claim already set the usual one.
-    if (Math.abs(next - loaded.nextAt) >= 1_000) {
-      await deps.db
-        .prepare("UPDATE tenants SET schedule_next_at = ? WHERE id = ? AND schedule_claim = ? AND schedule_next_at = ?")
-        .bind(next, tenant.id, msg.runId, loaded.nextAt)
+  if (call.kind !== "answered") {
+    console.error("[schedule] no answer from tenant", { tenant: tenant.id, run: msg.runId, attempt, outcome: call.kind, error: call.error });
+    const delay = RETRY_DELAYS_SECONDS[attempt - 1];
+    // Retry only while it can finish, lease and all, before the tenant's next
+    // run, which is the retry otherwise; a longer lease would push that run back.
+    const retryLease = delay === undefined ? Infinity : finishedAt + delay * 1000 + timeout + RUN_LEASE_MARGIN_MS;
+    if (retryLease <= loaded.nextAt) {
+      const extended = await deps.db
+        .prepare("UPDATE tenants SET schedule_lease_until = ? WHERE id = ? AND schedule_claim = ? AND schedule_running = ?")
+        .bind(retryLease, tenant.id, msg.runId, token)
         .run();
+      if ((extended.meta.changes ?? 0) > 0) {
+        message.retry({ delaySeconds: delay });
+        return { kind: "ran", tenantId: tenant.id, outcome: call.kind, retried: true };
+      }
     }
-    message.ack();
-    return { kind: "ran", tenantId: tenant.id, outcome: call.summary.outcome, retried: false };
   }
 
-  console.error("[schedule] no answer from tenant", { tenant: tenant.id, run: msg.runId, attempt, outcome: call.kind, error: call.error });
-  const delay = RETRY_DELAYS_SECONDS[attempt - 1];
-  // Retry only while it can finish before the tenant's next run, which is the retry otherwise.
-  // Its lease must also end by then, or the retry would push that run back a whole interval.
-  const retryLease = delay === undefined ? Infinity : finishedAt + delay * 1000 + timeout + RUN_LEASE_MARGIN_MS;
-  if (retryLease <= loaded.nextAt) {
-    const extended = await deps.db
-      .prepare("UPDATE tenants SET schedule_lease_until = ? WHERE id = ? AND schedule_claim = ? AND schedule_running = ?")
-      .bind(retryLease, tenant.id, msg.runId, token)
+  const next = nextDueAfterRun({
+    tick: msg.tick,
+    claimedNext: loaded.nextAt,
+    interval,
+    summary: call.kind === "answered" ? call.summary : null,
+    streak,
+  });
+  // A write only when the run moved the tenant to another tick; the claim already set the usual one.
+  if (next !== loaded.nextAt) {
+    await deps.db
+      .prepare("UPDATE tenants SET schedule_next_at = ? WHERE id = ? AND schedule_claim = ? AND schedule_next_at = ?")
+      .bind(next, tenant.id, msg.runId, loaded.nextAt)
       .run();
-    if ((extended.meta.changes ?? 0) > 0) {
-      message.retry({ delaySeconds: delay });
-      return { kind: "ran", tenantId: tenant.id, outcome: call.kind, retried: true };
-    }
   }
   message.ack();
-  return { kind: "ran", tenantId: tenant.id, outcome: call.kind, retried: false };
+  return { kind: "ran", tenantId: tenant.id, outcome: call.kind === "answered" ? call.summary.outcome : call.kind, retried: false };
 }
 
 type CallResult =
-  | { kind: "answered"; summary: ScheduledRunSummary; nextDueAt: number | null }
+  | { kind: "answered"; summary: ScheduledRunSummary }
   | { kind: "error" | "timeout"; error: string };
 
 /** One POST /__platform/scheduled under `timeoutMs`, aborted when it runs out. */
@@ -435,7 +482,7 @@ async function callScheduled(deps: SchedulingDeps, tenant: TenantRecord, body: S
     }
     const parsed = parseSummary(await result.response.json().catch(() => null), body.runId);
     if (!parsed) return { kind: "error", error: "the answer wasn't a run summary" };
-    return { kind: "answered", summary: parsed, nextDueAt: readNextDueAt(parsed) };
+    return { kind: "answered", summary: parsed };
   })().catch((error: unknown): CallResult => ({ kind: "error", error: errorText(error) }));
   try {
     return await Promise.race([answered, timedOut]);
@@ -510,24 +557,25 @@ const RECORD_SQL = `INSERT INTO scheduler_stats (tenant_id, last_run_id, last_at
     day_failures = CASE WHEN ${same} THEN scheduler_stats.day_failures + excluded.day_failures ELSE excluded.day_failures END,
     day_d1_queries = CASE WHEN ${same} THEN scheduler_stats.day_d1_queries + excluded.day_d1_queries ELSE excluded.day_d1_queries END,
     day_ms = CASE WHEN ${same} THEN scheduler_stats.day_ms + excluded.day_ms ELSE excluded.day_ms END,
-    day_max_ms = CASE WHEN ${same} THEN MAX(scheduler_stats.day_max_ms, excluded.day_max_ms) ELSE excluded.day_max_ms END`;
+    day_max_ms = CASE WHEN ${same} THEN MAX(scheduler_stats.day_max_ms, excluded.day_max_ms) ELSE excluded.day_max_ms END
+  RETURNING streak`;
 
 /**
  * Records one call in scheduler_stats: one row per tenant, rewritten, plus a
  * row in scheduler_days the first time a run lands on a new UTC day. Both in
- * one batch, so one round trip.
+ * one batch, so one round trip. Answers the failures in a row, this run included.
  */
 async function recordRun(
   db: D1Database,
   run: { tenantId: string; runId: string; at: number; durationMs: number; lagMs: number; call: CallResult },
-): Promise<void> {
+): Promise<number> {
   const day = Math.floor(run.at / DAY_MS);
   const call = run.call;
   const s = call.kind === "answered" ? call.summary : null;
   const outcome: RunOutcome = call.kind === "answered" ? call.summary.outcome : call.kind;
   const failed = outcome !== "ran" && outcome !== "lease_busy" ? 1 : 0;
   const error = call.kind === "answered" ? (call.summary.outcome === "failed" ? (call.summary.error ?? "failed") : null) : call.error.slice(0, 200);
-  await db.batch([
+  const [, recorded] = await db.batch<{ streak: number }>([
     db.prepare(ROLL_DAY_SQL).bind(run.tenantId, day),
     db
       .prepare(RECORD_SQL)
@@ -553,6 +601,7 @@ async function recordRun(
         s ? s.d1Queries : 0,
       ),
   ]);
+  return recorded?.results[0]?.streak ?? failed;
 }
 
 /** Once an hour from the cron: forget days older than RUN_DAYS_KEPT. */
