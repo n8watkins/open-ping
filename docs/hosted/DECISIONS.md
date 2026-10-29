@@ -74,3 +74,10 @@ It appears in the emails (D2), the terms (D3), and the platform's own pages, suc
 **Status:** decided 2026-10-28.
 Trial customers can turn on push alerts on their devices, even though the trial plan's alert channels are email only.
 Push devices aren't channels, so plan limits don't count them, and the owner chose to keep it that way: push costs the platform nothing per send and helps a trial feel complete.
+
+## D11: after the last failed payment retry
+
+**Status:** decided 2026-10-28.
+When Stripe's last automatic retry of a renewal fails, Stripe cancels the subscription (Billing settings, "Manage failed payments": cancel the subscription), rather than marking it unpaid.
+The tenant is then suspended by billing, its checks stop, and the 30-day data retention and deletion of decision D8 apply.
+A customer who comes back subscribes again from their account page.
