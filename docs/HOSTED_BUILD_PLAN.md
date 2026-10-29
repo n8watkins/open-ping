@@ -298,7 +298,7 @@ Running cost before revenue: about $30 to $45 a month (Workers Paid, Workers for
 ## 14. Definition of done for launch
 
 - A stranger can sign up, get a working OpenPing in under a minute, add monitors, receive an alert, publish a status page, start paying, and cancel, all without help.
-- A trial that isn't paid stops checking on day 15 and is deleted on day 45, with emails before each step.
+- A trial that isn't paid stops checking on day 31 and is deleted on day 61, with emails before each step.
 - Plan limits can't be exceeded through the dashboard, the API, MCP or the CLI.
 - The canary and batched release has shipped at least two versions to staging tenants with no missed runs.
 - The restore drill passed, the security review found nothing high or critical open, and the load test met its targets.
