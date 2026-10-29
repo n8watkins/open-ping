@@ -68,3 +68,9 @@ Google sign-in comes after launch.
 **Status:** decided 2026-10-28.
 Support is **support@n8builds.dev**, forwarded with Cloudflare Email Routing.
 It appears in the emails (D2), the terms (D3), and the platform's own pages, such as the suspended page.
+
+## D10: push alerts on trial plans
+
+**Status:** decided 2026-10-28.
+Trial customers can turn on push alerts on their devices, even though the trial plan's alert channels are email only.
+Push devices aren't channels, so plan limits don't count them, and the owner chose to keep it that way: push costs the platform nothing per send and helps a trial feel complete.
