@@ -43,6 +43,7 @@ import {
   tenantHistory,
 } from "./data";
 import { adminAccess, parsePinnedPasskeys } from "./owner";
+import { scheduleView } from "../scheduling";
 import { auditPage, tenantListPage, tenantPage, verifyPage, waitlistPage, type HealthView } from "./pages";
 import { WAITLIST_MAX_BYTES, importWaitlist, parseWaitlistExport, readBodyCapped, waitlistSummary } from "./waitlist";
 
@@ -187,11 +188,16 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
     const db = c.env.PLATFORM_DB;
     const detail = await tenantDetail(db, c.req.param("id"));
     if (!detail) return appNotFoundPage(appOrigin(c.env.HOSTED_DOMAIN));
-    const [history, health] = await Promise.all([tenantHistory(db, detail.record.id), liveHealth(c, detail.record)]);
+    const [history, health, schedule] = await Promise.all([
+      tenantHistory(db, detail.record.id),
+      liveHealth(c, detail.record),
+      scheduleView(db, detail.record),
+    ]);
     return tenantPage({
       detail,
       history,
       health,
+      schedule,
       tenantUrl: requestTenantOrigin(c.req.url, detail.record.slug, c.env.HOSTED_DOMAIN),
       recent: c.get("recent"),
       supportOn: Boolean(c.env.HANDOFF_SIGNING_KEY),

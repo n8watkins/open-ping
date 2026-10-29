@@ -3,7 +3,7 @@
 This is the platform Worker for OpenPing Hosted: the code that owns customers rather than monitoring.
 It is planned in [the build plan](../docs/HOSTED_BUILD_PLAN.md), and it talks to each customer's OpenPing only through [the contract](../docs/hosted/CONTRACT.md).
 
-**Status: skeleton (B1), provisioning (B3), accounts (B2) and the admin console (B6), not deployed anywhere.**
+**Status: skeleton (B1), provisioning (B3), accounts (B2), the admin console (B6) and scheduling (B4), not deployed anywhere.**
 Nothing here has been created in a Cloudflare account yet; see [Owner setup](#owner-setup-not-done-yet).
 
 ## What it does today
@@ -54,6 +54,15 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   - the audit log, newest first, filtered by tenant, actor and action prefix;
   - the waitlist: an upload (or paste) of the canonical install's CSV export (Settings > Reports > Download CSV), or the JSON of `/api/waitlist`, into `waitlist_entries`, idempotent, up to 5,000 addresses and 1 MB (enforced while reading) at a time; the platform never calls the install;
   - every change is a POST from this origin, limited to 120 an hour (support sign-ins 20), and audited with actor `owner` or `support`.
+- Runs every customer's scheduler (B4, `src/scheduling.ts`), since a user Worker in a dispatch namespace has no Cron Trigger:
+  - every minute the cron claims the tenants that are due and puts one message per tenant on `SCHEDULE_QUEUE` (`openping-schedule`), in rounds of 100 (one D1 batch and one `sendBatch` each);
+  - the due query is a range scan of a partial index (`idx_tenants_schedule_due`, migration 0005) whose WHERE leaves out tenants that aren't ready, are suspended by billing or by the owner, or are being removed, so the cron reads only the tenants due this minute (`test/scheduling.test.ts` checks the query plan and the rows read);
+  - a tenant is due every `minIntervalMinutes` of its effective limits (12 minutes on the trial and the yearly plan, 1 minute with fast checks, or a per-tenant override), keeping its phase so tenants stay spread over the interval; its first run is spread by its id;
+  - when a run's summary carries `nextDueAt` (the tenant's next due monitor, from lane A's contract change), the next run waits for it, but never past 12 minutes and never sooner than the plan allows; without it, the plan's interval applies;
+  - the consumer calls each tenant's `POST /__platform/scheduled` through the dispatch namespace with fresh props and a new call id (`callTenant`), under a timeout (40 seconds at 1-minute checks, 90 seconds otherwise) that aborts the call;
+  - never two runs of one tenant at once: the claim records a run id and a lease, the consumer starts only the claimed run and only once per attempt (a conditional write), and the run's lease (timeout plus 10 seconds) is shorter than the interval, so it is never released by hand; the tenant also keeps its own lease (`lease_busy`);
+  - a call that gets no answer (an error, a status other than 200, a timeout, a missing script) is retried through the queue after 15, 60 and 180 seconds, only while the retry can finish before the tenant's next run, which is the retry otherwise; a run the tenant answers as `failed` is not retried;
+  - each run's numbers go to `scheduler_stats` (one row per tenant: the last run's outcome, platform-measured duration, queue lag, the tenant's own duration, checks, failed checks, deferred monitors, D1 queries, version, error, failures in a row, and today's totals) and, once a day per tenant, to `scheduler_days` (kept 90 days); the admin console's tenant page shows them under "Scheduler".
 - Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit` and `reportUsage` are real, the latter keeping each tenant's latest counts in `tenant_usage` for the console; `sendEmail` is a stub until A5).
 
 ## Layout
@@ -76,6 +85,7 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 | `src/accounts.ts`, `src/mail.ts`, `src/handoff.ts` | Accounts and identities, the Resend mailer, minting hand-off tokens |
 | `src/admin/` | The admin console: `owner.ts` (who may use it), `data.ts` (queries, suspend and resume), `waitlist.ts` (the import), `pages.ts`, `routes.ts` |
 | `src/provisioning.ts` | The provisioning state machine: `requestTenant`, `runProvisioning`, `removeTenant`, and `provisionDue` (the retry sweep) |
+| `src/scheduling.ts` | The scheduler: `enqueueDue` (the cron's claims), `handleScheduleBatch` (the queue consumer), due times, run metrics and the console's `scheduleView` |
 | `src/provisioning-env.ts` | Builds provisioning's dependencies from the env, or names the settings that are missing |
 | `src/cloudflare/api.ts` | `CloudflareApi`: the D1 and Workers for Platforms calls provisioning makes, with links to Cloudflare's docs |
 | `src/cloudflare/http.ts` | `HttpCloudflareApi`, the real client over HTTPS |
@@ -105,6 +115,40 @@ Provisioning runs against `FakeCloudflareApi`, which keeps databases, scripts an
 Sign-in runs against an in-memory outbox, a stand-in for GitHub's API, and OpenPing's software authenticator (`test/support/soft-authenticator.ts`), and `test/integration/platform-handoff.test.ts` (in the root suite) checks that a token the platform mints signs a customer in to the real OpenPing Worker.
 No test makes a network request or needs a Cloudflare login.
 
+## Scheduling costs at scale
+
+Prices checked on 2026-10-28 in Cloudflare's docs: [Queues pricing](https://developers.cloudflare.com/queues/platform/pricing/), [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/), [Workers for Platforms pricing](https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/platform/pricing/) and [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/).
+
+- Queues on Workers Paid: 1 million operations a month included, then $0.40 a million; a message under 64 KB costs 3 operations (write, read, delete), and each retry one more read.
+- Workers for Platforms ($25 a month): 20 million requests and 60 million CPU ms included, then $0.30 a million requests and $0.02 a million CPU ms; CPU is charged across the dispatch chain.
+- Workers Paid ($5 a month): 10 million requests and 30 million CPU ms included, the same overage prices.
+- D1 on Workers Paid: 50 million rows written a month included, then $1.00 a million; an index adds a written row when a write changes the indexed column; reads cost $0.001 a million rows past 25 billion, which the scheduler never gets near.
+
+What one run costs the platform:
+
+| Item | Per run |
+| --- | --- |
+| Queue operations | 3 (one message) |
+| D1 rows written in `PLATFORM_DB` | 4: the claim (the row and its due-index entry), the start, the numbers; 2 more when the tenant's `nextDueAt` moves its next run |
+| Workers for Platforms requests | 1 (the call to the tenant), counted at full price to be safe |
+| CPU | about 20 ms in the tenant (an assumption until the load test measures it) and about 2 ms in the platform |
+| Platform Worker requests | 1/25 (consumer batches of 25) plus the cron's 43,200 a month |
+
+A month is 43,200 minutes: a 1-minute tenant runs 43,200 times, a 12-minute tenant 3,600 times.
+CPU is 22 ms a run against the two plans' 90 million included CPU ms; the platform's own requests (the cron and the consumer batches) stay inside Workers Paid's 10 million in every row.
+
+| Tenants | Runs a month | Queues | D1 writes | WfP requests | CPU | Total a month |
+| --- | --- | --- | --- | --- | --- | --- |
+| 200, all 12-minute | 0.72 million | $0.46 | $0 (2.9 million, included) | $0 | $0 | about $0.50 |
+| 200, all 1-minute | 8.64 million | $9.97 | $0 (34.6 million, included) | $0 | $2.00 | about $12 |
+| 2,000, all 12-minute | 7.2 million | $8.24 | $0 (28.8 million, included) | $0 | $1.37 | about $10 |
+| 2,000, a quarter 1-minute | 27 million | $32.00 | $58.00 | $2.10 | $10.08 | about $102 |
+| 2,000, all 1-minute | 86.4 million | $103.28 | $295.60 | $19.92 | $36.22 | about $455 |
+
+These are on top of the $30 a month of fixed plan fees, and leave out each tenant's own D1 work in its own database, which the [Hosted plan's cost model](../docs/HOSTED_PLAN.md) covers.
+At the margin a 12-minute tenant costs the scheduler about 2 cents a month, and a 1-minute tenant about 26 cents (D1 writes 17, queue 5, requests and CPU 4), against the $1 a month the add-on brings in.
+The levers, if 1-minute checks sell well: drop the start write and rely on the tenant's own lease (a quarter of the D1 writes), or carry several tenants per message (queue operations fall with the number per message), both measured in the wave 4 load test first.
+
 ## Owner setup (not done yet)
 
 None of these steps has been done.
@@ -115,7 +159,8 @@ They are needed before staging in wave 3 ([build plan, section 12](../docs/HOSTE
 2. **The Hosted domain** (decision D2, owner action O2): buy it, add it to Cloudflare, then set `HOSTED_DOMAIN` and add routes for `app.<domain>/*` and `*.<domain>/*` to this Worker.
 3. **The dispatch namespace:** `wrangler dispatch-namespace create openping-tenants` (and `openping-tenants-staging` for staging).
 4. **The platform database:** `wrangler d1 create openping-platform`, then put its id in a gitignored local config (as `deploy.local.json` does for OpenPing), and apply `migrations/` with `wrangler d1 migrations apply PLATFORM_DB --remote`.
-5. **The queues:** `wrangler queues create openping-provision` (provisioning; this Worker is its consumer) and `wrangler queues create openping-schedule` (B4 adds its consumer).
+5. **The queues:** `wrangler queues create openping-provision` (provisioning) and `wrangler queues create openping-schedule` (the scheduler, B4); this Worker consumes both (`queues.consumers` in `wrangler.jsonc`).
+   For staging, `openping-provision-staging` and `openping-schedule-staging`: the consumer routes by the queue name's prefix.
 6. **The bundle bucket:** `wrangler r2 bucket create openping-tenant-bundles`; the release runner (C1) writes each release there in the layout `src/bundle.ts` describes.
 7. **Mail and GitHub for sign-in:** verify a sending domain in Resend and set `MAIL_FROM`; create a GitHub OAuth app with the callback `https://app.<domain>/auth/github/callback` and set `GITHUB_CLIENT_ID`; set `SIGN_UPS` to `open` at launch.
 8. **Secrets**, with `wrangler secret put` from the owner's machine and a copy of each in the password manager:

@@ -40,7 +40,7 @@ export interface TenantRecord {
   trialEndsAt: number | null;
 }
 
-interface TenantRow {
+export interface TenantRow {
   id: string;
   account_id: string;
   slug: string;
@@ -54,7 +54,7 @@ interface TenantRow {
   trial_ends_at: number | null;
 }
 
-const TENANT_COLUMNS =
+export const TENANT_COLUMNS =
   "id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at";
 
 function oneOf<T extends string>(values: readonly T[], value: string, fallback: T): T {

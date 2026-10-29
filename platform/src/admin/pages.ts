@@ -24,6 +24,7 @@ import {
   type TenantDetail,
   type TenantList,
 } from "./data";
+import type { RunOutcome, ScheduleView } from "../scheduling";
 import { ADMIN_REAUTH_MS, ADMIN_SESSION_MAX_AGE_MS } from "./owner";
 import { WAITLIST_MAX_ENTRIES, type ParsedWaitlist, type WaitlistSummary } from "./waitlist";
 
@@ -116,6 +117,12 @@ a.stat:hover { border-color: var(--ink-faint); }
 .facts dt { flex: none; color: var(--ink-muted); font-size: 0.875rem; }
 .facts dd { margin: 0; min-width: 0; text-align: right; color: var(--ink); font-size: 0.875rem; overflow-wrap: anywhere; }
 .facts dd.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8125rem; }
+h3.minor { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-faint); margin: 20px 0 4px; }
+@media (min-width: 900px) {
+  .facts.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 40px; }
+  .facts.split div:nth-child(2) { border-top: 0; }
+}
+.table.runs td.num { white-space: nowrap; }
 .ok-text { color: var(--up); } .bad-text { color: var(--down); } .warn-text { color: var(--degraded); }
 .actions-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin: 12px 0 0; }
 @media (min-width: 900px) { .actions-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -300,6 +307,8 @@ export interface TenantPageInput {
   detail: TenantDetail;
   history: AuditEvent[];
   health: HealthView;
+  /** Its scheduler runs (src/scheduling.ts). */
+  schedule: ScheduleView;
   tenantUrl: string;
   recent: boolean;
   supportOn: boolean;
@@ -334,6 +343,62 @@ ${fact("Fastest check", d.limits.minIntervalMinutes === 1 ? "1 minute" : `${d.li
 ${fact("Emails a day", String(d.limits.emailsPerDay))}
 ${fact("Reported", u ? timeText(u.reportedAt) : "Never")}
 </dl>`;
+}
+
+/** To the second: runs happen every minute. */
+function secondsText(ms: number): string {
+  const d = new Date(ms);
+  const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  return `${date}, ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" })} UTC`;
+}
+
+function dayText(ms: number): string {
+  return new Date(ms).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+function msText(ms: number): string {
+  return ms < 10_000 ? `${ms.toLocaleString("en-US")} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+const OUTCOME_LABELS: Record<RunOutcome, string> = { ran: "Ran", lease_busy: "Already running", failed: "Failed", error: "No answer", timeout: "Timed out" };
+
+function outcomeText(outcome: RunOutcome): Html {
+  const tone = outcome === "ran" ? "ok-text" : outcome === "lease_busy" ? "warn-text" : "bad-text";
+  return html`<span class="${tone}">${OUTCOME_LABELS[outcome]}</span>`;
+}
+
+function scheduleFacts(v: ScheduleView, now: number): Html {
+  const every = v.intervalMs === 60_000 ? "Every minute" : `Every ${Math.round(v.intervalMs / 60_000)} minutes`;
+  const last = v.last;
+  return html`<dl class="facts split">
+${fact("Cadence", every)}
+${fact("Next run", v.nextAt === null ? "Not while it can't run" : v.nextAt <= now ? "Due now" : secondsText(v.nextAt))}
+${v.leaseUntil && v.leaseUntil > now ? fact("Running", `held until ${secondsText(v.leaseUntil)}`) : ""}
+${fact("Last run", last ? secondsText(last.at) : "No run yet")}
+${last ? fact("Outcome", outcomeText(last.outcome)) : ""}
+${last && last.streak > 0 ? fact("Failed in a row", html`<span class="bad-text">${last.streak}</span>`) : ""}
+${last ? fact("Took", `${msText(last.durationMs)}${last.tenantMs !== null ? ` (the run itself ${msText(last.tenantMs)})` : ""}`) : ""}
+${last ? fact("Queue lag", msText(last.lagMs)) : ""}
+${last && last.checked !== null ? fact("Checks", `${last.checked}, ${last.failures ?? 0} failed${last.deferred ? `, ${last.deferred} left for later` : ""}`) : ""}
+${last && last.d1Queries !== null ? fact("D1 queries", String(last.d1Queries)) : ""}
+${last?.error ? fact("Error", last.error) : ""}
+${last && last.outcome !== "ran" ? fact("Last clean run", last.okAt ? secondsText(last.okAt) : "Never") : ""}
+</dl>`;
+}
+
+function scheduleDays(v: ScheduleView): Html {
+  if (!v.days.length) return html``;
+  return html`<table class="table runs"><thead><tr><th>Day (UTC)</th><th class="num">Runs</th><th class="num">No answer</th><th class="num">Checks</th><th class="num">Failed checks</th><th class="num">D1 queries</th><th class="num">Average</th><th class="num">Slowest</th></tr></thead><tbody>
+${v.days.map(
+  (d) => html`<tr><td class="primary nowrap"><strong>${dayText(d.day)}</strong></td>
+<td class="num" data-label="Runs">${d.runs.toLocaleString("en-US")}</td>
+<td class="num" data-label="No answer">${d.errors ? html`<span class="bad-text">${d.errors.toLocaleString("en-US")}</span>` : "0"}</td>
+<td class="num" data-label="Checks">${d.checked.toLocaleString("en-US")}</td>
+<td class="num" data-label="Failed checks">${d.failures.toLocaleString("en-US")}</td>
+<td class="num" data-label="D1 queries">${d.d1Queries.toLocaleString("en-US")}</td>
+<td class="num" data-label="Average">${msText(d.avgMs)}</td>
+<td class="num" data-label="Slowest">${msText(d.maxMs)}</td></tr>`,
+)}</tbody></table>`;
 }
 
 function reasonField(id: string, label: string, placeholder: string, hint: string): Html {
@@ -445,6 +510,11 @@ ${d.provision.leaseUntil && d.provision.leaseUntil > Date.now() ? fact("Running"
 ${fact("Requested", timeText(d.createdAt))}
 </dl></section></div>
 </div>
+<section><h2>Scheduler</h2>${scheduleFacts(input.schedule, Date.now())}${
+    input.schedule.days.length
+      ? html`<h3 class="minor">${input.schedule.days.length === 1 ? "Today" : `Last ${input.schedule.days.length} days`}</h3>${scheduleDays(input.schedule)}`
+      : ""
+  }</section>
 <section><h2>Actions</h2>${actions(input)}</section>
 <section><h2>History</h2>${history}</section>`;
   return adminPage({ title: t.slug, tab: "tenants", main });

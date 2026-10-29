@@ -28,6 +28,7 @@ import { mailerFromEnv } from "./mail";
 import { provisionDue } from "./provisioning";
 import { handleProvisionBatch, type ProvisionMessage } from "./provisioning-queue";
 import { provisioningSetup } from "./provisioning-env";
+import { enqueueDue, handleScheduleBatch, schedulerDaysCleanup, type SchedulingDeps } from "./scheduling";
 import type { TenantRecord } from "./tenants";
 
 /** Set by the platform when it makes the stub; never by the tenant. */
@@ -75,28 +76,52 @@ const app = createApp({
   },
 });
 
+function schedulingDeps(env: PlatformEnv, ctx: ExecutionContext): SchedulingDeps {
+  return {
+    db: env.PLATFORM_DB,
+    dispatcher: new NamespaceDispatcher(env.TENANTS),
+    capability: (tenant) => capabilityFor(ctx, tenant),
+    hostedDomain: env.HOSTED_DOMAIN,
+  };
+}
+
 /**
- * Every minute: clear expired sign-in state, and the safety net for
- * provisioning, picking up any tenant a queue message missed (B4 adds the
- * scheduler here).
+ * Every minute: enqueue the customers whose scheduler is due (src/scheduling.ts),
+ * clear expired sign-in state, and the safety net for provisioning, picking
+ * up any tenant a queue message missed. The scheduler goes first and runs
+ * alongside the rest, since it is the one that is late when it waits.
  */
-async function scheduled(env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
+async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
   const now = Date.now();
   const db = env.PLATFORM_DB;
+  const schedule = enqueueDue({ db }, env.SCHEDULE_QUEUE, controller.scheduledTime)
+    .then((r) => {
+      if (r.sent || r.returned) console.log("[schedule] enqueued", r);
+    })
+    .catch((error) => console.error("[schedule] enqueue failed", error));
+  const hourly = new Date(controller.scheduledTime).getUTCMinutes() === 7 ? [schedulerDaysCleanup(db, now)] : [];
   await db
-    .batch([sessionCleanup(db, now), emailSignInCleanup(db, now), ceremonyCleanup(db, now), rateLimitCleanup(db, now)])
+    .batch([sessionCleanup(db, now), emailSignInCleanup(db, now), ceremonyCleanup(db, now), rateLimitCleanup(db, now), ...hourly])
     .catch((error) => console.error("[cleanup] failed", error));
   const setup = provisioningSetup(env, (tenant) => capabilityFor(ctx, tenant));
   if (!setup.ok) {
     console.warn("[provision] off until these are set:", setup.missing.join(", "));
-    return;
+  } else {
+    const outcomes = await provisionDue(setup.deps);
+    if (outcomes.length) console.log("[provision] sweep", outcomes.map((o) => `${o.tenantId}:${o.kind}`).join(" "));
   }
-  const outcomes = await provisionDue(setup.deps);
-  if (outcomes.length) console.log("[provision] sweep", outcomes.map((o) => `${o.tenantId}:${o.kind}`).join(" "));
+  await schedule;
 }
 
-/** The provisioning queue's consumer. */
+/** The queues' consumer: the scheduler's runs and provisioning's. */
 async function queue(batch: MessageBatch<unknown>, env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
+  // openping-schedule, or a staging copy of it (openping-schedule-staging).
+  if (batch.queue.startsWith("openping-schedule")) {
+    const results = await handleScheduleBatch(schedulingDeps(env, ctx), batch);
+    const failed = results.filter((r) => r.kind === "ran" && r.outcome !== "ran" && r.outcome !== "lease_busy");
+    if (failed.length) console.warn("[schedule] runs without a clean answer", failed.length, "of", results.length);
+    return;
+  }
   // openping-provision, or a staging copy of it (openping-provision-staging).
   if (!batch.queue.startsWith("openping-provision")) {
     console.error("[queue] message for an unknown queue", batch.queue);
@@ -114,6 +139,6 @@ async function queue(batch: MessageBatch<unknown>, env: PlatformEnv, ctx: Execut
 
 export default {
   fetch: (request, env, ctx) => app.fetch(request, env, ctx),
-  scheduled: (_controller, env, ctx) => scheduled(env, ctx),
+  scheduled: (controller, env, ctx) => scheduled(controller, env, ctx),
   queue: (batch, env, ctx) => queue(batch, env, ctx),
 } satisfies ExportedHandler<PlatformEnv>;

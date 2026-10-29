@@ -6,8 +6,8 @@ export interface PlatformEnv {
   PLATFORM_DB: D1Database;
   /** The dispatch namespace holding every customer's OpenPing. */
   TENANTS: DispatchNamespace;
-  /** Due customers for the scheduler's consumer (B4). */
-  SCHEDULE_QUEUE: Queue;
+  /** Due customers, one message each, for the scheduler's consumer (B4, src/scheduling.ts). */
+  SCHEDULE_QUEUE: Queue<import("./scheduling").ScheduleMessage>;
 
   // --- Provisioning (B3, src/provisioning.ts) ---
   /** The dispatch namespace's name, for the Cloudflare API (the binding above is TENANTS). */

@@ -93,6 +93,8 @@ describe("the platform database", () => {
       "escrowed_keys",
       "platform_sessions",
       "rate_limits",
+      "scheduler_days",
+      "scheduler_stats",
       "slug_holds",
       "subscriptions",
       "tenant_usage",
