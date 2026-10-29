@@ -147,9 +147,17 @@ A paid plan can carry packs (`PACKS`), each a quantity on the customer's subscri
 | `monitors` | 25 monitors | 4 (120 monitors in all) | `hosted`, `hosted_fast` |
 | `fast_monitors` | 5 fast monitors | 3 (20 fast monitors in all) | `hosted_fast` only |
 
-The platform does all of the arithmetic: `planLimitsWithPacks(plan, packs)` adds the packs to the plan's limits, clamped to the caps and to the plans each pack is sold with (`packsForPlan`), the platform puts any per-tenant override on top, and `tenant.limits` carries the final numbers.
+The platform does all of the arithmetic: `planLimitsWithPacks(plan, packs)` adds the packs to the plan's limits, clamped to the caps and to the plans each pack is sold with (`packsForPlan`), `withLimitGrant` adds any support grant on top, and `tenant.limits` carries the final numbers.
 A tenant never sees a pack, a price or a cap, and never works out a limit itself; a new pack, a new price or a bigger cap needs no release of OpenPing.
 Larger accounts ask support, whose grant is an override.
+
+### Support grants
+
+A support grant (the platform's per-tenant override, `LimitGrant`) is added to what the tenant pays for, never put in its place, so a grant can't take away a pack the customer bought:
+
+- `monitors`, `statusPages`, `fastMonitors` and `emailsPerDay` are added to the plan and its packs;
+- `minIntervalMinutes` only ever lowers the interval, and `channelKinds` only ever adds kinds;
+- fast monitors come only from `fastMonitors`: every monitor faster than 12 minutes is a fast monitor, so a grant of `minIntervalMinutes: 1` alone allows none (on a plan without fast checks), and a grant of fast checks gives both `minIntervalMinutes` and `fastMonitors`.
 
 Enforcement happens on every create or update route, whether it is reached from the dashboard, the API, MCP or the CLI:
 

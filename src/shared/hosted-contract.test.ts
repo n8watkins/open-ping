@@ -32,6 +32,7 @@ import {
   planLimitsWithPacks,
   signHandoffToken,
   upgradeUrlFor,
+  withLimitGrant,
   tenantDatabaseName,
   tenantScriptName,
   validateHandoffClaims,
@@ -244,6 +245,32 @@ describe("plan limits", () => {
     // Nonsense counts as none.
     expect(packsForPlan("hosted_fast", { monitors: -2, fast_monitors: Number.NaN })).toEqual(NO_PACKS);
     expect(packsForPlan("hosted_fast", { monitors: 1.7, fast_monitors: "2" })).toEqual({ monitors: 1, fast_monitors: 0 });
+  });
+
+  it("adds a support grant on top of the plan and its packs, never in place of them", () => {
+    const paid = planLimitsWithPacks("hosted_fast", { monitors: 2, fast_monitors: 1 });
+    expect(withLimitGrant(paid, null)).toEqual(paid);
+    expect(withLimitGrant(paid, { monitors: 10, fastMonitors: 5, statusPages: 1, emailsPerDay: 100 })).toMatchObject({
+      monitors: 80,
+      fastMonitors: 15,
+      statusPages: 3,
+      emailsPerDay: 600,
+    });
+    // A grant only ever widens: a shorter interval, more channel kinds.
+    expect(withLimitGrant(PLAN_LIMITS.hosted, { minIntervalMinutes: 5 }).minIntervalMinutes).toBe(5);
+    expect(withLimitGrant(PLAN_LIMITS.hosted_fast, { minIntervalMinutes: 5 }).minIntervalMinutes).toBe(1);
+    expect(withLimitGrant(PLAN_LIMITS.trial, { channelKinds: ["slack"] }).channelKinds).toEqual(["email", "slack"]);
+    expect(withLimitGrant(PLAN_LIMITS.trial, { channelKinds: "all" }).channelKinds).toBe("all");
+    expect(withLimitGrant(PLAN_LIMITS.hosted, { channelKinds: ["slack"] }).channelKinds).toBe("all");
+  });
+
+  it("grants fast monitors only explicitly: a shorter interval alone makes none fast", () => {
+    const interval = withLimitGrant(PLAN_LIMITS.hosted, { minIntervalMinutes: 1 });
+    expect(fastMonitorAllowance(interval)).toBe(0);
+    expect(checkFastMonitorLimit(interval, 0)).not.toBeNull();
+    const both = withLimitGrant(PLAN_LIMITS.hosted, { minIntervalMinutes: 1, fastMonitors: 3 });
+    expect(fastMonitorAllowance(both)).toBe(3);
+    expect(checkIntervalLimit(both, 1)).toBeNull();
   });
 
   it("links an upgrade to what the limit needs", () => {

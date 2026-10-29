@@ -153,6 +153,40 @@ export function packsForPlan(plan: PlanId, packs: Partial<Record<PackKind, unkno
   return out;
 }
 
+/**
+ * A support grant (the platform's per-tenant `limit_overrides`): what the
+ * owner gives one tenant on top of what it pays for. Counts are added to the
+ * plan and its packs, so a grant never takes away a pack the customer paid
+ * for; `minIntervalMinutes` and `channelKinds` only ever widen (the shorter
+ * interval, the union of kinds). Fast monitors are granted only through
+ * `fastMonitors`: a shorter interval alone lets no monitor be fast.
+ */
+export type LimitGrant = Partial<PlanLimits>;
+
+/** The limits with a support grant on top (platform side): see LimitGrant. */
+export function withLimitGrant(limits: PlanLimits, grant: LimitGrant | null | undefined): PlanLimits {
+  if (!grant) return limits;
+  const add = (base: number, extra: number | undefined) => base + (typeof extra === "number" && Number.isFinite(extra) && extra > 0 ? Math.floor(extra) : 0);
+  const kinds = grant.channelKinds;
+  return {
+    ...limits,
+    monitors: add(limits.monitors, grant.monitors),
+    statusPages: add(limits.statusPages, grant.statusPages),
+    fastMonitors: add(limits.fastMonitors, grant.fastMonitors),
+    emailsPerDay: add(limits.emailsPerDay, grant.emailsPerDay),
+    minIntervalMinutes:
+      typeof grant.minIntervalMinutes === "number" && grant.minIntervalMinutes >= 1
+        ? Math.min(limits.minIntervalMinutes, grant.minIntervalMinutes)
+        : limits.minIntervalMinutes,
+    channelKinds:
+      limits.channelKinds === "all" || kinds === "all"
+        ? "all"
+        : kinds
+          ? [...new Set([...limits.channelKinds, ...kinds])]
+          : limits.channelKinds,
+  };
+}
+
 /** A plan's limits with its packs added (platform side; the result is what `tenant.limits` carries). */
 export function planLimitsWithPacks(plan: PlanId, packs: Partial<Record<PackKind, unknown>> = NO_PACKS): PlanLimits {
   const base = PLAN_LIMITS[plan];
