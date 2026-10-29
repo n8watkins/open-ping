@@ -49,6 +49,7 @@ const BUNDLE: TenantBundle = {
   vars: { WORKERS_PLAN: "paid", WAITLIST_ENABLED: "false", HOME_PAGE: "status", CONFIRM_REGIONS: "wnam,weur" },
   durableObjects: [{ name: "REGION_PROBE", className: "RegionProbe" }],
   migrations: [{ tag: "v1", new_sqlite_classes: ["RegionProbe"] }],
+  d1Migrations: [],
 };
 
 const noopPlatform: PlatformCapability = {

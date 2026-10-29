@@ -143,6 +143,15 @@ describe("HttpCloudflareApi requests", () => {
     expect(seen[0]!.method).toBe("DELETE");
     expect(seen[0]!.url).toBe(`${ACC}/workers/dispatch/namespaces/openping-tenants/scripts/t-abc?force=true`);
   });
+
+  it("reads a script's Durable Object migration tag from GET on the namespace script", async () => {
+    const { seen, api } = recorder(() => ok({ dispatch_namespace: "openping-tenants", script: { id: "t-abc", migration_tag: "v2" } }));
+    expect(await api.getScriptMigrationTag("openping-tenants", "t-abc")).toBe("v2");
+    expect(seen[0]!.method).toBe("GET");
+    expect(seen[0]!.url).toBe(`${ACC}/workers/dispatch/namespaces/openping-tenants/scripts/t-abc`);
+    const none = recorder(() => ok({ script: { id: "t-abc" } }));
+    expect(await none.api.getScriptMigrationTag("ns", "t-abc")).toBeNull();
+  });
 });
 
 describe("HttpCloudflareApi errors", () => {
@@ -201,6 +210,7 @@ const BUNDLE: TenantBundle = {
   vars: { WORKERS_PLAN: "paid", HOSTED_MODE: "0" },
   durableObjects: [],
   migrations: [],
+  d1Migrations: [],
 };
 
 function upload(overrides: Partial<UserWorkerUpload> = {}): UserWorkerUpload {

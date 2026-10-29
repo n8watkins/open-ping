@@ -29,7 +29,8 @@ export type FakeOperation =
   | "uploadAssets"
   | "putScript"
   | "deleteScript"
-  | "exportDatabase";
+  | "exportDatabase"
+  | "getScriptMigrationTag";
 
 export interface FakeScript {
   namespace: string;
@@ -212,6 +213,14 @@ export class FakeCloudflareApi implements CloudflareApi {
       this.scripts.set(key, script);
       this.onScriptChange?.(scriptName, script);
       return { id: scriptName, etag: this.id("etag-"), hasAssets: assetPaths.length > 0 };
+    });
+  }
+
+  getScriptMigrationTag(namespace: string, scriptName: string): Promise<string | null> {
+    return this.run("getScriptMigrationTag", [namespace, scriptName], () => {
+      const script = this.scripts.get(`${namespace}/${scriptName}`);
+      if (!script) throw new CloudflareApiError("fake.getScript", 404, [{ code: 10007, message: "script not found" }]);
+      return script.migrationTag;
     });
   }
 

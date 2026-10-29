@@ -27,6 +27,10 @@ export interface PlatformEnv {
   /** Var: base64url of the raw 32-byte Ed25519 hand-off public key, set on every tenant (contract, section 7). */
   HANDOFF_PUBLIC_KEY?: string;
 
+  // --- Releases (C1, src/releases/) ---
+  /** Var: the canary of every rollout that names none, as a slug or tenant id (the owner's own test tenant). */
+  RELEASE_CANARY?: string;
+
   // --- Accounts and sign-in (B2, src/account-routes.ts) ---
   /** Var: "open" lets new accounts be created; anything else (the default) lets only existing ones sign in. */
   SIGN_UPS?: string;

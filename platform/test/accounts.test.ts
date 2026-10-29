@@ -51,6 +51,7 @@ const BUNDLE: TenantBundle = {
   vars: {},
   durableObjects: [],
   migrations: [],
+  d1Migrations: [],
 };
 
 let outbox: Outbox;

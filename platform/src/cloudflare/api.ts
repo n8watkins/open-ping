@@ -86,6 +86,13 @@ export interface AssetsConfig {
   not_found_handling?: "single-page-application" | "404-page" | "none";
   /** true, false, or route patterns that reach the Worker before assets ("!/assets/*" excludes). */
   run_worker_first?: boolean | string[];
+  /**
+   * The contents of the assets' `_headers` and `_redirects` files, which are
+   * sent here rather than uploaded as assets (as Wrangler does).
+   * https://developers.cloudflare.com/workers/static-assets/headers/
+   */
+  _headers?: string;
+  _redirects?: string;
 }
 
 /**
@@ -186,6 +193,14 @@ export interface CloudflareApi {
    * https://developers.cloudflare.com/api/resources/workers_for_platforms/subresources/dispatch/subresources/namespaces/subresources/scripts/methods/delete/
    */
   deleteScript(namespace: string, scriptName: string): Promise<boolean>;
+
+  /**
+   * GET /accounts/{account_id}/workers/dispatch/namespaces/{namespace}/scripts/{script}:
+   * the Durable Object migration tag most recently applied to the script
+   * (`result.script.migration_tag`), or null for none.
+   * https://developers.cloudflare.com/api/resources/workers_for_platforms/subresources/dispatch/subresources/namespaces/subresources/scripts/methods/get/
+   */
+  getScriptMigrationTag(namespace: string, scriptName: string): Promise<string | null>;
 }
 
 /** One entry of the API's `errors` array. */

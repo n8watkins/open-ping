@@ -219,6 +219,14 @@ export class HttpCloudflareApi implements CloudflareApi {
     return { id: result.id ?? scriptName, etag: result.etag ?? null, hasAssets: result.has_assets === true };
   }
 
+  async getScriptMigrationTag(namespace: string, scriptName: string): Promise<string | null> {
+    const op = "script.get";
+    const { status, body } = await this.call<{ script?: { migration_tag?: string | null } }>(op, this.script(namespace, scriptName), { method: "GET" });
+    const result = HttpCloudflareApi.result(op, status, body);
+    const tag = result.script?.migration_tag;
+    return typeof tag === "string" && tag ? tag : null;
+  }
+
   async deleteScript(namespace: string, scriptName: string): Promise<boolean> {
     const { status } = await this.call(
       "script.delete",

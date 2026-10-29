@@ -16,7 +16,7 @@ import { handleStripeWebhook } from "./billing/webhook";
 import { recipientRoutes } from "./recipients";
 import { accountExportRoutes, type AccountExportDeps } from "./lifecycle/account-export";
 import { exportDepsFromEnv } from "./lifecycle/env";
-import { adminRoutes } from "./admin/routes";
+import { adminRoutes, type AdminDeps } from "./admin/routes";
 import { HOSTED_ERRORS, isInternalPath, type PlatformCapability } from "../../src/shared/hosted-contract";
 import { DISPATCH_LIMITS, buildTenantProps, newCallId, publicRequest, type TenantDispatcher } from "./dispatch";
 import type { PlatformEnv } from "./env";
@@ -42,6 +42,8 @@ export interface AppDeps {
   accounts?: AccountDeps;
   /** A customer's exports (/account/export); by default from the env. */
   exports?: AccountExportDeps;
+  /** The release runner for the admin console's Releases tab (src/releases/env.ts). */
+  releases?: AdminDeps["releases"];
   /** Tests only: a fixed call id. */
   newCallId?: () => string;
 }
@@ -87,7 +89,13 @@ function appHost(deps: AppDeps): Hono<Platform> {
   // Before the account routes: /admin answers its own 404 to everyone but the owner.
   app.route(
     "/admin",
-    adminRoutes({ dispatcher: deps.dispatcher, capability: deps.capability, provisioning: accounts.provisioning, now: accounts.now }),
+    adminRoutes({
+      dispatcher: deps.dispatcher,
+      capability: deps.capability,
+      provisioning: accounts.provisioning,
+      releases: deps.releases,
+      now: accounts.now,
+    }),
   );
   // An address a tenant wants to email says yes or no (src/recipients.ts).
   app.route("/email", recipientRoutes({ now: accounts.now }));

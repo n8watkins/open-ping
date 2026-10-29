@@ -46,12 +46,16 @@ import {
 import { adminAccess, parsePinnedPasskeys } from "./owner";
 import { scheduleView } from "../scheduling";
 import { auditPage, tenantListPage, tenantPage, verifyPage, waitlistPage, type HealthView } from "./pages";
+import { releaseRoutes } from "./releases";
+import type { ReleaseSetup } from "../releases/env";
 import { WAITLIST_MAX_BYTES, importWaitlist, parseWaitlistExport, readBodyCapped, waitlistSummary } from "./waitlist";
 
 export interface AdminDeps {
   dispatcher(env: PlatformEnv): TenantDispatcher;
   capability(env: PlatformEnv, ctx: ExecutionContext, tenant: TenantRecord): PlatformCapability;
   provisioning(env: PlatformEnv, ctx: ExecutionContext): ProvisioningSetup;
+  /** The release runner (src/releases/); absent, the Releases tab says it is off. */
+  releases?(env: PlatformEnv, ctx: ExecutionContext, capability: (tenant: TenantRecord) => PlatformCapability): ReleaseSetup;
   now?: () => number;
 }
 
@@ -63,11 +67,14 @@ const NO_STORE = { "cache-control": "no-store" } as const;
 export const HEALTH_TIMEOUT_MS = 5_000;
 
 /** Pages of the console a passkey sign-in may return to (account-routes' safeNext accepts these). */
-export const ADMIN_NEXT_PATTERN = /^\/admin(?:\/(?:audit|waitlist|tenants\/[a-z0-9]{16}))?$/;
+export const ADMIN_NEXT_PATTERN = /^\/admin(?:\/(?:audit|waitlist|releases(?:\/rel_[0-9a-f]{24})?|tenants\/[a-z0-9]{16}))?$/;
 
 /** Where to come back to after confirming: the page itself, or for a change the page it was made from. */
 function returnPath(path: string): string {
-  const page = path.replace(/\/+$/, "").replace(/^(\/admin\/tenants\/[a-z0-9]{16})\/[a-z-]+$/, "$1");
+  const page = path
+    .replace(/\/+$/, "")
+    .replace(/^(\/admin\/tenants\/[a-z0-9]{16})\/[a-z-]+$/, "$1")
+    .replace(/^(\/admin\/releases)\/request$/, "$1");
   return ADMIN_NEXT_PATTERN.test(page) ? page : "/admin";
 }
 
@@ -332,6 +339,10 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
       });
     }),
   );
+
+  // --- Releases (C1) --------------------------------------------------------
+
+  app.route("/releases", releaseRoutes({ releases: deps.releases, capability: deps.capability }));
 
   // --- The audit log --------------------------------------------------------
 
