@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.1 - 2026-10-29
+
+### Fixed
+
+- Phones and browsers with push notifications turned on now get alerts even when no other alert channel is set up.
+
 ## 0.17.0 - 2026-10-28
 
 ### New
