@@ -3,13 +3,13 @@
 This is the platform Worker for OpenPing Hosted: the code that owns customers rather than monitoring.
 It is planned in [the build plan](../docs/HOSTED_BUILD_PLAN.md), and it talks to each customer's OpenPing only through [the contract](../docs/hosted/CONTRACT.md).
 
-**Status: skeleton (B1), provisioning (B3), accounts (B2), the admin console (B6), scheduling (B4), billing (B5) and the release runner (C1), not deployed anywhere.**
+**Status: skeleton (B1), provisioning (B3), accounts (B2), the admin console (B6), scheduling (B4), billing (B5), the release runner (C1), lifecycle (B7) and observability (C4), not deployed anywhere.**
 Nothing here has been created in a Cloudflare account yet; see [Owner setup](#owner-setup-not-done-yet).
 
 ## What it does today
 
 - Routes by hostname, with the domain taken from the `HOSTED_DOMAIN` var (decision D2, [DECISIONS.md](../docs/hosted/DECISIONS.md)):
-  - `app.<domain>`: the platform's own pages (sign-up, sign-in, the account) and `GET /healthz`;
+  - `app.<domain>`: the platform's own pages (sign-up, sign-in, the account), `GET /healthz` (the Worker and its database answer) and `GET /__health` (the whole platform, for outside monitors);
   - `<domain>` and `www.<domain>`: a 301 to `app.<domain>`;
   - `<slug>.<domain>`: that customer's OpenPing, dispatched to its user Worker `t-<tenant id>`;
   - anything else: a plain 404.
@@ -92,6 +92,12 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   - a payment that lands before the teardown wins: the tenant is marked for removal only while it is still suspended by that same suspension; the owner's own suspension never deletes anything;
   - exports are kept 30 days (before a deletion) or 7 (a customer's own), then their files, their kept key and their rows are deleted together (decision D12).
 - Lets a customer take their OpenPing with them at `app.<domain>/account/export`: an export (one at a time, three a day), its downloads (only to its own account, with no caching), the steps, and each export's `MASTER_KEY` after a sign-in from the last 15 minutes (with a passkey, when the account has one), recorded in the audit log and emailed to the account each time it is shown; a deleted tenant's account still reaches its last export and key there while it is kept.
+- Watches itself (C4, `src/observability/`, `src/log.ts`; the whole design, the monitors to create and the costs are in [OBSERVABILITY.md](../docs/hosted/OBSERVABILITY.md)):
+  - every log line is one flat object, `{ event: "<area>.<what>", level, ...fields }`, so Workers Logs indexes each field; fields named like secrets are written as `"[redacted]"` at every depth and every string is scrubbed of secret-shaped values (tokens in query strings, `/hb/` paths, Bearer tokens, JWTs, Stripe, Resend and OpenPing keys, email addresses); provisioning steps, scheduler batches, billing webhooks, release steps, lifecycle emails and every mail send are logged;
+  - Workers Logs is on for the platform (`observability` in `wrangler.jsonc`) and for every customer's user Worker, through each upload's metadata, at the `TENANT_LOG_SAMPLING` rate (0 to 1, 1 by default, a bad value logged and treated as 1), with invocation logs off (they record request URLs and headers, which carry secrets here) and query strings redacted; what that still records, and the staging check, are in [OBSERVABILITY.md](../docs/hosted/OBSERVABILITY.md#2-logs);
+  - `GET app.<domain>/__health` answers 200 or 503 with each check as a yes or no, nothing else: the database, the cron's and the enqueue's heartbeats (`platform_heartbeats`, migration 0010; the enqueue's fails when the queue refused its batch), queue lag (the oldest due tenant's wait, new tenants included, 5 minutes at most), tenants failing 3 runs in a row (5 at most), a paused or stuck release, and whether mail, billing and provisioning are configured; one D1 batch of primary key and partial index reads, shared per Cloudflare location for 10 seconds (the Cache API) and per isolate for 15, behind the optional `HEALTH_RATE_LIMIT` binding, never a per-tenant scan; `GET /healthz` sits behind the same cache and limit;
+  - the queue consumer adds each batch's runs to `scheduler_minutes` (one row per UTC minute, with duration buckets for the p95, kept 8 days) in one write, and a partial index over `scheduler_stats` holds only the failing tenants;
+  - the admin console's Operations tab (`/admin/operations`) shows the same checks, runs a minute, failures, timeouts, p95 and average duration and queue lag over 15 minutes, an hour and a day, the last 24 hours by hour, and the failing and overdue tenants, worst first.
 - Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit`, `reportUsage`, which keeps each tenant's latest counts in `tenant_usage` for the console, and `sendEmail`).
 - Sends all its mail through one Resend account (`src/mail.ts`) from the Hosted domain, so no customer ever holds the key:
   - its own emails (`src/emails.ts`: sign-in, a new passkey, and the account emails of D2), from `MAIL_FROM`, with replies to the support address;
@@ -118,7 +124,9 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 | `src/accounts.ts`, `src/handoff.ts` | Accounts and identities, minting hand-off tokens |
 | `src/mail.ts`, `src/emails.ts` | The Resend mailer and its settings; the platform's emails |
 | `src/lifecycle/` | The lifecycle jobs: `jobs.ts` (emails, deletion), `exports.ts` (D1 exports to R2 and the steps), `account-export.ts` (`/account/export`), `billing-view.ts` (what it reads of billing), `env.ts` |
-| `src/admin/` | The admin console: `owner.ts` (who may use it), `data.ts` (queries, suspend and resume), `waitlist.ts` (the import), `releases.ts` (the Releases tab), `pages.ts`, `routes.ts` |
+| `src/admin/` | The admin console: `owner.ts` (who may use it), `data.ts` (queries, suspend and resume), `waitlist.ts` (the import), `releases.ts` (the Releases tab), `operations.ts` (the Operations tab), `pages.ts`, `routes.ts` |
+| `src/observability/` | `health.ts` (`GET /__health`, the heartbeats, the platform's state), `metrics.ts` (`scheduler_minutes`: writing and the windows) |
+| `src/log.ts` | The structured, secret-free log lines |
 | `src/provisioning.ts` | The provisioning state machine: `requestTenant`, `runProvisioning`, `removeTenant`, and `provisionDue` (the retry sweep) |
 | `src/billing/` | Billing: `stripe.ts` (the Stripe client, pinned version), `signature.ts` (webhook signatures), `webhook.ts`, `state.ts` (the state machine and the trial sweep), `routes.ts`, `pages.ts`, `config.ts` |
 | `src/scheduling.ts` | The scheduler: `enqueueDue` (the cron's claims), `handleScheduleBatch` (the queue consumer), due times, run metrics and the console's `scheduleView` |
@@ -187,6 +195,12 @@ These are on top of the $30 a month of fixed plan fees, and leave out each tenan
 At the margin a tenant with 12-minute work costs the scheduler about 2.5 cents a month, and one with 1-minute work about 30 cents (D1 writes 22, queue 5, requests and CPU 3), against the $1 a month the add-on brings in; a 1-minute plan whose monitors are slower costs what its work needs, since `nextDueAt` sets the cadence.
 The levers, if 1-minute checks sell well: drop the start write and rely on the tenant's own lease (a fifth of the D1 writes), or carry several tenants per message (queue operations fall with the number per message), both measured in the wave 4 load test first.
 
+## Observability costs
+
+A health check costs nothing measurable: a checker once a minute is 43,200 platform requests, at most about 600,000 D1 rows read, no rows written and no log events a month, all inside Workers Paid's allowance.
+C4 adds 86,400 heartbeat rows written a month, about one `scheduler_minutes` row per 25 runs at volume (about $3.50 a month at 2,000 tenants on 1-minute checks), and the user Workers' own log lines, the one cost that grows (about $10 to $30 a month at that size from December 1, 2026; `TENANT_LOG_SAMPLING` is the lever).
+The full table is in [OBSERVABILITY.md](../docs/hosted/OBSERVABILITY.md#8-costs).
+
 ## Owner setup (not done yet)
 
 None of these steps has been done.
@@ -223,3 +237,4 @@ They are needed before staging in wave 3 ([build plan, section 12](../docs/HOSTE
     - failed payments (Billing settings, "Manage failed payments"): Smart Retries on, and after the last retry choose **"cancel the subscription"** (decision D11, [DECISIONS.md](../docs/hosted/DECISIONS.md)); Stripe then sends `customer.subscription.deleted`, the tenant is suspended by billing as `canceled`, its checks stop, and decision D8's 30 days of retention apply; the customer subscribes again from their account page; Stripe's own customer emails for failed payments can stay on alongside the platform's;
     - a webhook endpoint at `https://app.<domain>/stripe/webhook`, snapshot payload, API version `2026-09-30.endive`, with the ten events in `WEBHOOK_EVENTS` (`src/billing/webhook.ts`, including `customer.subscription.pending_update_applied` and `customer.subscription.pending_update_expired`); its signing secret is `STRIPE_WEBHOOK_SECRET`;
     - at launch: the same in live mode with live keys and prices, and `STRIPE_MODE` set to `live` (owner action O8).
+12. **Monitoring and the public status page** (C4), once staging answers: on the owner's install, the category, the five monitors and the `hosted` status page of [OBSERVABILITY.md](../docs/hosted/OBSERVABILITY.md#5-alerting-the-monitors-to-create), with an API token from its Developers page; the canary tenant's status page turned on; a WAF rate limiting rule on `/__health` and `/healthz` ([section 3](../docs/hosted/OBSERVABILITY.md#3-the-health-endpoint)); the staging check that no secret reaches Workers Logs ([section 2](../docs/hosted/OBSERVABILITY.md#2-logs)); and three UptimeRobot monitors (free plan) as the outside checker ([section 7](../docs/hosted/OBSERVABILITY.md#7-the-outside-checker)).

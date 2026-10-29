@@ -22,6 +22,7 @@ import { DISPATCH_LIMITS, buildTenantProps, newCallId, publicRequest, type Tenan
 import type { PlatformEnv } from "./env";
 import { appOrigin, classifyHost } from "./hosts";
 import { mailerFromEnv } from "./mail";
+import { PLATFORM_HEALTH_ROUTE, defaultEdgeCache, healthResponse, livenessResponse } from "./observability/health";
 import {
   appNotFoundPage,
   tenantNotFoundPage,
@@ -32,6 +33,7 @@ import {
 } from "./pages";
 import { slugProblem } from "./slugs";
 import { cachedTenantBySlug, hostedUrls, type TenantRecord } from "./tenants";
+import { log } from "./log";
 
 export interface AppDeps {
   /** The dispatcher for this request's env. */
@@ -46,6 +48,10 @@ export interface AppDeps {
   releases?: AdminDeps["releases"];
   /** Tests only: a fixed call id. */
   newCallId?: () => string;
+  /** Tests only: the clock of the health endpoint. */
+  now?: () => number;
+  /** Tests only: the health endpoints' location cache (caches.default otherwise; null for none). */
+  edgeCache?: Cache | null;
 }
 
 const DEFAULT_ACCOUNT_DEPS: AccountDeps = {
@@ -61,16 +67,16 @@ const NO_STORE = { "cache-control": "no-store" };
 function appHost(deps: AppDeps): Hono<Platform> {
   const app = new Hono<Platform>();
 
-  // For uptime monitors of the platform itself (C4): the Worker runs and its database answers.
-  app.get("/healthz", async (c) => {
-    try {
-      await c.env.PLATFORM_DB.prepare("SELECT 1").first();
-      return c.json({ ok: true, service: "openping-platform", db: "ok" }, 200, NO_STORE);
-    } catch (error) {
-      console.error("[healthz] platform database check failed", error);
-      return c.json({ ok: false, service: "openping-platform", db: "error" }, 503, NO_STORE);
-    }
+  // For outside monitors (C4, src/observability/health.ts): /healthz, the
+  // Worker runs and its database answers; /__health, the whole platform.
+  // Both answer 200 or 503, shared per location for 10 seconds.
+  const healthDeps = (c: { req: { header(name: string): string | undefined } }) => ({
+    now: (deps.now ?? Date.now)(),
+    cache: deps.edgeCache === undefined ? defaultEdgeCache() : deps.edgeCache,
+    clientIp: c.req.header("cf-connecting-ip") ?? null,
   });
+  app.get("/healthz", (c) => livenessResponse(c.env, c.req.raw, healthDeps(c)));
+  app.get(PLATFORM_HEALTH_ROUTE, (c) => healthResponse(c.env, c.req.raw, healthDeps(c)));
 
   const accounts = deps.accounts ?? DEFAULT_ACCOUNT_DEPS;
 
@@ -140,12 +146,12 @@ async function tenantHost(
     const result = await deps.dispatcher(env).dispatch(tenant.scriptName, publicRequest(request), props, DISPATCH_LIMITS.public);
     if (result.kind === "missing") {
       // A ready tenant always has a script; this is a provisioning bug, not the visitor's.
-      console.error("[dispatch] ready tenant has no user Worker", { tenant: tenant.id, script: tenant.scriptName });
+      log.error("dispatch.script_missing", { tenant: tenant.id, script: tenant.scriptName });
       return tenantUnavailablePage();
     }
     return result.response;
   } catch (error) {
-    console.error("[dispatch] user Worker failed", { tenant: tenant.id }, error);
+    log.error("dispatch.tenant_threw", { tenant: tenant.id, error });
     return tenantUnavailablePage();
   }
 }
@@ -171,7 +177,7 @@ export function createApp(deps: AppDeps): Hono<Platform> {
   });
 
   app.onError((error) => {
-    console.error("[platform] unhandled error", error);
+    log.error("platform.unhandled", { error });
     return tenantUnavailablePage();
   });
 

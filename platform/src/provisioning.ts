@@ -60,6 +60,7 @@ import { PermanentError } from "./errors";
 import { ensureMasterKey } from "./keys";
 import { checkSlugAvailability, holdSlug, type SlugAvailability } from "./slugs";
 import { PROVISION_STATES, forgetTenant, tenantFromRow, type ProvisionState, type TenantRecord } from "./tenants";
+import { log } from "./log";
 
 /** Failures in a row before a tenant is paused for the owner. */
 export const PROVISION_MAX_ATTEMPTS = 6;
@@ -79,6 +80,8 @@ export interface ProvisioningConfig {
   platformKey: string;
   /** HANDOFF_PUBLIC_KEY: every tenant's copy of the hand-off verification key. */
   handoffPublicKey: string;
+  /** TENANT_LOG_SAMPLING: Workers Logs' head sampling rate for every user Worker, 0 to 1; 1 when absent. */
+  tenantLogSampling?: number;
 }
 
 export interface ProvisioningDeps {
@@ -270,9 +273,12 @@ async function advance(
     )
     .bind(to, now, ...columns.map((c) => set[c]!), run.tenantId, from, run.token)
     .run();
+  log.info("provision.step", { tenant: run.tenantId, from, to, version: typeof set.version === "string" ? set.version : undefined });
 }
 
 async function audit(db: D1Database, tenant: TenantRecord, action: string, now: number, detail: Record<string, unknown>) {
+  // The audit log's actions are the platform's events too (tenant.*, provision.*): one name in both places.
+  log.info(action, { tenant: tenant.id, ...detail });
   await db
     .prepare("INSERT INTO audit_events (at, account_id, tenant_id, actor, action, detail) VALUES (?, ?, ?, 'system', ?, ?)")
     .bind(now, tenant.accountId, tenant.id, action, JSON.stringify(detail))
@@ -349,6 +355,7 @@ const stepUpload: Step = async (deps, t, run, now) => {
     secrets: { MASTER_KEY: masterKey },
     tags: tenantTags(t.record.id, bundle.version),
     previousMigrationTag: null,
+    logSampling: deps.config.tenantLogSampling,
   });
   await advance(deps.db, run, "db_created", "uploaded", now, {
     version: bundle.version,
@@ -502,7 +509,7 @@ async function recordFailure(
   const message = describeError(error);
   const state = t.record.provisionState;
   const permanent = isPermanentFailure(error);
-  console.error("[provision] step failed", { tenant: t.record.id, state, attempts, permanent, error: message });
+  log.error("provision.step_failed", { tenant: t.record.id, state, attempts, permanent, error: message });
   // A teardown keeps retrying whatever happens: there is nothing behind it to protect.
   const pause = state !== "deleting" && (permanent || attempts >= PROVISION_MAX_ATTEMPTS);
   const nextAt = now + backoffMs(attempts);

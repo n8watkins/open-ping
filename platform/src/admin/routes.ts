@@ -46,9 +46,11 @@ import {
 import { adminAccess, parsePinnedPasskeys } from "./owner";
 import { scheduleView } from "../scheduling";
 import { auditPage, tenantListPage, tenantPage, verifyPage, waitlistPage, type HealthView } from "./pages";
+import { operationsPage, operationsView } from "./operations";
 import { releaseRoutes } from "./releases";
 import type { ReleaseSetup } from "../releases/env";
 import { WAITLIST_MAX_BYTES, importWaitlist, parseWaitlistExport, readBodyCapped, waitlistSummary } from "./waitlist";
+import { log } from "../log";
 
 export interface AdminDeps {
   dispatcher(env: PlatformEnv): TenantDispatcher;
@@ -67,7 +69,7 @@ const NO_STORE = { "cache-control": "no-store" } as const;
 export const HEALTH_TIMEOUT_MS = 5_000;
 
 /** Pages of the console a passkey sign-in may return to (account-routes' safeNext accepts these). */
-export const ADMIN_NEXT_PATTERN = /^\/admin(?:\/(?:audit|waitlist|releases(?:\/rel_[0-9a-f]{24})?|tenants\/[a-z0-9]{16}))?$/;
+export const ADMIN_NEXT_PATTERN = /^\/admin(?:\/(?:audit|waitlist|operations|releases(?:\/rel_[0-9a-f]{24})?|tenants\/[a-z0-9]{16}))?$/;
 
 /** Where to come back to after confirming: the page itself, or for a change the page it was made from. */
 function returnPath(path: string): string {
@@ -187,7 +189,7 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
       if (!body || typeof body.ok !== "boolean") return { kind: "unreachable", reason: `It answered HTTP ${result.response.status} without a health report.` };
       return { kind: "answered", status: result.response.status, health: body };
     } catch (error) {
-      console.error("[admin] health call failed", { tenant: tenant.id }, error);
+      log.error("admin.tenant_health_failed", { tenant: tenant.id, error });
       return { kind: "unreachable", reason: "The call to it failed; the platform's logs have the error." };
     }
   }
@@ -262,7 +264,7 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
     if (c.env.PROVISION_QUEUE) {
       await enqueueProvisioning(c.env.PROVISION_QUEUE, tenantId);
     } else if (setup.ok) {
-      c.executionCtx.waitUntil(runProvisioning(setup.deps, tenantId, { force: true }).catch((error) => console.error("[admin] provisioning run failed", error)));
+      c.executionCtx.waitUntil(runProvisioning(setup.deps, tenantId, { force: true }).catch((error) => log.error("admin.provision_run_failed", { tenant: tenantId, error })));
     }
   }
 
@@ -345,6 +347,10 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
   app.route("/releases", releaseRoutes({ releases: deps.releases, capability: deps.capability }));
 
   // --- The audit log --------------------------------------------------------
+
+  // --- Operations (C4) --------------------------------------------------------
+
+  app.get("/operations", async (c) => operationsPage(await operationsView(c.env.PLATFORM_DB, c.env, c.get("now"))));
 
   app.get("/audit", async (c) => {
     const filters = auditFilters(c.req.query());

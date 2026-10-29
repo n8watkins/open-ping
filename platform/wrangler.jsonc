@@ -15,8 +15,24 @@
   // Customers reach the platform only through its routes on HOSTED_DOMAIN
   // (added with the domain, decision D2), never a workers.dev address.
   "workers_dev": false,
+  // Workers Logs (C4, docs/hosted/OBSERVABILITY.md): the structured lines the
+  // platform writes (src/log.ts) and uncaught exceptions, kept 7 days and
+  // searchable by any field in the dashboard's Query Builder. Invocation
+  // logs are OFF: they record each request's URL and headers, and the
+  // platform's requests carry the session cookie, Stripe's signature, and
+  // tokens in query strings (sign-in links, recipient confirmations, GitHub's
+  // code and state). Query strings are redacted from what is still recorded.
+  // Customers' user Workers get the same through their upload metadata
+  // (src/cloudflare/upload.ts).
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "redact_query_string": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false,
+      // Everything: head sampling drops whole invocations, errors included.
+      "head_sampling_rate": 1
+    }
   },
   "vars": {
     // The Hosted domain (decision D2, docs/hosted/DECISIONS.md): the platform
@@ -71,8 +87,23 @@
     // The canary of every release that names none (src/releases/runner.ts):
     // a slug or tenant id, best the owner's own test tenant. Empty: the
     // oldest tenant.
-    "RELEASE_CANARY": ""
+    "RELEASE_CANARY": "",
+    // Workers Logs' head sampling for every customer's user Worker, 0 to 1,
+    // sent in each upload's metadata (src/cloudflare/upload.ts); a change
+    // reaches a tenant with its next upload (a release). Empty means 1.
+    "TENANT_LOG_SAMPLING": "1"
   },
+  // Per caller, for the public health endpoints (/__health and /healthz,
+  // src/observability/health.ts): 60 a minute, then 429. They are also cached
+  // per location for 10 seconds, so this only stops one caller hogging them.
+  // The namespace id is any number unique in the account.
+  "ratelimits": [
+    {
+      "name": "HEALTH_RATE_LIMIT",
+      "namespace_id": "4601",
+      "simple": { "limit": 60, "period": 60 }
+    }
+  ],
   // Every minute: the scheduler enqueues the due customers (src/scheduling.ts),
   // and the safety net for provisioning (src/provisioning.ts) and the release
   // runner (src/releases/runner.ts) run alongside.

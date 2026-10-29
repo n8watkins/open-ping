@@ -35,6 +35,9 @@ import { provisioningSetup } from "./provisioning-env";
 import { enqueueDue, handleScheduleBatch, schedulerDaysCleanup, type SchedulingDeps } from "./scheduling";
 import { releaseSetup } from "./releases/env";
 import { releaseTick } from "./releases/runner";
+import { log } from "./log";
+import { heartbeatStatement } from "./observability/health";
+import { schedulerMinutesCleanup } from "./observability/metrics";
 import type { TenantRecord } from "./tenants";
 
 /** Set by the platform when it makes the stub; never by the tenant. */
@@ -106,10 +109,10 @@ async function releases(env: PlatformEnv, ctx: ExecutionContext): Promise<void> 
   if (!setup.ok) return; // provisioning logs the missing settings, which are the same
   try {
     const { requests, tick } = await releaseTick(setup.deps);
-    for (const r of requests) console.log("[release] request", r.requestId, r.result);
-    if (tick.kind === "ran") console.log("[release] tick", tick.releaseId, tick.state, `${tick.steps} steps`);
+    for (const r of requests) log.info("release.request_handled", { request: r.requestId, release: r.releaseId, result: r.result });
+    if (tick.kind === "ran") log.info("release.tick", { release: tick.releaseId, state: tick.state, steps: tick.steps });
   } catch (error) {
-    console.error("[release] tick failed", error);
+    log.error("release.tick_failed", { error });
   }
 }
 
@@ -127,61 +130,76 @@ async function lifecycle(env: PlatformEnv, ctx: ExecutionContext): Promise<void>
     if (!report) return; // the run before this one still holds the lock
     const sent = Object.entries(report.sent).map(([k, n]) => `${k}:${n}`);
     if (sent.length || report.deleted.length || report.exports.length) {
-      console.log("[lifecycle]", { sent: sent.join(" "), deleted: report.deleted, exports: report.exports.map((e) => `${e.exportId}:${e.kind}`) });
+      log.info("lifecycle.run", { sent, deleted: report.deleted, exports: report.exports.map((e) => `${e.exportId}:${e.kind}`) });
     }
   } catch (error) {
-    console.error("[lifecycle] run failed", error);
+    log.error("lifecycle.run_failed", { error });
   }
 }
 
 async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
   const now = Date.now();
   const db = env.PLATFORM_DB;
+  // First and on its own: the health check's proof that the cron fires (src/observability/health.ts), whatever else fails.
+  const heartbeat = heartbeatStatement(db, "cron", now)
+    .run()
+    .catch((error) => log.error("cron.heartbeat_failed", { error }));
   // Trials past their 14 days stop first (billing, B5), so the scheduler doesn't enqueue them.
   await endTrials(db, now)
     .then((ended) => {
-      if (ended.length) console.log("[billing] trials ended", ended.map((t) => t.tenantId).join(" "));
+      if (ended.length) log.info("billing.trials_ended", { tenants: ended.map((t) => t.tenantId) });
     })
-    .catch((error) => console.error("[billing] trial sweep failed", error));
+    .catch((error) => log.error("billing.trial_sweep_failed", { error }));
   const schedule = enqueueDue({ db }, env.SCHEDULE_QUEUE, controller.scheduledTime)
-    .then((r) => {
-      if (r.sent || r.returned) console.log("[schedule] enqueued", r);
+    .then(async (r) => {
+      if (r.sent || r.returned) log.info("schedule.enqueued", { sent: r.sent, returned: r.returned, rounds: r.rounds });
+      // The health check's proof that the cron reaches the queue (src/observability/health.ts).
+      await heartbeatStatement(db, "enqueue", Date.now(), { sent: r.sent, returned: r.returned }).run();
     })
-    .catch((error) => console.error("[schedule] enqueue failed", error));
-  const hourly = new Date(controller.scheduledTime).getUTCMinutes() === 7 ? [schedulerDaysCleanup(db, now), ...billingRecordsCleanup(db, now)] : [];
+    .catch((error) => log.error("schedule.enqueue_failed", { error }));
+  const hourly =
+    new Date(controller.scheduledTime).getUTCMinutes() === 7
+      ? [schedulerDaysCleanup(db, now), schedulerMinutesCleanup(db, now), ...billingRecordsCleanup(db, now)]
+      : [];
   if (new Date(controller.scheduledTime).getUTCMinutes() % LIFECYCLE_EVERY_MINUTES === 0) ctx.waitUntil(lifecycle(env, ctx));
   ctx.waitUntil(releases(env, ctx));
   await db
-    .batch([sessionCleanup(db, now), emailSignInCleanup(db, now), ceremonyCleanup(db, now), rateLimitCleanup(db, now), emailUsageCleanup(db, now), ...hourly])
-    .catch((error) => console.error("[cleanup] failed", error));
+    .batch([
+      sessionCleanup(db, now),
+      emailSignInCleanup(db, now),
+      ceremonyCleanup(db, now),
+      rateLimitCleanup(db, now),
+      emailUsageCleanup(db, now),
+      ...hourly,
+    ])
+    .catch((error) => log.error("cron.cleanup_failed", { error }));
   const setup = provisioningSetup(env, (tenant) => capabilityFor(ctx, tenant));
   if (!setup.ok) {
-    console.warn("[provision] off until these are set:", setup.missing.join(", "));
+    log.warn("provision.off", { missing: setup.missing });
   } else {
     const outcomes = await provisionDue(setup.deps);
-    if (outcomes.length) console.log("[provision] sweep", outcomes.map((o) => `${o.tenantId}:${o.kind}`).join(" "));
+    if (outcomes.length) log.info("provision.sweep", { outcomes: outcomes.map((o) => `${o.tenantId}:${o.kind}`) });
   }
-  await schedule;
+  await Promise.all([schedule, heartbeat]);
 }
 
 /** The queues' consumer: the scheduler's runs and provisioning's. */
 async function queue(batch: MessageBatch<unknown>, env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
   // openping-schedule, or a staging copy of it (openping-schedule-staging).
   if (batch.queue.startsWith("openping-schedule")) {
-    const results = await handleScheduleBatch(schedulingDeps(env, ctx), batch);
-    const failed = results.filter((r) => r.kind === "ran" && r.outcome !== "ran" && r.outcome !== "lease_busy");
-    if (failed.length) console.warn("[schedule] runs without a clean answer", failed.length, "of", results.length);
+    // Logs its own summary line (schedule.batch) and writes the run metrics.
+    await handleScheduleBatch(schedulingDeps(env, ctx), batch);
     return;
   }
   // openping-provision, or a staging copy of it (openping-provision-staging).
   if (!batch.queue.startsWith("openping-provision")) {
-    console.error("[queue] message for an unknown queue", batch.queue);
+    log.error("queue.unknown", { queue: batch.queue });
     batch.retryAll({ delaySeconds: 300 });
     return;
   }
   const setup = provisioningSetup(env, (tenant) => capabilityFor(ctx, tenant));
   if (!setup.ok || !env.PROVISION_QUEUE) {
-    console.warn("[provision] off until these are set:", setup.ok ? "PROVISION_QUEUE" : setup.missing.join(", "));
+    log.warn("provision.off", { missing: setup.ok ? ["PROVISION_QUEUE"] : setup.missing });
     batch.retryAll({ delaySeconds: 600 });
     return;
   }

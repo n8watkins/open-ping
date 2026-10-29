@@ -40,6 +40,7 @@ import { Html, html, notice } from "../ui";
 import { adminPage, fact, timeText } from "./pages";
 import { appNotFoundPage } from "../pages";
 import { appOrigin } from "../hosts";
+import { log } from "../log";
 
 export interface ReleaseConsoleDeps {
   releases?(env: PlatformEnv, ctx: ExecutionContext, capability: (tenant: TenantRecord) => PlatformCapability): ReleaseSetup;
@@ -396,7 +397,7 @@ export function releaseRoutes(deps: ReleaseConsoleDeps): Hono<Env> {
     const outcomes = await handleRequests(setup.deps);
     const mine = outcomes.find((o) => o.requestId === requestId);
     // Starts the work at once; the cron carries on from here.
-    c.executionCtx.waitUntil(advanceRelease(setup.deps, CONSOLE_TICK_BUDGET_MS).catch((error) => console.error("[admin] release push failed", error)));
+    c.executionCtx.waitUntil(advanceRelease(setup.deps, CONSOLE_TICK_BUDGET_MS).catch((error) => log.error("admin.release_push_failed", { error })));
     const target = mine?.releaseId ?? (await activeRelease(db))?.id ?? null;
     return new Response(null, {
       status: 303,

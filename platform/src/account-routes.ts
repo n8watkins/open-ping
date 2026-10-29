@@ -57,6 +57,7 @@ import { SLUG_MESSAGES, checkSlugAvailability } from "./slugs";
 import { tenantFromRow, type TenantRecord } from "./tenants";
 import { billingSetup, type BillingSetup } from "./billing/config";
 import { billingView, registerBillingRoutes } from "./billing/routes";
+import { log } from "./log";
 
 export interface AccountDeps {
   /** The platform's mailer, or null while mail isn't configured. */
@@ -289,7 +290,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     const message = signInEmail({ code: started.code, link, newAccount: !existing });
     const sent = await mailer.send({ to: email, ...message, category: "signin", replyTo: PLATFORM_REPLY_TO });
     if (!sent.ok) {
-      console.error("[sign-in] email not sent", { error: sent.error });
+      log.error("signin.email_not_sent", { error: sent.error });
       return page("We couldn't send the email just now. Please try again in a minute.", 502);
     }
     return checkEmailPage({ email, loginId: started.loginId });
@@ -453,7 +454,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
         category: "passkey_added",
         replyTo: PLATFORM_REPLY_TO,
       });
-      if (!sent.ok) console.error("[passkeys] added-passkey email not sent", { error: sent.error });
+      if (!sent.ok) log.error("signin.passkey_notice_not_sent", { error: sent.error });
     }
     return withCookies(c.json({ ok: true, redirect: "/account?done=passkey" }, 200, NO_STORE), [clearCeremonyCookie()]);
   });
@@ -509,7 +510,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       if (!ceremony.verifier) return failed("That sign-in started somewhere else or took too long. Please try again.");
       user = await fetchGithubUser(config, { code, redirectUri: callbackUrl(c), codeVerifier: ceremony.verifier }, deps.fetch);
     } catch (error) {
-      console.error("[github] sign-in failed", { error: error instanceof Error ? error.message : String(error) });
+      log.error("signin.github_failed", { error });
       return failed("We couldn't reach GitHub. Please try again in a minute.", 502);
     }
     return githubSignedIn(c, user, ceremony.accountId, safeNext(ceremony.nextPath));
@@ -699,10 +700,10 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       await enqueueProvisioning(c.env.PROVISION_QUEUE, result.tenantId);
     } else if (setup.ok) {
       c.executionCtx.waitUntil(
-        runProvisioning(setup.deps, result.tenantId, { force: true }).catch((error) => console.error("[provision] first run failed", error)),
+        runProvisioning(setup.deps, result.tenantId, { force: true }).catch((error) => log.error("provision.first_run_failed", { tenant: result.tenantId, error })),
       );
     } else {
-      console.warn("[provision] off until these are set:", setup.missing.join(", "));
+      log.warn("provision.off", { missing: setup.missing });
     }
     return seeOther(c, "/account");
   });
@@ -718,7 +719,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     }
     if (tenant.provisionState !== "ready" || tenant.status === "suspended") return seeOther(c, "/account");
     if (!c.env.HANDOFF_SIGNING_KEY) {
-      console.error("[handoff] HANDOFF_SIGNING_KEY is not set");
+      log.error("signin.handoff_key_missing");
       return messagePage({ title: "Signing in to your OpenPing isn't available right now", body: "It has been logged. Please try again in a few minutes.", status: 503 });
     }
     const token = await mintHandoffToken(c.env.HANDOFF_SIGNING_KEY, {

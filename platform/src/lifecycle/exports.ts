@@ -30,6 +30,7 @@ import { CloudflareApiError, type CloudflareApi } from "../cloudflare/api";
 import { PermanentError } from "../errors";
 import { activeEscrowedKey } from "../keys";
 import { describeError } from "../provisioning";
+import { log } from "../log";
 
 /** Failed tries before an export gives up (and a deletion waiting on it starts a new one later). */
 export const EXPORT_MAX_ATTEMPTS = 5;
@@ -293,7 +294,7 @@ async function advanceLeased(
       // A failed export has no files; its row is kept a while as history.
       expires_at: failed ? now() + EXPORT_KEEP_MS.deletion : null,
     });
-    console.error("[export] failed", { export: exportId, tenant: row.tenant_id, attempts, error: message });
+    log.error("export.failed", { export: exportId, tenant: row.tenant_id, attempts, error: message });
     return { kind: failed ? "failed" : "retry", exportId, error: message };
   };
   try {

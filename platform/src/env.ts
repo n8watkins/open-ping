@@ -26,6 +26,12 @@ export interface PlatformEnv {
   PLATFORM_KEY?: string;
   /** Var: base64url of the raw 32-byte Ed25519 hand-off public key, set on every tenant (contract, section 7). */
   HANDOFF_PUBLIC_KEY?: string;
+  /** Var: Workers Logs' head sampling rate for every customer's user Worker, 0 to 1 (C4); empty means 1. Applies on each tenant's next upload. */
+  TENANT_LOG_SAMPLING?: string;
+
+  // --- Observability (C4, src/observability/) ---
+  /** Optional rate limit binding for /__health and /healthz, per caller (platform/wrangler.jsonc, ratelimits). */
+  HEALTH_RATE_LIMIT?: RateLimit;
 
   // --- Releases (C1, src/releases/) ---
   /** Var: the canary of every rollout that names none, as a slug or tenant id (the owner's own test tenant). */

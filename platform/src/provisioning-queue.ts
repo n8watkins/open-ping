@@ -14,6 +14,7 @@
  */
 
 import { runProvisioning, type ProvisionOutcome, type ProvisioningDeps } from "./provisioning";
+import { log } from "./log";
 
 export interface ProvisionMessage {
   tenantId: string;
@@ -49,7 +50,7 @@ export async function handleProvisionBatch(
       // A new tenant has no next attempt set, and a retry's message arrives when it is due, so the schedule is kept.
       outcome = await runProvisioning(deps, tenantId);
     } catch (error) {
-      console.error("[provision] run threw", { tenant: tenantId, error: error instanceof Error ? error.message : String(error) });
+      log.error("provision.run_threw", { tenant: tenantId, error });
       message.retry({ delaySeconds: 30 });
       continue;
     }

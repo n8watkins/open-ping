@@ -24,6 +24,7 @@ import type { PlatformEnv } from "./env";
 import { appOrigin, tenantOrigin } from "./hosts";
 import { PLATFORM_REPLY_TO, type Mailer } from "./mail";
 import { html, renderPage } from "./ui";
+import { log } from "./log";
 
 /** A confirmation link works this long. */
 export const CONFIRM_TTL_MS = 7 * 86_400_000;
@@ -86,7 +87,7 @@ export async function requestConfirmation(
     tenantId: tenant.id,
     replyTo: PLATFORM_REPLY_TO,
   });
-  if (!sent.ok) console.error("[mail] confirmation not sent", { tenant: tenant.id, error: sent.error });
+  if (!sent.ok) log.error("mail.confirmation_not_sent", { tenant: tenant.id, error: sent.error });
   return sent.ok;
 }
 

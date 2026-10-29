@@ -10,6 +10,8 @@
  * stalls past BILLING_LOCK_MS and loses the lock changes nothing.
  */
 
+import { log } from "../log";
+
 export const BILLING_LOCK_MS = 60_000;
 
 export interface BillingLock {
@@ -60,6 +62,6 @@ export async function withBillingLock<T>(db: D1Database, accountId: string, now:
   try {
     return await fn(lock);
   } finally {
-    await releaseBillingLock(db, lock).catch((error) => console.error("[billing] lock not released; it expires on its own", error));
+    await releaseBillingLock(db, lock).catch((error) => log.error("billing.lock_not_released", { account: lock.accountId, error }));
   }
 }

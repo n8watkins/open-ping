@@ -477,15 +477,52 @@ describe("taking your OpenPing with you", () => {
 });
 
 describe("the review's cases", () => {
-  const sentNotice = (tenantId: string, kind: string, cycle: string, at: number) =>
-    env.PLATFORM_DB.prepare("INSERT INTO lifecycle_notices (tenant_id, kind, cycle, state, claimed_at, sent_at) VALUES (?, ?, ?, 'sent', ?, ?)").bind(tenantId, kind, cycle, at, at).run();
+  const notice = (tenantId: string, kind: string, cycle: string, at: number) =>
+    env.PLATFORM_DB.prepare("INSERT INTO lifecycle_notices (tenant_id, kind, cycle, state, claimed_at, sent_at) VALUES (?, ?, ?, 'sent', ?, ?)").bind(tenantId, kind, cycle, at, at);
+  const sentNotice = (tenantId: string, kind: string, cycle: string, at: number) => notice(tenantId, kind, cycle, at).run();
+
+  /**
+   * `n` tenants suspended by billing, each with a sent notice of `kind` for
+   * its suspension, written in one D1 batch: the cases below need many rows
+   * ahead of the one they check, and one round trip per row made them slow
+   * enough to time out under the full suite's load. These rows are only ever
+   * read, never exported or torn down, so they need no database or key.
+   */
+  async function suspendedMany(n: number, input: { trialEndsAt: number; suspendedAt: (i: number) => number; kind: string; sentAt: number; exportNextAt?: number }) {
+    const db = env.PLATFORM_DB;
+    const statements: D1PreparedStatement[] = [];
+    for (let i = 0; i < n; i++) {
+      seq++;
+      const id = `life${String(seq).padStart(12, "0")}`;
+      const accountId = `acc_life${seq}`;
+      const suspendedAt = input.suspendedAt(i);
+      statements.push(
+        db.prepare("INSERT INTO accounts (id, email, created_at, updated_at) VALUES (?, ?, 0, 0)").bind(accountId, `customer${seq}@example.com`),
+        db
+          .prepare(
+            `INSERT INTO tenants (id, account_id, slug, script_name, d1_id, status, plan, provision_state, version, trial_ends_at, suspended_at, provisioned_at, billing_reason, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'suspended', 'trial', 'ready', '0.14.0', ?, ?, 0, ?, 0, 0)`,
+          )
+          .bind(id, accountId, `life-${seq}`, `t-${id}`, `db-${id}`, input.trialEndsAt, suspendedAt, input.trialEndsAt <= suspendedAt ? "trial_ended" : "canceled"),
+        notice(id, input.kind, String(suspendedAt), input.sentAt),
+      );
+      if (input.exportNextAt !== undefined) {
+        statements.push(
+          db
+            .prepare(
+              `INSERT INTO tenant_exports (id, tenant_id, account_id, slug, reason, state, next_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'deletion', 'requested', ?, ?, ?)`,
+            )
+            .bind(`exp_bulk${seq}`, id, accountId, `life-${seq}`, input.exportNextAt, input.sentAt, input.sentAt),
+        );
+      }
+    }
+    await db.batch(statements);
+  }
 
   it("doesn't let tenants already emailed fill the window and starve newer ones", async () => {
     const w = world();
-    for (let i = 0; i < 51; i++) {
-      const t = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 10 * DAY, suspendedAt: w.clock.now - 5 * DAY - i * 60_000 });
-      await sentNotice(t.id, "suspended", String(w.clock.now - 5 * DAY - i * 60_000), w.clock.now - DAY);
-    }
+    await suspendedMany(51, { trialEndsAt: w.clock.now - 10 * DAY, suspendedAt: (i) => w.clock.now - 5 * DAY - i * 60_000, kind: "suspended", sentAt: w.clock.now - DAY });
     const late = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 10 * DAY, suspendedAt: w.clock.now - 60_000 });
     await tick(w);
     expect(kinds(w, late.email)).toEqual(["suspended"]);
@@ -494,12 +531,8 @@ describe("the review's cases", () => {
   it("doesn't let deletions waiting on an export starve the ones behind them", async () => {
     const w = world();
     const at = w.clock.now - 31 * DAY;
-    for (let i = 0; i < 51; i++) {
-      const t = await tenant(w, { status: "suspended", trialEndsAt: at - DAY, suspendedAt: at - i * 60_000 });
-      await sentNotice(t.id, "deletion_warning", String(at - i * 60_000), at);
-      const id = await requestExport(env.PLATFORM_DB, { tenantId: t.id, accountId: t.accountId, slug: t.slug, reason: "deletion", now: w.clock.now });
-      await env.PLATFORM_DB.prepare("UPDATE tenant_exports SET next_at = ? WHERE id = ?").bind(w.clock.now + DAY, id).run();
-    }
+    // Each with an export that won't be worked on for a day: deletions waiting on it.
+    await suspendedMany(51, { trialEndsAt: at - DAY, suspendedAt: (i) => at - i * 60_000, kind: "deletion_warning", sentAt: at, exportNextAt: w.clock.now + DAY });
     const last = await tenant(w, { status: "suspended", trialEndsAt: at - DAY, suspendedAt: at + 60_000 });
     await sentNotice(last.id, "deletion_warning", String(at + 60_000), at + 60_000);
     await tick(w);

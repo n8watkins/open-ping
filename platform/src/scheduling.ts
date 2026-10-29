@@ -68,6 +68,8 @@ import {
 } from "../../src/shared/hosted-contract";
 import { callTenant, type TenantDispatcher } from "./dispatch";
 import { TENANT_COLUMNS, effectiveLimits, tenantFromRow, type TenantRecord, type TenantRow } from "./tenants";
+import { errorText as logErrorText, log } from "./log";
+import { runMinuteStatements, type RunSample } from "./observability/metrics";
 
 /** The platform's cron expression (platform/wrangler.jsonc), sent to the tenant as `cron`. */
 export const SCHEDULE_CRON = "* * * * *";
@@ -254,11 +256,11 @@ export async function enqueueDue(
         await queue.sendBatch(claimed.map((c) => ({ body: c.message, delaySeconds: deliveryDelaySeconds(c.message.tenantId) })));
         result.sent += claimed.length;
       } catch (error) {
-        console.error("[schedule] the queue refused a batch; claims given back", { count: claimed.length, error: errorText(error) });
+        log.error("schedule.queue_refused", { count: claimed.length, error });
         // If this fails too, the queue lease runs out on its own and the next cron claims them again.
         await deps.db
           .batch(claimed.map((c) => deps.db.prepare(UNCLAIM_SQL).bind(c.message.tenantId, c.message.runId)))
-          .catch((e) => console.error("[schedule] claims not given back; they free themselves", { error: errorText(e) }));
+          .catch((e) => log.error("schedule.unclaim_failed", { count: claimed.length, error: e }));
         result.returned += claimed.length;
         break;
       }
@@ -310,27 +312,50 @@ function isScheduleMessage(body: unknown): body is ScheduleMessage {
   );
 }
 
-/** One batch from SCHEDULE_QUEUE: every message at once, each on its own (one slow tenant holds up nobody). */
+/**
+ * One batch from SCHEDULE_QUEUE: every message at once, each on its own (one
+ * slow tenant holds up nobody). Then the batch's runs go into the platform's
+ * per-minute totals (scheduler_minutes, src/observability/metrics.ts) in one
+ * write, and one log line sums the batch up.
+ */
 export async function handleScheduleBatch(deps: SchedulingDeps, batch: MessageBatch<unknown>): Promise<ScheduleResult[]> {
-  return Promise.all(
+  const samples: RunSample[] = [];
+  const results = await Promise.all(
     batch.messages.map(async (message) => {
       try {
-        return await runOne(deps, message);
+        return await runOne(deps, message, samples);
       } catch (error) {
         // The platform's own database failed; the queue tries the message again.
-        console.error("[schedule] run threw", { error: errorText(error) });
+        log.error("schedule.run_threw", { tenant: isScheduleMessage(message.body) ? message.body.tenantId : null, error });
         message.retry({ delaySeconds: 30 });
         const tenantId = isScheduleMessage(message.body) ? message.body.tenantId : "";
         return { kind: "skipped", tenantId, reason: "invalid" } as const;
       }
     }),
   );
+  if (samples.length) {
+    // Metrics only: a failure here is logged and never retries the batch, which already called its tenants.
+    await deps.db.batch(runMinuteStatements(deps.db, samples)).catch((error) => log.error("schedule.metrics_failed", { runs: samples.length, error }));
+  }
+  const errors = samples.filter((r) => r.outcome !== "ran" && r.outcome !== "lease_busy").length;
+  const line = {
+    messages: batch.messages.length,
+    runs: samples.length,
+    errors,
+    timeouts: samples.filter((r) => r.outcome === "timeout").length,
+    skipped: results.filter((r) => r.kind === "skipped").length,
+    maxMs: samples.reduce((n, r) => Math.max(n, r.durationMs), 0),
+    maxLagMs: samples.reduce((n, r) => Math.max(n, r.lagMs), 0),
+  };
+  if (errors) log.warn("schedule.batch", line);
+  else log.info("schedule.batch", line);
+  return results;
 }
 
-async function runOne(deps: SchedulingDeps, message: Message<unknown>): Promise<ScheduleResult> {
+async function runOne(deps: SchedulingDeps, message: Message<unknown>, samples: RunSample[]): Promise<ScheduleResult> {
   const now = deps.now ?? Date.now;
   if (!isScheduleMessage(message.body)) {
-    console.error("[schedule] malformed message dropped");
+    log.error("schedule.malformed_message");
     message.ack();
     return { kind: "skipped", tenantId: "", reason: "invalid" };
   }
@@ -371,7 +396,7 @@ async function runOne(deps: SchedulingDeps, message: Message<unknown>): Promise<
   const call = await callScheduled(deps, tenant, { runId: msg.runId, scheduledTime: msg.tick, cron: SCHEDULE_CRON }, timeout);
   const finishedAt = now();
   if (call.kind !== "answered") {
-    console.error("[schedule] no answer from tenant", { tenant: tenant.id, run: msg.runId, outcome: call.kind, error: call.error });
+    log.warn("schedule.no_answer", { tenant: tenant.id, run: msg.runId, outcome: call.kind, error: call.error });
   }
 
   // The tenant has been called: from here on only the bookkeeping is retried,
@@ -398,10 +423,19 @@ async function runOne(deps: SchedulingDeps, message: Message<unknown>): Promise<
     });
   } catch (error) {
     // The lease runs out on its own and the tenant, still due, is claimed again then.
-    console.error("[schedule] run's bookkeeping failed; the tenant is claimed again when its lease ends", { tenant: tenant.id, run: msg.runId, error: errorText(error) });
+    log.error("schedule.bookkeeping_failed", { tenant: tenant.id, run: msg.runId, error });
   }
   message.ack();
-  return { kind: "ran", tenantId: tenant.id, outcome: call.kind === "answered" ? call.summary.outcome : call.kind };
+  const outcome: RunOutcome = call.kind === "answered" ? call.summary.outcome : call.kind;
+  samples.push({
+    at: startedAt,
+    outcome,
+    durationMs: Math.max(0, finishedAt - startedAt),
+    lagMs: Math.max(0, startedAt - msg.dueAt),
+    checked: call.kind === "answered" ? call.summary.checked : 0,
+    failures: call.kind === "answered" ? call.summary.failures : 0,
+  });
+  return { kind: "ran", tenantId: tenant.id, outcome };
 }
 
 /** `fn`, tried again after each of BOOKKEEPING_WAITS_MS when it throws. */
@@ -583,7 +617,7 @@ export function schedulerDaysCleanup(db: D1Database, now: number): D1PreparedSta
 }
 
 function errorText(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error)).slice(0, 200);
+  return logErrorText(error).slice(0, 200);
 }
 
 // ---------------------------------------------------------------------------

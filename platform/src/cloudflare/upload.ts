@@ -22,6 +22,7 @@ import type {
   UploadedScript,
   WorkerBinding,
   WorkerMigrations,
+  WorkerObservability,
   WorkerUploadMetadata,
 } from "./api";
 import { PermanentError } from "../errors";
@@ -116,6 +117,23 @@ export interface UserWorkerUpload {
    * script (provisioning), the recorded tag for an update (the release runner).
    */
   previousMigrationTag: string | null;
+  /** Workers Logs' head sampling for this user Worker, 0 to 1 (TENANT_LOG_SAMPLING); 1 when absent. */
+  logSampling?: number;
+}
+
+/**
+ * The user Worker's observability: Workers Logs on for what the Worker
+ * writes (console lines and uncaught exceptions), with invocation logs OFF
+ * and query strings redacted. An invocation log records the request (its
+ * URL and headers), and a customer's OpenPing gets secrets there: heartbeat
+ * ping paths (/hb/<token>), magic-link and recipient tokens in query
+ * strings, and Bearer API tokens in headers. Head sampling keeps or drops a
+ * whole invocation, errors included, so 1 (everything) is the default and a
+ * lower rate is a cost lever for later (docs/hosted/OBSERVABILITY.md).
+ */
+export function tenantObservability(sampling = 1): WorkerObservability {
+  const rate = Number.isFinite(sampling) ? Math.min(1, Math.max(0, sampling)) : 1;
+  return { enabled: true, redact_query_string: true, logs: { enabled: true, invocation_logs: false, head_sampling_rate: rate } };
 }
 
 /**
@@ -157,7 +175,7 @@ export function userWorkerMetadata(input: UserWorkerUpload, assetsJwt: string): 
     tags: input.tags,
     assets: { jwt: assetsJwt, config: input.bundle.assetsConfig },
     ...(migrations ? { migrations } : {}),
-    observability: { enabled: true },
+    observability: tenantObservability(input.logSampling),
   };
 }
 
