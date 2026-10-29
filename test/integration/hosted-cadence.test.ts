@@ -60,6 +60,70 @@ async function samplesOf(id: string): Promise<number> {
   return row?.n ?? 0;
 }
 
+
+interface Rows {
+  read: number;
+  written: number;
+}
+
+/** A D1 binding that adds up the rows every query read and wrote, as D1 bills them (meta). */
+function rowsD1(db: D1Database, rows: Rows): D1Database {
+  const real = new WeakMap<object, D1PreparedStatement>();
+  const add = <T>(result: T): T => {
+    for (const r of Array.isArray(result) ? result : [result]) {
+      const meta = (r as { meta?: { rows_read?: number; rows_written?: number } } | null)?.meta;
+      rows.read += meta?.rows_read ?? 0;
+      rows.written += meta?.rows_written ?? 0;
+    }
+    return result;
+  };
+  const wrap = (stmt: D1PreparedStatement): D1PreparedStatement => {
+    const proxy = new Proxy(stmt, {
+      get(target, prop) {
+        if (prop === "bind") return (...values: unknown[]) => wrap(target.bind(...values));
+        if (prop === "run" || prop === "all") {
+          const fn = Reflect.get(target, prop, target) as (...a: unknown[]) => Promise<unknown>;
+          return async (...args: unknown[]) => add(await fn.apply(target, args));
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    real.set(proxy, stmt);
+    return proxy;
+  };
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop === "prepare") return (query: string) => wrap(target.prepare(query));
+      if (prop === "batch") {
+        return async (statements: D1PreparedStatement[]) =>
+          add(await target.batch(statements.map((st) => real.get(st) ?? st)));
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+/**
+ * The rows read and written over `minutes` from `from`, with the platform
+ * calling as it does (on the first tick at or after each nextDueAt).
+ */
+async function measureCalls(from: number, minutes: number, cadence: Cadence): Promise<Rows & { calls: number }> {
+  const rows = { read: 0, written: 0, calls: 0 };
+  const db = rowsD1(env.DB, rows);
+  for (let at = from; at < from + minutes * MINUTE; rows.calls++) {
+    vi.setSystemTime(at);
+    const result = await runScheduled({ cron: "* * * * *", scheduledTime: at, noRetry() {} }, { ...env, DB: db }, {
+      cadence,
+      budget: PLAN_BUDGETS.hosted,
+      confirmDelayMs: 0,
+    });
+    at = nextTick(result, at);
+  }
+  return rows;
+}
+
 beforeAll(async () => {
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 });
@@ -203,6 +267,30 @@ describe("per-monitor intervals on the platform", () => {
     const result = await tick(T0, STANDARD);
     expect(result.nextDueAt).toBe(T0 + SCHEDULED_MAX_GAP_MS);
   });
+});
+
+describe("what a tenant costs in D1 rows (docs/HOSTED_PLAN.md)", () => {
+  it("measures 20 monitors on 1-minute checks and on 12-minute checks", async () => {
+    for (let i = 0; i < 20; i++) await addMonitor(`Cost ${i}`, { intervalSeconds: 60 });
+    await measureCalls(T0, 1, FAST); // the first checks (warm-up)
+    // 24 minutes in steady state: 24 calls, 2 of them with the upkeep.
+    const fast = await measureCalls(T0 + MINUTE, 24, FAST);
+    await env.DB.prepare("UPDATE monitors SET interval_seconds = 720").run();
+    await env.DB.prepare("UPDATE monitor_state SET next_check_at = ?").bind(T0 + 36 * MINUTE).run();
+    // 2 hours on 12-minute checks: the tenant is called once per 12 minutes.
+    const standard = await measureCalls(T0 + 36 * MINUTE, 120, STANDARD);
+    // Measured 2026-10-29: 1-minute checks wrote 3,520 rows and read 7,368 in
+    // 24 calls (about 147 written per minute: 7.3 per check, the upkeep
+    // included); 12-minute checks wrote 1,990 and read 7,210 in 10 calls
+    // (about 199 per call). Sample deletes, a day later, add one row each.
+    // docs/HOSTED_PLAN.md turns these into dollars; the bounds catch a regression.
+    expect(fast.calls).toBe(24);
+    expect(fast.written / fast.calls).toBeLessThan(160);
+    expect(fast.read / fast.calls).toBeLessThan(400);
+    expect(standard.calls).toBe(10);
+    expect(standard.written / standard.calls).toBeLessThan(220);
+    expect(standard.read / standard.calls).toBeLessThan(900);
+  }, 120_000);
 });
 
 describe("a plain install's cron", () => {
