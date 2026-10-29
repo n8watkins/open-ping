@@ -103,6 +103,7 @@ function schedulingDeps(env: PlatformEnv, ctx: ExecutionContext): SchedulingDeps
 async function lifecycle(env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
   try {
     const report = await lifecycleTick(lifecycleDepsFromEnv(env, (tenant) => capabilityFor(ctx, tenant)));
+    if (!report) return; // the run before this one still holds the lock
     const sent = Object.entries(report.sent).map(([k, n]) => `${k}:${n}`);
     if (sent.length || report.deleted.length || report.exports.length) {
       console.log("[lifecycle]", { sent: sent.join(" "), deleted: report.deleted, exports: report.exports.map((e) => `${e.exportId}:${e.kind}`) });

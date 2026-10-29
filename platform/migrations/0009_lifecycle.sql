@@ -2,15 +2,19 @@
 -- calls for, sent once each, and exports of a tenant's database to R2,
 -- before a deletion and when a customer moves to their own Cloudflare.
 
--- Every lifecycle email sent, once per tenant, kind and cycle: a second
+-- Every lifecycle email, once per tenant, kind and cycle: a second
 -- suspension (a new suspended_at) is a new cycle and gets its own email.
--- A row is claimed before the send and dropped when the send fails, so a
--- failed email is tried again on the next run and a sent one never twice.
+-- A row is claimed as 'sending' before the send and becomes 'sent' only once
+-- the mail provider took it; a failed send drops the claim, and a claim left
+-- by a run that died is taken again after a few minutes. Deletion counts
+-- only a warning that was sent.
 CREATE TABLE lifecycle_notices (
   tenant_id  TEXT NOT NULL,
   kind       TEXT NOT NULL,                   -- 'welcome', 'trial_ending_3', 'trial_ending_1', 'payment_failed', 'suspended', 'deletion_warning'
   cycle      TEXT NOT NULL,                   -- what the email is about: a trial end, a suspension time, ...
-  sent_at    INTEGER NOT NULL,
+  state      TEXT NOT NULL CHECK (state IN ('sending', 'sent')),
+  claimed_at INTEGER NOT NULL,
+  sent_at    INTEGER,                         -- when the provider accepted it
   PRIMARY KEY (tenant_id, kind, cycle)
 );
 
@@ -29,6 +33,10 @@ CREATE TABLE tenant_exports (
   next_at     INTEGER,                        -- not before this is it worked on again
   r2_prefix   TEXT,                           -- exports/<tenant>/<export id>/ once done
   bytes       INTEGER,                        -- the dump's size
+  sha256      TEXT,                           -- the dump's SHA-256 hex, checked again before a deletion
+  tables      TEXT,                           -- JSON: the tables the dump creates, checked too
+  lease_until INTEGER,                        -- one run works on an export at a time (the cron, the account page)
+  lease_token TEXT,
   error       TEXT,                           -- the last failure, short and never secret
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,
@@ -39,3 +47,21 @@ CREATE INDEX idx_tenant_exports_tenant ON tenant_exports(tenant_id, created_at);
 CREATE INDEX idx_tenant_exports_account ON tenant_exports(account_id, created_at);
 CREATE INDEX idx_tenant_exports_open ON tenant_exports(next_at) WHERE state IN ('requested', 'exporting');
 CREATE INDEX idx_tenant_exports_expiry ON tenant_exports(expires_at) WHERE expires_at IS NOT NULL;
+
+-- The MASTER_KEY a done export's encrypted values are sealed with, kept with
+-- the export (the same AES-GCM ciphertext under PLATFORM_KEY as escrowed_keys)
+-- so it outlives a deleted tenant's escrowed key, and is deleted together
+-- with the export's files when it expires (decision D12).
+CREATE TABLE export_keys (
+  export_id  TEXT PRIMARY KEY,
+  tenant_id  TEXT NOT NULL,                   -- what the ciphertext is bound to
+  kid        TEXT NOT NULL,
+  ciphertext TEXT NOT NULL
+);
+
+-- One lifecycle run at a time, across the cron's overlapping minutes.
+CREATE TABLE lifecycle_locks (
+  name  TEXT PRIMARY KEY,
+  until INTEGER NOT NULL,
+  token TEXT NOT NULL
+);

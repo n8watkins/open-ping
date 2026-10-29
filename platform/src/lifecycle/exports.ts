@@ -18,13 +18,17 @@
  * from their account page.
  *
  * The dump holds what the tenant's database holds: encrypted values sealed
- * with its MASTER_KEY, which is never written here. The customer reveals the
- * key separately, on their account page after a fresh sign-in, as BACKUP.md
- * says a key is kept: apart from the backups it opens.
+ * with its MASTER_KEY, which is never written to the bucket. Its escrowed
+ * copy (still sealed with PLATFORM_KEY) is kept with the export in
+ * export_keys, so it outlives a deleted tenant, and the customer reveals it
+ * on their account page after a fresh sign-in, as BACKUP.md says a key is
+ * kept: apart from the backups it opens. Both go when the export expires.
  */
 
 import { tenantDatabaseName } from "../../../src/shared/hosted-contract";
 import { CloudflareApiError, type CloudflareApi } from "../cloudflare/api";
+import { PermanentError } from "../errors";
+import { activeEscrowedKey } from "../keys";
 import { describeError } from "../provisioning";
 
 /** Failed tries before an export gives up (and a deletion waiting on it starts a new one later). */
@@ -34,6 +38,8 @@ export const EXPORT_BACKOFF_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 3_600_000
 /** How long one run polls D1 before leaving it for the next (D1 cancels an export nobody polls). */
 export const EXPORT_POLL_BUDGET_MS = 60_000;
 export const EXPORT_POLL_INTERVAL_MS = 2_000;
+/** How long one run holds an export (longer than its poll budget and the copy). */
+export const EXPORT_LEASE_MS = 5 * 60_000;
 /** How long the files stay in the bucket after they are made. */
 export const EXPORT_KEEP_MS = { self_host: 7 * 86_400_000, deletion: 30 * 86_400_000 } as const;
 
@@ -156,7 +162,7 @@ This is ${input.tenantUrl}, exported from OpenPing Hosted on ${when} UTC${input.
 
 Treat \`openping.sql\` as sensitive, like any full OpenPing backup (docs/BACKUP.md).
 Passwords, tokens and webhook URLs in it are encrypted with your OpenPing's \`MASTER_KEY\`, which is not in this download.
-Reveal the key on your account page (${input.accountUrl}), after signing in again, and keep it in your password manager, apart from this file.
+Reveal it with this export's Key button on your account page (${input.accountUrl}), after signing in again, for as long as the export is kept there, and keep it in your password manager, apart from this file.
 Without the key the database still restores, but the encrypted values can't be read, and you add those credentials again.
 
 ## Run it as your own OpenPing
@@ -184,18 +190,44 @@ Questions: support@n8builds.dev, within 2 business days.
 `;
 }
 
-/** Puts the dump in the bucket: streamed when its size is known, read whole otherwise. */
-async function storeDump(bucket: R2Bucket, key: string, res: Response): Promise<number> {
+/** Larger than this, a tenant's dump is refused here (a Hosted tenant's is a few MB at most) and the owner exports it by hand. */
+export const EXPORT_MAX_BYTES = 64 * 1024 * 1024;
+/** Tables every OpenPing database has; a dump without them isn't one. */
+export const REQUIRED_TABLES = ["d1_migrations", "monitors"] as const;
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** The tables a SQL dump creates, in order. */
+export function dumpTables(sql: string): string[] {
+  const names: string[] = [];
+  for (const m of sql.matchAll(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["'`[]?([A-Za-z0-9_]+)/gi)) names.push(m[1]!);
+  return names;
+}
+
+/** Why `bytes` isn't a usable OpenPing dump, or null. */
+export function dumpProblem(bytes: Uint8Array): string | null {
+  if (bytes.byteLength === 0) return "the dump is empty";
+  const head = new TextDecoder().decode(bytes.subarray(0, 4096)).trimStart();
+  if (!/^(PRAGMA|CREATE|BEGIN|INSERT|--)/i.test(head)) return "the dump doesn't look like SQL";
+  const tables = dumpTables(new TextDecoder().decode(bytes));
+  const missing = REQUIRED_TABLES.filter((t) => !tables.includes(t));
+  return missing.length ? `the dump has no ${missing.join(" or ")} table` : null;
+}
+
+/** Reads the dump whole (bounded), checks it is an OpenPing dump, and stores it. */
+async function storeDump(bucket: R2Bucket, key: string, res: Response): Promise<{ bytes: number; sha256: string; tables: string[] }> {
   const length = Number(res.headers.get("content-length") ?? "");
-  if (res.body && Number.isSafeInteger(length) && length > 0 && typeof FixedLengthStream !== "undefined") {
-    const fixed = new FixedLengthStream(length);
-    const piped = res.body.pipeTo(fixed.writable);
-    await Promise.all([bucket.put(key, fixed.readable, { httpMetadata: { contentType: "application/sql" } }), piped]);
-    return length;
-  }
+  if (Number.isSafeInteger(length) && length > EXPORT_MAX_BYTES) throw new PermanentError(`the dump is ${length} bytes, over ${EXPORT_MAX_BYTES}`);
   const body = new Uint8Array(await res.arrayBuffer());
-  await bucket.put(key, body, { httpMetadata: { contentType: "application/sql" } });
-  return body.byteLength;
+  if (body.byteLength > EXPORT_MAX_BYTES) throw new PermanentError(`the dump is over ${EXPORT_MAX_BYTES} bytes`);
+  const problem = dumpProblem(body);
+  if (problem) throw new Error(problem);
+  const sha256 = await sha256Hex(body);
+  await bucket.put(key, body, { httpMetadata: { contentType: "application/sql" }, sha256 });
+  return { bytes: body.byteLength, sha256, tables: dumpTables(new TextDecoder().decode(body)) };
 }
 
 export type ExportOutcome = { kind: "done" | "waiting" | "retry" | "failed" | "missing"; exportId: string; error?: string };
@@ -210,18 +242,40 @@ export async function advanceExport(
   context: { tenantUrl: string; accountUrl: string },
 ): Promise<ExportOutcome> {
   const now = deps.now ?? Date.now;
-  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const row = await deps.db
     .prepare(`SELECT ${COLUMNS}, bookmark FROM tenant_exports WHERE id = ?`)
     .bind(exportId)
     .first<Row & { bookmark: string | null }>();
   if (!row || (row.state !== "requested" && row.state !== "exporting")) return { kind: "missing", exportId };
+  // One run per export (the cron and the account page's push), so two can't write the same files.
+  const token = crypto.randomUUID();
+  const leased = await deps.db
+    .prepare("UPDATE tenant_exports SET lease_until = ?, lease_token = ? WHERE id = ? AND (lease_until IS NULL OR lease_until <= ?)")
+    .bind(now() + EXPORT_LEASE_MS, token, exportId, now())
+    .run();
+  if ((leased.meta.changes ?? 0) === 0) return { kind: "waiting", exportId };
+  try {
+    return await advanceLeased(deps, row, token, context);
+  } finally {
+    await deps.db.prepare("UPDATE tenant_exports SET lease_until = NULL, lease_token = NULL WHERE id = ? AND lease_token = ?").bind(exportId, token).run();
+  }
+}
+
+async function advanceLeased(
+  deps: ExportDeps,
+  row: Row & { bookmark: string | null },
+  token: string,
+  context: { tenantUrl: string; accountUrl: string },
+): Promise<ExportOutcome> {
+  const now = deps.now ?? Date.now;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const exportId = row.id;
   const tenant = await deps.db.prepare("SELECT d1_id, version FROM tenants WHERE id = ?").bind(row.tenant_id).first<{ d1_id: string | null; version: string | null }>();
   const set = (columns: Record<string, string | number | null>) => {
     const names = Object.keys(columns);
     return deps.db
-      .prepare(`UPDATE tenant_exports SET ${names.map((n) => `${n} = ?`).join(", ")}, updated_at = ? WHERE id = ? AND state = ?`)
-      .bind(...names.map((n) => columns[n]!), now(), exportId, row.state)
+      .prepare(`UPDATE tenant_exports SET ${names.map((n) => `${n} = ?`).join(", ")}, updated_at = ? WHERE id = ? AND state = ? AND lease_token = ?`)
+      .bind(...names.map((n) => columns[n]!), now(), exportId, row.state, token)
       .run();
   };
   const fail = async (error: unknown): Promise<ExportOutcome> => {
@@ -263,13 +317,32 @@ export async function advanceExport(
         const res = await (deps.fetchDump ?? ((url: string) => fetch(url)))(poll.signedUrl);
         if (!res.ok) return await fail(new Error(`the dump's download answered ${res.status}`));
         const prefix = `exports/${row.tenant_id}/${row.id}/`;
-        const bytes = await storeDump(deps.bucket, `${prefix}openping.sql`, res);
+        const stored = await storeDump(deps.bucket, `${prefix}openping.sql`, res);
+        // The key the dump's encrypted values are sealed with, kept with the
+        // export: it outlives the tenant's own escrowed key (decision D12).
+        const escrowed = await activeEscrowedKey(deps.db, row.tenant_id);
+        if (!escrowed) throw new PermanentError("the tenant has no escrowed MASTER_KEY to keep with its export");
+        await deps.db
+          .prepare("INSERT INTO export_keys (export_id, tenant_id, kid, ciphertext) VALUES (?, ?, ?, ?) ON CONFLICT(export_id) DO UPDATE SET kid = excluded.kid, ciphertext = excluded.ciphertext")
+          .bind(exportId, row.tenant_id, escrowed.kid, escrowed.ciphertext)
+          .run();
         await deps.bucket.put(
           `${prefix}README.md`,
           exportInstructions({ slug: row.slug, tenantUrl: context.tenantUrl, version: tenant?.version ?? null, exportedAt: now(), accountUrl: context.accountUrl }),
           { httpMetadata: { contentType: "text/markdown; charset=utf-8" } },
         );
-        await set({ state: "done", r2_prefix: prefix, bytes, error: null, bookmark: null, next_at: null, finished_at: now(), expires_at: now() + EXPORT_KEEP_MS[row.reason] });
+        await set({
+          state: "done",
+          r2_prefix: prefix,
+          bytes: stored.bytes,
+          sha256: stored.sha256,
+          tables: JSON.stringify(stored.tables),
+          error: null,
+          bookmark: null,
+          next_at: null,
+          finished_at: now(),
+          expires_at: now() + EXPORT_KEEP_MS[row.reason],
+        });
         return { kind: "done", exportId };
       }
       if (now() >= deadline) return { kind: "waiting", exportId };
@@ -285,11 +358,30 @@ export async function advanceExport(
   }
 }
 
-/** True when the export's files are in the bucket, read back rather than taken from the row. */
-export async function exportIsStored(bucket: R2Bucket, exp: TenantExport): Promise<boolean> {
-  if (exp.state !== "done" || !exp.r2Prefix) return false;
-  const [dump, readme] = await Promise.all([bucket.head(`${exp.r2Prefix}openping.sql`), bucket.head(`${exp.r2Prefix}README.md`)]);
-  return !!dump && !!readme && (exp.bytes === null || dump.size === exp.bytes);
+/**
+ * Why the export isn't safe to delete its tenant behind, or null when it is:
+ * both files read back from the bucket, the dump the same bytes as when it
+ * was made (its SHA-256), still an OpenPing dump with the same tables, and
+ * its key kept with it.
+ */
+export async function exportVerificationProblem(db: D1Database, bucket: R2Bucket, exp: TenantExport): Promise<string | null> {
+  if (exp.state !== "done" || !exp.r2Prefix) return "it isn't done";
+  const row = await db.prepare("SELECT sha256, tables FROM tenant_exports WHERE id = ?").bind(exp.id).first<{ sha256: string | null; tables: string | null }>();
+  if (!row?.sha256 || !row.tables) return "it has no checksum";
+  const [dump, readme, key] = await Promise.all([
+    bucket.get(`${exp.r2Prefix}openping.sql`),
+    bucket.head(`${exp.r2Prefix}README.md`),
+    db.prepare("SELECT 1 AS x FROM export_keys WHERE export_id = ?").bind(exp.id).first(),
+  ]);
+  if (!dump || !readme) return "its files are missing from the bucket";
+  if (!key) return "its key wasn't kept";
+  const bytes = new Uint8Array(await dump.arrayBuffer());
+  if (exp.bytes !== null && bytes.byteLength !== exp.bytes) return "its dump changed size";
+  if ((await sha256Hex(bytes)) !== row.sha256) return "its dump doesn't match its checksum";
+  const problem = dumpProblem(bytes);
+  if (problem) return problem;
+  if (JSON.stringify(dumpTables(new TextDecoder().decode(bytes))) !== row.tables) return "its dump's tables changed";
+  return null;
 }
 
 /** Deletes the files and rows of exports past their keep time. */
@@ -301,7 +393,11 @@ export async function expireExports(deps: Pick<ExportDeps, "db" | "bucket" | "no
     .all<{ id: string; r2_prefix: string | null }>();
   for (const r of rows.results) {
     if (r.r2_prefix) await deps.bucket.delete([`${r.r2_prefix}openping.sql`, `${r.r2_prefix}README.md`]);
-    await deps.db.prepare("DELETE FROM tenant_exports WHERE id = ?").bind(r.id).run();
+    // The files, the key kept for them, and the row go together.
+    await deps.db.batch([
+      deps.db.prepare("DELETE FROM export_keys WHERE export_id = ?").bind(r.id),
+      deps.db.prepare("DELETE FROM tenant_exports WHERE id = ?").bind(r.id),
+    ]);
   }
   return rows.results.length;
 }

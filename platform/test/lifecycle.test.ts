@@ -9,8 +9,8 @@ import { StaticBundleSource, type TenantBundle } from "../src/bundle";
 import type { PlatformEnv } from "../src/env";
 import { ensureMasterKey, generateMasterKey } from "../src/keys";
 import { D1BillingView, type BillingView } from "../src/lifecycle/billing-view";
-import { EXPORT_MAX_ATTEMPTS, accountExports, exportInstructions } from "../src/lifecycle/exports";
-import { DELETE_AFTER_MS, EXPORT_RETRY_AFTER_MS, WARNING_BEFORE_MS, deletionTime, lifecycleTick, type LifecycleDeps } from "../src/lifecycle/jobs";
+import { EXPORT_MAX_ATTEMPTS, accountExports, advanceExport, exportInstructions, requestExport } from "../src/lifecycle/exports";
+import { DELETE_AFTER_MS, EXPORT_RETRY_AFTER_MS, NOTICE_CLAIM_STALE_MS, WARNING_BEFORE_MS, deletionTime, lifecycleTick, type LifecycleDeps } from "../src/lifecycle/jobs";
 import type { ProvisioningDeps } from "../src/provisioning";
 import { FakeCloudflareApi } from "./fake-cloudflare";
 import { FakeDispatcher } from "./fake-dispatcher";
@@ -21,7 +21,8 @@ const DOMAIN = "openping.test";
 const APP = `https://app.${DOMAIN}`;
 const DAY = 86_400_000;
 const PLATFORM_KEY = generateMasterKey();
-const DUMP = "PRAGMA defer_foreign_keys=TRUE;\nCREATE TABLE monitors (id TEXT PRIMARY KEY);\nINSERT INTO monitors VALUES ('mon_1');\n";
+const DUMP =
+  "PRAGMA defer_foreign_keys=TRUE;\nCREATE TABLE d1_migrations (id INTEGER PRIMARY KEY, name TEXT);\nCREATE TABLE monitors (id TEXT PRIMARY KEY);\nINSERT INTO monitors VALUES ('mon_1');\n";
 
 const noopPlatform: PlatformCapability = {
   sendEmail: async () => ({ ok: false, error: "email_unavailable", message: "" }),
@@ -124,7 +125,7 @@ async function tenant(w: World, fields: { status?: string; trialEndsAt?: number 
   return { id, accountId, email, slug, d1Id: db.id };
 }
 
-const tick = (w: World, over: Partial<LifecycleDeps> = {}) => lifecycleTick({ ...w.deps, ...over });
+const tick = async (w: World, over: Partial<LifecycleDeps> = {}) => (await lifecycleTick({ ...w.deps, ...over }))!;
 const kinds = (w: World, email: string) => w.mailer.to(email).map((m) => m.category);
 const exists = async (id: string) => (await env.PLATFORM_DB.prepare("SELECT provision_state FROM tenants WHERE id = ?").bind(id).first<{ provision_state: string }>())?.provision_state ?? null;
 const setStatus = (id: string, status: string, suspendedAt: number | null = null) =>
@@ -137,7 +138,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await env.PLATFORM_DB.batch(
-    ["lifecycle_notices", "tenant_exports", "escrowed_keys", "slug_holds", "subscriptions", "tenants", "platform_sessions", "rate_limits", "audit_events", "accounts"].map((t) =>
+    ["lifecycle_notices", "lifecycle_locks", "export_keys", "tenant_exports", "account_identities", "escrowed_keys", "slug_holds", "subscriptions", "tenants", "platform_sessions", "rate_limits", "audit_events", "accounts"].map((t) =>
       env.PLATFORM_DB.prepare(`DELETE FROM ${t}`),
     ),
   );
@@ -322,7 +323,7 @@ describe("deletion after 30 days", () => {
     w.bucket.objects.delete(`${exp!.r2Prefix}openping.sql`);
     const report = await tick(w);
     expect(report.deleted).toEqual([]);
-    expect(report.waiting).toEqual([{ tenantId: t.id, why: "its export's files are missing" }]);
+    expect(report.waiting).toEqual([{ tenantId: t.id, why: "its export can't be trusted: its files are missing from the bucket" }]);
     expect(await exists(t.id)).toBe("ready");
   });
 
@@ -383,8 +384,8 @@ describe("taking your OpenPing with you", () => {
   }
   const platformEnv = () => ({ ...(env as unknown as PlatformEnv), PLATFORM_KEY });
 
-  async function signedIn(w: World, accountId: string) {
-    const cookie = (await createSession(env.PLATFORM_DB, accountId, "email", w.clock.now)).split(";")[0]!;
+  async function signedIn(w: World, accountId: string, method: "email" | "passkey" = "email") {
+    const cookie = (await createSession(env.PLATFORM_DB, accountId, method, w.clock.now, method === "passkey" ? "cred-1" : null)).split(";")[0]!;
     const a = app(w);
     return async (path: string, init: { method?: string; origin?: string } = {}) => {
       const ctx = createExecutionContext();
@@ -408,11 +409,11 @@ describe("taking your OpenPing with you", () => {
     const [exp] = await accountExports(env.PLATFORM_DB, t.accountId);
     expect(exp).toMatchObject({ reason: "self_host", state: "done" });
     expect(page).toContain(`href="/account/export/${exp!.id}/openping.sql"`);
-    expect(page).toContain("Show my key");
+    expect(page).toContain(`action="/account/export/${exp!.id}/key"`);
     const dump = await browse(`/account/export/${exp!.id}/openping.sql`);
     expect(dump.headers.get("content-disposition")).toBe(`attachment; filename="openping-${t.slug}-${new Date(exp!.createdAt).toISOString().slice(0, 10)}.sql"`);
     expect(dump.headers.get("cache-control")).toBe("no-store");
-    expect(await dump.text()).toBe(DUMP);
+    expect(new TextDecoder().decode(await dump.arrayBuffer())).toBe(DUMP);
     const steps = await (await browse(`/account/export/${exp!.id}/README.md`)).text();
     expect(steps).toContain(`This is https://${t.slug}.${DOMAIN}`);
     expect(steps).not.toContain(PLATFORM_KEY);
@@ -442,7 +443,9 @@ describe("taking your OpenPing with you", () => {
     const w = world();
     const t = await tenant(w, { status: "active", trialEndsAt: null });
     const browse = await signedIn(w, t.accountId);
-    const res = await browse("/account/export/key", { method: "POST" });
+    await browse("/account/export", { method: "POST" });
+    const [exp] = await accountExports(env.PLATFORM_DB, t.accountId);
+    const res = await browse(`/account/export/${exp!.id}/key`, { method: "POST" });
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     const { masterKey } = await ensureMasterKey(env.PLATFORM_DB, t.id, PLATFORM_KEY, 0);
@@ -453,7 +456,7 @@ describe("taking your OpenPing with you", () => {
     expect(audited.results).toEqual([{ actor: "customer" }]);
 
     w.clock.now += 16 * 60_000;
-    const stale = await browse("/account/export/key", { method: "POST" });
+    const stale = await browse(`/account/export/${exp!.id}/key`, { method: "POST" });
     expect(stale.status).toBe(401);
     expect(await stale.text()).toContain("Sign in again first");
   });
@@ -476,3 +479,167 @@ describe("taking your OpenPing with you", () => {
     expect(text).not.toMatch(/—/);
   });
 });
+
+describe("the review's cases", () => {
+  const sentNotice = (tenantId: string, kind: string, cycle: string, at: number) =>
+    env.PLATFORM_DB.prepare("INSERT INTO lifecycle_notices (tenant_id, kind, cycle, state, claimed_at, sent_at) VALUES (?, ?, ?, 'sent', ?, ?)").bind(tenantId, kind, cycle, at, at).run();
+
+  it("doesn't let tenants already emailed fill the window and starve newer ones", async () => {
+    const w = world();
+    for (let i = 0; i < 51; i++) {
+      const t = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 10 * DAY, suspendedAt: w.clock.now - 5 * DAY - i * 60_000 });
+      await sentNotice(t.id, "suspended", String(w.clock.now - 5 * DAY - i * 60_000), w.clock.now - DAY);
+      const p = await tenant(w, { status: "past_due", trialEndsAt: null });
+      await sentNotice(p.id, "payment_failed", "current", w.clock.now - DAY);
+    }
+    const late = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 10 * DAY, suspendedAt: w.clock.now - 60_000 });
+    const lateDue = await tenant(w, { status: "past_due", trialEndsAt: null });
+    await tick(w);
+    expect(kinds(w, late.email)).toEqual(["suspended"]);
+    expect(kinds(w, lateDue.email)).toEqual(["payment_failed"]);
+  });
+
+  it("doesn't let deletions waiting on an export starve the ones behind them", async () => {
+    const w = world();
+    const at = w.clock.now - 31 * DAY;
+    for (let i = 0; i < 51; i++) {
+      const t = await tenant(w, { status: "suspended", trialEndsAt: at - DAY, suspendedAt: at - i * 60_000 });
+      await sentNotice(t.id, "deletion_warning", String(at - i * 60_000), at);
+      const id = await requestExport(env.PLATFORM_DB, { tenantId: t.id, accountId: t.accountId, slug: t.slug, reason: "deletion", now: w.clock.now });
+      await env.PLATFORM_DB.prepare("UPDATE tenant_exports SET next_at = ? WHERE id = ?").bind(w.clock.now + DAY, id).run();
+    }
+    const last = await tenant(w, { status: "suspended", trialEndsAt: at - DAY, suspendedAt: at + 60_000 });
+    await sentNotice(last.id, "deletion_warning", String(at + 60_000), at + 60_000);
+    await tick(w);
+    expect((await accountExports(env.PLATFORM_DB, last.accountId)).map((e) => e.reason)).toEqual(["deletion"]);
+  });
+
+  it("keeps a deleted tenant's key with its export, shows it for that export, and drops both when it expires", async () => {
+    const w = world();
+    const t = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 24 * DAY, suspendedAt: w.clock.now - 23 * DAY });
+    const { masterKey } = await ensureMasterKey(env.PLATFORM_DB, t.id, PLATFORM_KEY, 0);
+    await tick(w);
+    w.clock.now += WARNING_BEFORE_MS;
+    await tick(w);
+    await tick(w);
+    expect(await exists(t.id)).toBeNull();
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM escrowed_keys WHERE tenant_id = ?").bind(t.id).first("n")).toBe(0);
+    const [exp] = await accountExports(env.PLATFORM_DB, t.accountId);
+    const browse = await (async () => {
+      const cookie = (await createSession(env.PLATFORM_DB, t.accountId, "email", w.clock.now)).split(";")[0]!;
+      const a = createApp({
+        dispatcher: () => new FakeDispatcher(),
+        capability: () => noopPlatform,
+        accounts: { mailer: () => w.mailer, provisioning: () => ({ ok: false, missing: ["none"] }), now: () => w.clock.now },
+        exports: { exports: () => w.deps.exports, mailer: () => w.mailer, now: () => w.clock.now },
+      });
+      return async (path: string, method = "GET") => {
+        const ctx = createExecutionContext();
+        const headers = new Headers({ cookie, ...(method === "POST" ? { origin: APP } : {}) });
+        const res = await a.fetch(new Request(`${APP}${path}`, { method, headers, redirect: "manual" }), { ...(env as unknown as PlatformEnv), PLATFORM_KEY }, ctx);
+        await waitOnExecutionContext(ctx);
+        return res;
+      };
+    })();
+    expect(await (await browse("/account/export")).text()).toContain(`/account/export/${exp!.id}/key`);
+    expect(await (await browse(`/account/export/${exp!.id}/key`, "POST")).text()).toContain(`<code class="key">${masterKey}</code>`);
+    w.clock.now += 31 * DAY;
+    await tick(w);
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM export_keys WHERE export_id = ?").bind(exp!.id).first("n")).toBe(0);
+  });
+
+  it("counts only a warning the provider took, and takes over a dead run's claim", async () => {
+    const w = world();
+    const t = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 32 * DAY, suspendedAt: w.clock.now - 31 * DAY });
+    const cycle = String(w.clock.now - 31 * DAY);
+    await sentNotice(t.id, "suspended", cycle, w.clock.now - 31 * DAY);
+    // A run claimed the warning a while ago and died before Resend answered.
+    await env.PLATFORM_DB.prepare("INSERT INTO lifecycle_notices (tenant_id, kind, cycle, state, claimed_at) VALUES (?, 'deletion_warning', ?, 'sending', ?)")
+      .bind(t.id, cycle, w.clock.now - 8 * DAY)
+      .run();
+    const report = await tick(w);
+    expect(report.deleted).toEqual([]);
+    expect(kinds(w, t.email)).toEqual(["deletion_warning"]);
+    const row = await env.PLATFORM_DB.prepare("SELECT state, sent_at FROM lifecycle_notices WHERE tenant_id = ? AND kind = 'deletion_warning'").bind(t.id).first();
+    expect(row).toEqual({ state: "sent", sent_at: w.clock.now });
+    // A fresh claim by a live run is left alone.
+    const other = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 2 * DAY, suspendedAt: w.clock.now - DAY });
+    await env.PLATFORM_DB.prepare("INSERT INTO lifecycle_notices (tenant_id, kind, cycle, state, claimed_at) VALUES (?, 'suspended', ?, 'sending', ?)")
+      .bind(other.id, String(w.clock.now - DAY), w.clock.now - NOTICE_CLAIM_STALE_MS / 2)
+      .run();
+    await tick(w);
+    expect(kinds(w, other.email)).toEqual([]);
+    w.clock.now += WARNING_BEFORE_MS - 3_600_000;
+    await tick(w);
+    expect(await exists(t.id)).toBe("ready");
+  });
+
+  it("never deletes behind a dump that changed or isn't an OpenPing database", async () => {
+    const w = world();
+    const t = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 24 * DAY, suspendedAt: w.clock.now - 23 * DAY });
+    await tick(w);
+    w.clock.now += WARNING_BEFORE_MS;
+    await tick(w); // exported
+    const [exp] = await accountExports(env.PLATFORM_DB, t.accountId);
+    // Same size, other bytes.
+    w.bucket.putText(`${exp!.r2Prefix}openping.sql`, DUMP.replace("mon_1", "mon_2"));
+    const report = await tick(w);
+    expect(report.waiting).toEqual([{ tenantId: t.id, why: "its export can't be trusted: its dump doesn't match its checksum" }]);
+    expect(await exists(t.id)).toBe("ready");
+
+    // A D1 export that isn't an OpenPing dump is never done.
+    const w2 = world();
+    w2.deps.exports!.fetchDump = async () => new Response("<html>error page</html>");
+    const u = await tenant(w2, { status: "active", trialEndsAt: null });
+    const id = await requestExport(env.PLATFORM_DB, { tenantId: u.id, accountId: u.accountId, slug: u.slug, reason: "self_host", now: w2.clock.now });
+    expect(await advanceExport({ ...w2.deps.exports!, db: env.PLATFORM_DB, now: () => w2.clock.now }, id, { tenantUrl: "x", accountUrl: "y" })).toMatchObject({
+      kind: "retry",
+      error: "the dump doesn't look like SQL",
+    });
+  });
+
+  it("wants a passkey sign-in for the key when the account has a passkey", async () => {
+    const w = world();
+    const t = await tenant(w, { status: "active", trialEndsAt: null });
+    await env.PLATFORM_DB.prepare(
+      "INSERT INTO account_identities (id, account_id, kind, subject, public_key, alg, created_at) VALUES ('idn_pk', ?, 'passkey', 'cred-1', 'pk', -7, 0)",
+    ).bind(t.accountId).run();
+    const exportId = await requestExport(env.PLATFORM_DB, { tenantId: t.id, accountId: t.accountId, slug: t.slug, reason: "self_host", now: w.clock.now });
+    await advanceExport({ ...w.deps.exports!, db: env.PLATFORM_DB, now: () => w.clock.now }, exportId, { tenantUrl: "x", accountUrl: "y" });
+    const viaEmail = await signedInFor(w, t.accountId, "email");
+    const refused = await viaEmail(`/account/export/${exportId}/key`, "POST");
+    expect(refused.status).toBe(401);
+    expect(await refused.text()).toContain("with your passkey");
+    const viaPasskey = await signedInFor(w, t.accountId, "passkey");
+    expect((await viaPasskey(`/account/export/${exportId}/key`, "POST")).status).toBe(200);
+  });
+
+  it("runs one lifecycle at a time, and one run per export", async () => {
+    const w = world();
+    await env.PLATFORM_DB.prepare("INSERT INTO lifecycle_locks (name, until, token) VALUES ('tick', ?, 'other')").bind(w.clock.now + 60_000).run();
+    expect(await lifecycleTick(w.deps)).toBeNull();
+    await env.PLATFORM_DB.prepare("DELETE FROM lifecycle_locks").run();
+    const t = await tenant(w, { status: "active", trialEndsAt: null });
+    const id = await requestExport(env.PLATFORM_DB, { tenantId: t.id, accountId: t.accountId, slug: t.slug, reason: "self_host", now: w.clock.now });
+    const deps = { ...w.deps.exports!, db: env.PLATFORM_DB, now: () => w.clock.now };
+    const [a, b] = await Promise.all([advanceExport(deps, id, { tenantUrl: "x", accountUrl: "y" }), advanceExport(deps, id, { tenantUrl: "x", accountUrl: "y" })]);
+    expect([a.kind, b.kind].sort()).toEqual(["done", "waiting"]);
+  });
+});
+
+async function signedInFor(w: World, accountId: string, method: "email" | "passkey") {
+  const cookie = (await createSession(env.PLATFORM_DB, accountId, method, w.clock.now, method === "passkey" ? "cred-1" : null)).split(";")[0]!;
+  const a = createApp({
+    dispatcher: () => new FakeDispatcher(),
+    capability: () => noopPlatform,
+    accounts: { mailer: () => w.mailer, provisioning: () => ({ ok: false, missing: ["none"] }), now: () => w.clock.now },
+    exports: { exports: () => w.deps.exports, mailer: () => w.mailer, now: () => w.clock.now },
+  });
+  return async (path: string, method2 = "GET") => {
+    const ctx = createExecutionContext();
+    const headers = new Headers({ cookie, ...(method2 === "POST" ? { origin: APP } : {}) });
+    const res = await a.fetch(new Request(`${APP}${path}`, { method: method2, headers, redirect: "manual" }), { ...(env as unknown as PlatformEnv), PLATFORM_KEY }, ctx);
+    await waitOnExecutionContext(ctx);
+    return res;
+  };
+}

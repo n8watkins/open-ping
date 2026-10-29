@@ -89,7 +89,8 @@ A customer who comes back subscribes again from their account page.
 
 **Recommendation:** before a tenant is deleted (decision D8), the platform exports its database to the private `openping-tenant-exports` bucket and keeps that export 30 more days, so the customer can still download it from their account page, and the owner can restore it.
 A customer's own export, from the account page, is kept 7 days.
-The customer may see their OpenPing's `MASTER_KEY` on the account page, after a sign-in from the last 15 minutes; it is never emailed or put in a download, the account is emailed each time it is shown, and it is in the audit log.
+Each export keeps the escrowed copy of the `MASTER_KEY` its encrypted values are sealed with (still encrypted with `PLATFORM_KEY`, in `export_keys`), so a deletion export stays readable after the tenant and its escrowed key are gone; the key and the export's files are deleted together when the export expires.
+The customer may see an export's key on the account page, after a sign-in from the last 15 minutes (a passkey sign-in, when the account has a passkey); it is never emailed or put in a download, the account is emailed each time it is shown, and it is in the audit log.
 
 **Why:**
 

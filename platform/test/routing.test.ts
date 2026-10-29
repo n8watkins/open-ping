@@ -94,6 +94,8 @@ describe("the platform database", () => {
       "email_logins",
       "email_recipients",
       "escrowed_keys",
+      "export_keys",
+      "lifecycle_locks",
       "lifecycle_notices",
       "platform_sessions",
       "rate_limits",

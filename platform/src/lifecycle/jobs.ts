@@ -37,8 +37,8 @@ import { appOrigin, tenantOrigin } from "../hosts";
 import { PLATFORM_REPLY_TO, type Mailer } from "../mail";
 import { runProvisioning, type ProvisioningDeps } from "../provisioning";
 import { forgetTenant, hostedUrls } from "../tenants";
-import type { BillingTenant, BillingView } from "./billing-view";
-import { OPEN_EXPORTS_SQL, advanceExport, expireExports, exportIsStored, latestExport, requestExport, type ExportDeps, type ExportOutcome } from "./exports";
+import type { BillingTenant, BillingView, Unnotified } from "./billing-view";
+import { OPEN_EXPORTS_SQL, advanceExport, expireExports, exportVerificationProblem, latestExport, requestExport, type ExportDeps, type ExportOutcome } from "./exports";
 
 const DAY = 86_400_000;
 /** Decision D8: data is kept this long after billing suspends a tenant. */
@@ -86,34 +86,62 @@ async function audit(db: D1Database, tenant: Pick<BillingTenant, "tenantId" | "a
     .run();
 }
 
-/** When the warning for this suspension went out, or null. */
-async function warnedAt(db: D1Database, tenantId: string, cycle: string): Promise<number | null> {
-  const row = await db
-    .prepare("SELECT sent_at FROM lifecycle_notices WHERE tenant_id = ? AND kind = 'deletion_warning' AND cycle = ?")
-    .bind(tenantId, cycle)
-    .first<{ sent_at: number }>();
-  return row?.sent_at ?? null;
-}
+/** A claim older than this was left by a run that died before the mail provider answered; it is taken again. */
+export const NOTICE_CLAIM_STALE_MS = 10 * 60_000;
+/** How long one lifecycle run holds its lock (longer than a run takes, short enough that a dead one frees it). */
+export const LIFECYCLE_LOCK_MS = 10 * 60_000;
 
-/** When a suspended tenant is deleted: 30 days after the suspension, and never sooner than a week after its warning. */
+/** When a suspended tenant is deleted: 30 days after the suspension, and never sooner than a week after its warning was sent. */
 export function deletionTime(suspendedAt: number, warningSentAt: number | null): number | null {
   if (warningSentAt === null) return null;
   return Math.max(suspendedAt + DELETE_AFTER_MS, warningSentAt + WARNING_BEFORE_MS);
 }
 
-export async function lifecycleTick(deps: LifecycleDeps): Promise<LifecycleReport> {
+/**
+ * One run of the jobs, under a lock, so the cron's overlapping minutes never
+ * run two at once (two exports of one tenant, two claims of one email).
+ * Answers null when another run holds the lock.
+ */
+export async function lifecycleTick(deps: LifecycleDeps): Promise<LifecycleReport | null> {
+  const now = deps.now ?? Date.now;
+  const token = crypto.randomUUID();
+  const locked = await deps.db
+    .prepare(
+      `INSERT INTO lifecycle_locks (name, until, token) VALUES ('tick', ?1, ?2)
+       ON CONFLICT(name) DO UPDATE SET until = excluded.until, token = excluded.token WHERE lifecycle_locks.until <= ?3`,
+    )
+    .bind(now() + LIFECYCLE_LOCK_MS, token, now())
+    .run();
+  if ((locked.meta.changes ?? 0) === 0) return null;
+  try {
+    return await runJobs(deps);
+  } finally {
+    await deps.db.prepare("DELETE FROM lifecycle_locks WHERE name = 'tick' AND token = ?").bind(token).run();
+  }
+}
+
+async function runJobs(deps: LifecycleDeps): Promise<LifecycleReport> {
   const now = deps.now ?? Date.now;
   const db = deps.db;
   const report: LifecycleReport = { sent: {}, exports: [], deleted: [], waiting: [], expired: 0 };
   const app = appOrigin(deps.hostedDomain);
   const links = (t: BillingTenant) => ({ tenantUrl: tenantOrigin(t.slug, deps.hostedDomain), ...hostedUrls(t.slug, deps.hostedDomain), exportUrl: `${app}/account/export` });
+  const skip = (kind: NoticeKind, cycle: Unnotified["cycle"]): Unnotified => ({ kind, cycle, staleBefore: now() - NOTICE_CLAIM_STALE_MS });
 
-  /** Claims the notice, sends it, and drops the claim when the send fails. */
+  /**
+   * Claims the notice as sending (or takes over a dead run's stale claim),
+   * sends it, and marks it sent once the provider took it; a failed send
+   * drops the claim, so the next run tries again.
+   */
   async function notice(t: BillingTenant, kind: NoticeKind, cycle: string, render: () => RenderedEmail): Promise<boolean> {
     if (!deps.mailer) return false;
     const claimed = await db
-      .prepare("INSERT INTO lifecycle_notices (tenant_id, kind, cycle, sent_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING")
-      .bind(t.tenantId, kind, cycle, now())
+      .prepare(
+        `INSERT INTO lifecycle_notices (tenant_id, kind, cycle, state, claimed_at) VALUES (?1, ?2, ?3, 'sending', ?4)
+         ON CONFLICT (tenant_id, kind, cycle) DO UPDATE SET claimed_at = excluded.claimed_at
+         WHERE lifecycle_notices.state = 'sending' AND lifecycle_notices.claimed_at < ?5`,
+      )
+      .bind(t.tenantId, kind, cycle, now(), now() - NOTICE_CLAIM_STALE_MS)
       .run();
     if ((claimed.meta.changes ?? 0) === 0) return false;
     const email = render();
@@ -123,13 +151,15 @@ export async function lifecycleTick(deps: LifecycleDeps): Promise<LifecycleRepor
       category: kind,
       tenantId: t.tenantId,
       replyTo: PLATFORM_REPLY_TO,
+      // A retaken claim whose first send did go out is one email at Resend.
       idempotencyKey: `lifecycle-${t.tenantId}-${kind}-${cycle}`,
     });
     if (!result.ok) {
-      await db.prepare("DELETE FROM lifecycle_notices WHERE tenant_id = ? AND kind = ? AND cycle = ?").bind(t.tenantId, kind, cycle).run();
+      await db.prepare("DELETE FROM lifecycle_notices WHERE tenant_id = ? AND kind = ? AND cycle = ? AND state = 'sending'").bind(t.tenantId, kind, cycle).run();
       console.error("[lifecycle] email not sent", { tenant: t.tenantId, kind, error: result.error });
       return false;
     }
+    await db.prepare("UPDATE lifecycle_notices SET state = 'sent', sent_at = ? WHERE tenant_id = ? AND kind = ? AND cycle = ?").bind(now(), t.tenantId, kind, cycle).run();
     report.sent[kind] = (report.sent[kind] ?? 0) + 1;
     await audit(db, t, "lifecycle.email_sent", { kind }, now());
     return true;
@@ -137,17 +167,19 @@ export async function lifecycleTick(deps: LifecycleDeps): Promise<LifecycleRepor
 
   // --- Emails ---------------------------------------------------------------
 
-  for (const t of await deps.billing.newlyReady(now() - WELCOME_WINDOW_MS, BATCH)) {
-    if (t.status === "suspended") continue;
+  for (const t of await deps.billing.newlyReady(now() - WELCOME_WINDOW_MS, BATCH, skip("welcome", "once"))) {
     await notice(t, "welcome", "once", () =>
       welcomeEmail({ tenantUrl: links(t).tenantUrl, trialEndsAt: t.status === "trial" ? t.trialEndsAt : null, monitors: PLAN_LIMITS.trial.monitors }),
     );
   }
 
-  for (const t of await deps.billing.trialsEnding(now(), now() + TRIAL_NOTICE_DAYS[0] * DAY, BATCH)) {
-    const left = t.trialEndsAt! - now();
-    // Only the nearer one when both are due (a trial that began less than 3 days before its end, or a late run).
-    const days = left <= TRIAL_NOTICE_DAYS[1] * DAY ? 1 : 3;
+  // The 1-day email first, then the 3-day one for trials further out, each
+  // list leaving out the tenants that already have theirs.
+  const oneDay = await deps.billing.trialsEnding(now(), now() + TRIAL_NOTICE_DAYS[1] * DAY, BATCH, skip("trial_ending_1", "trial_ends_at"));
+  const threeDays = (await deps.billing.trialsEnding(now() + TRIAL_NOTICE_DAYS[1] * DAY, now() + TRIAL_NOTICE_DAYS[0] * DAY, BATCH, skip("trial_ending_3", "trial_ends_at"))).map(
+    (t) => ({ t, days: 3 as const }),
+  );
+  for (const { t, days } of [...oneDay.map((t) => ({ t, days: 1 as const })), ...threeDays]) {
     await notice(t, days === 1 ? "trial_ending_1" : "trial_ending_3", String(t.trialEndsAt), () =>
       trialEndingEmail({ tenantUrl: links(t).tenantUrl, endsAt: t.trialEndsAt!, daysLeft: days, upgradeUrl: links(t).upgrade, deleteAfterDays: DELETE_AFTER_MS / DAY }),
     );
@@ -155,54 +187,44 @@ export async function lifecycleTick(deps: LifecycleDeps): Promise<LifecycleRepor
 
   // A tenant no longer past due may fail again later: that is a new email.
   await db.prepare("DELETE FROM lifecycle_notices WHERE kind = 'payment_failed' AND tenant_id NOT IN (SELECT id FROM tenants WHERE status = 'past_due')").run();
-  for (const t of await deps.billing.pastDue(BATCH)) {
+  for (const t of await deps.billing.pastDue(BATCH, skip("payment_failed", "current"))) {
     await notice(t, "payment_failed", "current", () => paymentFailedEmail({ tenantUrl: links(t).tenantUrl, billingUrl: links(t).billing, suspendAt: null }));
   }
 
-  const suspended = await deps.billing.suspended(BATCH);
-  for (const t of suspended) {
-    const cycle = String(t.suspendedAt);
+  for (const t of await deps.billing.suspended(now(), BATCH, skip("suspended", "suspended_at"))) {
     const reason = await deps.billing.suspensionReason(t);
-    await notice(t, "suspended", cycle, () =>
+    await notice(t, "suspended", String(t.suspendedAt), () =>
       suspendedEmail({ tenantUrl: links(t).tenantUrl, reason, billingUrl: links(t).billing, accountUrl: links(t).exportUrl, deleteAt: t.suspendedAt! + DELETE_AFTER_MS }),
     );
-    if (now() >= t.suspendedAt! + DELETE_AFTER_MS - WARNING_BEFORE_MS) {
-      const deleteAt = Math.max(t.suspendedAt! + DELETE_AFTER_MS, now() + WARNING_BEFORE_MS);
-      await notice(t, "deletion_warning", cycle, () =>
-        deletionWarningEmail({ tenantUrl: links(t).tenantUrl, deleteAt, billingUrl: links(t).billing, accountUrl: links(t).exportUrl }),
-      );
-    }
+  }
+
+  for (const t of await deps.billing.suspended(now() - (DELETE_AFTER_MS - WARNING_BEFORE_MS), BATCH, skip("deletion_warning", "suspended_at"))) {
+    const deleteAt = Math.max(t.suspendedAt! + DELETE_AFTER_MS, now() + WARNING_BEFORE_MS);
+    await notice(t, "deletion_warning", String(t.suspendedAt), () =>
+      deletionWarningEmail({ tenantUrl: links(t).tenantUrl, deleteAt, billingUrl: links(t).billing, accountUrl: links(t).exportUrl }),
+    );
   }
 
   // --- Exports, and the deletions waiting on them ---------------------------
 
   if (deps.exports) {
     const exportDeps: ExportDeps = { ...deps.exports, db, now };
-    for (const t of suspended) {
-      const due = deletionTime(t.suspendedAt!, await warnedAt(db, t.tenantId, String(t.suspendedAt)));
-      if (due === null) {
-        if (now() >= t.suspendedAt! + DELETE_AFTER_MS) report.waiting.push({ tenantId: t.tenantId, why: "its deletion warning hasn't gone out yet" });
-        continue;
-      }
-      if (now() < due) continue;
+    // Past their 30 days, warned a week or more ago, and not waiting on an export.
+    const due = await deps.billing.dueForDeletion(now() - DELETE_AFTER_MS, now() - WARNING_BEFORE_MS, now() - EXPORT_RETRY_AFTER_MS, BATCH);
+    for (const t of due) {
       const exp = await latestExport(db, t.tenantId, "deletion", t.suspendedAt!);
-      if (!exp || (exp.state === "failed" && now() - (exp.finishedAt ?? exp.createdAt) >= EXPORT_RETRY_AFTER_MS)) {
+      if (!exp || exp.state === "failed") {
+        if (exp) await audit(db, t, "lifecycle.export_retried", { previous: exp.id, error: exp.error }, now());
         await requestExport(db, { tenantId: t.tenantId, accountId: t.accountId, slug: t.slug, reason: "deletion", now: now() });
-        report.waiting.push({ tenantId: t.tenantId, why: "its export has just been asked for" });
+        report.waiting.push({ tenantId: t.tenantId, why: exp ? `its export failed (${exp.error ?? "no reason"}); a new one has been asked for` : "its export has just been asked for" });
         continue;
       }
-      if (exp.state === "failed") {
-        report.waiting.push({ tenantId: t.tenantId, why: `its export failed: ${exp.error ?? "no reason"}` });
-        continue;
-      }
-      if (exp.state !== "done") {
-        report.waiting.push({ tenantId: t.tenantId, why: "its export is running" });
-        continue;
-      }
-      // Done on the row isn't enough: the files must be in the bucket.
-      if (!(await exportIsStored(deps.exports.bucket, exp))) {
-        await db.prepare("UPDATE tenant_exports SET state = 'failed', error = 'its files are missing from the bucket', finished_at = ? WHERE id = ?").bind(now(), exp.id).run();
-        report.waiting.push({ tenantId: t.tenantId, why: "its export's files are missing" });
+      // Done on the row isn't enough: the files must read back as the same OpenPing dump.
+      const problem = await exportVerificationProblem(db, deps.exports.bucket, exp);
+      if (problem) {
+        await db.prepare("UPDATE tenant_exports SET state = 'failed', error = ?, finished_at = ? WHERE id = ?").bind(problem, now(), exp.id).run();
+        await audit(db, t, "lifecycle.export_failed", { export: exp.id, error: problem }, now());
+        report.waiting.push({ tenantId: t.tenantId, why: `its export can't be trusted: ${problem}` });
         continue;
       }
       if (!deps.provisioning) {
@@ -222,17 +244,28 @@ export async function lifecycleTick(deps: LifecycleDeps): Promise<LifecycleRepor
       if ((marked.meta.changes ?? 0) === 0) continue;
       forgetTenant(t.slug);
       await audit(db, t, "tenant.deletion_started", { export: exp.id, suspendedAt: t.suspendedAt, bytes: exp.bytes }, now());
-      // The teardown; if it fails, provisioning's sweep keeps retrying it.
+      // The teardown deletes the escrowed key; the export keeps its own copy (export_keys).
       await runProvisioning(deps.provisioning, t.tenantId, { force: true }).catch((error) => console.error("[lifecycle] teardown failed", { tenant: t.tenantId }, error));
       report.deleted.push(t.tenantId);
     }
 
+    // Suspended past their time but not warned yet (mail was off): said, so the owner sees it.
+    const unwarned = await db
+      .prepare(
+        `SELECT t.id FROM tenants t WHERE t.status = 'suspended' AND t.suspended_at <= ? AND t.provision_state <> 'deleting'
+           AND NOT EXISTS (SELECT 1 FROM lifecycle_notices n WHERE n.tenant_id = t.id AND n.kind = 'deletion_warning' AND n.cycle = CAST(t.suspended_at AS TEXT) AND n.state = 'sent')
+         LIMIT ?`,
+      )
+      .bind(now() - DELETE_AFTER_MS, BATCH)
+      .all<{ id: string }>();
+    for (const r of unwarned.results) report.waiting.push({ tenantId: r.id, why: "its deletion warning hasn't gone out yet" });
+
     const open = await db.prepare(OPEN_EXPORTS_SQL).bind(now(), 10).all<{ id: string }>();
     for (const { id } of open.results) {
       const row = await db.prepare("SELECT slug FROM tenant_exports WHERE id = ?").bind(id).first<{ slug: string }>();
-      report.exports.push(
-        await advanceExport(exportDeps, id, { tenantUrl: tenantOrigin(row?.slug ?? "", deps.hostedDomain), accountUrl: `${app}/account/export` }),
-      );
+      const outcome = await advanceExport(exportDeps, id, { tenantUrl: tenantOrigin(row?.slug ?? "", deps.hostedDomain), accountUrl: `${app}/account/export` });
+      report.exports.push(outcome);
+      if (outcome.kind === "failed") console.error("[lifecycle] export failed for good", outcome);
     }
     report.expired = await expireExports(exportDeps);
   }

@@ -7,9 +7,11 @@
  * - The export is the same pipeline as the one before a deletion
  *   (./exports.ts), started here and finished by the cron; it is kept 7 days.
  * - The files download only to the account that owns them, from this origin.
- * - The key is shown only after a sign-in from the last 15 minutes, never
- *   emailed and never in a download, and the account is emailed each time it
- *   is shown, the way a new passkey is.
+ * - The key is each export's own (kept with it in export_keys, so it still
+ *   opens after a deletion, decision D12), shown only after a sign-in from
+ *   the last 15 minutes (a passkey sign-in, when the account has a passkey),
+ *   never emailed and never in a download, and the account is emailed each
+ *   time it is shown, the way a new passkey is.
  * - After a deletion the account still reaches its last export here, for as
  *   long as it is kept.
  */
@@ -23,7 +25,7 @@ import { readSession, type Session } from "../auth/sessions";
 import { keyRevealedEmail } from "../emails";
 import type { PlatformEnv } from "../env";
 import { appOrigin, requestTenantOrigin } from "../hosts";
-import { activeEscrowedKey, openEscrowedKey } from "../keys";
+import { openEscrowedKey } from "../keys";
 import { PLATFORM_REPLY_TO, type Mailer } from "../mail";
 import { Html, html, notice, renderPage } from "../ui";
 import { accountExports, advanceExport, getExport, requestExport, type ExportDeps, type TenantExport } from "./exports";
@@ -76,7 +78,8 @@ function exportRow(e: TenantExport, now: number): Html {
   const why = e.reason === "deletion" ? "Made before deletion" : "Your export";
   if (e.state === "done" && e.expiresAt && e.expiresAt > now) {
     return html`<li><div class="what"><strong>${why}, ${when}</strong><span>${sizeText(e.bytes)}, kept until ${dateText(e.expiresAt)}</span></div>
-<div class="row-actions"><a class="button secondary small" href="/account/export/${e.id}/openping.sql" download>Database</a><a class="button secondary small" href="/account/export/${e.id}/README.md" download>Steps</a></div></li>`;
+<div class="row-actions"><a class="button secondary small" href="/account/export/${e.id}/openping.sql" download>Database</a><a class="button secondary small" href="/account/export/${e.id}/README.md" download>Steps</a>
+<form method="post" action="/account/export/${e.id}/key"><button class="button secondary small" type="submit">Key</button></form></div></li>`;
   }
   const state = e.state === "failed" ? "Didn't finish; we've been told" : e.state === "done" ? "No longer kept" : "Being made";
   return html`<li><div class="what"><strong>${why}, ${when}</strong><span>${state}</span></div></li>`;
@@ -105,9 +108,8 @@ ${
 ${
   done
     ? html`<section><h2>Your key</h2>
-<p>Passwords, tokens and webhook URLs in the database are encrypted with your OpenPing's key. You need it to read them on your own install; keep it in your password manager, apart from the download.</p>
-<form method="post" action="/account/export/key"><div class="stack"><button class="button secondary" type="submit">Show my key</button></div></form>
-<p class="hint">We ask you to sign in again first if you signed in more than 15 minutes ago, and we email you each time it's shown.</p></section>
+<p>Passwords, tokens and webhook URLs in the database are encrypted with your OpenPing's key. You need it to read them on your own install; keep it in your password manager, apart from the download. Each export's <strong>Key</strong> button shows the key that export needs, for as long as the export is kept.</p>
+<p class="hint">We ask you to sign in again first (with your passkey, if you have one) if you signed in more than 15 minutes ago, and we email you each time it's shown.</p></section>
 <section><h2>The steps</h2><ol class="steps">
 <li>Download the database and the steps above.</li>
 <li>Make a database in your Cloudflare account and load the export into it.</li>
@@ -199,29 +201,41 @@ export function accountExportRoutes(deps: AccountExportDeps): Hono<Env> {
     });
   });
 
-  app.post("/key", async (c) => {
+  // The key of one export: the one its encrypted values are sealed with,
+  // kept with it (export_keys), so it still opens after the tenant is gone.
+  app.post("/:id/key", async (c) => {
     const db = c.env.PLATFORM_DB;
     const session = c.get("session")!;
     const now = c.get("now");
-    if (now - session.createdAt > KEY_REVEAL_FRESH_MS) {
+    const id = c.req.param("id");
+    const exp = EXPORT_ID.test(id) ? await getExport(db, id) : null;
+    if (!exp || exp.accountId !== session.account.id || exp.state !== "done" || (exp.expiresAt ?? 0) <= now) {
+      return messagePage({ title: "Not found", body: "There's no such export on your account.", status: 404, action: { href: "/account/export", label: "Your exports" } });
+    }
+    // With a passkey on the account, only a passkey sign-in counts: an inbox alone mustn't open the key.
+    const hasPasskey = await db.prepare("SELECT 1 AS x FROM account_identities WHERE account_id = ? AND kind = 'passkey' LIMIT 1").bind(session.account.id).first();
+    const fresh = now - session.createdAt <= KEY_REVEAL_FRESH_MS && (!hasPasskey || session.method === "passkey");
+    if (!fresh) {
       return messagePage({
         title: "Sign in again first",
-        body: "Your key opens everything in your OpenPing, so we ask for a sign-in from the last 15 minutes before showing it.",
+        body: hasPasskey
+          ? "Your key opens everything in your OpenPing, so we ask for a sign-in with your passkey from the last 15 minutes before showing it."
+          : "Your key opens everything in your OpenPing, so we ask for a sign-in from the last 15 minutes before showing it.",
         status: 401,
         action: { href: "/sign-in?next=%2Faccount%2Fexport", label: "Sign in again" },
       });
     }
-    const tenant = await accountTenant(db, session.account.id);
-    const escrowed = tenant ? await activeEscrowedKey(db, tenant.id) : null;
-    if (!tenant || !escrowed || !c.env.PLATFORM_KEY) {
-      return messagePage({ title: "No key to show", body: "There's no OpenPing on this account whose key we hold.", status: 404, action: { href: "/account/export", label: "Back" } });
+    const escrowed = await db.prepare("SELECT tenant_id, kid, ciphertext FROM export_keys WHERE export_id = ?").bind(exp.id).first<{ tenant_id: string; kid: string; ciphertext: string }>();
+    if (!escrowed || !c.env.PLATFORM_KEY) {
+      return messagePage({ title: "No key to show", body: "We don't hold a key for this export.", status: 404, action: { href: "/account/export", label: "Back" } });
     }
+    const tenant = { id: escrowed.tenant_id, slug: exp.slug };
     if (await hitInOrder(db, [[LIMITS.keyRevealPerAccount, session.account.id]], now)) {
       return messagePage({ title: "Try again tomorrow", body: "Your key has been shown several times today already.", status: 429, action: { href: "/account/export", label: "Back" } });
     }
-    const key = await openEscrowedKey(escrowed, tenant.id, c.env.PLATFORM_KEY);
+    const key = await openEscrowedKey({ kid: escrowed.kid, ciphertext: escrowed.ciphertext }, tenant.id, c.env.PLATFORM_KEY);
     // Recorded before it is shown; and the inbox hears of it, like a new passkey.
-    await audit(db, { accountId: session.account.id, tenantId: tenant.id, actor: "customer", action: "tenant.master_key_revealed", detail: { kid: escrowed.kid }, now });
+    await audit(db, { accountId: session.account.id, tenantId: tenant.id, actor: "customer", action: "tenant.master_key_revealed", detail: { kid: escrowed.kid, export: exp.id }, now });
     const mailer = deps.mailer(c.env);
     if (mailer) {
       const sent = await mailer.send({

@@ -9,6 +9,11 @@
  * version of the schema has (status, trial_ends_at, suspended_at, and the
  * subscriptions table from migration 0001), and the tests use a fake.
  *
+ * Each list leaves out the tenants lifecycle has already dealt with for that
+ * cycle (an email sent or being sent, a deletion waiting on its export), so
+ * a run's window of BATCH rows only ever holds work still to do: tenants
+ * stuck at the front can't starve the ones behind them.
+ *
  * Lifecycle never changes billing's columns. The owner's own suspension
  * (owner_suspended_at) is not billing's and never starts the deletion clock.
  */
@@ -31,17 +36,32 @@ export interface BillingTenant {
   provisionedAt: number | null;
 }
 
+/** A notice already sent, or claimed by a run that is still alive, for a cycle: those tenants are left out. */
+export interface Unnotified {
+  kind: string;
+  /** What names the cycle: a fixed text, or one of the tenant's times. */
+  cycle: "once" | "current" | "trial_ends_at" | "suspended_at";
+  /** A claim older than this (epoch ms) is a dead run's, and counts as not sent. */
+  staleBefore: number;
+}
+
 export interface BillingView {
-  /** Ready trials ending at or before `until` and not yet ended. */
-  trialsEnding(now: number, until: number, limit: number): Promise<BillingTenant[]>;
+  /** Ready trials ending after `now` and at or before `until`. */
+  trialsEnding(now: number, until: number, limit: number, skip: Unnotified): Promise<BillingTenant[]>;
   /** Tenants billing has past due (a renewal failed; Stripe is retrying). */
-  pastDue(limit: number): Promise<BillingTenant[]>;
-  /** Tenants billing has suspended, oldest suspension first, with when. */
-  suspended(limit: number): Promise<BillingTenant[]>;
+  pastDue(limit: number, skip: Unnotified): Promise<BillingTenant[]>;
+  /** Tenants billing suspended at or before `before`, oldest suspension first. */
+  suspended(before: number, limit: number, skip: Unnotified): Promise<BillingTenant[]>;
+  /**
+   * Tenants billing suspended at or before `before` whose deletion warning
+   * was sent at or before `warnedBefore`, and that aren't waiting on an
+   * export (one running, or one that failed after `failedSince`).
+   */
+  dueForDeletion(before: number, warnedBefore: number, failedSince: number, limit: number): Promise<BillingTenant[]>;
   /** Why billing suspended this one. */
   suspensionReason(tenant: BillingTenant): Promise<SuspensionReason>;
   /** Tenants that became ready since `since`, for the welcome email. */
-  newlyReady(since: number, limit: number): Promise<BillingTenant[]>;
+  newlyReady(since: number, limit: number, skip: Unnotified): Promise<BillingTenant[]>;
 }
 
 const COLUMNS = `t.id, t.account_id, a.email, t.slug, t.status, t.trial_ends_at, t.suspended_at, t.provisioned_at
@@ -69,31 +89,65 @@ const fromRow = (r: Row): BillingTenant => ({
   provisionedAt: r.provisioned_at,
 });
 
+const CYCLE_SQL: Record<Unnotified["cycle"], string> = {
+  once: "'once'",
+  current: "'current'",
+  trial_ends_at: "CAST(t.trial_ends_at AS TEXT)",
+  suspended_at: "CAST(t.suspended_at AS TEXT)",
+};
+
+/** `AND NOT EXISTS` a sent (or live) notice of this kind for the tenant's cycle; binds kind and staleBefore. */
+function unnotified(skip: Unnotified): { sql: string; binds: (string | number)[] } {
+  return {
+    sql: ` AND NOT EXISTS (SELECT 1 FROM lifecycle_notices n WHERE n.tenant_id = t.id AND n.kind = ? AND n.cycle = ${CYCLE_SQL[skip.cycle]}
+             AND (n.state = 'sent' OR n.claimed_at >= ?))`,
+    binds: [skip.kind, skip.staleBefore],
+  };
+}
+
 /** Billing's state as the platform database holds it. */
 export class D1BillingView implements BillingView {
   constructor(private readonly db: D1Database) {}
 
-  private async all(sql: string, ...binds: (string | number)[]): Promise<BillingTenant[]> {
-    const rows = await this.db.prepare(`SELECT ${COLUMNS} ${sql}`).bind(...binds).all<Row>();
+  private async all(where: string, binds: (string | number)[], order: string, limit: number): Promise<BillingTenant[]> {
+    const rows = await this.db.prepare(`SELECT ${COLUMNS} WHERE ${where} ORDER BY ${order} LIMIT ?`).bind(...binds, limit).all<Row>();
     return rows.results.map(fromRow);
   }
 
-  trialsEnding(now: number, until: number, limit: number) {
+  trialsEnding(now: number, until: number, limit: number, skip: Unnotified) {
+    const u = unnotified(skip);
     return this.all(
-      "WHERE t.status = 'trial' AND t.provision_state = 'ready' AND t.trial_ends_at > ? AND t.trial_ends_at <= ? ORDER BY t.trial_ends_at LIMIT ?",
-      now,
-      until,
+      `t.status = 'trial' AND t.provision_state = 'ready' AND t.trial_ends_at > ? AND t.trial_ends_at <= ?${u.sql}`,
+      [now, until, ...u.binds],
+      "t.trial_ends_at",
       limit,
     );
   }
 
-  pastDue(limit: number) {
-    return this.all("WHERE t.status = 'past_due' AND t.provision_state = 'ready' ORDER BY t.id LIMIT ?", limit);
+  pastDue(limit: number, skip: Unnotified) {
+    const u = unnotified(skip);
+    return this.all(`t.status = 'past_due' AND t.provision_state = 'ready'${u.sql}`, u.binds, "t.id", limit);
   }
 
-  suspended(limit: number) {
+  suspended(before: number, limit: number, skip: Unnotified) {
+    const u = unnotified(skip);
     return this.all(
-      "WHERE t.status = 'suspended' AND t.suspended_at IS NOT NULL AND t.provision_state <> 'deleting' ORDER BY t.suspended_at LIMIT ?",
+      `t.status = 'suspended' AND t.suspended_at IS NOT NULL AND t.suspended_at <= ? AND t.provision_state <> 'deleting'${u.sql}`,
+      [before, ...u.binds],
+      "t.suspended_at",
+      limit,
+    );
+  }
+
+  dueForDeletion(before: number, warnedBefore: number, failedSince: number, limit: number) {
+    return this.all(
+      `t.status = 'suspended' AND t.suspended_at IS NOT NULL AND t.suspended_at <= ? AND t.provision_state <> 'deleting'
+       AND EXISTS (SELECT 1 FROM lifecycle_notices n WHERE n.tenant_id = t.id AND n.kind = 'deletion_warning'
+                   AND n.cycle = CAST(t.suspended_at AS TEXT) AND n.state = 'sent' AND n.sent_at <= ?)
+       AND NOT EXISTS (SELECT 1 FROM tenant_exports e WHERE e.tenant_id = t.id AND e.reason = 'deletion' AND e.created_at >= t.suspended_at
+                       AND (e.state IN ('requested', 'exporting') OR (e.state = 'failed' AND e.finished_at > ?)))`,
+      [before, warnedBefore, failedSince],
+      "t.suspended_at",
       limit,
     );
   }
@@ -109,7 +163,8 @@ export class D1BillingView implements BillingView {
     return !sub && tenant.trialEndsAt !== null && tenant.suspendedAt !== null && tenant.trialEndsAt <= tenant.suspendedAt ? "trial_ended" : "payment";
   }
 
-  newlyReady(since: number, limit: number) {
-    return this.all("WHERE t.provision_state = 'ready' AND t.provisioned_at >= ? ORDER BY t.provisioned_at LIMIT ?", since, limit);
+  newlyReady(since: number, limit: number, skip: Unnotified) {
+    const u = unnotified(skip);
+    return this.all(`t.provision_state = 'ready' AND t.provisioned_at >= ? AND t.status <> 'suspended'${u.sql}`, [since, ...u.binds], "t.provisioned_at", limit);
   }
 }
