@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.0 - 2026-10-28
+
+### Fixed
+
+- Scheduled check runs now read only recent history instead of recomputing all of it, so installs stay well inside Cloudflare D1's free daily row limits.
+
 ## 0.14.0 - 2026-10-28
 
 _Maintenance release: no user-facing changes._
