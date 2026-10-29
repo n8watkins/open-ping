@@ -36,7 +36,7 @@ These counters hold the address and a number, nothing else.
 
 **The account history (audit log).**
 We keep a record of important events on your account: sign-ins and the method used, a new or removed passkey, an export, each time your encryption key was shown, plan changes, a support sign-in and its reason, and a suspension and its reason.
-It includes the email addresses that confirmed or declined email from your OpenPing.
+It includes the email addresses that confirmed or declined email from your OpenPing, and, when you change your account's email address, the old and the new address.
 It never holds passwords, codes, keys or card details, and it does not record your IP address.
 
 **Billing.**
@@ -151,7 +151,7 @@ No system is perfectly secure; if a breach affects your personal data, we will t
 You can, at any time:
 
 - **See and export your data:** your account page shows your account, sign-in methods, support sign-ins and plan, and lets you download a full export of your OpenPing; for a copy of everything else we hold about you, write to support@n8builds.dev.
-- **Correct it:** change your OpenPing's data yourself; to change your account's email address, write to support.
+- **Correct it:** change your OpenPing's data yourself, and your account's email address on your account page (we send the new address a code first, and tell the old one).
 - **Delete it:** write to support@n8builds.dev from your account's email, and we will delete your OpenPing and your account; we may keep payment records the law requires, and the account history entries needed to show what happened, and we will tell you what we kept.
 - **Object or restrict:** ask us to stop a use of your data based on our legitimate interests.
 - **Complain:** to your local data protection authority, though we would like the chance to help first.

@@ -115,6 +115,19 @@ async function tenantSees(slug: string): Promise<TenantProps["tenant"] | number>
   return res.status === 200 ? ((await res.json()) as TenantProps["tenant"]) : res.status;
 }
 
+describe("an email change", () => {
+  it("moves the Stripe customer's email too, so receipts follow", async () => {
+    const c = await customer();
+    await subscribe(c);
+    const { stripe_customer_id: id } = (await env.PLATFORM_DB.prepare("SELECT stripe_customer_id FROM accounts WHERE id = ?").bind(c.accountId).first<{ stripe_customer_id: string }>())!;
+    const page = await c.browser("/account/email", { form: { email: `moved-${c.slug}@example.com` } });
+    const changeId = /name="change" value="([^"]+)"/.exec(await page.text())![1]!;
+    const code = /Code: (\d{6})/.exec(outbox.sent.at(-1)!.text)![1]!;
+    expect((await c.browser("/account/email/confirm", { form: { change: changeId, code } })).status).toBe(303);
+    expect(stripe.customers.get(id)!.email).toBe(`moved-${c.slug}@example.com`);
+  });
+});
+
 /** Signs up for `plan` through Checkout and Stripe; answers the subscription. */
 async function subscribe(c: Awaited<ReturnType<typeof customer>>, plan: "hosted" | "hosted_fast" = "hosted") {
   const res = await c.browser("/billing/checkout", { form: { plan } });

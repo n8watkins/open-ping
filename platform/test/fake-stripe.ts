@@ -24,6 +24,7 @@ export interface FakeEvent {
 
 type Method =
   | "createCustomer"
+  | "updateCustomerEmail"
   | "createCheckoutSession"
   | "createPortalSession"
   | "retrieveSubscription"
@@ -95,6 +96,14 @@ export class FakeStripe implements StripeApi {
       return { id: customer.id };
     });
   }
+  async updateCustomerEmail(id: string, email: string, idempotencyKey: string) {
+    this.enter("updateCustomerEmail", idempotencyKey);
+    const customer = this.customers.get(id);
+    if (!customer) throw new StripeApiError(400, "invalid_request_error", "resource_missing", "No such customer");
+    customer.email = email;
+    return { id };
+  }
+
 
   async createCheckoutSession(input: CheckoutInput, idempotencyKey: string) {
     this.enter("createCheckoutSession", idempotencyKey);

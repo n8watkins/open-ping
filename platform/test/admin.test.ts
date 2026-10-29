@@ -865,41 +865,40 @@ describe("usage reported by a tenant", () => {
 // --- Review fixes ------------------------------------------------------------------
 
 describe("the owner's inbox alone", () => {
-  it("can't open the console, even with a passkey it registered before anything was pinned", async () => {
-    const tenant = await addTenant();
+  it("can't add a passkey to the owner's account, which already has one", async () => {
     const real = await personWithPasskey();
     owners = real.accountId;
-    // Someone with the inbox signs in by code and adds their own passkey: allowed, since nothing is pinned yet...
     const attacker = new Browser();
     await attacker.signInWithCode(real.email);
+    const refused = await attacker.fetch("/account/passkeys/options", { json: {} });
+    expect(refused.status).toBe(401);
+    expect(((await refused.json()) as { error: string }).error).toBe("sign_in_again");
+  });
+
+  it("can't open the console, even with a passkey it registered before the owner had any", async () => {
+    const tenant = await addTenant();
+    const email = newEmail();
+    // Someone with the inbox signs in by code and adds their own passkey: allowed, since the account has none yet...
+    const attacker = new Browser();
+    await attacker.signInWithCode(email);
+    owners = await accountIdOf(email);
     const theirs = await SoftAuthenticator.create();
     const options = (await (await attacker.fetch("/account/passkeys/options", { json: {} })).json()) as any;
     expect((await attacker.fetch("/account/passkeys", { json: { credential: await theirs.register(options, APP) } })).status).toBe(200);
     // ...and the owner is told by email, as every account is.
-    expect(outbox.sent.at(-1)).toMatchObject({ to: real.email, subject: "A passkey was added to your OpenPing Hosted account" });
+    expect(outbox.sent.at(-1)).toMatchObject({ to: email, subject: "A passkey was added to your OpenPing Hosted account" });
     await attacker.signInWithPasskey(theirs);
 
-    // Not pinned: the console stays closed, and shows the ids so the owner can pin the right one.
+    // Not pinned: the console stays closed, and shows the ids so the owner can see one they don't know.
     const page = await attacker.fetch("/admin");
     expect(page.status).toBe(200);
     const body = await text(page);
     expect(body).toContain("None of your passkeys is pinned yet");
-    expect(body).toContain(real.authenticator.id);
     expect(body).toContain(`${theirs.id}`);
-    expect(body).toContain("(this session)");
     expect(body).not.toContain('aria-current="page">Tenants</a>');
-    const refused = await attacker.fetch(`/admin/tenants/${tenant.id}/suspend`, { form: { reason: "taking over" } });
-    expect(refused.status).toBe(401);
+    const blocked = await attacker.fetch(`/admin/tenants/${tenant.id}/suspend`, { form: { reason: "taking over" } });
+    expect(blocked.status).toBe(401);
     expect((await tenantRow(tenant.id))!.owner_suspended_at).toBeNull();
-
-    // The owner pins their own passkey: the attacker's still opens nothing.
-    pinned = real.authenticator.id;
-    await attacker.signInWithPasskey(theirs);
-    expect(await text(await attacker.fetch("/admin"))).toContain("isn't one of your pinned passkeys");
-    expect((await attacker.fetch(`/admin/tenants/${tenant.id}/suspend`, { form: { reason: "taking over" } })).status).toBe(401);
-    // While the owner's pinned passkey opens it.
-    await real.browser.signInWithPasskey(real.authenticator);
-    expect(await text(await real.browser.fetch("/admin"))).toContain('aria-current="page">Tenants</a>');
     expect(await auditRows("tenant_id = ? AND actor = 'owner'", tenant.id)).toEqual([]);
   });
 
