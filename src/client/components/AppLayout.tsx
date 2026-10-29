@@ -24,7 +24,7 @@ import { useFetch } from "../lib/useFetch";
 import type { OverviewResponse } from "../lib/types";
 import { shellTransitionKey } from "../lib/section-routes";
 import { clearSavedData, offlineBanner, offlineSummary, precacheApp, useSavedAt } from "../lib/offline";
-import { InstallNavButton, IosInstallSheet, canOfferInstall } from "./InstallApp";
+import { InstallNavButton, IosInstallSheet, hasNavEntry } from "./InstallApp";
 import { useInstallState } from "../lib/install";
 import { PAGE_REFRESHED_EVENT } from "../lib/pull-to-refresh";
 
@@ -414,7 +414,7 @@ export function AppLayout() {
 /** The More menu's install entry, under a divider, when there is one to offer. */
 function InstallMenuEntry({ onShowSteps }: { onShowSteps: () => void }) {
   const state = useInstallState();
-  if (!canOfferInstall(state)) return null;
+  if (!hasNavEntry(state)) return null;
   return (
     <div className="mt-1.5 border-t border-line pt-1.5">
       <InstallNavButton variant="menu" onShowSteps={onShowSteps} />
