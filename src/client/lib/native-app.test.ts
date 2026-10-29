@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { safeNextPath } from "./native-app";
-import { isAppUserAgent } from "../../shared/native-app";
+import { androidPhone, isAppUserAgent } from "../../shared/native-app";
 
 describe("isAppUserAgent", () => {
   const chrome =
@@ -31,5 +31,14 @@ describe("safeNextPath", () => {
     expect(safeNextPath("https://evil.example/")).toBe("/");
     expect(safeNextPath(undefined)).toBe("/");
     expect(safeNextPath(42)).toBe("/");
+  });
+});
+
+describe("androidPhone", () => {
+  it("finds the model, or the Android version when the model is hidden", () => {
+    expect(androidPhone("Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/AP2A; wv) AppleWebKit/537.36")).toBe("Pixel 8");
+    expect(androidPhone("Mozilla/5.0 (Linux; Android 15; K) AppleWebKit/537.36")).toBe("Android 15");
+    expect(androidPhone("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBeNull();
+    expect(androidPhone(undefined)).toBeNull();
   });
 });

@@ -26,6 +26,18 @@ export function isAppUserAgent(userAgent: string | null | undefined): boolean {
   return !!userAgent && new RegExp(`\\b${APP_USER_AGENT_TOKEN}/`).test(userAgent);
 }
 
+/**
+ * The phone in an Android user agent: "Pixel 8", or "Android 14" when the
+ * browser hides the model (Chrome's reduced user agent says "K"); null for
+ * anything that isn't Android.
+ */
+export function androidPhone(userAgent: string | null | undefined): string | null {
+  const m = /Android ([\d.]+); ([^;)]+?)(?: Build\/[^;)]*)?[;)]/.exec(userAgent ?? "");
+  if (!m) return null;
+  const model = m[2]!.trim();
+  return model === "K" ? `Android ${m[1]}` : model;
+}
+
 /** The sign-in hand-off's paths on every install (src/worker/routes/app-signin.ts). */
 export const APP_SIGNIN_PATHS = {
   /** GET, in the browser: `?challenge=<S256 of the verifier>&state=<the app's>`. */

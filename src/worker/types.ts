@@ -163,4 +163,6 @@ export interface SessionRow {
   last_seen_at: number | null;
   user_agent: string | null;
   ip: string | null;
+  /** "app" for the Android app's sessions (migration 0025), else null. */
+  via?: "app" | null;
 }
