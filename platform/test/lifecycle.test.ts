@@ -794,29 +794,54 @@ describe("deleting an account", () => {
     expect(kinds(w, t.email)).toEqual(["account_deletion"]);
   });
 
-  it("needs a fresh sign-in, and changes nothing when Stripe can't cancel the plan", async () => {
+  it("needs a fresh sign-in, and doesn't scrub the account while its plan can't be cancelled", async () => {
     const w = world();
-    const t = await tenant(w, { status: "active" });
+    await env.PLATFORM_DB.prepare("INSERT INTO accounts (id, email, created_at, updated_at) VALUES ('acc_payer', 'payer@example.com', 0, 0)").run();
     await env.PLATFORM_DB.prepare(
-      "INSERT INTO subscriptions (id, account_id, tenant_id, stripe_customer_id, stripe_subscription_id, status, plan, created_at, updated_at) VALUES ('sub_fail', ?, ?, 'cus_f', 'sub_stripe_fail', 'active', 'hosted', 0, 0)",
-    )
-      .bind(t.accountId, t.id)
-      .run();
-    const stale = await browser(w, t.accountId, { signedInAgo: 16 * 60_000 });
+      "INSERT INTO subscriptions (id, account_id, stripe_customer_id, stripe_subscription_id, status, plan, created_at, updated_at) VALUES ('sub_fail', 'acc_payer', 'cus_f', 'sub_stripe_fail', 'active', 'hosted', 0, 0)",
+    ).run();
+    const stale = await browser(w, "acc_payer", { signedInAgo: 16 * 60_000 });
     expect((await stale("/account/delete")).status).toBe(401);
-    expect((await stale("/account/delete", { confirm: t.email })).status).toBe(401);
+    expect((await stale("/account/delete", { confirm: "payer@example.com" })).status).toBe(401);
+    expect((await accountRow("acc_payer"))!.deletion_requested_at).toBeNull();
+    // Stripe down: the deletion starts, and says so.
     const stripe = stripeStub();
     stripe.fail = true;
-    const go = await browser(w, t.accountId, { stripe });
-    expect((await go("/account/delete", { confirm: t.email })).status).toBe(503);
-    // Without Stripe at all, a live plan can't be left running either.
-    expect((await (await browser(w, t.accountId))("/account/delete", { confirm: t.email })).status).toBe(503);
-    expect((await accountRow(t.accountId))!.deletion_requested_at).toBeNull();
-    expect(await env.PLATFORM_DB.prepare("SELECT owner_suspended_at FROM tenants WHERE id = ?").bind(t.id).first("owner_suspended_at")).toBeNull();
+    const res = await (await browser(w, "acc_payer", { stripe }))("/account/delete", { confirm: "payer@example.com" });
+    expect(await res.text()).toContain("we keep trying until it does");
+    expect((await accountRow("acc_payer"))!.disabled_at).toBe(w.clock.now);
+    // Without Stripe, or with it still failing, the job waits; once Stripe takes it, the account goes.
+    await tick(w);
+    expect((await accountRow("acc_payer"))!.deleted_at).toBeNull();
+    await tick(w, { stripe: stripe as never });
+    expect((await accountRow("acc_payer"))!.deleted_at).toBeNull();
+    stripe.fail = false;
+    await tick(w, { stripe: stripe as never });
+    expect(stripe.cancelled).toEqual(["sub_stripe_fail"]);
+    expect((await accountRow("acc_payer"))!.deleted_at).toBe(w.clock.now);
   });
 
-  it("deletes an account with no OpenPing at once on the next run", async () => {
+  it("blanks the addresses in the account's history and lets its security record expire", async () => {
     const w = world();
+    await env.PLATFORM_DB.prepare("INSERT INTO accounts (id, email, created_at, updated_at) VALUES ('acc_hist', 'hist@example.com', 0, 0)").run();
+    await env.PLATFORM_DB.batch([
+      env.PLATFORM_DB.prepare("INSERT INTO audit_events (at, account_id, actor, action, detail) VALUES (1, 'acc_hist', 'customer', 'account.email_changed', '{\"from\":\"old@example.com\",\"to\":\"hist@example.com\"}')"),
+      env.PLATFORM_DB.prepare("INSERT INTO audit_events (at, account_id, tenant_id, actor, action) VALUES (1, 'acc_hist', 'tenhist000000001', 'system', 'tenant.requested')"),
+      env.PLATFORM_DB.prepare("INSERT INTO audit_events (at, account_id, tenant_id, actor, action, detail) VALUES (1, NULL, 'tenhist000000001', 'system', 'email.recipient_confirmed', '{\"address\":\"friend@example.com\"}')"),
+    ]);
+    await (await browser(w, "acc_hist"))("/account/delete", { confirm: "hist@example.com" });
+    await tick(w, { exports: null, provisioning: null });
+    const rows = await env.PLATFORM_DB.prepare("SELECT action, detail, kept FROM audit_events WHERE account_id = 'acc_hist' OR tenant_id = 'tenhist000000001' ORDER BY id").all<{ action: string; detail: string | null; kept: number }>();
+    const text = JSON.stringify(rows.results);
+    expect(text).not.toContain("@example.com");
+    expect(rows.results.every((r) => r.kept === 0)).toBe(true);
+    expect(rows.results.map((r) => r.action)).toContain("account.deleted");
+  });
+
+  it("deletes an account with no OpenPing at once on the next run, even with exports off", async () => {
+    const w = world();
+    w.deps.exports = null;
+    w.deps.provisioning = null;
     await env.PLATFORM_DB.prepare("INSERT INTO accounts (id, email, created_at, updated_at) VALUES ('acc_lonely', 'lonely@example.com', 0, 0)").run();
     const go = await browser(w, "acc_lonely");
     expect(await (await go("/account/delete")).text()).not.toContain("checks stop");
@@ -824,5 +849,15 @@ describe("deleting an account", () => {
     await tick(w);
     expect((await accountRow("acc_lonely"))!.deleted_at).not.toBeNull();
     expect(kinds(w, "lonely@example.com")).toEqual(["account_deletion", "account_deleted"]);
+  });
+});
+
+describe("the account scrub's rate-limit delete", () => {
+  it("is a range over the primary key, one per scope", async () => {
+    const { rateLimitScrub } = await import("../src/account-deletion");
+    const statements = rateLimitScrub(env.PLATFORM_DB, "a@example.com", "acc_x");
+    expect(statements.length).toBeGreaterThan(3);
+    const plan = await env.PLATFORM_DB.prepare("EXPLAIN QUERY PLAN DELETE FROM rate_limits WHERE key >= ? AND key < ?").bind("a:", "a;").all<{ detail: string }>();
+    expect(plan.results.map((r) => r.detail).join(" | ")).toMatch(/USING (COVERING )?INDEX sqlite_autoindex_rate_limits_1 \(key>\? AND key<\?\)/);
   });
 });

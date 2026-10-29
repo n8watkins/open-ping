@@ -115,6 +115,47 @@ async function tenantSees(slug: string): Promise<TenantProps["tenant"] | number>
   return res.status === 200 ? ((await res.json()) as TenantProps["tenant"]) : res.status;
 }
 
+describe("an account being deleted", () => {
+  it("expires its open Checkout, and cancels and refunds a subscription that starts anyway", async () => {
+    const c = await customer();
+    const res = await c.browser("/billing/checkout", { form: { plan: "hosted" } });
+    const sessionId = /<meta http-equiv="refresh" content="0;url=([^"]+)">/.exec(await res.text())![1]!.split("/").at(-1)!;
+    // The deletion expires the open page, so it can't be paid.
+    expect((await c.browser("/account/delete", { form: { confirm: `${c.slug}@example.com` } })).status).toBe(200);
+    expect(stripe.sessions.get(sessionId)!.status).toBe("expired");
+    expect((await env.PLATFORM_DB.prepare("SELECT checkout_session_id FROM accounts WHERE id = ?").bind(c.accountId).first("checkout_session_id"))).toBeNull();
+
+    // A second customer whose expire didn't reach Stripe pays a moment later: billing undoes it.
+    const d = await customer();
+    const res2 = await d.browser("/billing/checkout", { form: { plan: "hosted" } });
+    const second = /<meta http-equiv="refresh" content="0;url=([^"]+)">/.exec(await res2.text())![1]!.split("/").at(-1)!;
+    stripe.failNext("expireCheckoutSession", 503);
+    await d.browser("/account/delete", { form: { confirm: `${d.slug}@example.com` } });
+    const paid = stripe.completeCheckout(second);
+    await deliverAll(paid.events);
+    expect(stripe.subscriptions.get(paid.subscription.id)!.status).toBe("canceled");
+    expect(stripe.refunds).toHaveLength(1);
+    const audited = await env.PLATFORM_DB.prepare("SELECT detail FROM audit_events WHERE account_id = ? AND action = 'billing.deleted_account_refunded'").bind(d.accountId).first<{ detail: string }>();
+    expect(JSON.parse(audited!.detail)).toMatchObject({ subscription: paid.subscription.id, refunds: 1 });
+    // Its OpenPing stays paused.
+    expect((await tenantRow(d.tenantId)).owner_suspended_at).not.toBeNull();
+  });
+
+  it("cancels a live plan, and when Stripe fails, still starts the deletion and says the cancellation is retried", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    stripe.failNext("cancelSubscription", 503);
+    const res = await c.browser("/account/delete", { form: { confirm: `${c.slug}@example.com` } });
+    expect(await res.text()).toContain("we keep trying until it does");
+    expect(stripe.subscriptions.get(sub.id)!.status).toBe("active");
+    expect(await env.PLATFORM_DB.prepare("SELECT deletion_requested_at FROM accounts WHERE id = ?").bind(c.accountId).first("deletion_requested_at")).not.toBeNull();
+    const { settleAccountBilling } = await import("../src/account-deletion");
+    expect(await settleAccountBilling(env.PLATFORM_DB, stripe, c.accountId, clock.now)).toBe(true);
+    expect(stripe.subscriptions.get(sub.id)!.status).toBe("canceled");
+    expect(await settleAccountBilling(env.PLATFORM_DB, stripe, c.accountId, clock.now)).toBe(true);
+  });
+});
+
 describe("an email change", () => {
   it("moves the Stripe customer's email too, so receipts follow", async () => {
     const c = await customer();

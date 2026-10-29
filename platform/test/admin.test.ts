@@ -1200,3 +1200,28 @@ describe("deleting an account for a support request", () => {
     expect((await go({ reason: "Asked by email", confirm: t.email })).headers.get("location")).toContain("done=deletion-already");
   });
 });
+
+describe("deleting an account by its email", () => {
+  it("works for an account with no OpenPing, with the email twice and a reason", async () => {
+    const { browser } = await owner();
+    const lonely = new Browser();
+    const email = newEmail();
+    await lonely.signInWithCode(email);
+    const go = (form: Record<string, string>) => browser.fetch("/admin/accounts/delete", { form });
+    expect(await text(await browser.fetch("/admin"))).toContain('action="/admin/accounts/delete"');
+    expect((await go({ email, confirm: "other@example.com", reason: "Asked by email" })).headers.get("location")).toBe("/admin?done=account-email-mismatch");
+    expect((await go({ email, confirm: email, reason: "x" })).headers.get("location")).toBe("/admin?done=account-reason-needed");
+    expect((await go({ email: "nobody@example.com", confirm: "nobody@example.com", reason: "Asked by email" })).headers.get("location")).toBe("/admin?done=account-not-found");
+    expect((await go({ email, confirm: email, reason: "Asked by email" })).headers.get("location")).toBe("/admin?done=account-deletion-started");
+    expect(await env.PLATFORM_DB.prepare("SELECT deletion_requested_by FROM accounts WHERE email = ?").bind(email).first("deletion_requested_by")).toBe("owner");
+    expect((await lonely.fetch("/account")).status).toBe(303);
+  });
+
+  it("won't remove a paused tenant of an account being deleted, which the deletion removes export first", async () => {
+    const { browser } = await owner();
+    const t = await addTenant({ provisionState: "uploaded", paused: true });
+    await browser.fetch(`/admin/tenants/${t.id}/delete-account`, { form: { reason: "Asked by email", confirm: t.email } });
+    expect(await text(await browser.fetch(`/admin/tenants/${t.id}`))).not.toContain(`action="/admin/tenants/${t.id}/remove"`);
+    expect((await browser.fetch(`/admin/tenants/${t.id}/remove`, { form: { confirm: t.slug } })).headers.get("location")).toContain("done=being-deleted");
+  });
+});

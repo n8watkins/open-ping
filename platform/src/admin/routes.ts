@@ -110,9 +110,9 @@ const FLASH: Record<string, { message: string; tone: "ok" | "error" }> = {
   "provisioning-off": { message: "Provisioning is off until all its settings are set (the cron logs which), so nothing was changed.", tone: "error" },
   "deletion-started": { message: "Deleting the account. Its OpenPing is paused now; the export, the teardown and the account itself follow on the next lifecycle runs.", tone: "ok" },
   "deletion-already": { message: "This account was already being deleted.", tone: "error" },
-  "deletion-billing": { message: "Its plan couldn't be cancelled in Stripe, so nothing was deleted. Try again in a few minutes.", tone: "error" },
+  "deletion-billing": { message: "Deleting the account. Stripe didn't take the cancellation of its plan yet; the lifecycle job keeps trying, and the account isn't scrubbed before.", tone: "error" },
   "email-mismatch": { message: "The email you typed doesn't match the account's, so nothing was deleted.", tone: "error" },
-  "being-deleted": { message: "Its account is being deleted, so it stays paused.", tone: "error" },
+  "being-deleted": { message: "Its account is being deleted: it stays paused, and the deletion removes it, export first.", tone: "error" },
   "confirm-mismatch": { message: "The address you typed doesn't match, so nothing was removed.", tone: "error" },
   "reason-needed": { message: "Write a short reason (at least 3 characters) first.", tone: "error" },
   "not-ready": { message: "Support sign-in needs a ready OpenPing that isn't suspended.", tone: "error" },
@@ -120,6 +120,12 @@ const FLASH: Record<string, { message: string; tone: "ok" | "error" }> = {
 };
 
 const LIST_FLASH: Record<string, { message: string; tone: "ok" | "error" }> = {
+  "account-deletion-started": { message: "Deleting the account. It is closed now; the lifecycle jobs delete its OpenPing, if it has one, then scrub it.", tone: "ok" },
+  "account-deletion-billing": { message: "Deleting the account. Stripe didn't take the cancellation of its plan yet; the lifecycle job keeps trying, and the account isn't scrubbed before.", tone: "error" },
+  "account-deletion-already": { message: "That account was already being deleted.", tone: "error" },
+  "account-not-found": { message: "No account has that email.", tone: "error" },
+  "account-email-mismatch": { message: "The two emails don't match, so nothing was deleted.", tone: "error" },
+  "account-reason-needed": { message: "Write the reason first: it goes in the audit log.", tone: "error" },
   "removal-started": { message: "Removal started. The tenant disappears from this list once its Worker and database are deleted.", tone: "ok" },
 };
 
@@ -260,6 +266,25 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
     }),
   );
 
+  // The same for an account found by its email: one with no OpenPing has no tenant page.
+  app.post("/accounts/delete", async (c) => {
+    const fields = await form(c);
+    const reason = cleanReason(fields.reason);
+    const email = text(fields.email).trim().toLowerCase();
+    const confirm = text(fields.confirm).trim().toLowerCase();
+    if (reason.length < 3) return seeOther("/admin?done=account-reason-needed");
+    if (!email || email !== confirm) return seeOther("/admin?done=account-email-mismatch");
+    const account = await c.env.PLATFORM_DB.prepare("SELECT id FROM accounts WHERE email = ? AND deleted_at IS NULL").bind(email).first<{ id: string }>();
+    if (!account) return seeOther("/admin?done=account-not-found");
+    const setup = deps.billing?.(c.env);
+    const result = await requestAccountDeletion(
+      { db: c.env.PLATFORM_DB, stripe: setup?.ok ? setup.stripe : null, mailer: deps.mailer?.(c.env) ?? null, now: c.get("now") },
+      { accountId: account.id, by: "owner", actorAccountId: c.get("owner").account.id, reason },
+    );
+    if (!result.ok) return seeOther("/admin?done=account-deletion-already");
+    return seeOther(result.billingSettled ? "/admin?done=account-deletion-started" : "/admin?done=account-deletion-billing");
+  });
+
   // A support request to delete the customer's account: the same deletion as
   // their own button (src/account-deletion.ts), with the reason recorded.
   app.post(
@@ -274,8 +299,8 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
         { db: c.env.PLATFORM_DB, stripe: setup?.ok ? setup.stripe : null, mailer: deps.mailer?.(c.env) ?? null, now: c.get("now") },
         { accountId: tenant.accountId, by: "owner", actorAccountId: c.get("owner").account.id, reason },
       );
-      if (result.ok) return pageOf(tenant, "deletion-started");
-      return pageOf(tenant, result.reason === "already" ? "deletion-already" : "deletion-billing");
+      if (result.ok) return pageOf(tenant, result.billingSettled ? "deletion-started" : "deletion-billing");
+      return pageOf(tenant, "deletion-already");
     }),
   );
 
@@ -283,8 +308,7 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
     "/tenants/:id/resume",
     tenantAction(async (c, tenant) => {
       // The pause of an account being deleted isn't the owner's to lift.
-      const deleting = await c.env.PLATFORM_DB.prepare("SELECT 1 AS x FROM accounts WHERE id = ? AND deletion_requested_at IS NOT NULL").bind(tenant.accountId).first();
-      if (deleting) return pageOf(tenant, "being-deleted");
+      if (await accountBeingDeleted(c.env.PLATFORM_DB, tenant.accountId)) return pageOf(tenant, "being-deleted");
       const status = await resumeTenant(c.env.PLATFORM_DB, tenant, c.get("now"));
       if (!status) return pageOf(tenant, "not-suspended");
       await ownerAudit(c, tenant, "tenant.resumed", { to: status });
@@ -323,6 +347,8 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
     "/tenants/:id/remove",
     tenantAction(async (c, tenant, fields) => {
       if (text(fields.confirm).trim().toLowerCase() !== tenant.slug) return pageOf(tenant, "confirm-mismatch");
+      // An account being deleted removes its tenant itself, export first.
+      if (await accountBeingDeleted(c.env.PLATFORM_DB, tenant.accountId)) return pageOf(tenant, "being-deleted");
       const setup = provisioningFor(c);
       if (!setup) return pageOf(tenant, "provisioning-off");
       if (!(await markForRemoval(c.env.PLATFORM_DB, tenant.id, c.get("now"), { onlyIfPaused: true }))) return pageOf(tenant, "not-paused");
@@ -426,4 +452,9 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
   });
 
   return app;
+}
+
+/** The account's deletion was asked for (src/account-deletion.ts). */
+async function accountBeingDeleted(db: D1Database, accountId: string): Promise<boolean> {
+  return (await db.prepare("SELECT 1 AS x FROM accounts WHERE id = ? AND deletion_requested_at IS NOT NULL").bind(accountId).first()) !== null;
 }

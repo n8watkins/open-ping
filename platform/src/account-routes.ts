@@ -836,18 +836,13 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       { db: c.env.PLATFORM_DB, stripe: setup.ok ? setup.stripe : null, mailer: deps.mailer(c.env), now: c.get("now") },
       { accountId: session.account.id, by: "customer", actorAccountId: session.account.id },
     );
-    if (!result.ok && result.reason !== "already") {
-      return messagePage({
-        title: "We couldn't cancel your plan",
-        body: `Nothing was deleted, and your plan is as it was. Please try again in a few minutes, or write to ${SUPPORT_EMAIL}.`,
-        status: 503,
-        action: { href: "/account/delete", label: "Try again" },
-      });
-    }
+    const settled = !result.ok || result.billingSettled;
     return withCookies(
       messagePage({
         title: "Your account is being deleted",
-        body: "You're signed out. We've emailed you what happens next, and we email again when it's done.",
+        body: settled
+          ? "You're signed out. We've emailed you what happens next, and we email again when it's done."
+          : "You're signed out. Our payment provider didn't take the cancellation of your plan just now; we keep trying until it does, and refund anything it charges meanwhile. We've emailed you what happens next, and we email again when it's done.",
       }),
       [clearCookie(SESSION_COOKIE)],
     );
