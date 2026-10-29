@@ -185,7 +185,8 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
   At launch the owner sets it in `deploy.local.json` and deploys; nothing else changes.
 - **D2 Emails (S), templates done.** Welcome, sign-in code, trial ending (3 days and 1 day), receipt (Stripe), payment failed, suspended, deletion warning. Needs: nothing for the templates.
   `platform/src/emails.ts` has each as plain HTML and text; the platform's mail (`platform/src/mail.ts`) sends them, the sign-in code already, the rest from the lifecycle jobs (B7).
-- **D3 Terms and privacy (M).** Plain-English drafts, the acceptable-use rule, data retention, sub-processors (Cloudflare, Stripe, Resend). Needs: nothing; owner review before launch.
+- [x] **D3 Terms and privacy (M), drafted; owner review pending.** Plain-English drafts, the acceptable-use rule, data retention, sub-processors (Cloudflare, Stripe, Resend). Needs: nothing; owner review before launch.
+  [docs/legal/TERMS.md](./legal/TERMS.md) and [docs/legal/PRIVACY.md](./legal/PRIVACY.md), served by the platform at `/terms` and `/privacy` from the same Markdown; every placeholder is marked `[TO FILL: ...]` and shows highlighted on the page, and a new account records the Terms' version it accepted.
 - **D4 Docs (S).** Hosted FAQ, "move from Hosted to self-hosted" and back. Needs: B7.
 - **D5 Launch (S).** Email the waitlist with early pricing, open sign-up, announce. Needs: everything in the launch definition (section 14).
 

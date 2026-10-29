@@ -41,7 +41,8 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   - choosing an address (`/start`) creates the tenant (one per account, enforced by a unique index) and queues its provisioning;
   - `/open?tenant=<slug>` mints the Ed25519 hand-off (`src/handoff.ts`, only the contract's helpers) and redirects to `https://<slug>.<domain>/auth/hosted?t=...`;
   - `SIGN_UPS` stays `closed` until launch: existing accounts sign in, no new ones are made, and the email form sends nothing to an address without an account (it shows the same page either way);
-  - signing out is a POST; the tenant's sign-out lands on `GET /sign-out`, which offers one tap to end the platform session too.
+  - signing out is a POST; the tenant's sign-out lands on `GET /sign-out`, which offers one tap to end the platform session too;
+  - `/terms` and `/privacy` (`src/legal/`): the Terms of Service and the Privacy Policy, rendered from [docs/legal/TERMS.md](../docs/legal/TERMS.md) and [docs/legal/PRIVACY.md](../docs/legal/PRIVACY.md), which the Worker bundles as text (the `Text` module rule in `wrangler.jsonc`, and a matching plugin in `vitest.config.ts`), so the Markdown is their one copy; every page's footer links both, the sign-up and sign-in pages say that continuing accepts them, and a new account records the Terms' version (its "Last updated" date) and the time (migration 0011).
 - Runs the owner's admin console at `app.<domain>/admin` (B6, `src/admin/`):
   - who gets in: an account named in `PLATFORM_OWNERS` (account ids or emails, never in code), signed in with one of the passkeys pinned in `PLATFORM_OWNER_PASSKEYS` (credential ids) in the last 12 hours, and in the last 10 minutes for any change; everyone else, signed in or not, gets the ordinary 404 on every path and method, and the owner without a fresh pinned sign-in gets one tap to sign in again and come back;
   - why pinned: anyone holding the owner's inbox can sign in by email and register a passkey of their own, so only the passkeys named in config count; once one is pinned, the owner's passkeys can be added or removed only within 10 minutes of a pinned sign-in, and every account is emailed whenever a passkey is added to it;
@@ -122,6 +123,7 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 | `src/account-routes.ts`, `src/account-pages.ts` | Sign-up, sign-in, the account page, `/start` and `/open` |
 | `src/auth/` | Sessions, email codes and links, passkeys, GitHub OAuth, ceremonies and rate limits |
 | `src/accounts.ts`, `src/handoff.ts` | Accounts and identities, minting hand-off tokens |
+| `src/legal/` | `/terms` and `/privacy`: the bundled Markdown of `docs/legal/`, its small renderer (`markdown.ts`), and the pages |
 | `src/mail.ts`, `src/emails.ts` | The Resend mailer and its settings; the platform's emails |
 | `src/lifecycle/` | The lifecycle jobs: `jobs.ts` (emails, deletion), `exports.ts` (D1 exports to R2 and the steps), `account-export.ts` (`/account/export`), `billing-view.ts` (what it reads of billing), `env.ts` |
 | `src/admin/` | The admin console: `owner.ts` (who may use it), `data.ts` (queries, suspend and resume), `waitlist.ts` (the import), `releases.ts` (the Releases tab), `operations.ts` (the Operations tab), `pages.ts`, `routes.ts` |

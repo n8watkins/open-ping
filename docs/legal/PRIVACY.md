@@ -109,12 +109,12 @@ We share personal data with others only when the law requires it, to protect peo
 
 We use only the cookies needed to sign you in and keep it secure; there are no analytics or advertising cookies.
 
-On the account site (app.<our domain>):
+On the account site (`app.<our domain>`):
 
 - `__Host-op_platform`: keeps you signed in, for 30 days.
 - `__Host-op_ceremony`: holds a passkey or GitHub sign-in while it happens, for 5 minutes.
 
-In your OpenPing (yourname.<our domain>):
+In your OpenPing (`yourname.<our domain>`):
 
 - `op_session`: keeps you signed in to your OpenPing, for 30 days (an hour for a support sign-in).
 - `op_passkey`: holds a passkey sign-in or registration while it happens, for 5 minutes.

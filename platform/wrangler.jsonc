@@ -34,6 +34,15 @@
       "head_sampling_rate": 1
     }
   },
+  // The Terms and the Privacy Policy (src/legal/documents.ts) import
+  // docs/legal/*.md as plain text, so the Markdown stays their one copy.
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.md"],
+      "fallthrough": true
+    }
+  ],
   "vars": {
     // The Hosted domain (decision D2, docs/hosted/DECISIONS.md): the platform
     // serves app.<HOSTED_DOMAIN> itself and dispatches <slug>.<HOSTED_DOMAIN>
