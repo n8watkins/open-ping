@@ -336,15 +336,19 @@ export async function runScheduled(
           // platform, which may call every minute, one already marked missed
           // is marked again only a slice later (the cron's runs are a slice
           // apart already).
+          // Measured from the tick, with the same slack as a polled check, so a
+          // call delivered a few seconds late still marks it on time and the
+          // marks stay 12 minutes apart.
           const slice = HEARTBEAT_DOWN_SLICE_SECONDS * 1000;
+          const slack = dueSlackMs(HEARTBEAT_DOWN_SLICE_SECONDS, cadence);
           const markedAt = st.state === "down" && st.last_error === "heartbeat_missed" ? st.last_checked_at : null;
-          const nextMark = cadence.kind === "platform" && markedAt != null ? markedAt + slice : now;
-          if (nextMark - dueSlackMs(HEARTBEAT_DOWN_SLICE_SECONDS, cadence) > now) {
-            wakes.push(nextMark);
+          const nextMark = cadence.kind === "platform" && markedAt != null ? markedAt + slice : base;
+          if (nextMark - slack > base) {
+            wakes.push(nextMark - slack);
             tally.skipped++;
             continue;
           }
-          wakes.push(now + slice);
+          wakes.push(base + slice - slack);
           missedHeartbeats.push(m);
         } else {
           // A beat after `now` would move the deadline, but only later.

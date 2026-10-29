@@ -236,6 +236,28 @@ describe("per-monitor intervals on the platform", () => {
     expect(down?.s).toBe(3 * 720);
   });
 
+  it("accrues a silent heartbeat's downtime in full when calls arrive a little late", async () => {
+    const input = createMonitorSchema.parse({
+      type: "heartbeat",
+      name: "Silent job",
+      config: { intervalSeconds: 60, graceSeconds: 0 },
+    });
+    const hb = await createMonitor(env, input);
+    await env.DB.prepare("UPDATE monitor_state SET state = 'up', last_beat_at = ? WHERE monitor_id = ?")
+      .bind(T0 - 10 * MINUTE, hb.id)
+      .run();
+    // Only the platform's calls, each delivered 2 seconds after its tick, for 4 hours.
+    let at = T0;
+    while (at < T0 + 240 * MINUTE) at = nextTick(await tick(at, STANDARD, 2_000), at);
+    const down = await env.DB.prepare(
+      "SELECT SUM(down_seconds) AS s FROM summaries WHERE monitor_id = ? AND period = 'hour'",
+    )
+      .bind(hb.id)
+      .first<{ s: number }>();
+    // 240 minutes of silence: 20 marks of 12 minutes each.
+    expect(down?.s).toBe(240 * 60);
+  });
+
   it("answers a heartbeat's deadline as the time it next has work", async () => {
     const input = createMonitorSchema.parse({
       type: "heartbeat",
