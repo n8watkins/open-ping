@@ -79,6 +79,23 @@ export function recordRunStartStatement(
   ).bind(run.id, cron, run.startedAt, lease.name, lease.holder);
 }
 
+/**
+ * When the most recent finished run started (the history rollups recompute
+ * only what changed since then). Reads the started_at index from the newest
+ * end, so it reads a row or two however many runs are kept.
+ */
+export function lastFinishedRunStatement(env: Env): D1PreparedStatement {
+  return env.DB.prepare(
+    "SELECT started_at FROM scheduler_runs WHERE finished_at IS NOT NULL ORDER BY started_at DESC LIMIT 1",
+  );
+}
+
+/** lastFinishedRunStatement's answer: epoch ms, or null before the first finished run. */
+export function lastFinishedRunAt(result: D1Result | undefined): number | null {
+  const at = (result?.results?.[0] as { started_at?: unknown } | undefined)?.started_at;
+  return typeof at === "number" && Number.isFinite(at) ? at : null;
+}
+
 /** The run's finish row: its outcome, counts and wall-clock duration. */
 export function recordRunFinishStatement(
   env: Env,

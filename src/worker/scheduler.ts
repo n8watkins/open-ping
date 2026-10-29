@@ -36,6 +36,8 @@ import { sendWeeklySummary, WEEKLY_GATE_SETTINGS } from "./notifications/weekly"
 import { MONTHLY_GATE_SETTINGS, sendMonthlyReport } from "./notifications/monthly";
 import {
   acquireLeaseStatement,
+  lastFinishedRunAt,
+  lastFinishedRunStatement,
   leaseHolderStatement,
   recordRunStartStatement,
   recordRunFinishStatement,
@@ -157,16 +159,18 @@ export async function runScheduled(
   // won), and read what the run needs. A batch is one transaction, so the run
   // record can never exist without the lease. Losing the lease wastes only the
   // reads; nothing is written.
-  const [, holderRes, , monitorsRes, statesRes, maintenanceRes, settingsRes, unnotifiedRes] = await env.DB.batch([
-    acquireLeaseStatement(env, lease.name, lease.holder, now, LEASE_TTL_MS),
-    leaseHolderStatement(env, lease.name),
-    recordRunStartStatement(env, run, controller.cron ?? null, lease),
-    listMonitorsStatement(env),
-    env.DB.prepare(`SELECT monitor_id, next_check_at, ${STATE_COLUMNS} FROM monitor_state`),
-    listMaintenanceStatement(env),
-    settingsStatement(env, RUN_SETTINGS),
-    unnotifiedIncidentsStatement(env, now),
-  ]);
+  const [, holderRes, , monitorsRes, statesRes, maintenanceRes, settingsRes, unnotifiedRes, lastRunRes] =
+    await env.DB.batch([
+      acquireLeaseStatement(env, lease.name, lease.holder, now, LEASE_TTL_MS),
+      leaseHolderStatement(env, lease.name),
+      recordRunStartStatement(env, run, controller.cron ?? null, lease),
+      listMonitorsStatement(env),
+      env.DB.prepare(`SELECT monitor_id, next_check_at, ${STATE_COLUMNS} FROM monitor_state`),
+      listMaintenanceStatement(env),
+      settingsStatement(env, RUN_SETTINGS),
+      unnotifiedIncidentsStatement(env, now),
+      lastFinishedRunStatement(env),
+    ]);
   const holder = (holderRes?.results?.[0] as { holder?: string } | undefined)?.holder;
   if (holder !== lease.holder) {
     console.log("[scheduler] another run holds the lease; skipping");
@@ -492,7 +496,12 @@ export async function runScheduled(
       env,
       "scheduler",
       writes.map((w) => w.group),
-      [...claim, ...compactionStatements(env, now, retention), ...expiredAuthCleanupStatements(env)],
+      [
+        ...claim,
+        // Only what changed since the last run (history/rollups.ts).
+        ...compactionStatements(env, now, retention, lastFinishedRunAt(lastRunRes)),
+        ...expiredAuthCleanupStatements(env),
+      ],
       // Keep room for the run record and the deliveries just claimed.
       { canSpend: () => budget.canSpendD1(1 + take * NOTIFICATION_D1_COST) },
     );

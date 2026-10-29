@@ -190,12 +190,24 @@ const SUM_TOTALS =
   "SUM(checks), SUM(ok_checks), SUM(fail_checks), SUM(retry_recoveries), SUM(sum_latency_ms), " +
   "MIN(min_latency_ms), MAX(max_latency_ms), SUM(monitored_seconds), SUM(down_seconds)";
 
-/** Overwrite a derived bucket with its recomputed totals (idempotent). */
+const TOTALS = TOTALS_COLUMNS.split(", ");
+
+/**
+ * Overwrite a derived bucket with its recomputed totals (idempotent), and only
+ * when they changed: D1 bills every row an upsert writes, and most buckets a
+ * pass recomputes come out exactly as they were.
+ */
 const UPSERT_TOTALS = `ON CONFLICT(monitor_id, period, bucket_start) DO UPDATE SET
-  checks = excluded.checks, ok_checks = excluded.ok_checks, fail_checks = excluded.fail_checks,
-  retry_recoveries = excluded.retry_recoveries, sum_latency_ms = excluded.sum_latency_ms,
-  min_latency_ms = excluded.min_latency_ms, max_latency_ms = excluded.max_latency_ms,
-  monitored_seconds = excluded.monitored_seconds, down_seconds = excluded.down_seconds`;
+  ${TOTALS.map((c) => `${c} = excluded.${c}`).join(", ")}
+  WHERE ${TOTALS.map((c) => `summaries.${c} IS NOT excluded.${c}`).join(" OR ")}`;
+
+/**
+ * Restricts a statement to the monitors that exist, so SQLite reaches the rows
+ * through the (monitor_id, ...) indexes instead of scanning the whole table:
+ * D1 bills every row a query reads. Every history row belongs to a monitor
+ * (deleting one deletes its history), so this never leaves a row out.
+ */
+const KNOWN_MONITORS = "monitor_id IN (SELECT id FROM monitors)";
 
 /** How long a sent or dead notification delivery is kept, for Diagnostics. */
 const OUTBOX_KEEP_DAYS = 30;
@@ -222,15 +234,26 @@ export function resolveRetention(stored: Partial<RetentionConfig> | null | undef
  * A derived bucket is recomputed only while ALL of its source rows are still
  * retained; older buckets are sealed at their last full value, so the prune in
  * the same pass can never shrink them. Days and months are UTC, as bucketStart.
+ *
+ * `since` is when the previous pass ran (the last finished run's start), or
+ * null to recompute every bucket still open. Hour rows only change for the hour
+ * a check or a beat lands in, so a pass recomputes only the days and months
+ * that may have changed since then (and always the last day, so one failed
+ * pass is made up by the next), and writes only the buckets that really
+ * changed. Recomputing every open bucket on every run read and rewrote about
+ * 80 rows per monitor, which on a two-month-old install of 20 monitors went
+ * past the Free plan's daily D1 limits.
  */
 export function compactionStatements(
   env: Env,
   now: number,
   retention: RetentionConfig,
+  since: number | null = null,
 ): LabeledStatement[] {
   const sampleMs = retention.sampleHours * HOUR_MS;
   const hourlyMs = retention.hourlyDays * DAY_MS;
   const dailyMs = retention.dailyDays * DAY_MS;
+  const window = compactionWindow(now, retention, since);
   return [
     {
       label: "hour→day pass",
@@ -238,11 +261,11 @@ export function compactionStatements(
         `INSERT INTO summaries (id, monitor_id, period, bucket_start, ${TOTALS_COLUMNS})
          SELECT monitor_id || ':day:' || day_start, monitor_id, 'day', day_start, ${SUM_TOTALS}
            FROM (SELECT *, bucket_start - (bucket_start % ${DAY_MS}) AS day_start
-                   FROM summaries WHERE period = 'hour' AND bucket_start >= ?1)
+                   FROM summaries WHERE ${KNOWN_MONITORS} AND period = 'hour' AND bucket_start >= ?2)
           WHERE day_start >= ?1
           GROUP BY monitor_id, day_start
          ${UPSERT_TOTALS}`,
-      ).bind(now - hourlyMs),
+      ).bind(now - hourlyMs, window.days),
     },
     {
       label: "day→month pass",
@@ -252,32 +275,32 @@ export function compactionStatements(
            FROM (SELECT *,
                         CAST(strftime('%s', bucket_start / 1000, 'unixepoch', 'start of month') AS INTEGER) * 1000
                           AS month_start
-                   FROM summaries WHERE period = 'day' AND bucket_start >= ?1)
+                   FROM summaries WHERE ${KNOWN_MONITORS} AND period = 'day' AND bucket_start >= ?2)
           WHERE month_start >= ?1
           GROUP BY monitor_id, month_start
          ${UPSERT_TOTALS}`,
-      ).bind(now - dailyMs),
+      ).bind(now - dailyMs, window.months),
     },
     {
       label: "sample prune",
-      stmt: env.DB.prepare("DELETE FROM samples WHERE at < ?").bind(now - sampleMs),
+      stmt: env.DB.prepare(`DELETE FROM samples WHERE ${KNOWN_MONITORS} AND at < ?`).bind(now - sampleMs),
     },
     {
       label: "hour prune",
-      stmt: env.DB.prepare("DELETE FROM summaries WHERE period = 'hour' AND bucket_start < ?").bind(
+      stmt: env.DB.prepare(`DELETE FROM summaries WHERE ${KNOWN_MONITORS} AND period = 'hour' AND bucket_start < ?`).bind(
         now - hourlyMs,
       ),
     },
     {
       label: "day prune",
-      stmt: env.DB.prepare("DELETE FROM summaries WHERE period = 'day' AND bucket_start < ?").bind(
+      stmt: env.DB.prepare(`DELETE FROM summaries WHERE ${KNOWN_MONITORS} AND period = 'day' AND bucket_start < ?`).bind(
         now - dailyMs,
       ),
     },
     {
       label: "interval prune",
       stmt: env.DB.prepare(
-        "DELETE FROM status_intervals WHERE ended_at IS NOT NULL AND ended_at < ?",
+        `DELETE FROM status_intervals WHERE ${KNOWN_MONITORS} AND ended_at IS NOT NULL AND ended_at < ?`,
       ).bind(now - dailyMs),
     },
     {
@@ -294,4 +317,25 @@ export function compactionStatements(
       ).bind(now - OUTBOX_KEEP_DAYS * DAY_MS),
     },
   ];
+}
+
+/**
+ * The oldest hour row (`days`) and day row (`months`) a pass reads, from when
+ * the previous pass ran: the start of the day and month it ran in, or of the
+ * day before now when that is earlier, and never before the oldest bucket the
+ * pass may still recompute (older ones are sealed). PURE.
+ */
+export function compactionWindow(
+  now: number,
+  retention: RetentionConfig,
+  since: number | null,
+): { days: number; months: number } {
+  const hourlyFloor = now - retention.hourlyDays * DAY_MS;
+  const dailyFloor = now - retention.dailyDays * DAY_MS;
+  if (since === null || !Number.isFinite(since)) return { days: hourlyFloor, months: dailyFloor };
+  const from = Math.min(since, now - DAY_MS);
+  return {
+    days: Math.max(hourlyFloor, bucketStart("day", from)),
+    months: Math.max(dailyFloor, bucketStart("month", from)),
+  };
 }
