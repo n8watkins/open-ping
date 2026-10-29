@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.0 - 2026-10-28
+
+### New
+
+- A new SSL certificate monitor warns 30, 14 and 7 days before a site's certificate expires, and shows Can't check for sites behind Cloudflare's proxy instead of a false alarm. A domain or certificate close to expiry now marks only its own row Degraded on a status page, not the whole page.
+
 ## 0.16.0 - 2026-10-28
 
 ### Faster
