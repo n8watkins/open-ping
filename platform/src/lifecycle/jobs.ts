@@ -4,7 +4,7 @@
  *
  *   welcome             once its OpenPing is ready
  *   trial ending        3 days and 1 day before the trial ends
- *   payment failed      once each time billing has it past due
+ *   (a failed payment is billing's email: src/billing/webhook.ts)
  *   suspended           once each time billing suspends it (the trial
  *                       ended unpaid, or the payment lapsed); its checks
  *                       stop and its pages go offline (billing, B5, does that)
@@ -27,7 +27,6 @@
 import { PLAN_LIMITS } from "../../../src/shared/hosted-contract";
 import {
   deletionWarningEmail,
-  paymentFailedEmail,
   suspendedEmail,
   trialEndingEmail,
   welcomeEmail,
@@ -56,7 +55,7 @@ export const LIFECYCLE_EVERY_MINUTES = 5;
 /** Tenants each kind of job looks at per run. */
 const BATCH = 50;
 
-export type NoticeKind = "welcome" | "trial_ending_3" | "trial_ending_1" | "payment_failed" | "suspended" | "deletion_warning";
+export type NoticeKind = "welcome" | "trial_ending_3" | "trial_ending_1" | "suspended" | "deletion_warning";
 
 export interface LifecycleDeps {
   db: D1Database;
@@ -185,11 +184,8 @@ async function runJobs(deps: LifecycleDeps): Promise<LifecycleReport> {
     );
   }
 
-  // A tenant no longer past due may fail again later: that is a new email.
-  await db.prepare("DELETE FROM lifecycle_notices WHERE kind = 'payment_failed' AND tenant_id NOT IN (SELECT id FROM tenants WHERE status = 'past_due')").run();
-  for (const t of await deps.billing.pastDue(BATCH, skip("payment_failed", "current"))) {
-    await notice(t, "payment_failed", "current", () => paymentFailedEmail({ tenantUrl: links(t).tenantUrl, billingUrl: links(t).billing, suspendAt: null }));
-  }
+  // A failed payment is billing's to tell (src/billing/webhook.ts emails it
+  // with Stripe's next try, once per invoice and attempt), so lifecycle doesn't.
 
   for (const t of await deps.billing.suspended(now(), BATCH, skip("suspended", "suspended_at"))) {
     const reason = await deps.billing.suspensionReason(t);

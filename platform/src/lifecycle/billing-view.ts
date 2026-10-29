@@ -5,9 +5,9 @@
  * writes tenants.status, tenants.plan and suspended_at, suspends a trial
  * that ended unpaid and a subscription that lapsed, and lifts it on a
  * payment. Lifecycle only reads that state, through this one interface, so
- * the two stay separate modules: `D1BillingView` reads the columns every
- * version of the schema has (status, trial_ends_at, suspended_at, and the
- * subscriptions table from migration 0001), and the tests use a fake.
+ * the two stay separate modules: `D1BillingView` reads billing's columns
+ * (status, trial_ends_at, suspended_at, billing_reason), and the tests can
+ * substitute their own.
  *
  * Each list leaves out the tenants lifecycle has already dealt with for that
  * cycle (an email sent or being sent, a deletion waiting on its export), so
@@ -48,8 +48,6 @@ export interface Unnotified {
 export interface BillingView {
   /** Ready trials ending after `now` and at or before `until`. */
   trialsEnding(now: number, until: number, limit: number, skip: Unnotified): Promise<BillingTenant[]>;
-  /** Tenants billing has past due (a renewal failed; Stripe is retrying). */
-  pastDue(limit: number, skip: Unnotified): Promise<BillingTenant[]>;
   /** Tenants billing suspended at or before `before`, oldest suspension first. */
   suspended(before: number, limit: number, skip: Unnotified): Promise<BillingTenant[]>;
   /**
@@ -124,11 +122,6 @@ export class D1BillingView implements BillingView {
     );
   }
 
-  pastDue(limit: number, skip: Unnotified) {
-    const u = unnotified(skip);
-    return this.all(`t.status = 'past_due' AND t.provision_state = 'ready'${u.sql}`, u.binds, "t.id", limit);
-  }
-
   suspended(before: number, limit: number, skip: Unnotified) {
     const u = unnotified(skip);
     return this.all(
@@ -153,14 +146,13 @@ export class D1BillingView implements BillingView {
   }
 
   /**
-   * A trial that ended without the account ever having a subscription was
-   * suspended for the trial; anything else, for its payment. (Billing keeps
-   * the exact reason in a column of its own; this reads only what every
-   * schema has.)
+   * Billing's own reason (tenants.billing_reason, migration 0006): an ended
+   * trial, or anything about the subscription (unpaid, canceled, paused),
+   * which the email calls the payment.
    */
   async suspensionReason(tenant: BillingTenant): Promise<SuspensionReason> {
-    const sub = await this.db.prepare("SELECT 1 AS x FROM subscriptions WHERE account_id = ? LIMIT 1").bind(tenant.accountId).first();
-    return !sub && tenant.trialEndsAt !== null && tenant.suspendedAt !== null && tenant.trialEndsAt <= tenant.suspendedAt ? "trial_ended" : "payment";
+    const row = await this.db.prepare("SELECT billing_reason FROM tenants WHERE id = ?").bind(tenant.tenantId).first<{ billing_reason: string | null }>();
+    return row?.billing_reason === "trial_ended" ? "trial_ended" : "payment";
   }
 
   newlyReady(since: number, limit: number, skip: Unnotified) {

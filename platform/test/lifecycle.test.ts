@@ -95,7 +95,7 @@ function world(): World {
 
 let seq = 0;
 /** A ready tenant, its account, its database in the fake, and its escrowed key. */
-async function tenant(w: World, fields: { status?: string; trialEndsAt?: number | null; suspendedAt?: number | null; provisionedAt?: number; ownerSuspended?: boolean } = {}) {
+async function tenant(w: World, fields: { status?: string; trialEndsAt?: number | null; suspendedAt?: number | null; provisionedAt?: number; ownerSuspended?: boolean; billingReason?: string } = {}) {
   seq++;
   const id = `life${String(seq).padStart(12, "0")}`;
   const accountId = `acc_life${seq}`;
@@ -106,8 +106,8 @@ async function tenant(w: World, fields: { status?: string; trialEndsAt?: number 
     env.PLATFORM_DB.prepare("INSERT INTO accounts (id, email, created_at, updated_at) VALUES (?, ?, 0, 0)").bind(accountId, email),
     env.PLATFORM_DB.prepare(
       `INSERT INTO tenants (id, account_id, slug, script_name, d1_id, status, plan, provision_state, version, trial_ends_at, suspended_at,
-         owner_suspended_at, provisioned_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'trial', 'ready', '0.14.0', ?, ?, ?, ?, 0, 0)`,
+         owner_suspended_at, provisioned_at, billing_reason, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'trial', 'ready', '0.14.0', ?, ?, ?, ?, ?, 0, 0)`,
     ).bind(
       id,
       accountId,
@@ -119,6 +119,10 @@ async function tenant(w: World, fields: { status?: string; trialEndsAt?: number 
       fields.suspendedAt ?? null,
       fields.ownerSuspended ? w.clock.now : null,
       fields.provisionedAt ?? w.clock.now - 30 * DAY,
+      // As billing (B5) would have it: an ended trial, or a lapsed subscription.
+      fields.status === "suspended"
+        ? (fields.billingReason ?? (fields.trialEndsAt != null && fields.suspendedAt != null && fields.trialEndsAt <= fields.suspendedAt ? "trial_ended" : "canceled"))
+        : null,
     ),
   ]);
   await ensureMasterKey(env.PLATFORM_DB, id, PLATFORM_KEY, 0);
@@ -186,26 +190,17 @@ describe("the account emails", () => {
     expect(kinds(w, t.email)).toEqual(["trial_ending_1"]);
   });
 
-  it("emails once each time a payment fails", async () => {
+  it("leaves a failed payment's email to billing", async () => {
     const w = world();
     const t = await tenant(w, { status: "past_due", trialEndsAt: null });
     await tick(w);
-    await tick(w);
-    expect(kinds(w, t.email)).toEqual(["payment_failed"]);
-    await setStatus(t.id, "active");
-    await tick(w);
-    await setStatus(t.id, "past_due");
-    await tick(w);
-    expect(kinds(w, t.email)).toEqual(["payment_failed", "payment_failed"]);
+    expect(kinds(w, t.email)).toEqual([]);
   });
 
   it("emails once per suspension, saying why", async () => {
     const w = world();
     const trial = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - DAY, suspendedAt: w.clock.now - DAY + 60_000 });
-    const lapsed = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 400 * DAY, suspendedAt: w.clock.now - 3_600_000 });
-    await env.PLATFORM_DB.prepare("INSERT INTO subscriptions (id, account_id, tenant_id, stripe_customer_id, status, plan, created_at, updated_at) VALUES ('sub_1', ?, ?, 'cus_1', 'canceled', 'hosted', 0, 0)")
-      .bind(lapsed.accountId, lapsed.id)
-      .run();
+    const lapsed = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 400 * DAY, suspendedAt: w.clock.now - 3_600_000, billingReason: "unpaid" });
     await tick(w);
     await tick(w);
     expect(kinds(w, trial.email)).toEqual(["suspended"]);
@@ -489,14 +484,10 @@ describe("the review's cases", () => {
     for (let i = 0; i < 51; i++) {
       const t = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 10 * DAY, suspendedAt: w.clock.now - 5 * DAY - i * 60_000 });
       await sentNotice(t.id, "suspended", String(w.clock.now - 5 * DAY - i * 60_000), w.clock.now - DAY);
-      const p = await tenant(w, { status: "past_due", trialEndsAt: null });
-      await sentNotice(p.id, "payment_failed", "current", w.clock.now - DAY);
     }
     const late = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 10 * DAY, suspendedAt: w.clock.now - 60_000 });
-    const lateDue = await tenant(w, { status: "past_due", trialEndsAt: null });
     await tick(w);
     expect(kinds(w, late.email)).toEqual(["suspended"]);
-    expect(kinds(w, lateDue.email)).toEqual(["payment_failed"]);
   });
 
   it("doesn't let deletions waiting on an export starve the ones behind them", async () => {

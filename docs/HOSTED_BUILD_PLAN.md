@@ -164,7 +164,7 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
   The owner is named in `PLATFORM_OWNERS` and needs a passkey sign-in (10 minutes old at most for a change); anyone else gets a 404.
   The waitlist comes in as the canonical install's CSV export, uploaded by the owner, with no call between the two.
 - [x] **B7 Lifecycle jobs (M), done.** Trial ending emails, suspension, 30-day deletion with an export first, tenant export to a self-host bundle (D1 export plus instructions). Needs: B3, B5.
-  `platform/src/lifecycle/`: the account emails once each, deletion only after an export read back from R2 and a warning a week before, and `/account/export` for the customer (the database, the steps, and their `MASTER_KEY` after a fresh sign-in). It reads billing's state through one small interface (`billing-view.ts`), so it works with or without B5's own columns.
+  `platform/src/lifecycle/`: the account emails once each, deletion only after an export read back from R2 and a warning a week before, and `/account/export` for the customer (the database, the steps, and their `MASTER_KEY` after a fresh sign-in). It reads billing's state (B5's columns, `billing_reason` included) through one small interface (`billing-view.ts`), and leaves the failed-payment email to billing, which sends it with Stripe's next try.
 
 ### C. Shared and cross-cutting
 
