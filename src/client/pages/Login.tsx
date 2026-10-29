@@ -50,7 +50,9 @@ export default function Login() {
     !status.passkeyConfigured
   )
     return <Navigate to="/setup" replace />;
-  if (me?.authenticated) return <Navigate to="/" replace />;
+  // Signing in for the Android app needs a fresh sign-in, even in a browser
+  // that is signed in already (routes/app-signin.ts).
+  if (me?.authenticated && !forApp) return <Navigate to="/" replace />;
   // Inside the Android app, every sign-in goes through the phone's browser.
   if (status?.appSignIn && isInApp() && hasAppBridge()) {
     return (
@@ -111,7 +113,7 @@ export default function Login() {
 
         {forApp && (
           <p role="status" className="mb-4 rounded-lg border border-accent/40 bg-accent-soft px-3.5 py-3 text-center text-sm leading-relaxed text-ink">
-            Signing in for the OpenPing app. Once you're in, you go back to the app.
+            Signing in for the OpenPing app. Sign in here, even if you already are, and you go back to the app.
           </p>
         )}
         <div className="rounded-card border border-line bg-surface p-6">

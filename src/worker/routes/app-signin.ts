@@ -7,12 +7,17 @@ import { hitRateLimit } from "../db/rate-limit";
 import { timingSafeEqual } from "../lib/timing";
 import { hostedProps } from "../lib/hosted";
 import { renderPlainPage } from "../lib/plain-page";
+import { getAdminEmail } from "../lib/admin";
+import { getSetting } from "../db/settings";
+import { sendEmail } from "../notifications/mail";
+import { escapeHtml, renderEmailLayout, renderEmailText } from "../notifications/email-layout";
 import {
   APP_REDIRECT_URI,
   APP_SIGNIN_PATHS,
   APP_STATE_PATTERN,
   PKCE_CHALLENGE_PATTERN,
   PKCE_VERIFIER_PATTERN,
+  androidPhone,
 } from "../../shared/native-app";
 
 /**
@@ -26,8 +31,11 @@ import {
  *
  * 1. The app makes a random verifier and opens, in a Custom Tab,
  *    `GET /auth/app/start?challenge=<base64url SHA-256 of it>&state=<random>`.
- *    That remembers the pair in this browser (a cookie naming a row) and goes
- *    on to the normal sign-in, or straight on when the browser is signed in.
+ *    That remembers the pair in this browser (a `__Host-` cookie naming a
+ *    row) and goes on to the normal sign-in. Always a fresh one, even when
+ *    the browser is signed in already, and only for a request the browser
+ *    started itself (Sec-Fetch-Site: none, as from an app): a link on a web
+ *    page can't start it.
  * 2. Every sign-in (GitHub, the email link, a passkey, the Hosted hand-off)
  *    ends at `afterSignInPath`, which sends a browser with that cookie to
  *    `GET /auth/app/finish` instead of the dashboard.
@@ -37,17 +45,28 @@ import {
  *    redirect to an app after one.
  * 4. The app posts the code and its verifier from the web view to
  *    `POST /auth/app/exchange`, which checks the verifier against the
- *    challenge and starts the web view's own session.
+ *    challenge and starts the web view's own session (`via` "app", listed and
+ *    revocable in Settings), and emails the admin that the app signed in.
  *
  * A code that some other app catches is useless without the verifier, which
  * never leaves the OpenPing app. The browser's own session, when the sign-in
  * made one, ends at step 3: the phone ends up signed in only in the app.
+ *
+ * What remains (docs/ANDROID.md, "Security"): a malicious app on the phone
+ * that claims the same scheme could start the flow itself, with its own
+ * verifier, and be handed the code if the person signs in and taps "Open the
+ * OpenPing app" for it. The fresh sign-in, the tap, the email and the session
+ * list in Settings are what stand in its way.
  */
 export const appSignIn = new Hono<AppEnv>();
 
 type Ctx = Context<AppEnv>;
 
-const PENDING_COOKIE = "op_app_signin";
+/**
+ * `__Host-`: the browser only takes it from this exact origin, over https,
+ * for "/", so no sibling subdomain (another Hosted customer) can plant one.
+ */
+export const PENDING_COOKIE = "__Host-op_app_signin";
 /** How long the browser may take to sign in, from the app's tap. */
 const PENDING_TTL_MS = 15 * 60 * 1000;
 /** How long the code on the "Open the app" page lasts. */
@@ -61,6 +80,10 @@ interface PendingSignIn {
   state: string;
   /** Whether this browser was signed in before the app asked: then it stays signed in. */
   hadSession: boolean;
+  /** When it started: only a session made after this counts (a fresh sign-in). */
+  startedAt: number;
+  /** The session the browser had when it started, which never counts (its row id). */
+  priorSession: string | null;
 }
 
 interface AppCode {
@@ -75,7 +98,32 @@ interface AppCode {
  * sign-in can call it; finish checks the cookie properly.
  */
 export function afterSignInPath(c: Ctx): string {
-  return getCookie(c, PENDING_COOKIE) ? APP_SIGNIN_PATHS.finish : "/";
+  return appSignInPending(c) ? APP_SIGNIN_PATHS.finish : "/";
+}
+
+/** True while this browser is signing in for the app (GitHub then asks which account, routes/auth.ts). */
+export function appSignInPending(c: Ctx): boolean {
+  return !!getCookie(c, PENDING_COOKIE);
+}
+
+/**
+ * Whether the browser itself started this request: Sec-Fetch-Site "none" is
+ * what an app opening a Custom Tab, a typed address or a bookmark sends; a link
+ * or a form on any web page sends cross-site, same-site or same-origin. A
+ * browser without Fetch Metadata sends nothing and is let through.
+ */
+export function browserInitiated(secFetchSite: string | undefined): boolean {
+  return secFetchSite === undefined || secFetchSite === "none";
+}
+
+/**
+ * Whether a post to /exchange may come from here: the app's web view
+ * (WebView.postUrl sends no Origin, or "null", and Sec-Fetch-Site "none") or
+ * this install's own page; never another site's form (login CSRF).
+ */
+export function exchangeAllowed(origin: string | undefined, secFetchSite: string | undefined, own: string): boolean {
+  if (secFetchSite === "cross-site" || secFetchSite === "same-site") return false;
+  return origin === undefined || origin === "null" || origin === own;
 }
 
 async function limited(c: Ctx): Promise<boolean> {
@@ -123,6 +171,16 @@ export async function s256(input: string): Promise<string> {
 appSignIn.get("/start", async (c) => {
   noStore(c);
   if (await limited(c)) return startAgainPage(c, "Too many sign-in attempts", "Give it a minute and try again.", 429);
+  // Only from the app: a link or a form on a web page (or in a page someone
+  // sends you) can't start a sign-in for an app.
+  if (!browserInitiated(c.req.header("sec-fetch-site"))) {
+    return startAgainPage(
+      c,
+      "Start signing in from the app",
+      "This sign-in for the OpenPing app didn't come from the app. Open the OpenPing app and tap Sign in there.",
+      403,
+    );
+  }
   const challenge = c.req.query("challenge") ?? "";
   const state = c.req.query("state") ?? "";
   const method = c.req.query("challenge_method") ?? "S256";
@@ -131,9 +189,15 @@ appSignIn.get("/start", async (c) => {
   }
 
   const session = await getSession(c);
-  const pending: PendingSignIn = { challenge, state, hadSession: session !== null };
-  const nonce = randomToken(24);
   const now = Date.now();
+  const pending: PendingSignIn = {
+    challenge,
+    state,
+    hadSession: session !== null,
+    startedAt: now,
+    priorSession: session?.id ?? null,
+  };
+  const nonce = randomToken(24);
   await c.env.DB.prepare(
     `INSERT INTO auth_tokens (id, kind, data, created_at, expires_at) VALUES (?, 'app_signin', ?, ?, ?)`,
   )
@@ -148,11 +212,17 @@ appSignIn.get("/start", async (c) => {
     maxAge: PENDING_TTL_MS / 1000,
   });
 
-  if (session) return c.redirect(APP_SIGNIN_PATHS.finish, 302);
-  // OpenPing Hosted signs its customers in on the platform, which hands the
-  // browser back to /auth/hosted, which ends at afterSignInPath.
+  // Always a fresh sign-in, even when this browser is signed in already: the
+  // app gets a session only for someone who just proved it's them.
+  // OpenPing Hosted signs its customers in on the platform (asked to sign in
+  // again, `reauth=1`), which hands the browser back to /auth/hosted, which
+  // ends at afterSignInPath.
   const hosted = hostedProps(c);
-  if (hosted) return c.redirect(hosted.tenant.urls.signIn, 302);
+  if (hosted) {
+    const signIn = new URL(hosted.tenant.urls.signIn);
+    signIn.searchParams.set("reauth", "1");
+    return c.redirect(signIn.toString(), 302);
+  }
   return c.redirect("/login?app=1", 302);
 });
 
@@ -177,6 +247,10 @@ appSignIn.get("/finish", async (c) => {
   const session = await getSession(c);
   if (!session) {
     return startAgainPage(c, "You're not signed in", "Sign in first, then the app can open.", 403);
+  }
+  // A session from before the app asked is not a fresh sign-in.
+  if (session.id === pending.priorSession || session.created_at < pending.startedAt) {
+    return startAgainPage(c, "Sign in again", "The app needs a new sign-in, made after you tapped Sign in in the app.", 403);
   }
   // A support session (the owner helping a Hosted customer) is short and
   // audited, and stays in the browser it was given to.
@@ -221,6 +295,11 @@ appSignIn.get("/finish", async (c) => {
 appSignIn.post("/exchange", async (c) => {
   noStore(c);
   const failed = () => c.redirect("/login?error=app_signin_failed", 302);
+  // Never another site's form: that would sign the web view (or a browser)
+  // in to someone else's session (login CSRF).
+  if (!exchangeAllowed(c.req.header("origin"), c.req.header("sec-fetch-site"), new URL(c.req.url).origin)) {
+    return failed();
+  }
   if (await limited(c)) return failed();
   const body = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
   const code = typeof body.code === "string" ? body.code : "";
@@ -238,15 +317,68 @@ appSignIn.post("/exchange", async (c) => {
 
   // The web view's own session, rotated like every other sign-in.
   await endCurrentSession(c);
-  await createSession(c, grant.identity, grant.identityKind);
+  await createSession(c, grant.identity, grant.identityKind, undefined, "app");
+  const notice = sendAppSignInNotice(c).catch((e: unknown) => console.error("[app-signin] notice email failed", e));
+  try {
+    c.executionCtx.waitUntil(notice);
+  } catch {
+    await notice;
+  }
   return c.redirect("/", 302);
 });
+
+/**
+ * Tell the admin the app just signed in: if it wasn't them, Settings lists the
+ * app's sessions to sign out. Best effort, like every sign-in email.
+ */
+async function sendAppSignInNotice(c: Ctx): Promise<void> {
+  const to = await getAdminEmail(c.env);
+  if (!to) return;
+  const host = new URL(c.req.url).host;
+  const phone = androidPhone(c.req.header("user-agent"));
+  const device = phone ?? "an Android phone";
+  const when = new Date().toUTCString();
+  const settings = `${new URL(c.req.url).origin}/settings/security#sessions`;
+  const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+  const p = (text: string) =>
+    `<p style="margin:0 0 14px;font-family:${FONT};font-size:15px;line-height:1.6;color:#16233a;">${escapeHtml(text)}</p>`;
+  const lines = [
+    `The OpenPing app on ${device} signed in to ${host} (${when}).`,
+    "If that was you, there is nothing to do.",
+    "If it wasn't, open Settings > Sign-in & security on your OpenPing and sign that session out, or sign out everywhere.",
+  ];
+  await sendEmail(c.env, {
+    from: (await getSetting(c.env, "email_from")) || "OpenPing <onboarding@resend.dev>",
+    to,
+    subject: "The OpenPing app signed in",
+    html: renderEmailLayout({
+      heading: "The OpenPing app signed in",
+      accent: "neutral",
+      bodyHtml: lines.map(p).join(""),
+      button: { label: "Review sessions", url: settings },
+      preheader: `The OpenPing app on ${device} signed in to ${host}.`,
+    }),
+    text: renderEmailText({ heading: "The OpenPing app signed in", lines: [...lines, "", settings] }),
+    category: "signin",
+  });
+}
 
 function parsePending(raw: string | null): PendingSignIn | null {
   try {
     const v = JSON.parse(raw ?? "") as Partial<PendingSignIn>;
-    if (typeof v.challenge === "string" && typeof v.state === "string" && typeof v.hadSession === "boolean") {
-      return { challenge: v.challenge, state: v.state, hadSession: v.hadSession };
+    if (
+      typeof v.challenge === "string" &&
+      typeof v.state === "string" &&
+      typeof v.hadSession === "boolean" &&
+      typeof v.startedAt === "number"
+    ) {
+      return {
+        challenge: v.challenge,
+        state: v.state,
+        hadSession: v.hadSession,
+        startedAt: v.startedAt,
+        priorSession: typeof v.priorSession === "string" ? v.priorSession : null,
+      };
     }
   } catch {
     // An unreadable row is no sign-in.

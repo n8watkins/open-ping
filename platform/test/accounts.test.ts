@@ -289,6 +289,10 @@ describe("signing up with email, through to the customer's OpenPing", () => {
     expect((await browser.fetch("/open?tenant=returnco")).headers.get("location")).toMatch(/^https:\/\/returnco\.openping\.test\/auth\/hosted\?t=v1\./);
     // Already signed in, the tenant's sign-in link goes straight through.
     expect((await browser.fetch("/sign-in?tenant=returnco")).headers.get("location")).toBe("/open?tenant=returnco");
+    // Unless the tenant asks for a fresh sign-in (the Android app's): then the page shows.
+    const fresh = await browser.fetch("/sign-in?tenant=returnco&reauth=1");
+    expect(fresh.status).toBe(200);
+    expect(await fresh.text()).toContain('name="next" value="/open?tenant=returnco"');
   });
 
   it("refuses to hand off to someone else's OpenPing, and sends a signed-out visitor to sign in", async () => {

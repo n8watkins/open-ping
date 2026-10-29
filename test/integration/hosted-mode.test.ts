@@ -341,13 +341,20 @@ describe("the sign-in hand-off", () => {
     const verifier = "v".repeat(43);
     const start = await browser.fetch(`/auth/app/start?challenge=${await s256(verifier)}&state=${"s".repeat(16)}`);
     expect(start.status).toBe(302);
-    expect(start.headers.get("location")).toBe(URLS.signIn);
+    // Always a fresh sign-in on the platform, even with a platform session.
+    expect(start.headers.get("location")).toBe(`${URLS.signIn}?reauth=1`);
     // The platform signs the customer in and hands the browser back.
     const handoff = await browser.fetch(handoffPath(await token()));
     expect(handoff.headers.get("location")).toBe("/auth/app/finish");
     const finish = await browser.fetch("/auth/app/finish");
     expect(finish.status).toBe(200);
     expect(await finish.text()).toContain("Open the OpenPing app");
+
+    // A hand-off from before the app asked doesn't count as that fresh sign-in.
+    const stale = hostedBrowser();
+    await stale.fetch(handoffPath(await token()));
+    await stale.fetch(`/auth/app/start?challenge=${await s256(verifier)}&state=${"s".repeat(16)}`);
+    expect((await stale.fetch("/auth/app/finish")).status).toBe(403);
 
     // A support sign-in stays in its browser.
     const support = hostedBrowser();

@@ -9,7 +9,7 @@ import { appOrigin } from "../lib/app-origin";
 import { hitRateLimit } from "../db/rate-limit";
 import { homePage } from "../lib/home-page";
 import { countEvent } from "./events";
-import { afterSignInPath } from "./app-signin";
+import { afterSignInPath, appSignInPending } from "./app-signin";
 
 /**
  * Browser-facing auth flows mounted at /auth. GitHub OAuth (PRD §13):
@@ -83,6 +83,9 @@ auth.get("/github/start", async (c) => {
   authorize.searchParams.set("scope", "read:user");
   authorize.searchParams.set("state", state);
   authorize.searchParams.set("allow_signup", "false");
+  // Signing in for the Android app is always a deliberate, fresh sign-in:
+  // GitHub asks which account even when it would go straight through.
+  if (appSignInPending(c)) authorize.searchParams.set("prompt", "select_account");
   return c.redirect(authorize.toString(), 302);
 });
 
