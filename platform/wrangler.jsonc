@@ -67,10 +67,15 @@
     // Stripe Tax in Checkout; "off" turns it off.
     "STRIPE_TAX": "on",
     // A Customer Portal configuration (bpc_...); empty uses the account's default.
-    "STRIPE_PORTAL_CONFIGURATION": ""
+    "STRIPE_PORTAL_CONFIGURATION": "",
+    // The canary of every release that names none (src/releases/runner.ts):
+    // a slug or tenant id, best the owner's own test tenant. Empty: the
+    // oldest tenant.
+    "RELEASE_CANARY": ""
   },
   // Every minute: the scheduler enqueues the due customers (src/scheduling.ts),
-  // and the safety net for provisioning (src/provisioning.ts) runs alongside.
+  // and the safety net for provisioning (src/provisioning.ts) and the release
+  // runner (src/releases/runner.ts) run alongside.
   "triggers": {
     "crons": ["* * * * *"]
   },
@@ -92,8 +97,9 @@
       "namespace": "openping-tenants"
     }
   ],
-  // Tenant bundles, one per OpenPing release, written by the release runner
-  // (C1) and read by provisioning (layout in src/bundle.ts).
+  // Tenant bundles, one per OpenPing release, uploaded by
+  // scripts/tenant-release.mjs and read by provisioning and releases (layout
+  // in src/bundle.ts); the platform writes only releases/current.
   "r2_buckets": [
     {
       "binding": "BUNDLES",

@@ -44,12 +44,22 @@ export interface BundleWorkerConfig {
   migrations: BundleMigration[];
 }
 
+/** One of OpenPing's D1 migrations the bundle carries (each tenant applies them itself, CONTRACT.md section 6). */
+export interface BundleD1Migration {
+  /** The file name: "0021_support_activity.sql". */
+  name: string;
+  /** SHA-256 hex of the file, so a release can tell an edited migration from the one tenants already ran. */
+  sha256: string;
+}
+
 export interface TenantBundle extends BundleWorkerConfig {
   /** OpenPing's version (package.json), recorded on the tenant row. */
   version: string;
   mainModule: string;
   modules: WorkerModule[];
   assets: BundleAsset[];
+  /** The D1 migrations compiled into the bundle, in order. Empty for a bundle that doesn't list them. */
+  d1Migrations: BundleD1Migration[];
 }
 
 const MIGRATION_STEP_KEYS = ["new_sqlite_classes", "new_classes", "renamed_classes", "deleted_classes", "transferred_classes"] as const;
@@ -109,12 +119,17 @@ export class StaticBundleSource implements BundleSource {
 }
 
 /**
- * The R2 layout the release runner writes (C1) and provisioning reads:
+ * The R2 layout the release runner writes (scripts/tenant-release.mjs) and
+ * provisioning and releases read:
  *
  *   releases/current                       the current version, as plain text
- *   releases/<version>/bundle.json         BundleManifest below
+ *   releases/<version>/bundle.json         BundleManifest below, written last
  *   releases/<version>/modules/<name>      each Worker module
  *   releases/<version>/assets/<path>       each static asset (path without its leading slash)
+ *   releases/<version>/migrations/<name>   each D1 migration's SQL, for the release's additive check
+ *
+ * A version is immutable once its bundle.json exists: the command line
+ * refuses to upload a different bundle under the same version.
  */
 export interface BundleManifest {
   version: string;
@@ -126,11 +141,42 @@ export interface BundleManifest {
   /** Absent in a bundle written before Durable Objects: none. */
   durableObjects?: BundleDurableObject[];
   migrations?: BundleMigration[];
+  /** Absent in a bundle written before releases checked them: none listed. */
+  d1Migrations?: BundleD1Migration[];
   modules: { name: string; contentType: string }[];
   assets: { path: string; contentType: string }[];
+  /** Where it was built from, for the console: the git commit and the time. */
+  commit?: string;
+  builtAt?: string;
+  /** SHA-256 over everything but builtAt: two uploads of one version must have the same. */
+  digest?: string;
 }
 
-const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/;
+export const RELEASES_PREFIX = "releases/";
+export const CURRENT_KEY = "releases/current";
+
+export const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/;
+
+export function isBundleVersion(value: unknown): value is string {
+  return typeof value === "string" && VERSION_PATTERN.test(value) && !value.includes("..");
+}
+
+/** Orders versions like SemVer where they look like it ("0.9.0" before "0.10.0"), by text otherwise. */
+export function compareVersions(a: string, b: string): number {
+  const parts = (v: string) => v.split(/[.+-]/).map((p) => (/^\d+$/.test(p) ? Number(p) : p));
+  const pa = parts(a);
+  const pb = parts(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i];
+    const y = pb[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    if (x === y) continue;
+    if (typeof x === "number" && typeof y === "number") return x - y;
+    return String(x) < String(y) ? -1 : 1;
+  }
+  return 0;
+}
 
 /**
  * Loaded bundles, per isolate and by version: a release is immutable, so it
@@ -138,6 +184,11 @@ const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/;
  * (the current release and the one before) stay in memory.
  */
 const loaded = new Map<string, Promise<TenantBundle>>();
+
+/** Tests only: forget every loaded bundle. */
+export function clearLoadedBundles(): void {
+  loaded.clear();
+}
 
 export class R2BundleSource implements BundleSource {
   constructor(private readonly bucket: R2Bucket) {}
@@ -154,14 +205,62 @@ export class R2BundleSource implements BundleSource {
     return new Uint8Array(await object.arrayBuffer());
   }
 
+  /** The version releases/current names, or null before the first release. */
+  async currentVersion(): Promise<string | null> {
+    const object = await this.bucket.get(CURRENT_KEY);
+    if (!object) return null;
+    const version = (await object.text()).trim();
+    if (!isBundleVersion(version)) throw new PermanentError("tenant bundle: releases/current is not a version");
+    return version;
+  }
+
   async current(): Promise<TenantBundle> {
-    const version = (await this.text("releases/current")).trim();
-    if (!VERSION_PATTERN.test(version)) throw new PermanentError("tenant bundle: releases/current is not a version");
+    const version = await this.currentVersion();
+    if (!version) throw new PermanentError(`tenant bundle: ${CURRENT_KEY} is missing`);
+    return this.version(version);
+  }
+
+  /** Points new tenants at `version` (a rollout's canary passed, or a rollback). */
+  async setCurrent(version: string): Promise<void> {
+    if (!isBundleVersion(version)) throw new PermanentError(`tenant bundle: ${JSON.stringify(version)} is not a version`);
+    await this.bucket.put(CURRENT_KEY, version, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
+  }
+
+  /** True when the version's bundle.json is there (it is written last, so the rest is too). */
+  async hasVersion(version: string): Promise<boolean> {
+    if (!isBundleVersion(version)) return false;
+    return (await this.bucket.head(`${RELEASES_PREFIX}${version}/bundle.json`)) !== null;
+  }
+
+  /** Every version with a folder in the bucket, newest first (one whose upload didn't finish too). */
+  async listVersions(): Promise<string[]> {
+    const versions: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.bucket.list({ prefix: RELEASES_PREFIX, delimiter: "/", ...(cursor ? { cursor } : {}) });
+      for (const prefix of page.delimitedPrefixes) {
+        const version = prefix.slice(RELEASES_PREFIX.length, -1);
+        if (isBundleVersion(version)) versions.push(version);
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    return versions.sort((a, b) => compareVersions(b, a));
+  }
+
+  /** The SQL of one of the version's D1 migrations, as uploaded. */
+  async migrationSql(version: string, name: string): Promise<string> {
+    if (!isBundleVersion(version) || !/^[0-9A-Za-z_.-]+\.sql$/.test(name)) throw new PermanentError(`tenant bundle: bad migration ${name}`);
+    return this.text(`${RELEASES_PREFIX}${version}/migrations/${name}`);
+  }
+
+  /** One version's bundle, read once per isolate. */
+  async version(version: string): Promise<TenantBundle> {
+    if (!isBundleVersion(version)) throw new PermanentError(`tenant bundle: ${JSON.stringify(version)} is not a version`);
     let bundle = loaded.get(version);
     if (!bundle) {
       if (loaded.size >= 2) loaded.delete(loaded.keys().next().value!);
       bundle = this.load(version);
-      // Never keep a failure: the next sign-up tries R2 again.
+      // Never keep a failure: the next call tries R2 again.
       bundle.catch(() => loaded.delete(version));
       loaded.set(version, bundle);
     }
@@ -169,9 +268,18 @@ export class R2BundleSource implements BundleSource {
   }
 
   private async load(version: string): Promise<TenantBundle> {
-    const prefix = `releases/${version}`;
-    const manifest = JSON.parse(await this.text(`${prefix}/bundle.json`)) as BundleManifest;
+    const prefix = `${RELEASES_PREFIX}${version}`;
+    let manifest: BundleManifest;
+    try {
+      manifest = JSON.parse(await this.text(`${prefix}/bundle.json`)) as BundleManifest;
+    } catch (error) {
+      if (error instanceof PermanentError) throw error;
+      throw new PermanentError(`tenant bundle: ${prefix}/bundle.json is not JSON`);
+    }
     if (manifest.version !== version) throw new PermanentError("tenant bundle: bundle.json names another version");
+    if (!Array.isArray(manifest.modules) || !manifest.modules.some((m) => m.name === manifest.mainModule)) {
+      throw new PermanentError("tenant bundle: its main module isn't one of its modules");
+    }
     const modules = await Promise.all(
       manifest.modules.map(async (m) => ({
         name: m.name,
@@ -180,7 +288,7 @@ export class R2BundleSource implements BundleSource {
       })),
     );
     const assets = await Promise.all(
-      manifest.assets.map(async (a) => ({
+      (manifest.assets ?? []).map(async (a) => ({
         path: a.path,
         contentType: a.contentType,
         content: await this.bytes(`${prefix}/assets${a.path}`),
@@ -197,6 +305,7 @@ export class R2BundleSource implements BundleSource {
       vars: manifest.vars ?? {},
       durableObjects: manifest.durableObjects ?? [],
       migrations: manifest.migrations ?? [],
+      d1Migrations: manifest.d1Migrations ?? [],
     };
   }
 }

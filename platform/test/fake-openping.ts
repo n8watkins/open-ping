@@ -24,17 +24,37 @@ export interface FakeOpenPingState {
   scheduledRuns: ScheduledRequest[];
   /** Make the next scheduled run answer "failed". */
   failNextRun?: boolean;
+  /** Answer the next scheduled runs "lease_busy", this many times. */
+  busyRuns?: number;
+  /** Health answers not ok (a broken release) while this is true. */
+  unhealthy?: boolean;
   /** Vars and secrets the upload gave it, as its env would have them. */
   env: Record<string, string>;
+  /** The OpenPing version of the uploaded bundle (its release-<version> tag). */
+  version: string;
+  healthChecks: number;
 }
 
-export function fakeOpenPing(script: FakeScript): { worker: FakeUserWorker; state: FakeOpenPingState } {
+export interface FakeOpenPingOptions {
+  /**
+   * The state of the script it replaces: a re-upload keeps the tenant's
+   * database, so its schema stays where it was.
+   */
+  state?: FakeOpenPingState;
+  /** Health applies missing migrations first, as OpenPing's does (CONTRACT.md, section 6). */
+  healthMigrates?: boolean;
+}
+
+export function fakeOpenPing(script: FakeScript, options: FakeOpenPingOptions = {}): { worker: FakeUserWorker; state: FakeOpenPingState } {
   const env: Record<string, string> = {};
   for (const b of script.metadata.bindings) {
     if (b.type === "plain_text" || b.type === "secret_text") env[b.name] = b.text;
     if (b.type === "d1") env[b.name] = `d1:${b.database_id}`;
   }
-  const state: FakeOpenPingState = { schemaVersion: 0, scheduledRuns: [], env };
+  const version = script.metadata.tags?.find((t) => t.startsWith("release-"))?.slice("release-".length) ?? "0.10.1";
+  const state: FakeOpenPingState = options.state ?? { schemaVersion: 0, scheduledRuns: [], env, version, healthChecks: 0 };
+  state.env = env;
+  state.version = version;
   const worker: FakeUserWorker = async (request, props) => {
     const url = new URL(request.url);
     const internal = url.pathname.startsWith("/__platform/");
@@ -42,10 +62,12 @@ export function fakeOpenPing(script: FakeScript): { worker: FakeUserWorker; stat
       return Response.json({ error: "not_found" }, { status: 404 });
     }
     if (url.pathname === PLATFORM_HEALTH_PATH) {
-      const ok = state.schemaVersion === BUNDLED_SCHEMA_VERSION;
+      state.healthChecks++;
+      if (options.healthMigrates && !state.unhealthy) state.schemaVersion = Math.max(state.schemaVersion, BUNDLED_SCHEMA_VERSION);
+      const ok = state.schemaVersion >= BUNDLED_SCHEMA_VERSION && !state.unhealthy;
       const body: HealthResponse = {
         ok,
-        version: "0.10.1",
+        version: state.version,
         schemaVersion: state.schemaVersion,
         bundledSchemaVersion: BUNDLED_SCHEMA_VERSION,
         migrating: false,
@@ -56,6 +78,10 @@ export function fakeOpenPing(script: FakeScript): { worker: FakeUserWorker; stat
     if (url.pathname === PLATFORM_SCHEDULED_PATH && request.method === "POST") {
       const run = (await request.json()) as ScheduledRequest;
       state.scheduledRuns.push(run);
+      if (state.busyRuns) {
+        state.busyRuns--;
+        return Response.json({ runId: run.runId, outcome: "lease_busy", version: state.version } as Partial<ScheduledRunSummary>);
+      }
       const failed = state.failNextRun === true;
       state.failNextRun = false;
       const applied = failed ? 0 : BUNDLED_SCHEMA_VERSION - state.schemaVersion;
@@ -63,7 +89,7 @@ export function fakeOpenPing(script: FakeScript): { worker: FakeUserWorker; stat
       const summary: ScheduledRunSummary = {
         runId: run.runId,
         outcome: failed ? "failed" : "ran",
-        version: "0.10.1",
+        version: state.version,
         schemaVersion: state.schemaVersion,
         migrationsApplied: applied,
         startedAt: run.scheduledTime,

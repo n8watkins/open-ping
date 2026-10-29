@@ -86,6 +86,13 @@ export interface AssetsConfig {
   not_found_handling?: "single-page-application" | "404-page" | "none";
   /** true, false, or route patterns that reach the Worker before assets ("!/assets/*" excludes). */
   run_worker_first?: boolean | string[];
+  /**
+   * The contents of the assets' `_headers` and `_redirects` files, which are
+   * sent here rather than uploaded as assets (as Wrangler does).
+   * https://developers.cloudflare.com/workers/static-assets/headers/
+   */
+  _headers?: string;
+  _redirects?: string;
 }
 
 /**

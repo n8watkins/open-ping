@@ -33,6 +33,8 @@ import { provisionDue } from "./provisioning";
 import { handleProvisionBatch, type ProvisionMessage } from "./provisioning-queue";
 import { provisioningSetup } from "./provisioning-env";
 import { enqueueDue, handleScheduleBatch, schedulerDaysCleanup, type SchedulingDeps } from "./scheduling";
+import { releaseSetup } from "./releases/env";
+import { releaseTick } from "./releases/runner";
 import type { TenantRecord } from "./tenants";
 
 /** Set by the platform when it makes the stub; never by the tenant. */
@@ -77,6 +79,7 @@ function capabilityFor(ctx: ExecutionContext, tenant: TenantRecord): PlatformCap
 const app = createApp({
   dispatcher: (env) => new NamespaceDispatcher(env.TENANTS),
   capability: (_env, ctx, tenant) => capabilityFor(ctx, tenant),
+  releases: (env, _ctx, capability) => releaseSetup(env, capability),
   accounts: {
     mailer: (env) => mailerFromEnv(env),
     provisioning: (env, ctx) => provisioningSetup(env, (tenant) => capabilityFor(ctx, tenant)),
@@ -93,9 +96,27 @@ function schedulingDeps(env: PlatformEnv, ctx: ExecutionContext): SchedulingDeps
 }
 
 /**
+ * The release runner's turn (src/releases/runner.ts): the owner's requests,
+ * then the active rollout for up to five minutes. Beside the rest of the
+ * cron, not before it, so a long rollout never holds up provisioning or the
+ * scheduler; its lease keeps the next minute's tick from running it twice.
+ */
+async function releases(env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
+  const setup = releaseSetup(env, (tenant) => capabilityFor(ctx, tenant));
+  if (!setup.ok) return; // provisioning logs the missing settings, which are the same
+  try {
+    const { requests, tick } = await releaseTick(setup.deps);
+    for (const r of requests) console.log("[release] request", r.requestId, r.result);
+    if (tick.kind === "ran") console.log("[release] tick", tick.releaseId, tick.state, `${tick.steps} steps`);
+  } catch (error) {
+    console.error("[release] tick failed", error);
+  }
+}
+
+/**
  * Every minute: end the trials that are over (src/billing/state.ts), enqueue
  * the customers whose scheduler is due (src/scheduling.ts), clear expired
- * sign-in state, and the safety net for provisioning, picking
+ * sign-in state, the release runner beside the rest, and the safety net for provisioning, picking
  * up any tenant a queue message missed. The scheduler goes first and runs
  * alongside the rest, since it is the one that is late when it waits.
  */
@@ -129,6 +150,7 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
     .catch((error) => console.error("[schedule] enqueue failed", error));
   const hourly = new Date(controller.scheduledTime).getUTCMinutes() === 7 ? [schedulerDaysCleanup(db, now), ...billingRecordsCleanup(db, now)] : [];
   if (new Date(controller.scheduledTime).getUTCMinutes() % LIFECYCLE_EVERY_MINUTES === 0) ctx.waitUntil(lifecycle(env, ctx));
+  ctx.waitUntil(releases(env, ctx));
   await db
     .batch([sessionCleanup(db, now), emailSignInCleanup(db, now), ceremonyCleanup(db, now), rateLimitCleanup(db, now), emailUsageCleanup(db, now), ...hourly])
     .catch((error) => console.error("[cleanup] failed", error));

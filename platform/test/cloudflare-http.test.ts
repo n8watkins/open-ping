@@ -201,6 +201,7 @@ const BUNDLE: TenantBundle = {
   vars: { WORKERS_PLAN: "paid", HOSTED_MODE: "0" },
   durableObjects: [],
   migrations: [],
+  d1Migrations: [],
 };
 
 function upload(overrides: Partial<UserWorkerUpload> = {}): UserWorkerUpload {
