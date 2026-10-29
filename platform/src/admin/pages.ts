@@ -44,6 +44,7 @@ nav.tabs { display: flex; gap: 4px; margin: 0 0 20px; border-bottom: 1px solid v
 nav.tabs a { display: flex; align-items: center; min-height: 44px; padding: 0 12px; color: var(--ink-muted); text-decoration: none; font-weight: 600; font-size: 0.9375rem; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
 nav.tabs a:hover { color: var(--ink); }
 nav.tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+@media (max-width: 419px) { nav.tabs { gap: 0; } nav.tabs a { padding: 0 6px; font-size: 0.875rem; } nav.tabs a:first-child { padding-left: 0; } }
 .title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 4px; }
 .title-row h1 { margin: 0; }
 .title-row .badge { margin: 0; }
@@ -146,10 +147,11 @@ h3.minor { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.04em; text-
 .issues { margin: 8px 0 0; padding: 0 0 0 18px; font-size: 0.8125rem; color: var(--ink-muted); }
 `;
 
-type Tab = "tenants" | "audit" | "waitlist";
+export type Tab = "tenants" | "releases" | "audit" | "waitlist";
 
 const TABS: { id: Tab; href: string; label: string }[] = [
   { id: "tenants", href: "/admin", label: "Tenants" },
+  { id: "releases", href: "/admin/releases", label: "Releases" },
   { id: "audit", href: "/admin/audit", label: "Audit log" },
   { id: "waitlist", href: "/admin/waitlist", label: "Waitlist" },
 ];
@@ -168,7 +170,7 @@ ${
 }`;
 }
 
-function adminPage(input: { title: string; tab: Tab | null; main: Html; status?: number; scripts?: string[] }): Response {
+export function adminPage(input: { title: string; tab: Tab | null; main: Html; status?: number; scripts?: string[]; styleExtra?: string }): Response {
   return renderPage({
     title: `${input.title} - Admin`,
     main: input.main,
@@ -176,7 +178,7 @@ function adminPage(input: { title: string; tab: Tab | null; main: Html; status?:
     scripts: input.scripts,
     admin: true,
     header: header(input.tab),
-    style: ADMIN_STYLE,
+    style: ADMIN_STYLE + (input.styleExtra ?? ""),
     footer: false,
   });
 }
@@ -317,7 +319,7 @@ export interface TenantPageInput {
   flash?: { message: string; tone: "ok" | "error" } | null;
 }
 
-function fact(label: string, value: Html | string | number, mono = false): Html {
+export function fact(label: string, value: Html | string | number, mono = false): Html {
   return html`<div><dt>${label}</dt><dd${mono ? new Html(' class="mono"') : ""}>${value}</dd></div>`;
 }
 

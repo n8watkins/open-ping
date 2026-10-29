@@ -92,7 +92,7 @@ form { margin: 0; }
 .field { margin: 0 0 16px; }
 label { display: block; font-size: 0.875rem; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
 .hint { font-size: 0.8125rem; color: var(--ink-faint); margin: 6px 0 0; }
-input[type=email], input[type=text] {
+input[type=email], input[type=text], input[type=number] {
   display: block; width: 100%; min-height: 48px; padding: 10px 14px; font: inherit; font-size: 16px;
   color: var(--ink); background: var(--canvas); border: 1px solid var(--line); border-radius: 0.5rem;
 }

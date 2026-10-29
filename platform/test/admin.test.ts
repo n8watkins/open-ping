@@ -17,16 +17,18 @@ import { ADMIN_REAUTH_MS, ADMIN_SESSION_MAX_AGE_MS, parseOwners } from "../src/a
 import { WAITLIST_MAX_BYTES, csvRecords, parseJoinedAt, parseWaitlistExport } from "../src/admin/waitlist";
 import { createApp } from "../src/app";
 import { LIMITS } from "../src/auth/rate-limit";
-import { StaticBundleSource, type TenantBundle } from "../src/bundle";
+import { R2BundleSource, StaticBundleSource, clearLoadedBundles, type BundleManifest, type TenantBundle } from "../src/bundle";
 import { TenantCapability } from "../src/capability";
 import type { PlatformEnv } from "../src/env";
-import { generateMasterKey } from "../src/keys";
+import { ensureMasterKey, generateMasterKey } from "../src/keys";
 import { FakeMailer } from "./fake-mailer";
 import { requestTenant, type ProvisioningDeps } from "../src/provisioning";
 import { clearTenantCache } from "../src/tenants";
 import { FakeCloudflareApi } from "./fake-cloudflare";
 import { FakeDispatcher } from "./fake-dispatcher";
-import { fakeOpenPing } from "./fake-openping";
+import { fakeOpenPing, type FakeOpenPingState } from "./fake-openping";
+import { FakeR2Bucket } from "./fake-r2";
+import type { ReleaseSetup } from "../src/releases/env";
 
 const DOMAIN = "openping.test";
 const APP = `https://app.${DOMAIN}`;
@@ -58,6 +60,7 @@ const BUNDLE: TenantBundle = {
   vars: {},
   durableObjects: [],
   migrations: [],
+  d1Migrations: [],
 };
 
 const api = new FakeCloudflareApi();
@@ -85,7 +88,28 @@ const accountDeps: AccountDeps = {
   now: () => clock,
 };
 
-const app = createApp({ dispatcher: () => dispatcher, capability: () => noopPlatform, accounts: accountDeps });
+// The release runner behind the console's Releases tab, over an in-memory bucket.
+const RELEASE_PLATFORM_KEY = generateMasterKey();
+let releaseBucket = new FakeR2Bucket();
+let releasesOn = true;
+function releaseSetup(): ReleaseSetup {
+  if (!releasesOn) return { ok: false, missing: ["CF_API_TOKEN", "PLATFORM_KEY"] };
+  return {
+    ok: true,
+    deps: {
+      db: env.PLATFORM_DB,
+      api,
+      store: new R2BundleSource(releaseBucket.bucket),
+      dispatcher,
+      capability: () => noopPlatform,
+      config: { hostedDomain: DOMAIN, namespace: "ns", platformKey: RELEASE_PLATFORM_KEY, handoffPublicKey: keys.publicKey },
+      defaultCanary: null,
+      now: () => clock,
+    },
+  };
+}
+
+const app = createApp({ dispatcher: () => dispatcher, capability: () => noopPlatform, accounts: accountDeps, releases: () => releaseSetup() });
 
 function platformEnv(): PlatformEnv {
   return {
@@ -950,5 +974,152 @@ describe("the waitlist import, under pressure", () => {
     expect(a.added + b.added).toBe(180);
     expect(a.added + a.existing).toBe(120);
     expect(b.added + b.existing).toBe(120);
+  });
+});
+
+describe("the Releases tab", () => {
+  const MANIFEST = (version: string): BundleManifest => ({
+    version,
+    mainModule: "index.js",
+    compatibilityDate: "2024-12-30",
+    compatibilityFlags: [],
+    assetsConfig: {},
+    vars: {},
+    modules: [{ name: "index.js", contentType: "application/javascript+module" }],
+    assets: [],
+    d1Migrations: [{ name: "0021_support.sql", sha256: "a" }],
+  });
+  function upload(version: string) {
+    releaseBucket.putText(`releases/${version}/modules/index.js`, `export default {} // ${version}`);
+    releaseBucket.putText(`releases/${version}/migrations/0021_support.sql`, "CREATE TABLE support_activity (id INTEGER PRIMARY KEY);");
+    releaseBucket.putText(`releases/${version}/bundle.json`, JSON.stringify(MANIFEST(version)));
+  }
+  const states = new Map<string, FakeOpenPingState>();
+  const original = api.onScriptChange;
+
+  /** A ready tenant the runner can update: its database, its escrowed key, its OpenPing answering. */
+  async function updatableTenant(slug: string) {
+    const tenant = await addTenant({ slug });
+    const d1 = "00000000-0000-4000-8000-000000000000";
+    api.databases.set(d1, { id: d1, name: `openping-t-${tenant.id}` });
+    await ensureMasterKey(env.PLATFORM_DB, tenant.id, RELEASE_PLATFORM_KEY, clock);
+    return tenant;
+  }
+
+  beforeEach(async () => {
+    releaseBucket = new FakeR2Bucket();
+    releasesOn = true;
+    clearLoadedBundles();
+    upload("0.11.0");
+    upload("0.12.0");
+    releaseBucket.putText("releases/current", "0.11.0");
+    api.onScriptChange = (name, script) => {
+      if (!script) return dispatcher.remove(name);
+      const fake = fakeOpenPing(script, { state: states.get(name), healthMigrates: true });
+      states.set(name, fake.state);
+      dispatcher.register(name, fake.worker);
+    };
+    // Only this block's tenants: a rollout reaches every ready tenant.
+    await env.PLATFORM_DB.batch([
+      env.PLATFORM_DB.prepare("DELETE FROM release_tenants"),
+      env.PLATFORM_DB.prepare("DELETE FROM releases"),
+      env.PLATFORM_DB.prepare("DELETE FROM release_requests"),
+      env.PLATFORM_DB.prepare("DELETE FROM escrowed_keys"),
+      env.PLATFORM_DB.prepare("DELETE FROM tenant_usage"),
+      env.PLATFORM_DB.prepare("DELETE FROM tenants"),
+    ]);
+    return () => {
+      api.onScriptChange = original;
+    };
+  });
+
+  it("is the plain 404 for anyone but the owner", async () => {
+    const { browser } = await personWithPasskey();
+    owners = "acc_the_real_owner";
+    expect((await browser.fetch("/admin/releases")).status).toBe(404);
+    expect((await browser.fetch("/admin/releases/request", { form: { action: "rollback" } })).status).toBe(404);
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM release_requests").first("n")).toBe(0);
+  });
+
+  it("shows what new tenants get and what is in the bucket", async () => {
+    const { browser } = await owner();
+    const page = await text(await browser.fetch("/admin/releases"));
+    expect(page).toContain('aria-current="page">Releases</a>');
+    expect(page).toContain('<strong class="mono">0.11.0</strong><span>New tenants get</span>');
+    expect(page).toContain('<option value="0.12.0" selected>0.12.0</option>');
+    expect(page).toContain("No releases yet.");
+  });
+
+  it("plans a dry run and shows its plan without touching anyone", async () => {
+    const { browser } = await owner();
+    const tenant = await updatableTenant("canary-one");
+    const res = await browser.fetch("/admin/releases/request", { form: { action: "rollout", version: "0.12.0", dry_run: "1", canary: "canary-one", batch_size: "50" } });
+    expect(res.status).toBe(303);
+    const page = await text(await browser.fetch(res.headers.get("location")!));
+    expect(page).toContain("Dry run: 1 tenant to update: the canary canary-one, then 0 batches of up to 50.");
+    expect(page).toContain("<dt>New D1 migrations</dt><dd>None</dd>");
+    expect(page).toContain("A dry run touches no tenant.");
+    // The request's answer once, not again as the release's note.
+    expect(page.split("Dry run: 1 tenant to update").length).toBe(2);
+    expect((await tenantRow(tenant.id))!.version).toBe("0.11.0");
+    const rows = await env.PLATFORM_DB.prepare("SELECT requested_by FROM releases").all<{ requested_by: string }>();
+    expect(rows.results).toEqual([{ requested_by: `owner:${owners}` }]);
+  });
+
+  it("starts a rollout, follows it, and offers the right controls when it stops", async () => {
+    const { browser } = await owner();
+    const canary = await updatableTenant("canary-two");
+    const other = await addTenant({ slug: "no-key-here" }); // no escrowed key: it can't be updated
+    const res = await browser.fetch("/admin/releases/request", { form: { action: "rollout", version: "0.12.0", dry_run: "0", canary: "canary-two" } });
+    expect(res.status).toBe(303);
+    const location = res.headers.get("location")!;
+    expect(location).toMatch(/^\/admin\/releases\/rel_[0-9a-f]{24}\?request=rrq_[0-9a-f]{24}$/);
+    // The console pushed it right away: the canary passed, then the tenant without a key stopped it.
+    expect((await tenantRow(canary.id))!.version).toBe("0.12.0");
+    expect(releaseBucket.textOf("releases/current")).toBe("0.12.0");
+    const page = await text(await browser.fetch(location));
+    expect(page).toContain("Started: 2 tenants to update: the canary canary-two, then 1 batch of up to 50.");
+    expect(page).toContain("Stopped in batch 1: 1 tenant didn't come back healthy: no-key-here (upload: it has no escrowed MASTER_KEY).");
+    expect(page).toContain('aria-valuenow="1"');
+
+    const overview = await text(await browser.fetch("/admin/releases"));
+    expect(overview).toContain("Roll out 0.12.0");
+    expect(overview).toContain('<input type="hidden" name="action" value="skip_failed">');
+    expect(overview).toContain("Roll back to 0.11.0");
+    expect(overview).toMatch(/<button class="button primary" type="submit" name="dry_run" value="0" disabled>/);
+
+    const skipped = await browser.fetch("/admin/releases/request", { form: { action: "skip_failed" } });
+    expect(await text(await browser.fetch(skipped.headers.get("location")!))).toContain("Shipped 0.12.0: 1 tenant healthy, 0 failed and 1 skipped (see the list).");
+    expect((await tenantRow(other.id))!.version).toBe("0.11.0");
+
+    const back = await browser.fetch("/admin/releases/request", { form: { action: "rollback", version: "", dry_run: "0" } });
+    const rolledBack = await text(await browser.fetch(back.headers.get("location")!));
+    expect(rolledBack).toContain("Started: Back to 0.11.0: 1 tenant in 1 batch.");
+    expect((await tenantRow(canary.id))!.version).toBe("0.11.0");
+    expect(releaseBucket.textOf("releases/current")).toBe("0.11.0");
+  });
+
+  it("asks for a fresh passkey before any release change", async () => {
+    const { browser } = await owner();
+    clock += ADMIN_REAUTH_MS + 1;
+    expect(await text(await browser.fetch("/admin/releases"))).toContain("Changes ask you to confirm with your passkey first.");
+    const refused = await browser.fetch("/admin/releases/request", { form: { action: "rollout", version: "0.12.0", dry_run: "1" } });
+    expect(refused.status).toBe(401);
+    expect(await text(refused)).toContain('data-next="/admin/releases"');
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM release_requests").first("n")).toBe(0);
+  });
+
+  it("refuses nonsense, and says when releases are off", async () => {
+    const { browser } = await owner();
+    const bad = await browser.fetch("/admin/releases/request", { form: { action: "rollout", version: "../../etc" } });
+    expect(bad.status).toBe(400);
+    expect(await text(bad)).toContain("That isn't a version.");
+    expect((await browser.fetch("/admin/releases/request", { form: { action: "drop" } })).status).toBe(400);
+    releasesOn = false;
+    const page = await text(await browser.fetch("/admin/releases"));
+    expect(page).toContain("Releases are off until these are set: CF_API_TOKEN, PLATFORM_KEY.");
+    expect(page).not.toContain("Start a release");
+    expect((await browser.fetch("/admin/releases/request", { form: { action: "pause" } })).status).toBe(400);
+    expect((await browser.fetch("/admin/releases/rel_000000000000000000000000")).status).toBe(404);
   });
 });
