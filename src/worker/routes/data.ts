@@ -17,6 +17,7 @@ import { getExportableSettings } from "../db/settings";
 import {
   hostedPlan,
   importedCheckInterval,
+  importedFastIntervals,
   intervalLimit,
   monitorLimit,
   tolerantBackupInterval,
@@ -391,21 +392,31 @@ data.post("/import", async (c) => {
 
   // In hosted mode the restore must fit the plan as a whole: count the monitors
   // it would create and refuse before creating any (lib/plan-limits.ts).
+  // Fast monitors past the plan's allowance are restored at 12 minutes
+  // instead (importedFastIntervals), so `resolved` holds what each created
+  // monitor stores, by its place in validMonitors.
   const plan = hostedPlan(c);
+  const resolved = new Map<number, CreateMonitorInput>();
   if (plan) {
     // The same rule as the loop below: with skipExisting, a name that exists
     // (or came earlier in the backup) is skipped.
     const seen = new Set(existingNames);
-    const creating: CreateMonitorInput[] = [];
-    for (const { input } of validMonitors) {
-      if (skipExisting && seen.has(input.name)) continue;
+    const creating: { index: number; input: CreateMonitorInput }[] = [];
+    validMonitors.forEach(({ input }, index) => {
+      if (skipExisting && seen.has(input.name)) return;
       seen.add(input.name);
-      creating.push(importedCheckInterval(input, plan));
-    }
+      creating.push({ index, input: importedCheckInterval(input, plan) });
+    });
+    const fitted = await importedFastIntervals(
+      c.env,
+      plan,
+      creating.map((m) => m.input),
+    );
+    creating.forEach(({ index }, i) => resolved.set(index, fitted[i]!));
     // Only the monitors it would create: a skipped one is never checked.
     const refused =
-      creating.map((input) => intervalLimit(plan, input)).find((r) => r !== null) ??
-      (await monitorLimit(c.env, plan, creating.length));
+      fitted.map((input) => intervalLimit(plan, input)).find((r) => r !== null) ??
+      (await monitorLimit(c.env, plan, fitted.length));
     if (refused) return c.json(refused.body, refused.status);
   }
 
@@ -420,7 +431,7 @@ data.post("/import", async (c) => {
   // imported incidents reference a monitor that actually exists (avoids a
   // foreign-key failure / orphaned rows on restore into a fresh instance).
   const monitorIdMap = new Map<string, string>();
-  for (const { oldId, input } of validMonitors) {
+  for (const [index, { oldId, input }] of validMonitors.entries()) {
     if (skipExisting && existingNames.has(input.name)) {
       skippedMonitors++;
       // Link the backup's incidents to the existing same-named monitor.
@@ -428,7 +439,7 @@ data.post("/import", async (c) => {
       if (oldId && existingId) monitorIdMap.set(oldId, existingId);
       continue;
     }
-    const created = await createMonitor(c.env, importedCheckInterval(input, plan));
+    const created = await createMonitor(c.env, resolved.get(index) ?? importedCheckInterval(input, plan));
     existingNames.add(input.name);
     existingIdByName.set(input.name, created.id);
     if (oldId) monitorIdMap.set(oldId, created.id);

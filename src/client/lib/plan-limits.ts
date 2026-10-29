@@ -2,11 +2,15 @@ import {
   checkChannelKindLimit,
   checkMonitorLimit,
   checkStatusPageLimit,
+  fastMonitorAllowance,
   PLAN_LIMIT_ERROR,
   PLAN_LIMIT_STATUS,
+  STANDARD_CHECK_MINUTES,
+  upgradeUrlFor,
   type PlanLimitBody,
   type PlanLimits,
 } from "../../shared/hosted-contract";
+import { isFastMonitor, keptFastMonitorIds, type FastCandidate } from "../../shared/check-interval";
 import type { ChannelKind } from "../../shared/notifications";
 import { ApiError } from "./api";
 import { useBootstrap, type HostedAccount } from "./bootstrap";
@@ -36,12 +40,48 @@ export function usePlan(): PlanState | null {
 
 /**
  * The interval the editor starts a new polled monitor on: every minute on a
- * plan with fast checks (what the add-on is for), otherwise 12 minutes or the
- * plan's shortest if longer.
+ * plan with fast checks (what the add-on is for) while a fast monitor is
+ * free, otherwise 12 minutes or the plan's shortest if longer.
  */
-export function defaultIntervalMinutes(plan: PlanState): number {
+export function defaultIntervalMinutes(plan: PlanState, fast?: FastUsage | null): number {
   const min = plan.limits.minIntervalMinutes;
-  return min <= 1 ? 1 : Math.max(12, Math.ceil(min));
+  if (min <= 1 && (!fast || fast.others < fast.allowed)) return 1;
+  return Math.max(STANDARD_CHECK_MINUTES, Math.ceil(min));
+}
+
+/** The fast monitors (checked more often than every 12 minutes) around the one being edited. */
+export interface FastUsage {
+  /** How many the plan allows. */
+  allowed: number;
+  /** Fast monitors other than this one (paused ones count, as the server counts them). */
+  others: number;
+  /**
+   * This monitor is fast and among the ones checked at their own interval
+   * (the oldest, when more are fast than allowed). False for a new monitor.
+   */
+  kept: boolean;
+}
+
+/**
+ * Fast monitor usage for the editor, from the monitor list, leaving out
+ * `editingId` (null for a new monitor). Null on a plan that has no fast
+ * checks, where the interval picker locks those choices by itself.
+ */
+export function fastUsage(
+  plan: PlanState | null,
+  monitors: readonly (Omit<FastCandidate, "createdAt"> & { createdAt?: number })[],
+  editingId: string | null,
+): FastUsage | null {
+  if (!plan || plan.limits.minIntervalMinutes >= STANDARD_CHECK_MINUTES) return null;
+  const allowed = fastMonitorAllowance(plan.limits);
+  const others = monitors.filter((m) => m.id !== editingId && isFastMonitor(m)).length;
+  const kept =
+    editingId !== null &&
+    keptFastMonitorIds(
+      monitors.map((m) => ({ ...m, createdAt: m.createdAt ?? 0 })),
+      allowed,
+    ).has(editingId);
+  return { allowed, others, kept };
 }
 
 /** The 402 body of a refused create, or null for any other error. */
@@ -53,7 +93,9 @@ export function planLimitFromError(err: unknown): PlanLimitBody | null {
 }
 
 function body(plan: PlanState, exceeded: Omit<PlanLimitBody, "error" | "plan" | "upgradeUrl"> | null): PlanLimitBody | null {
-  return exceeded ? { error: PLAN_LIMIT_ERROR, ...exceeded, plan: plan.plan, upgradeUrl: plan.upgradeUrl } : null;
+  return exceeded
+    ? { error: PLAN_LIMIT_ERROR, ...exceeded, plan: plan.plan, upgradeUrl: upgradeUrlFor(plan.upgradeUrl, exceeded.limit) }
+    : null;
 }
 
 /** What creating one more monitor would answer, when `count` exist. */

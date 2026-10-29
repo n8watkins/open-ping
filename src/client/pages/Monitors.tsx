@@ -20,7 +20,7 @@ import { PageTitle } from "../components/ui/PageTitle";
 import { PullToRefresh } from "../components/PullToRefresh";
 import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
-import { monitorLimitReached, usageLabel, usePlan } from "../lib/plan-limits";
+import { fastUsage, monitorLimitReached, usageLabel, usePlan } from "../lib/plan-limits";
 import { PlanLimitNotice } from "../components/PlanLimitNotice";
 import type { Schedule } from "../../shared/schemas";
 import type { MonitorState } from "../../shared/states";
@@ -189,6 +189,8 @@ export default function Monitors() {
   const initialLoading = loading && !data;
   // Hosted mode: how many of the plan's monitors are in use (paused ones count).
   const atLimit = data ? monitorLimitReached(plan, monitors.length) : null;
+  // And, on a plan with fast checks, how many of its fast monitors.
+  const fast = data ? fastUsage(plan, monitors, null) : null;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -198,7 +200,8 @@ export default function Monitors() {
           <PageTitle>Monitors</PageTitle>
           {plan && data && !atLimit && (
             <p className="mt-1 text-sm text-ink-muted tabular-nums">
-              {usageLabel(monitors.length, plan.limits.monitors, "monitor", "monitors")} on your plan
+              {usageLabel(monitors.length, plan.limits.monitors, "monitor", "monitors")}
+              {fast && `, ${usageLabel(fast.others, fast.allowed, "fast monitor", "fast monitors")}`} on your plan
             </p>
           )}
         </div>

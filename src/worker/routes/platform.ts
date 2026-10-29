@@ -2,6 +2,7 @@ import { Hono, type Context, type Next } from "hono";
 import { z } from "zod";
 import {
   HOSTED_ERRORS,
+  fastMonitorAllowance,
   INTERNAL_HEADER,
   isPlatformCall,
   SCHEDULED_MAX_GAP_MS,
@@ -109,9 +110,11 @@ platformRoutes.post(
         scheduledTime: request.scheduledTime,
         noRetry() {},
       };
-      // Each polled monitor on its own interval, at least the plan's shortest.
+      // Each polled monitor on its own interval, at least the plan's shortest,
+      // and no more fast monitors than the plan allows.
+      const { limits } = props.tenant;
       result = await runScheduled(controller, c.env, {
-        cadence: platformCadence(props.tenant.limits.minIntervalMinutes),
+        cadence: platformCadence(limits.minIntervalMinutes, fastMonitorAllowance(limits)),
       });
     } catch (error) {
       // runScheduled handles everything after it holds the lease; this is its

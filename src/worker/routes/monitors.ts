@@ -30,6 +30,7 @@ import { computeListStats } from "../history/list-stats";
 import type { MonitorRecord } from "../db/monitors";
 import {
   hostedPlan,
+  fastMonitorLimit,
   intervalLimit,
   monitorLimit,
   ignoreIntervalWithoutPlan,
@@ -147,7 +148,8 @@ export async function createMonitorFromBody(
     return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
   }
   const input = withCheckInterval(parsed.data, plan);
-  const refused = intervalLimit(plan, input) ?? (await monitorLimit(env, plan));
+  const refused =
+    intervalLimit(plan, input) ?? (await monitorLimit(env, plan)) ?? (await fastMonitorLimit(env, plan, input));
   if (refused) return refused;
   return { ok: true, monitor: await createMonitor(env, input) };
 }
@@ -182,11 +184,13 @@ export function requestWaitUntil(c: {
 }
 
 /**
- * An edit is held to the plan's interval only when it changes the interval, so
- * a monitor kept from a bigger plan can still be renamed or retargeted.
+ * An edit is held to the plan's interval and fast monitor allowance only when
+ * it changes the interval, so a monitor kept from a bigger plan can still be
+ * renamed or retargeted.
  */
-function intervalChangeLimit(plan: HostedPlan | undefined, existing: MonitorRecord, input: CreateMonitorInput) {
-  return intervalSecondsOf(input) === existing.intervalSeconds ? null : intervalLimit(plan, input);
+async function intervalChangeLimit(env: Env, plan: HostedPlan | undefined, existing: MonitorRecord, input: CreateMonitorInput) {
+  if (intervalSecondsOf(input) === existing.intervalSeconds) return null;
+  return intervalLimit(plan, input) ?? (await fastMonitorLimit(env, plan, input, existing));
 }
 
 /** Validate and fully replace a monitor (PUT /api/monitors/:id). */
@@ -206,7 +210,7 @@ export async function replaceMonitor(
     return { ok: false, status: 400, error: "type_immutable" };
   }
   const input = withCheckInterval(parsed.data, plan, existing);
-  const refused = intervalChangeLimit(plan, existing, input);
+  const refused = await intervalChangeLimit(env, plan, existing, input);
   if (refused) return refused;
   const monitor = await updateMonitor(env, id, input);
   if (!monitor) return { ok: false, status: 404, error: "not_found" };
@@ -234,7 +238,7 @@ export async function patchMonitor(
     return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
   }
   const input = withCheckInterval(parsed.data, plan, existing);
-  const refused = intervalChangeLimit(plan, existing, input);
+  const refused = await intervalChangeLimit(env, plan, existing, input);
   if (refused) return refused;
   const monitor = await updateMonitor(env, id, input);
   if (!monitor) return { ok: false, status: 404, error: "not_found" };

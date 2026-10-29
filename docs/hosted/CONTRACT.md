@@ -213,12 +213,17 @@ The checks are `src/worker/lib/plan-limits.ts`; on a plain install there is no p
 - In hosted mode each polled monitor has its own check interval, in whole minutes, and `checkIntervalLimit` sees that; a heartbeat's interval is how often its job pings, not a check, so it never counts.
   An edit is held to the interval only when it changes it, so a monitor kept from a bigger plan can still be renamed.
 - The scheduler never checks a monitor more often than the plan's current `minIntervalMinutes`: after a downgrade, a 1-minute monitor is checked at the plan's fastest and keeps its setting, so it is fast again after an upgrade with no edit.
+- Creating a fast monitor, and an edit that sets a fast interval, go through `checkFastMonitorLimit` on the REST API (POST, PUT and PATCH), MCP `create_monitor` and `update_monitor`; an edit that keeps the stored interval is never held to it, and an edit leaves the monitor itself out of the count.
+- A backup import never refuses for fast monitors: in the backup's order, those that fit next to the fast monitors already there keep their interval, and the rest are restored at 12 minutes (`importedFastIntervals`).
+- After a downgrade (a fast pack removed), nothing in the database changes, and the scheduler checks at their own interval only as many fast monitors as `fastMonitors` allows: active ones before paused or disabled ones, then the oldest by creation time, then by id, so the choice is the same on every run (`keptFastMonitorIds` in `src/shared/check-interval.ts`); the others are checked every 12 minutes until one of the kept ones is slowed or removed, or the plan allows more.
+- The monitor editor shows "3 of 5 fast monitors used" under the interval choices, locks the fast choices once every fast monitor is in use (with "Add fast monitors", the upgrade link for `fast_monitors`), and says when a monitor kept from a bigger plan is checked every 12 minutes for now; the Monitors list shows the same count next to the monitor count.
+- `reportUsage` also counts fast monitors, and runs after a monitor edit through the API or an interval change through MCP.
 - On a plain install there is no plan, and every polled monitor is checked on each 12-minute cron run, as before.
 - Push devices are not channels (they are `push_subscriptions`), so `channelKinds` doesn't apply to them.
 - The check and the insert are separate queries, so two creates at the same instant could both pass at the last free place; the next create is refused.
 - MCP answers a refusal as a tool error with the message and the upgrade link, and `structuredContent.planLimit` holding the body; the CLI prints both.
 - `/api/auth/me` adds `limits` to `hosted`, and the app shows the usage ("3 of 5 monitors on your plan") and, at the limit, the same sentence with an Upgrade button instead of a form that can't be saved.
-- `reportUsage` runs after every successful create or delete through the API and MCP, after the response (`waitUntil`).
+- `reportUsage` runs after every successful create or delete through the API and MCP, and after a monitor edit, after the response (`waitUntil`).
 - A hosted scheduler run gets its own budget (`PLAN_BUDGETS.hosted` in `src/worker/lib/budget.ts`: 300 D1 queries and 600 fetches), under the 1,000 subrequests the platform allows a platform call.
 
 ## 6. Internal paths

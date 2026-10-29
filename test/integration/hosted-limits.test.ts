@@ -449,6 +449,131 @@ describe("check intervals", () => {
     expect((await intervalOf(patch)).intervalSeconds).toBe(720);
   });
 
+  describe("fast monitors", () => {
+    const create = (name: string, intervalSeconds: number) =>
+      call("/api/monitors", { json: site(name, { intervalSeconds }) });
+    const idOf = async (res: Response) => (await res.json<{ monitor: { id: string } }>()).monitor.id;
+    /** Five 1-minute monitors, all the fast checks plan allows. */
+    async function fillFast(): Promise<string[]> {
+      limits = PLAN_LIMITS.hosted_fast;
+      const ids: string[] = [];
+      for (let i = 1; i <= 5; i++) {
+        const res = await create(`Fast ${i}`, 60);
+        expect(res.status, `fast ${i}`).toBe(201);
+        ids.push(await idOf(res));
+      }
+      return ids;
+    }
+
+    it("creates up to the plan's fast monitors, then refuses with the way to fix it", async () => {
+      await fillFast();
+      const res = await create("Sixth", 300);
+      expect(res.status).toBe(402);
+      expect(await res.json()).toEqual({
+        error: "plan_limit",
+        limit: "fast_monitors",
+        allowed: 5,
+        requested: 6,
+        plan: "trial",
+        message:
+          "Your plan includes 5 fast monitors, checked more often than every 12 minutes. Set one to 12 minutes or more, or add more fast monitors.",
+        upgradeUrl: `${UPGRADE}?need=fast_monitors`,
+      } satisfies PlanLimitBody);
+      // 12 minutes and slower, and heartbeats, are never fast.
+      expect((await create("Standard", 720)).status).toBe(201);
+      expect((await create("Hourly", 3600)).status).toBe(201);
+      expect((await call("/api/monitors", { json: { type: "heartbeat", name: "Job", config: { intervalSeconds: 60, graceSeconds: 0 } } })).status).toBe(201);
+      // A pack's worth more from the platform: the next one fits.
+      limits = { ...PLAN_LIMITS.hosted_fast, fastMonitors: 10 };
+      expect((await create("Sixth", 300)).status).toBe(201);
+    });
+
+    it("counts paused fast monitors", async () => {
+      const [first] = await fillFast();
+      await call(`/api/monitors/${first}/pause`, { method: "POST" });
+      expect((await create("Sixth", 60)).status).toBe(402);
+    });
+
+    it("holds an edit to it only when it makes a monitor fast, leaving the monitor itself out", async () => {
+      const ids = await fillFast();
+      const slow = await idOf(await create("Slow", 720));
+      // PATCH and PUT to a fast interval: refused at the limit.
+      const patch = await call(`/api/monitors/${slow}`, { method: "PATCH", json: { intervalSeconds: 60 } });
+      expect(patch.status).toBe(402);
+      expect(await patch.json()).toMatchObject({ limit: "fast_monitors", allowed: 5, requested: 6 });
+      const put = await call(`/api/monitors/${slow}`, { method: "PUT", json: site("Slow", { intervalSeconds: 120 }) });
+      expect(put.status).toBe(402);
+      // A fast one may change to another fast interval: it doesn't count against itself.
+      const faster = await call(`/api/monitors/${ids[0]}`, { method: "PATCH", json: { intervalSeconds: 120 } });
+      expect(faster.status).toBe(200);
+      // Slowing one frees its place.
+      expect((await call(`/api/monitors/${ids[1]}`, { method: "PATCH", json: { intervalSeconds: 720 } })).status).toBe(200);
+      expect((await call(`/api/monitors/${slow}`, { method: "PATCH", json: { intervalSeconds: 60 } })).status).toBe(200);
+    });
+
+    it("keeps every fast monitor a downgrade left over, editable, but refuses another", async () => {
+      const ids = await fillFast();
+      limits = { ...PLAN_LIMITS.hosted_fast, fastMonitors: 2 };
+      // Nothing is deleted or slowed in the database.
+      const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM monitors WHERE interval_seconds = 60").first<{ n: number }>();
+      expect(rows!.n).toBe(5);
+      expect((await call(`/api/monitors/${ids[4]}`, { method: "PATCH", json: { name: "Renamed" } })).status).toBe(200);
+      expect((await call(`/api/monitors/${ids[4]}`, { method: "PATCH", json: { intervalSeconds: 120 } })).status).toBe(402);
+      expect((await create("New fast", 60)).status).toBe(402);
+    });
+
+    it("refuses update_monitor and create_monitor over MCP the same way", async () => {
+      await fillFast();
+      const created = await mcp("create_monitor", site("Over MCP", { intervalSeconds: 60 }));
+      expect(created.isError).toBe(true);
+      expect(created.content[0]!.text).toBe(
+        "Your plan includes 5 fast monitors, checked more often than every 12 minutes. Set one to 12 minutes or more, or add more fast monitors. " +
+          `Upgrade: ${UPGRADE}?need=fast_monitors`,
+      );
+      expect(created.structuredContent).toMatchObject({ planLimit: { limit: "fast_monitors" } });
+      const slow = await mcp("create_monitor", site("Slow over MCP", { intervalSeconds: 720 }));
+      expect(slow.isError).toBeFalsy();
+      const { id } = (slow.structuredContent as { monitor: { id: string } }).monitor;
+      const updated = await mcp("update_monitor", { id, intervalSeconds: 60 });
+      expect(updated.isError).toBe(true);
+      expect(updated.structuredContent).toMatchObject({ planLimit: { limit: "fast_monitors", requested: 6 } });
+    });
+
+    it("restores an import's fast monitors past the allowance at 12 minutes, in the backup's order", async () => {
+      limits = PLAN_LIMITS.hosted_fast;
+      await create("Here already", 60);
+      await create("Here too", 60);
+      const backup = ["A", "B", "C", "D", "E"].map((n) => site(`Backup ${n}`, { intervalSeconds: 60 }));
+      const data = { version: 1, monitors: [...backup, site("Backup hourly", { intervalSeconds: 3600 })], maintenance: [], incidents: [] };
+      const res = await call("/api/data/import", { json: { data } });
+      expect(res.status).toBe(200);
+      const rows = await env.DB.prepare("SELECT name, interval_seconds AS s FROM monitors WHERE name LIKE 'Backup %' ORDER BY name").all();
+      expect(rows.results).toEqual([
+        { name: "Backup A", s: 60 },
+        { name: "Backup B", s: 60 },
+        { name: "Backup C", s: 60 },
+        { name: "Backup D", s: 720 },
+        { name: "Backup E", s: 720 },
+        { name: "Backup hourly", s: 3600 },
+      ]);
+    });
+
+    it("reports fast monitors with the usage, after an edit too", async () => {
+      limits = PLAN_LIMITS.hosted_fast;
+      const id = await idOf(await create("Fast", 60));
+      expect(usageReports.at(-1)).toMatchObject({ monitors: 1, fastMonitors: 1 });
+      await call(`/api/monitors/${id}`, { method: "PATCH", json: { intervalSeconds: 720 } });
+      expect(usageReports.at(-1)).toMatchObject({ monitors: 1, fastMonitors: 0 });
+    });
+
+    it("never applies on a plain install", async () => {
+      limits = { ...PLAN_LIMITS.hosted_fast, fastMonitors: 0 };
+      for (let i = 1; i <= 3; i++) {
+        expect((await call("/api/monitors", { json: site(`Plain ${i}`, { intervalSeconds: 60 }), hosted: false })).status).toBe(201);
+      }
+    });
+  });
+
   it("restores a backup whose interval no install accepts, at the default", async () => {
     limits = PLAN_LIMITS.hosted;
     const data = { version: 1, monitors: [site("Odd backup", { intervalSeconds: 90 })], maintenance: [], incidents: [] };

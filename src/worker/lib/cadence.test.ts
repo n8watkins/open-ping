@@ -27,6 +27,18 @@ describe("check intervals by cadence", () => {
     expect(checkIntervalSeconds({ type: "tcp", intervalSeconds: 3600 }, platformCadence(12))).toBe(3600);
   });
 
+  it("checks a fast monitor over the plan's allowance every 12 minutes, at the slowest of that and its own", () => {
+    const kept = new Set(["kept"]);
+    const capped = platformCadence(1, 1);
+    expect(capped.fastMonitors).toBe(1);
+    expect(platformCadence(1).fastMonitors).toBeNull();
+    expect(checkIntervalSeconds({ id: "kept", type: "http", intervalSeconds: 60 }, capped, kept)).toBe(60);
+    expect(checkIntervalSeconds({ id: "over", type: "http", intervalSeconds: 60 }, capped, kept)).toBe(720);
+    expect(checkIntervalSeconds({ id: "slow", type: "http", intervalSeconds: 3600 }, capped, kept)).toBe(3600);
+    expect(checkIntervalSeconds({ id: "over", type: "heartbeat", intervalSeconds: 60 }, capped, kept)).toBe(60);
+    expect(checkIntervalSeconds({ id: "over", type: "http", intervalSeconds: 60 }, CRON_CADENCE, kept)).toBe(720);
+  });
+
   it("never changes a heartbeat's interval", () => {
     expect(checkIntervalSeconds({ type: "heartbeat", intervalSeconds: 60 }, CRON_CADENCE)).toBe(60);
     expect(checkIntervalSeconds({ type: "heartbeat", intervalSeconds: 60 }, platformCadence(12))).toBe(60);
