@@ -549,7 +549,8 @@ async function cmdMonitorsGet({ api, out, flags, positionals: [id] }) {
   out.line(`  state      ${s.state ?? "unknown"} since ${fmtTime(s.state_since)}`);
   out.line(`  last check ${fmtTime(s.last_checked_at)}${s.last_duration_ms != null ? `, ${s.last_duration_ms} ms` : ""}${s.last_status_code != null ? `, HTTP ${s.last_status_code}` : ""}`);
   if (s.last_error) out.line(`  last error ${s.last_error}`);
-  const up = (v) => fmtPct({ uptimePct: v, checks: 1 });
+  // null: a window with no counted checks (off hours, warm-up only, Can't check).
+  const up = (v) => (v == null ? "-" : fmtPct({ uptimePct: v, checks: 1 }));
   out.line(
     s.last_checked_at == null
       ? "  uptime     no checks yet"

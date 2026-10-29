@@ -316,6 +316,17 @@ describe("incident updates and the monthly report", () => {
     expect(missing.calls).toHaveLength(0);
   });
 
+  it("shows a monitor whose uptime windows have no counted checks as -", async () => {
+    const detail = {
+      monitor: { id: "mon_1", name: "Office hours", type: "cert", paused: false, enabled: true, schedule: { mode: "always" }, config: { host: "a.test", port: 443 }, public: {} },
+      state: { state: "cant_check", state_since: 1, last_checked_at: 2 },
+      uptime: { d1: null, d7: 99.5, d30: null, d90: null, d365: null },
+    };
+    const r = await cli(["monitors", "get", "mon_1"], { "GET /api/monitors/mon_1/detail": [200, detail] });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("uptime     24h -, 7d 99.5%, 30d -");
+  });
+
   it("shows an incident with its updates", async () => {
     const r = await cli(["incidents", "get", "inc_1"], {
       "GET /api/incidents/inc_1": [
