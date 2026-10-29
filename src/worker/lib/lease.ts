@@ -74,11 +74,51 @@ export function recordRunStartStatement(
   run: { id: string; startedAt: number },
   cron: string | null,
   lease: { name: string; holder: string },
+  /**
+   * OpenPing Hosted, called every minute, records one run per 12-minute slot
+   * (lib/cadence.ts isUpkeepRun): the row is written only when no successful
+   * run since `onlyIfNoneSince` has one, which is the same test the run makes
+   * from lastRecordedRunStatement in this batch.
+   */
+  onlyIfNoneSince?: number,
 ): D1PreparedStatement {
+  const sinceGuard =
+    onlyIfNoneSince === undefined
+      ? ""
+      : " AND NOT EXISTS (SELECT 1 FROM scheduler_runs WHERE finished_at IS NOT NULL AND ok = 1 AND started_at >= ?)";
   return env.DB.prepare(
     `INSERT INTO scheduler_runs (id, cron, started_at)
-       SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM locks WHERE name = ? AND holder = ?)`,
-  ).bind(run.id, cron, run.startedAt, lease.name, lease.holder);
+       SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM locks WHERE name = ? AND holder = ?)${sinceGuard}`,
+  ).bind(run.id, cron, run.startedAt, lease.name, lease.holder, ...(onlyIfNoneSince === undefined ? [] : [onlyIfNoneSince]));
+}
+
+/**
+/**
+ * A run that kept no record (lib/cadence.ts) but failed: its whole row at once,
+ * so every failure shows in Diagnostics.
+ */
+export function recordFailedRunStatement(
+  env: Env,
+  run: { id: string; startedAt: number },
+  cron: string | null,
+): D1PreparedStatement {
+  return env.DB.prepare("INSERT OR IGNORE INTO scheduler_runs (id, cron, started_at) VALUES (?, ?, ?)").bind(
+    run.id,
+    cron,
+    run.startedAt,
+  );
+}
+
+/**
+ * When the most recent finished, successful run started: on the platform the
+ * run record and the upkeep are once per 12-minute slot (lib/cadence.ts), and
+ * this is the same test recordRunStartStatement makes in SQL. Reads the
+ * started_at index from the newest end, a row or two.
+ */
+export function lastRecordedRunStatement(env: Env): D1PreparedStatement {
+  return env.DB.prepare(
+    "SELECT started_at FROM scheduler_runs WHERE finished_at IS NOT NULL AND ok = 1 ORDER BY started_at DESC LIMIT 1",
+  );
 }
 
 /**
@@ -94,9 +134,8 @@ export function lastCompactedRunStatement(env: Env): D1PreparedStatement {
   );
 }
 
-/** lastCompactedRunStatement's answer: epoch ms, or null when no run has one (a full pass). */
-export function lastCompactedRunAt(result: D1Result | undefined): number | null {
-  const at = (result?.results?.[0] as { started_at?: unknown } | undefined)?.started_at;
+/** A lastRecordedRunStatement or lastCompactedRunStatement answer: epoch ms, or null when there is none. */
+export function runStartedAt(result: D1Result | undefined): number | null {  const at = (result?.results?.[0] as { started_at?: unknown } | undefined)?.started_at;
   return typeof at === "number" && Number.isFinite(at) ? at : null;
 }
 

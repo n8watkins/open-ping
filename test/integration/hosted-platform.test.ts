@@ -410,6 +410,13 @@ describe("POST /__platform/scheduled", () => {
     });
     expect(summary.error).toBeUndefined();
     expect(summary.startedAt).toBeGreaterThanOrEqual(now);
+    // The site was just checked, on the plan's 12 minutes: next due about one
+    // interval on, on a 12-minute mark of the clock less the 30 seconds a call
+    // may come early (lib/cadence.ts), and never more than 12 minutes away.
+    const MAX_GAP = 12 * 60_000;
+    expect(summary.nextDueAt).toBeGreaterThan(summary.startedAt + 5 * 60_000);
+    expect(summary.nextDueAt).toBeLessThanOrEqual(summary.startedAt + MAX_GAP);
+    expect([MAX_GAP - 30_000, (summary.startedAt + MAX_GAP) % MAX_GAP]).toContain(summary.nextDueAt! % MAX_GAP);
     expect(summary.durationMs).toBeGreaterThanOrEqual(0);
     // At least the run's own three round trips, plus the migration check and the usage report.
     expect(summary.d1Queries).toBeGreaterThanOrEqual(5);
@@ -443,6 +450,8 @@ describe("POST /__platform/scheduled", () => {
     const summary = await res.json<ScheduledRunSummary>();
     expect(summary).toMatchObject({ runId: "run_dead", outcome: "failed", version: BUNDLE_VERSION });
     expect(summary.error).toMatch(/unavailable/);
+    // No nextDueAt after a failure: the platform calls again on its next tick.
+    expect(summary.nextDueAt).toBeUndefined();
   });
 });
 

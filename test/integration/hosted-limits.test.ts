@@ -181,9 +181,14 @@ describe("monitors", () => {
   it("refuses a polled monitor checked more often than the plan allows, but never a heartbeat", async () => {
     limits = { ...PLAN_LIMITS.trial, minIntervalMinutes: 15 };
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("ok"));
-    const http = await call("/api/monitors", { json: { type: "http", name: "Site", config: { url: "https://site.example.com/" } } });
+    const site = { type: "http", config: { url: "https://site.example.com/" } };
+    const http = await call("/api/monitors", { json: { ...site, name: "Site", intervalSeconds: 60 } });
     expect(http.status).toBe(402);
-    expect(await http.json()).toMatchObject({ limit: "interval", allowed: 15, requested: 12 });
+    expect(await http.json()).toMatchObject({ limit: "interval", allowed: 15, requested: 1 });
+    // With no interval, a new monitor gets the plan's shortest when that is over 12 minutes.
+    const fits = await call("/api/monitors", { json: { ...site, name: "Site" } });
+    expect(fits.status).toBe(201);
+    expect(await fits.json()).toMatchObject({ monitor: { intervalSeconds: 900 } });
     // A heartbeat's interval is how often its job pings, not a check.
     const hb = await call("/api/monitors", { json: { type: "heartbeat", name: "Fast job", config: { intervalSeconds: 60, graceSeconds: 0 } } });
     expect(hb.status).toBe(201);
@@ -201,7 +206,7 @@ describe("monitors", () => {
     expect(await count("monitors")).toBe(1);
   });
 
-  it("holds an import to the interval only for the monitors it would create", async () => {
+  it("restores an import's fast monitors at the plan's shortest interval", async () => {
     limits = { ...PLAN_LIMITS.trial, minIntervalMinutes: 15 };
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("ok"));
     const site = { type: "http", name: "Site", config: { url: "https://site.example.com/" } };
@@ -213,10 +218,12 @@ describe("monitors", () => {
     // "Site" exists, so it is skipped and its 12-minute checks don't count.
     expect((await call("/api/data/import", { json: { data } })).status).toBe(200);
     expect(await count("monitors")).toBe(2);
-    // Imported as a new monitor, it would be refused.
-    const all = await call("/api/data/import", { json: { data: { ...data, monitors: [{ ...site, name: "Site 2" }] } } });
-    expect(all.status).toBe(402);
-    expect(await all.json()).toMatchObject({ limit: "interval" });
+    // A new monitor faster than the plan is restored at the plan's shortest, not refused.
+    const fast = { ...site, name: "Site 2", intervalSeconds: 60 };
+    const all = await call("/api/data/import", { json: { data: { ...data, monitors: [fast] } } });
+    expect(all.status).toBe(200);
+    const restored = await env.DB.prepare("SELECT interval_seconds FROM monitors WHERE name = 'Site 2'").first();
+    expect(restored).toEqual({ interval_seconds: 900 });
   });
 
   it("refuses a backup import that would go over, before creating anything", async () => {
@@ -329,5 +336,82 @@ describe("a plain install (HOSTED_MODE unset)", () => {
       ).status,
     ).toBe(201);
     expect(usageReports).toEqual([]);
+  });
+});
+
+describe("check intervals", () => {
+  const site = (name: string, extra: Record<string, unknown> = {}) => ({
+    type: "http",
+    name,
+    config: { url: "https://site.example.com/" },
+    ...extra,
+  });
+  const intervalOf = async (res: Response) => (await res.json<{ monitor: { intervalSeconds: number } }>()).monitor;
+
+  beforeEach(() => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("ok"));
+  });
+
+  it("keeps each polled monitor's own interval on the fast checks plan", async () => {
+    limits = PLAN_LIMITS.hosted_fast;
+    const created = await intervalOf(await call("/api/monitors", { json: site("Fast", { intervalSeconds: 60 }) }));
+    expect(created.intervalSeconds).toBe(60);
+    const id = (created as unknown as { id: string }).id;
+
+    // The editor's full replace sends no interval: the monitor keeps its own.
+    const put = await call(`/api/monitors/${id}`, { method: "PUT", json: site("Fast, renamed") });
+    expect(put.status).toBe(200);
+    expect((await intervalOf(put)).intervalSeconds).toBe(60);
+
+    const patch = await call(`/api/monitors/${id}`, { method: "PATCH", json: { intervalSeconds: 300 } });
+    expect((await intervalOf(patch)).intervalSeconds).toBe(300);
+
+    // Whole minutes only.
+    const odd = await call(`/api/monitors/${id}`, { method: "PATCH", json: { intervalSeconds: 90 } });
+    expect(odd.status).toBe(400);
+  });
+
+  it("defaults a new monitor to 12 minutes, and refuses 1 minute without the add-on", async () => {
+    limits = PLAN_LIMITS.hosted;
+    const plain = await intervalOf(await call("/api/monitors", { json: site("Default") }));
+    expect(plain.intervalSeconds).toBe(720);
+    const hourly = await intervalOf(await call("/api/monitors", { json: site("Hourly", { intervalSeconds: 3600 }) }));
+    expect(hourly.intervalSeconds).toBe(3600);
+
+    const fast = await call("/api/monitors", { json: site("Too fast", { intervalSeconds: 60 }) });
+    expect(fast.status).toBe(402);
+    expect(await fast.json()).toMatchObject({
+      limit: "interval",
+      allowed: 12,
+      requested: 1,
+      message: "Your plan checks every 12 minutes at the fastest. Add fast checks for 1-minute checks.",
+      upgradeUrl: UPGRADE,
+    });
+  });
+
+  it("lets a downgraded 1-minute monitor be edited, but not made faster again", async () => {
+    limits = PLAN_LIMITS.hosted_fast;
+    const { id } = (await (await call("/api/monitors", { json: site("Was fast", { intervalSeconds: 60 }) })).json<{
+      monitor: { id: string };
+    }>()).monitor;
+    limits = PLAN_LIMITS.hosted;
+    const rename = await call(`/api/monitors/${id}`, { method: "PATCH", json: { name: "Still set to 1 minute" } });
+    expect(rename.status).toBe(200);
+    expect((await intervalOf(rename)).intervalSeconds).toBe(60);
+    const faster = await call(`/api/monitors/${id}`, { method: "PATCH", json: { intervalSeconds: 120 } });
+    expect(faster.status).toBe(402);
+  });
+
+  it("takes an interval over MCP on Hosted", async () => {
+    limits = PLAN_LIMITS.hosted_fast;
+    const r = await mcp("create_monitor", site("Over MCP", { intervalSeconds: 120 }));
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toMatchObject({ monitor: { intervalSeconds: 120 } });
+  });
+
+  it("checks every polled monitor every 12 minutes on a plain install, whatever is sent", async () => {
+    const res = await call("/api/monitors", { json: site("Plain", { intervalSeconds: 60 }), hosted: false });
+    expect(res.status).toBe(201);
+    expect((await intervalOf(res)).intervalSeconds).toBe(720);
   });
 });

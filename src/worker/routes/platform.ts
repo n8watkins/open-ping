@@ -4,6 +4,7 @@ import {
   HOSTED_ERRORS,
   INTERNAL_HEADER,
   isPlatformCall,
+  SCHEDULED_MAX_GAP_MS,
   type HealthResponse,
   type ScheduledRunSummary,
   type TenantProps,
@@ -13,6 +14,7 @@ import { hostedProps } from "../lib/hosted";
 import { countingD1, type UsageCounter } from "../lib/budget";
 import { BUNDLE_VERSION, BUNDLED_SCHEMA_VERSION, ensureSchema, readSchemaState } from "../lib/migrate";
 import { runScheduled } from "../scheduler";
+import { platformCadence } from "../lib/cadence";
 import { reportUsage } from "../db/usage";
 
 /**
@@ -107,7 +109,10 @@ platformRoutes.post(
         scheduledTime: request.scheduledTime,
         noRetry() {},
       };
-      result = await runScheduled(controller, c.env);
+      // Each polled monitor on its own interval, at least the plan's shortest.
+      result = await runScheduled(controller, c.env, {
+        cadence: platformCadence(props.tenant.limits.minIntervalMinutes),
+      });
     } catch (error) {
       // runScheduled handles everything after it holds the lease; this is its
       // first round trip failing (the database didn't answer).
@@ -118,7 +123,9 @@ platformRoutes.post(
       return c.json(summary({ outcome: "lease_busy", ...migrated, d1Queries: usage.d1 + result.d1Queries }));
     }
 
-    await reportUsage(db, props.platform);
+    // Counts change only through the API, which reports them itself; a run
+    // reports them once per 12 minutes too, as a backstop.
+    if (result.upkeep) await reportUsage(db, props.platform);
     const { stats } = result;
     return c.json(
       summary({
@@ -128,6 +135,8 @@ platformRoutes.post(
         failures: stats.checkFailures,
         deferred: result.deferred,
         d1Queries: usage.d1 + (stats.d1Queries ?? 0),
+        // Capped from the call's start, which the platform clamps from (contract, section 6).
+        ...(result.outcome === "ran" ? { nextDueAt: Math.min(result.nextDueAt, startedAt + SCHEDULED_MAX_GAP_MS) } : {}),
         ...(result.outcome === "failed" ? { error: shortReason(stats.error) } : {}),
       }),
     );

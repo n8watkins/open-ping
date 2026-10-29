@@ -81,6 +81,20 @@ describe("mergeMonitorPatch", () => {
     expect(merged.categoryId).toBeNull();
   });
 
+  it("keeps a polled monitor's interval unless the patch changes it, and never gives a heartbeat one", () => {
+    const http: MonitorRecord = {
+      ...heartbeatMonitor(),
+      id: "mon_http",
+      type: "http",
+      intervalSeconds: 60,
+      graceSeconds: null,
+      config: { url: "https://example.com/" } as MonitorRecord["config"],
+    };
+    expect(mergeMonitorPatch(http, { name: "Renamed" }).intervalSeconds).toBe(60);
+    expect(mergeMonitorPatch(http, { intervalSeconds: 300 }).intervalSeconds).toBe(300);
+    expect(mergeMonitorPatch(heartbeatMonitor(), { intervalSeconds: 60 })).not.toHaveProperty("intervalSeconds");
+  });
+
   it("rejects unknown fields in a patch", () => {
     expect(monitorPatchSchema.safeParse({ nmae: "typo" }).success).toBe(false);
     expect(monitorPatchSchema.safeParse({ name: "ok" }).success).toBe(true);

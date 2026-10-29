@@ -1,3 +1,4 @@
+import { defaultIntervalSeconds } from "../../shared/check-interval";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { Env } from "../types";
@@ -604,6 +605,18 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       .optional()
       .describe('Status page settings, e.g. {"visible":true,"name":"API","showUptime":true}.'),
     categoryId: z.string().max(64).nullable().optional().describe("Category id from list_categories, or null."),
+    // OpenPing Hosted only: a plain install checks every polled monitor on each 12-minute run.
+    ...(ctx.plan
+      ? {
+          intervalSeconds: z
+            .number()
+            .int()
+            .optional()
+            .describe(
+              `Polled monitors: seconds between checks, a whole number of minutes from ${ctx.plan.limits.minIntervalMinutes * 60} (this plan's shortest) to 86400. New monitors default to ${defaultIntervalSeconds(ctx.plan.limits.minIntervalMinutes)}.`,
+            ),
+        }
+      : {}),
     assertions: z
       .array(anyObject())
       .max(50)
@@ -616,7 +629,9 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     {
       title: "Create monitor",
       description: [
-        "Create a monitor. Validated exactly like the web editor. Polled monitors run every 12 minutes.",
+        ctx.plan
+          ? "Create a monitor. Validated exactly like the web editor. Polled monitors are checked every intervalSeconds."
+          : "Create a monitor. Validated exactly like the web editor. Polled monitors run every 12 minutes.",
         'http config: {"url":"https://...","method":"GET","expectedStatus":{"min":200,"max":399},"timeoutMs":60000}.',
         'heartbeat config: {"intervalSeconds":3600,"graceSeconds":300}; the result has the ping URL, shown only this once.',
         'dns: {"hostname":"example.com","recordType":"A"}. tcp: {"host":"db.example.com","port":5432}. domain: {"domain":"example.com","warnDays":30}.',

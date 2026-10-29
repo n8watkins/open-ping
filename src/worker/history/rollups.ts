@@ -249,6 +249,8 @@ export function compactionStatements(
   now: number,
   retention: RetentionConfig,
   since: number | null = null,
+  /** How long scheduler run records are kept (default: the daily horizon). */
+  opts: { runRecordsMs?: number } = {},
 ): LabeledStatement[] {
   const sampleMs = retention.sampleHours * HOUR_MS;
   const hourlyMs = retention.hourlyDays * DAY_MS;
@@ -306,7 +308,7 @@ export function compactionStatements(
     {
       // ~120 rows/day; only recent runs are read.
       label: "run-record prune",
-      stmt: env.DB.prepare("DELETE FROM scheduler_runs WHERE started_at < ?").bind(now - dailyMs),
+      stmt: env.DB.prepare("DELETE FROM scheduler_runs WHERE started_at < ?").bind(now - (opts.runRecordsMs ?? dailyMs)),
     },
     {
       // Finished deliveries only: pending and failed rows are still being

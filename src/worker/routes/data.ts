@@ -14,7 +14,7 @@ import {
   listMaintenanceWindows,
 } from "../db/maintenance";
 import { getExportableSettings } from "../db/settings";
-import { hostedPlan, intervalLimit, monitorLimit } from "../lib/plan-limits";
+import { hostedPlan, importedCheckInterval, intervalLimit, monitorLimit } from "../lib/plan-limits";
 
 /**
  * Data import/export API mounted at /api/data (PRD §23).
@@ -394,7 +394,7 @@ data.post("/import", async (c) => {
     for (const { input } of validMonitors) {
       if (skipExisting && seen.has(input.name)) continue;
       seen.add(input.name);
-      creating.push(input);
+      creating.push(importedCheckInterval(input, plan));
     }
     // Only the monitors it would create: a skipped one is never checked.
     const refused =
@@ -422,7 +422,7 @@ data.post("/import", async (c) => {
       if (oldId && existingId) monitorIdMap.set(oldId, existingId);
       continue;
     }
-    const created = await createMonitor(c.env, input);
+    const created = await createMonitor(c.env, importedCheckInterval(input, plan));
     existingNames.add(input.name);
     existingIdByName.set(input.name, created.id);
     if (oldId) monitorIdMap.set(oldId, created.id);
