@@ -80,6 +80,8 @@ export interface CheckoutInput {
 export interface StripeApi {
   /** POST /v1/customers. The idempotency key makes a retried or doubled call return the same Customer. */
   createCustomer(input: { email: string; accountId: string }, idempotencyKey: string): Promise<{ id: string }>;
+  /** POST /v1/customers/:id with a new email: receipts and Stripe's own emails follow an account's email change. */
+  updateCustomerEmail(id: string, email: string, idempotencyKey: string): Promise<{ id: string }>;
   /** POST /v1/checkout/sessions in subscription mode. */
   createCheckoutSession(input: CheckoutInput, idempotencyKey: string): Promise<{ id: string; url: string }>;
   /** POST /v1/billing_portal/sessions. */
@@ -205,6 +207,10 @@ export class HttpStripeApi implements StripeApi {
   retrieveSubscription(id: string, options: { expandInvoice?: boolean } = {}): Promise<StripeSubscription> {
     const query = options.expandInvoice ? "?expand[]=latest_invoice" : "";
     return this.request("GET", `/v1/subscriptions/${encodeURIComponent(id)}${query}`);
+  }
+
+  updateCustomerEmail(id: string, email: string, idempotencyKey: string): Promise<{ id: string }> {
+    return this.request("POST", `/v1/customers/${encodeURIComponent(id)}`, { email }, idempotencyKey);
   }
 
   expireCheckoutSession(id: string): Promise<{ id: string; status: string }> {

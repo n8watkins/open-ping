@@ -16,6 +16,7 @@
  *   long as it is kept.
  */
 
+import { FRESH_SIGN_IN_MS, freshSignIn } from "../auth/fresh";
 import { Hono } from "hono";
 
 import { audit } from "../accounts";
@@ -38,8 +39,8 @@ export interface AccountExportDeps {
   now?: () => number;
 }
 
-/** A sign-in this recent may see the key. */
-export const KEY_REVEAL_FRESH_MS = 15 * 60_000;
+/** A sign-in this recent may see the key (./auth/fresh.ts). */
+export const KEY_REVEAL_FRESH_MS = FRESH_SIGN_IN_MS;
 
 type Env = { Bindings: PlatformEnv; Variables: { session: Session | null; now: number } };
 
@@ -214,8 +215,7 @@ export function accountExportRoutes(deps: AccountExportDeps): Hono<Env> {
       return messagePage({ title: "Not found", body: "There's no such export on your account.", status: 404, action: { href: "/account/export", label: "Your exports" } });
     }
     // With a passkey on the account, only a passkey sign-in counts: an inbox alone mustn't open the key.
-    const hasPasskey = await db.prepare("SELECT 1 AS x FROM account_identities WHERE account_id = ? AND kind = 'passkey' LIMIT 1").bind(session.account.id).first();
-    const fresh = now - session.createdAt <= KEY_REVEAL_FRESH_MS && (!hasPasskey || session.method === "passkey");
+    const { fresh, hasPasskey } = await freshSignIn(db, session, now);
     if (!fresh) {
       return messagePage({
         title: "Sign in again first",

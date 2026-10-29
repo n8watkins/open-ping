@@ -761,3 +761,129 @@ describe("the Terms of Service and the Privacy Policy", () => {
     ).toBe(1);
   });
 });
+
+describe("changing the sign-in email", () => {
+  const codeOf = (text: string) => /Code: (\d{6})/.exec(text)![1]!;
+  const changeIdOf = async (res: Response) => /name="change" value="([^"]+)"/.exec(await res.text())![1]!;
+  async function accountOf(email: string) {
+    return env.PLATFORM_DB.prepare("SELECT id, email FROM accounts WHERE email = ?").bind(email).first<{ id: string; email: string }>();
+  }
+
+  it("asks the new address for a code, switches only with it, and tells the old address", async () => {
+    const oldEmail = newEmail();
+    const browser = new Browser();
+    await browser.signInWithCode(oldEmail);
+    const other = new Browser();
+    await other.signInWithCode(oldEmail);
+    const accountId = (await accountOf(oldEmail))!.id;
+    // (An account without an OpenPing yet is sent to /start; "done" shows the page itself.)
+    expect(await (await browser.fetch("/account?done=none")).text()).toContain('href="/account/email"');
+    expect(await (await browser.fetch("/account/email")).text()).toContain("Change your email");
+
+    const target = newEmail();
+    const sent = await browser.fetch("/account/email", { form: { email: ` ${target.toUpperCase()} ` } });
+    expect(sent.status).toBe(200);
+    const changeId = await changeIdOf(sent);
+    const mail = outbox.sent.at(-1)!;
+    expect(mail).toMatchObject({ to: target, category: "email_change" });
+    expect(mail.subject).toMatch(/^\d{6} is your OpenPing email change code$/);
+    // Nothing changes yet, and a wrong code says so.
+    expect((await accountOf(oldEmail))!.id).toBe(accountId);
+    const wrong = await browser.fetch("/account/email/confirm", { form: { change: changeId, code: codeOf(mail.text) === "000000" ? "111111" : "000000" } });
+    expect(wrong.status).toBe(400);
+    expect(await wrong.text()).toContain("4 tries left");
+    // Another account can't use this account's code.
+    const stranger = new Browser();
+    await stranger.signInWithCode(newEmail());
+    expect((await stranger.fetch("/account/email/confirm", { form: { change: changeId, code: codeOf(mail.text) } })).status).toBe(400);
+
+    const done = await browser.fetch("/account/email/confirm", { form: { change: changeId, code: codeOf(mail.text) } });
+    expect(done.status).toBe(303);
+    expect(done.headers.get("location")).toBe("/account?done=email");
+    expect(await accountOf(oldEmail)).toBeNull();
+    expect((await accountOf(target))!.id).toBe(accountId);
+    expect(await count("SELECT COUNT(*) AS n FROM account_identities WHERE account_id = ? AND kind = 'email' AND subject = ?", accountId, target)).toBe(1);
+    const notice = outbox.sent.at(-1)!;
+    expect(notice).toMatchObject({ to: oldEmail, category: "email_changed" });
+    expect(notice.text).toContain(`was changed to ${target}`);
+    const audited = await env.PLATFORM_DB.prepare("SELECT detail FROM audit_events WHERE account_id = ? AND action = 'account.email_changed'").bind(accountId).first<{ detail: string }>();
+    expect(JSON.parse(audited!.detail)).toEqual({ from: oldEmail, to: target });
+    // This browser stays signed in; the other one is signed out.
+    expect(await (await browser.fetch("/account?done=email")).text()).toContain("Your email is changed.");
+    expect((await other.fetch("/account")).headers.get("location")).toBe("/sign-in?next=%2Faccount");
+    // The new address signs in to the same account.
+    await new Browser().signInWithCode(target);
+    expect(await count("SELECT COUNT(*) AS n FROM accounts WHERE id = ? AND email = ?", accountId, target)).toBe(1);
+  });
+
+  it("works from the link too, which only shows a button until it is pressed", async () => {
+    const browser = new Browser();
+    const oldEmail = newEmail();
+    await browser.signInWithCode(oldEmail);
+    const target = newEmail();
+    await browser.fetch("/account/email", { form: { email: target } });
+    const link = /(https:\/\/\S+\/account\/email\/confirm\?token=\S+)/.exec(outbox.sent.at(-1)!.text)![1]!;
+    const page = await browser.fetch(link.slice(APP.length));
+    expect(await page.text()).toContain(target);
+    expect(await accountOf(oldEmail)).not.toBeNull();
+    // Signed out, the link sends you to sign in first and back.
+    const signedOut = await new Browser().fetch(link.slice(APP.length));
+    expect(signedOut.status).toBe(303);
+    expect(signedOut.headers.get("location")).toMatch(/^\/sign-in\?next=%2Faccount%2Femail%2Fconfirm%3Ftoken%3D/);
+    const token = new URL(link).searchParams.get("token")!;
+    expect((await browser.fetch("/account/email/confirm", { form: { token } })).headers.get("location")).toBe("/account?done=email");
+    expect(await accountOf(target)).not.toBeNull();
+    expect((await browser.fetch("/account/email/confirm", { form: { token } })).status).toBe(400);
+  });
+
+  it("needs a fresh sign-in, a passkey one when the account has a passkey", async () => {
+    const email = newEmail();
+    const browser = new Browser();
+    await browser.signInWithCode(email);
+    const { id } = (await accountOf(email))!;
+    await env.PLATFORM_DB.prepare("UPDATE platform_sessions SET created_at = created_at - ? WHERE account_id = ?").bind(16 * 60_000, id).run();
+    for (const res of [await browser.fetch("/account/email"), await browser.fetch("/account/email", { form: { email: newEmail() } })]) {
+      expect(res.status).toBe(401);
+      expect(await res.text()).toContain("/sign-in?next=%2Faccount%2Femail");
+    }
+    const fresh = new Browser();
+    await fresh.signInWithCode(email);
+    await env.PLATFORM_DB.prepare(
+      "INSERT INTO account_identities (id, account_id, kind, subject, public_key, alg, created_at) VALUES ('idn_pk_change', ?, 'passkey', 'cred-change', 'pk', -7, 0)",
+    )
+      .bind(id)
+      .run();
+    expect(await textOf(await fresh.fetch("/account/email"))).toContain("with your passkey");
+  });
+
+  it("sends nothing to an address another account holds, and says the same", async () => {
+    const taken = newEmail();
+    await new Browser().signInWithCode(taken);
+    const browser = new Browser();
+    await browser.signInWithCode(newEmail());
+    const before = outbox.sent.length;
+    const res = await browser.fetch("/account/email", { form: { email: taken } });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Check your new email");
+    expect(outbox.sent.length).toBe(before);
+    for (const [email, message] of [
+      ["not-an-address", "Enter an email address"],
+      ["someone@mailinator.com", "permanent email address"],
+    ] as const) {
+      expect(await textOf(await browser.fetch("/account/email", { form: { email } }))).toContain(message);
+    }
+  });
+
+  it("refuses an address that signed up meanwhile, and changes nothing", async () => {
+    const oldEmail = newEmail();
+    const browser = new Browser();
+    await browser.signInWithCode(oldEmail);
+    const target = newEmail();
+    const changeId = await changeIdOf(await browser.fetch("/account/email", { form: { email: target } }));
+    const code = codeOf(outbox.sent.at(-1)!.text);
+    await new Browser().signInWithCode(target);
+    const res = await browser.fetch("/account/email/confirm", { form: { change: changeId, code } });
+    expect(res.status).toBe(409);
+    expect(await accountOf(oldEmail)).not.toBeNull();
+  });
+});

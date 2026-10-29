@@ -22,6 +22,9 @@ import {
   checkEmailPage,
   confirmLinkPage,
   continuePage,
+  emailChangeCodePage,
+  emailChangeConfirmPage,
+  emailChangePage,
   homePage,
   messagePage,
   signInPage,
@@ -46,6 +49,9 @@ import {
   type PasskeyExpectation,
 } from "./auth/passkeys";
 import { LIMITS, hitInOrder, ipSubject, isOverLimit } from "./auth/rate-limit";
+import { applyEmailChange, checkEmailChangeCode, consumeEmailChangeLink, emailChangeByToken, startEmailChange, type EmailChangeCheck } from "./auth/email-change";
+import { freshSignIn } from "./auth/fresh";
+import { emailChangeCodeEmail, emailChangedEmail } from "./emails";
 import { createSession, endSession, readSession, type Session, type SignInMethod } from "./auth/sessions";
 import { PASSKEY_SCRIPT, PASSKEY_SCRIPT_PATH } from "./client-script";
 import type { PlatformEnv } from "./env";
@@ -60,6 +66,7 @@ import { tenantFromRow, type TenantRecord } from "./tenants";
 import { billingSetup, type BillingSetup } from "./billing/config";
 import { billingView, registerBillingRoutes } from "./billing/routes";
 import { log } from "./log";
+import { SUPPORT_EMAIL } from "./ui";
 
 export interface AccountDeps {
   /** The platform's mailer, or null while mail isn't configured. */
@@ -622,8 +629,137 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     "passkey-locked": { message: "Passkeys on this account change only within 10 minutes of signing in with a pinned passkey.", tone: "error" },
     github: { message: "GitHub connected.", tone: "ok" },
     "github-removed": { message: "GitHub disconnected.", tone: "ok" },
+    email: { message: "Your email is changed. Sign in with the new one from now on.", tone: "ok" },
     "github-taken": { message: "That GitHub account is already connected to another OpenPing Hosted account.", tone: "error" },
   };
+
+  // --- Changing the sign-in email -------------------------------------------
+  // A fresh sign-in first (./auth/fresh.ts), then a code or link sent to the
+  // new address; the old address is told once it switched.
+
+  /** The "sign in again" answer, or null when the session may change the email. */
+  async function needsFreshSignIn(c: Ctx, session: Session): Promise<Response | null> {
+    const { fresh, hasPasskey } = await freshSignIn(c.env.PLATFORM_DB, session, c.get("now"));
+    if (fresh) return null;
+    return messagePage({
+      title: "Sign in again first",
+      body: hasPasskey
+        ? "Your email can sign in to your account, so we ask for a sign-in with your passkey from the last 15 minutes before changing it."
+        : "Your email can sign in to your account, so we ask for a sign-in from the last 15 minutes before changing it.",
+      status: 401,
+      action: { href: "/sign-in?next=%2Faccount%2Femail", label: "Sign in again" },
+    });
+  }
+
+  app.get("/account/email", async (c) => {
+    const session = c.get("session");
+    if (!session) return seeOther(c, "/sign-in?next=%2Faccount%2Femail");
+    return (await needsFreshSignIn(c, session)) ?? emailChangePage({ current: session.account.email });
+  });
+
+  app.post("/account/email", async (c) => {
+    const session = c.get("session");
+    if (!session) return seeOther(c, "/sign-in?next=%2Faccount%2Femail");
+    const stale = await needsFreshSignIn(c, session);
+    if (stale) return stale;
+    const db = c.env.PLATFORM_DB;
+    const raw = (await form(c)).email ?? "";
+    const page = (error: string, status = 400) => emailChangePage({ current: session.account.email, email: raw, error, status });
+    const mailer = deps.mailer(c.env);
+    if (!mailer) return page("Email isn't available right now. Please try again later.", 503);
+    const email = normalizeEmail(raw);
+    if (!email) return page("Enter an email address like you@example.com.");
+    if (email === session.account.email) return page("That's already your email.");
+    if (isDisposableEmail(email)) return page("Please use a permanent email address. Throwaway addresses can't hold an account.");
+    const limited = await hitInOrder(
+      db,
+      [
+        [LIMITS.emailChangePerAccount, session.account.id],
+        [LIMITS.emailPerAddress, email],
+      ],
+      c.get("now"),
+    );
+    if (limited) return page(tooMany(), 429);
+    const started = await startEmailChange(db, { accountId: session.account.id, newEmail: email, now: c.get("now") });
+    // An address another account holds gets nothing, and the page reads the same,
+    // so this form can't tell anyone which addresses have accounts.
+    if (!(await findAccountByEmail(db, email))) {
+      const link = `${origin(c)}/account/email/confirm?token=${encodeURIComponent(started.token)}`;
+      const sent = await mailer.send({ to: email, ...emailChangeCodeEmail({ code: started.code, link }), category: "email_change", replyTo: PLATFORM_REPLY_TO });
+      if (!sent.ok) {
+        log.error("account.email_change_not_sent", { error: sent.error });
+        return page("We couldn't send the email just now. Please try again in a minute.", 502);
+      }
+    }
+    return emailChangeCodePage({ email, changeId: started.changeId });
+  });
+
+  // The link only shows a button: a mail scanner opening it changes nothing.
+  app.get("/account/email/confirm", async (c) => {
+    const session = c.get("session");
+    const token = c.req.query("token") ?? "";
+    if (!session) return seeOther(c, `/sign-in?next=${encodeURIComponent(`/account/email/confirm?token=${token}`)}`);
+    const change = await emailChangeByToken(c.env.PLATFORM_DB, session.account.id, token, c.get("now"));
+    if (!change) return emailChangeExpired();
+    return emailChangeConfirmPage({ token, email: change.newEmail });
+  });
+
+  app.post("/account/email/confirm", async (c) => {
+    const session = c.get("session");
+    if (!session) return seeOther(c, "/sign-in?next=%2Faccount%2Femail");
+    const db = c.env.PLATFORM_DB;
+    const now = c.get("now");
+    const fields = await form(c);
+    let check: EmailChangeCheck;
+    if (fields.token) {
+      check = await consumeEmailChangeLink(db, session.account.id, fields.token, now);
+    } else {
+      if (await hitInOrder(db, [[LIMITS.codePerIp, clientIp(c)]], now)) return messagePage({ title: "Too many tries", body: tooMany(), status: 429, action: { href: "/account", label: "Back to your account" } });
+      check = await checkEmailChangeCode(db, session.account.id, fields.change ?? "", fields.code ?? "", now);
+      if (!check.ok && check.reason === "wrong_code" && check.remaining > 0) {
+        return emailChangeCodePage({
+          email: check.newEmail,
+          changeId: fields.change ?? "",
+          status: 400,
+          error: `That code isn't right. ${check.remaining === 1 ? "1 try left." : `${check.remaining} tries left.`}`,
+        });
+      }
+    }
+    if (!check.ok) return emailChangeExpired();
+    const oldEmail = session.account.email;
+    const applied = await applyEmailChange(db, { accountId: session.account.id, oldEmail, newEmail: check.newEmail, keepSessionHash: session.tokenHash, now });
+    if (!applied) {
+      return messagePage({
+        title: "That address has its own account",
+        body: `${check.newEmail} signed up for OpenPing Hosted meanwhile, so it can't be this account's email. Write to ${SUPPORT_EMAIL} if you need the two joined.`,
+        status: 409,
+        action: { href: "/account", label: "Back to your account" },
+      });
+    }
+    await audit(db, { accountId: session.account.id, actor: "customer", action: "account.email_changed", detail: { from: oldEmail, to: check.newEmail }, now });
+    // Stripe's receipts follow; never fatal, the next change or the owner can fix it.
+    const stripeCustomer = await db.prepare("SELECT stripe_customer_id FROM accounts WHERE id = ?").bind(session.account.id).first<{ stripe_customer_id: string | null }>();
+    const setup = billing(c.env);
+    if (stripeCustomer?.stripe_customer_id && setup.ok) {
+      await setup.stripe
+        .updateCustomerEmail(stripeCustomer.stripe_customer_id, check.newEmail, `email-change-${session.account.id}-${now}`)
+        .catch((error: unknown) => log.error("billing.customer_email_not_updated", { account: session.account.id, error }));
+    }
+    const mailer = deps.mailer(c.env);
+    if (mailer) {
+      const sent = await mailer.send({ to: oldEmail, ...emailChangedEmail({ newEmail: check.newEmail, at: now }), category: "email_changed", replyTo: PLATFORM_REPLY_TO });
+      if (!sent.ok) log.error("account.email_changed_notice_not_sent", { error: sent.error });
+    }
+    return seeOther(c, "/account?done=email");
+  });
+
+  const emailChangeExpired = () =>
+    messagePage({
+      title: "This code has expired",
+      body: "Codes and links work once, for 15 minutes, while you're signed in to the account that asked. Nothing was changed.",
+      status: 400,
+      action: { href: "/account/email", label: "Start again" },
+    });
 
   app.get("/account", async (c) => {
     const session = c.get("session");

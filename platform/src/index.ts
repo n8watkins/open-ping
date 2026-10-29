@@ -20,6 +20,7 @@ import { createApp } from "./app";
 import { endTrials } from "./billing/state";
 import { billingRecordsCleanup } from "./billing/webhook";
 import { ceremonyCleanup } from "./auth/ceremonies";
+import { emailChangeCleanup } from "./auth/email-change";
 import { emailSignInCleanup } from "./auth/email-sign-in";
 import { rateLimitCleanup } from "./auth/rate-limit";
 import { sessionCleanup } from "./auth/sessions";
@@ -167,6 +168,7 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
     .batch([
       sessionCleanup(db, now),
       emailSignInCleanup(db, now),
+      emailChangeCleanup(db, now),
       ceremonyCleanup(db, now),
       rateLimitCleanup(db, now),
       emailUsageCleanup(db, now),

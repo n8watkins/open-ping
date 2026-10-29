@@ -288,7 +288,7 @@ ${passkeys}
 <p class="notice error" id="passkey-error" role="alert" hidden></p>
 </section>
 <section><h2>Sign-in methods</h2>
-<ul class="rows"><li><div class="what"><strong>Email</strong><span>${input.email}</span></div></li></ul>
+<ul class="rows"><li><div class="what"><strong>Email</strong><span>${input.email}</span></div><a class="button secondary small" href="/account/email" aria-label="Change your email">Change</a></li></ul>
 ${github}
 </section>
 ${
@@ -315,5 +315,62 @@ export function signOutPage(): Response {
 <p class="lead">You're still signed in to your OpenPing Hosted account on this device.</p>
 <form method="post" action="/sign-out"><button class="button primary" type="submit">Sign out of OpenPing Hosted too</button></form>
 <p class="switch"><a href="/account">Stay signed in</a></p>`,
+  });
+}
+
+/** /account/email: the new address, after a fresh sign-in. */
+export function emailChangePage(input: { current: string; email?: string; error?: string | null; status?: number }): Response {
+  return renderPage({
+    title: "Change your email",
+    status: input.status,
+    homeHref: "/account",
+    main: html`<h1>Change your email</h1>
+<p>You sign in with<strong class="email">${input.current}</strong></p>
+<p class="lead">Sign-in codes, account emails and your OpenPing's reports go there.</p>
+${input.error ? html`<p class="notice error" id="email-error" role="alert">${input.error}</p>` : ""}
+<form method="post" action="/account/email" novalidate>
+<div class="field"><label for="email">New email</label>
+<input id="email" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" required maxlength="254" placeholder="you@example.com" value="${input.email ?? ""}"${
+      input.error ? new Html(' aria-describedby="email-error" aria-invalid="true"') : ""
+    }>
+<p class="hint">We'll email it a 6-digit code and a link. Nothing changes until you use one.</p></div>
+<button class="button primary" type="submit">Send the code</button>
+</form>
+<p class="switch"><a href="/account">Keep my current email</a></p>`,
+  });
+}
+
+/** After the code went out: type it here, or use the link in the email. */
+export function emailChangeCodePage(input: { email: string; changeId: string; error?: string | null; status?: number }): Response {
+  return renderPage({
+    title: "Check your new email",
+    status: input.status,
+    homeHref: "/account",
+    main: html`<h1>Check your new email</h1>
+<p class="lead">If <strong>${input.email}</strong> can be used, it has a 6-digit code and a link from us. They work for 15 minutes.</p>
+${input.error ? html`<p class="notice error" id="code-error" role="alert">${input.error}</p>` : ""}
+<form method="post" action="/account/email/confirm" novalidate>
+<input type="hidden" name="change" value="${input.changeId}">
+<div class="field"><label for="code">Code</label>
+<input class="code" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" maxlength="7" required placeholder="000000" autofocus${
+      input.error ? new Html(' aria-describedby="code-error" aria-invalid="true"') : ""
+    }></div>
+<button class="button primary" type="submit">Change my email</button>
+</form>
+<p class="hint">No email after a minute? Check the address, or it may already have an OpenPing Hosted account of its own; write to ${SUPPORT_EMAIL} if you need it moved.</p>
+<p class="switch"><a href="/account/email">Use another address</a></p>`,
+  });
+}
+
+/** The link from the email: a button, so a mail scanner opening it changes nothing. */
+export function emailChangeConfirmPage(input: { token: string; email: string }): Response {
+  return renderPage({
+    title: "Use this email?",
+    homeHref: "/account",
+    main: html`<h1>Use this email?</h1>
+<p class="lead">From now on, sign in to OpenPing Hosted with<strong class="email">${input.email}</strong></p>
+<form method="post" action="/account/email/confirm"><input type="hidden" name="token" value="${input.token}">
+<button class="button primary" type="submit">Change my email</button></form>
+<p class="switch"><a href="/account">Not now</a></p>`,
   });
 }

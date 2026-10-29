@@ -43,6 +43,8 @@ export const LIMITS = {
   adminSupport: { scope: "admin-support:account", limit: 20, windowMs: HOUR },
   /** A customer's exports of their OpenPing (B7): each one is a D1 export, which pauses its database briefly. */
   exportPerAccount: { scope: "export:account", limit: 3, windowMs: DAY },
+  /** Starting a change of the sign-in email (each one emails the new address). */
+  emailChangePerAccount: { scope: "email-change:account", limit: 5, windowMs: DAY },
   /** Showing a customer their MASTER_KEY. */
   keyRevealPerAccount: { scope: "key-reveal:account", limit: 5, windowMs: DAY },
 } as const satisfies Record<string, RateLimitRule>;

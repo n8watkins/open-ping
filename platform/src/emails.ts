@@ -116,6 +116,38 @@ export function signInEmail(input: { code: string; link: string; newAccount: boo
   });
 }
 
+/** To the new address of an email change: the proof that it is theirs. */
+export function emailChangeCodeEmail(input: { code: string; link: string }): RenderedEmail {
+  const intro = "Here is your code to make this the sign-in email of your OpenPing Hosted account.";
+  return email({
+    subject: `${input.code} is your OpenPing email change code`,
+    preheader: intro,
+    heading: "Confirm your new email",
+    blocks: [
+      { kind: "p", text: intro },
+      { kind: "code", text: input.code },
+      { kind: "button", label: "Use this email", href: input.link },
+      { kind: "note", text: "The code and the link work once, for 15 minutes, while you're signed in to the account that asked." },
+      { kind: "note", text: "If you didn't ask for this, ignore this email; nothing changes without it." },
+    ],
+  });
+}
+
+/** To the old address once the change is done, so a change nobody asked for is noticed. */
+export function emailChangedEmail(input: { newEmail: string; at: number }): RenderedEmail {
+  const intro = `The sign-in email of your OpenPing Hosted account was changed to ${input.newEmail} at ${emailTime(input.at)}.`;
+  return email({
+    subject: "Your OpenPing Hosted email was changed",
+    preheader: intro,
+    heading: "Your sign-in email was changed",
+    blocks: [
+      { kind: "p", text: intro },
+      { kind: "p", text: "Sign-in codes, account emails and your OpenPing's reports go to the new address from now on, and this address can no longer sign in." },
+      { kind: "note", text: `If that wasn't you, write to ${SUPPORT_EMAIL} at once, from this address, and we'll help you get the account back.` },
+    ],
+  });
+}
+
 /** The notice every account gets when a passkey is added to it. */
 export function passkeyAddedEmail(input: { label: string; at: number; accountUrl: string }): RenderedEmail {
   const intro = `A passkey named "${input.label}" was added to your OpenPing Hosted account at ${emailTime(input.at)}.`;
