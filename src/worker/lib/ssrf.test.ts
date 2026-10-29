@@ -193,3 +193,26 @@ describe("isBlockedIPv6", () => {
     expect(isBlockedIPv6("[::ffff]")).toBe(true); // 0.0.255.255
   });
 });
+
+describe("host names that start like an IPv6 prefix", () => {
+  // fc/fd (ULA), fe8-fef (link-local, site-local) and ff (multicast) are IPv6
+  // prefixes, but plenty of public host names start with the same letters.
+  const names = ["fedoraproject.org", "feedly.com", "ffmpeg.org", "fdroid.org", "fcbarcelona.com", "fc7550302760.aa.environment.api.powerplatform.com"];
+
+  it("are allowed as hosts and in URLs", () => {
+    for (const name of names) {
+      expect(assertSafeHost(name)).toEqual({ ok: true });
+      expect(assertSafeUrl(`https://${name}/`).ok).toBe(true);
+    }
+  });
+
+  it("are not IPv6 literals", () => {
+    for (const name of names) expect(isBlockedIPv6(name)).toBe(false);
+  });
+
+  it("while the real IPv6 ranges stay blocked", () => {
+    for (const ip of ["[fc00::1]", "fd12:3456::1", "[fe80::1]", "[fec0::1]", "[ff02::1]"]) {
+      expect(assertSafeHost(ip).ok).toBe(false);
+    }
+  });
+});
