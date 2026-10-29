@@ -73,4 +73,15 @@ describe("fast monitors over the plan", () => {
     expect(keptFastMonitorIds([...list].reverse(), 2)).toEqual(new Set(["old", "tie-a"]));
     expect(keptFastMonitorIds(list, 0)).toEqual(new Set());
   });
+
+  it("keep active monitors before paused or disabled ones, oldest first within each", () => {
+    const list = [
+      { ...m("old-paused", 60, 1), paused: true },
+      { ...m("old-off", 60, 2), enabled: false },
+      m("newer", 60, 3),
+      m("newest", 60, 4),
+    ];
+    expect(keptFastMonitorIds(list, 2)).toEqual(new Set(["newer", "newest"]));
+    expect(keptFastMonitorIds(list, 3)).toEqual(new Set(["newer", "newest", "old-paused"]));
+  });
 });

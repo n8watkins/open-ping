@@ -237,7 +237,7 @@ export async function runScheduled(
   try {
     // Each polled monitor at the interval this cadence checks it at
     // (lib/cadence.ts): 12 minutes on the cron, its own on the platform, and
-    // never more fast monitors than the plan allows (the oldest keep their
+    // never more fast monitors than the plan allows (active ones, then the oldest, keep their
     // speed, shared/check-interval.ts).
     const stored = await monitorsFromRows(env, (monitorsRes?.results ?? []) as MonitorRow[]);
     const keptFast = cadence.fastMonitors === null ? undefined : keptFastMonitorIds(stored, cadence.fastMonitors);

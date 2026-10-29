@@ -98,7 +98,13 @@ export function intervalLimit(plan: HostedPlan | undefined, monitor: CreateMonit
   return refusal(plan, checkIntervalLimit(plan.limits, intervalSecondsOf(monitor) / 60));
 }
 
-/** Polled monitors set faster than every 12 minutes (paused ones count), leaving out `except`. */
+/**
+ * Polled monitors set faster than every 12 minutes (paused ones count),
+ * leaving out `except`. Count, then write, as for the monitor limit: two
+ * edits at the same instant could both take the last fast place; accepted
+ * (reviewed 2026-10-29), since the scheduler still checks no more fast
+ * monitors than the plan allows (keptFastMonitorIds) and the next one is refused.
+ */
 async function countFast(env: Env, except: string | null): Promise<number> {
   const row = await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM monitors WHERE type <> 'heartbeat' AND interval_seconds < ?1 AND id <> COALESCE(?2, '')",

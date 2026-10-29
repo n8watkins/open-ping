@@ -8,7 +8,7 @@
  * a downgrade a 1-minute monitor runs at the plan's fastest and keeps its
  * setting for when the plan allows it again. The plan also caps how many
  * monitors may be fast (`PlanLimits.fastMonitors`); when more are set fast
- * than that (after a downgrade), the oldest keep their speed and the rest are
+ * than that (after a downgrade), the oldest active ones keep their speed and the rest are
  * checked every 12 minutes (keptFastMonitorIds). A plain install has no plan and
  * checks every polled monitor on each 12-minute cron run, as it always has.
  */
@@ -41,6 +41,9 @@ export interface FastCandidate {
   type: string;
   intervalSeconds: number;
   createdAt: number;
+  /** A paused or disabled monitor isn't checked, so it keeps its speed only after the active ones. */
+  paused?: boolean;
+  enabled?: boolean;
 }
 
 /** Is this a fast monitor: polled, and set to check more often than every 12 minutes? Paused ones count. */
@@ -50,15 +53,19 @@ export function isFastMonitor(m: Pick<FastCandidate, "type" | "intervalSeconds">
 
 /**
  * Which fast monitors are checked at their own interval when the plan allows
- * `allowance` of them: all of them while they fit; otherwise the oldest
- * (created first, then by id, so the choice never changes between runs), and
- * the others are checked every 12 minutes until one is slowed, removed or the
- * plan allows more. Nothing is changed in the database.
+ * `allowance` of them: all of them while they fit; otherwise active monitors
+ * before paused or disabled ones (which aren't checked anyway), then the
+ * oldest (created first, then by id), so the choice never changes between
+ * runs; the others are checked every 12 minutes until one is slowed, removed
+ * or the plan allows more. Nothing is changed in the database.
  */
 export function keptFastMonitorIds(monitors: readonly FastCandidate[], allowance: number): Set<string> {
   const fast = monitors.filter(isFastMonitor);
   if (fast.length <= allowance) return new Set(fast.map((m) => m.id));
-  const oldest = [...fast].sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const idle = (m: FastCandidate) => (m.paused === true || m.enabled === false ? 1 : 0);
+  const oldest = [...fast].sort(
+    (a, b) => idle(a) - idle(b) || a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
   return new Set(oldest.slice(0, Math.max(0, allowance)).map((m) => m.id));
 }
 
