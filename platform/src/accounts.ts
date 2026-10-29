@@ -66,20 +66,26 @@ export async function findAccountByEmail(db: D1Database, email: string): Promise
 
 /**
  * The account for a verified email, created (with its email identity) when
- * there is none. `allowCreate` false (sign-ups closed) answers null instead.
+ * there is none. `create` null (sign-ups closed) answers null instead; when
+ * set, a new account records the Terms' version its sign-up page showed and
+ * when it was accepted (migration 0011).
  */
 export async function accountForVerifiedEmail(
   db: D1Database,
   email: string,
   now: number,
-  allowCreate: boolean,
+  create: { termsVersion: string } | null,
 ): Promise<{ account: Account; created: boolean } | null> {
   const existing = await findAccountByEmail(db, email);
   if (existing) return { account: existing, created: false };
-  if (!allowCreate) return null;
+  if (!create) return null;
   const id = newId("acc");
   await db.batch([
-    db.prepare("INSERT INTO accounts (id, email, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(email) DO NOTHING").bind(id, email, now, now),
+    db
+      .prepare(
+        "INSERT INTO accounts (id, email, created_at, updated_at, terms_version, terms_accepted_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO NOTHING",
+      )
+      .bind(id, email, now, now, create.termsVersion, now),
     db
       .prepare(
         `INSERT INTO account_identities (id, account_id, kind, subject, created_at)

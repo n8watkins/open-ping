@@ -15,6 +15,7 @@ import { createApp } from "../src/app";
 import { StaticBundleSource, type TenantBundle } from "../src/bundle";
 import type { PlatformEnv } from "../src/env";
 import { generateMasterKey } from "../src/keys";
+import { LEGAL_DOCUMENTS, TERMS_VERSION } from "../src/legal/documents";
 import { FakeMailer } from "./fake-mailer";
 import type { ProvisioningDeps } from "../src/provisioning";
 import { FakeCloudflareApi } from "./fake-cloudflare";
@@ -692,5 +693,71 @@ describe("the pages", () => {
       expect(res.status).toBe(303);
       expect(res.headers.get("location")).toBe(`/sign-in?next=${encodeURIComponent(path)}`);
     }
+  });
+});
+
+describe("the Terms of Service and the Privacy Policy", () => {
+  it("are served from docs/legal with their last-updated date, to anyone, signed in or not", async () => {
+    for (const [path, title, doc] of [
+      ["/terms", "Terms of Service", LEGAL_DOCUMENTS.terms],
+      ["/privacy", "Privacy Policy", LEGAL_DOCUMENTS.privacy],
+    ] as const) {
+      const res = await new Browser().fetch(path);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      expect(res.headers.get("content-security-policy")).not.toContain("script-src");
+      const html = await res.text();
+      expect(html).toContain(`<h1>${title}</h1>`);
+      expect(html).toContain(`<time datetime="${doc.updated}">`);
+      expect(html).toContain(doc.html);
+      expect(html).toContain(`<a href="#${doc.sections[0]!.id}">`);
+      expect(html).not.toContain("<script");
+    }
+    const signedIn = new Browser();
+    await signedIn.signInWithCode(newEmail());
+    expect((await signedIn.fetch("/terms")).status).toBe(200);
+  });
+
+  it("are linked from the footer of every customer page, and the sign-up and sign-in pages say what continuing means", async () => {
+    for (const path of ["/", "/sign-in", "/sign-up", "/terms"]) {
+      const html = await (await new Browser().fetch(path)).text();
+      expect(html, path).toContain('<nav class="legal-links" aria-label="Legal"><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a></nav>');
+    }
+    const signUp = await textOf(await new Browser().fetch("/sign-up"));
+    expect(signUp).toContain('By continuing, you agree to the <a href="/terms">Terms of Service</a> and the <a href="/privacy">Privacy Policy</a>.');
+    expect(await textOf(await new Browser().fetch("/sign-in"))).toContain("Signing in with a new email or GitHub account creates an account, and means you agree to");
+    // Closed sign-ups make no accounts, so there is nothing to agree to.
+    signUps = "closed";
+    expect(await textOf(await new Browser().fetch("/sign-in"))).not.toContain("creates an account, and means you agree");
+    expect(await textOf(await new Browser().fetch("/sign-up"))).not.toContain("By continuing");
+  });
+
+  it("are accepted, with their version and time, by an account made with email or GitHub, and only then", async () => {
+    const email = newEmail();
+    const browser = new Browser();
+    await browser.signInWithCode(email);
+    const row = await env.PLATFORM_DB.prepare("SELECT id, created_at, terms_version, terms_accepted_at FROM accounts WHERE email = ?")
+      .bind(email)
+      .first<{ id: string; created_at: number; terms_version: string; terms_accepted_at: number }>();
+    expect(row).toMatchObject({ terms_version: TERMS_VERSION });
+    expect(row!.terms_accepted_at).toBe(row!.created_at);
+    const created = await env.PLATFORM_DB.prepare("SELECT detail FROM audit_events WHERE account_id = ? AND action = 'account.created'")
+      .bind(row!.id)
+      .first<{ detail: string }>();
+    expect(JSON.parse(created!.detail)).toEqual({ method: "email", termsVersion: TERMS_VERSION });
+
+    // Signing in again changes nothing about what was accepted.
+    await env.PLATFORM_DB.prepare("UPDATE accounts SET terms_accepted_at = 1 WHERE id = ?").bind(row!.id).run();
+    await new Browser().signInWithCode(email);
+    expect(await count("SELECT COUNT(*) AS n FROM accounts WHERE id = ? AND terms_accepted_at = 1", row!.id)).toBe(1);
+
+    github = { ...github, user: { id: 777001, login: "termsfan" }, emails: [{ email: "termsfan@example.com", primary: true, verified: true }] };
+    const gh = new Browser();
+    const start = await gh.fetch("/auth/github");
+    const state = new URL(start.headers.get("location")!).searchParams.get("state");
+    expect((await gh.fetch(`/auth/github/callback?code=good&state=${state}`)).status).toBe(303);
+    expect(
+      await count("SELECT COUNT(*) AS n FROM accounts WHERE email = 'termsfan@example.com' AND terms_version = ? AND terms_accepted_at IS NOT NULL", TERMS_VERSION),
+    ).toBe(1);
   });
 });

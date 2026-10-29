@@ -380,8 +380,17 @@ describe("runProvisioning", () => {
     const w = world();
     const id = await signUp(w, "goneco");
     await runProvisioning(w.deps, id, { force: true });
+    await env.PLATFORM_DB.prepare(
+      "INSERT INTO email_recipients (tenant_id, address, state, requested_at, requested_day, expires_at) VALUES (?, 'friend@example.com', 'confirmed', 0, '2026-10-28', 0), ('othertenant', 'friend@example.com', 'confirmed', 0, '2026-10-28', 0)",
+    )
+      .bind(id)
+      .run();
     expect(await removeTenant(w.deps, id)).toEqual({ kind: "removed", tenantId: id });
     expect(w.api.scripts.size).toBe(0);
+    // The people who confirmed its email go with it; another tenant's stay.
+    expect(await count("SELECT COUNT(*) AS n FROM email_recipients WHERE tenant_id = ?", id)).toBe(0);
+    expect(await count("SELECT COUNT(*) AS n FROM email_recipients WHERE tenant_id = 'othertenant'")).toBe(1);
+    await env.PLATFORM_DB.prepare("DELETE FROM email_recipients WHERE tenant_id = 'othertenant'").run();
     expect(await checkSlugAvailability(env.PLATFORM_DB, "goneco", w.clock.now)).toEqual({ ok: false, slug: "goneco", reason: "taken" });
     expect(await checkSlugAvailability(env.PLATFORM_DB, "goneco", w.clock.now + 91 * 86_400_000)).toMatchObject({ ok: true });
   });

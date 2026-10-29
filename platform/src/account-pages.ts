@@ -67,6 +67,13 @@ ${
 }
 </div>
 <p class="notice error" id="passkey-error" role="alert" hidden></p>`;
+  // A new address or GitHub account makes an account from either page while sign-ups are open,
+  // and that account records the Terms' version (migration 0011), so both pages say so.
+  const agree = signUp
+    ? html`<p class="agree">By continuing, you agree to the <a href="/terms">Terms of Service</a> and the <a href="/privacy">Privacy Policy</a>.</p>`
+    : input.signUpsOpen
+      ? html`<p class="agree">Signing in with a new email or GitHub account creates an account, and means you agree to the <a href="/terms">Terms of Service</a> and the <a href="/privacy">Privacy Policy</a>.</p>`
+      : "";
   const main = closed
     ? html`<h1>Sign-ups aren't open yet</h1>
 <p>OpenPing Hosted is getting ready. <a href="https://openping.n8builds.dev/#pricing">Join the waitlist</a> and we'll email you when it opens.</p>
@@ -81,6 +88,7 @@ ${input.error ? html`<p class="notice error" id="form-error" role="alert">${inpu
 ${email}
 ${input.mailOn || input.githubOn || !signUp ? html`<div class="or">or</div>` : ""}
 ${others}
+${agree}
 <p class="switch">${
         signUp
           ? html`Already have an account? <a href="${withNext("/sign-in", input.next)}">Sign in</a>`

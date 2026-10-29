@@ -432,6 +432,8 @@ const stepTeardown: Step = async (deps, t, run, now) => {
   await deps.db.batch([
     deps.db.prepare(`UPDATE subscriptions SET tenant_id = NULL WHERE tenant_id = ?1 AND ${held}`).bind(t.record.id, run.token),
     deps.db.prepare(`DELETE FROM escrowed_keys WHERE tenant_id = ?1 AND ${held}`).bind(t.record.id, run.token),
+    // The addresses that confirmed (or declined) this OpenPing's email are other people's; they go with it (privacy policy, section 4).
+    deps.db.prepare(`DELETE FROM email_recipients WHERE tenant_id = ?1 AND ${held}`).bind(t.record.id, run.token),
     deps.db.prepare("DELETE FROM tenants WHERE id = ?1 AND provision_lease_token = ?2").bind(t.record.id, run.token),
   ]);
 };

@@ -14,6 +14,8 @@ import { ADMIN_NEXT_PATTERN } from "./admin/routes";
 import { isOwner, mayChangePasskeys } from "./admin/owner";
 import { supportSignIns } from "./admin/data";
 import { WebAuthnError, type AuthenticationResponseJSON, type RegistrationResponseJSON } from "../../src/worker/lib/webauthn";
+import { TERMS_VERSION } from "./legal/documents";
+import { LEGAL_PATHS, legalPage } from "./legal/pages";
 import { accountForVerifiedEmail, audit, findAccountByEmail, getAccount, isDisposableEmail, normalizeEmail, touchIdentity, type Account } from "./accounts";
 import {
   accountPage,
@@ -106,6 +108,9 @@ function clientIp(c: Ctx): string {
 }
 
 const signUpsOpen = (env: PlatformEnv) => env.SIGN_UPS === "open";
+
+/** What a new account accepts: the Terms the sign-up and sign-in pages link (src/legal/), or nothing while sign-ups are closed. */
+const accountCreation = (env: PlatformEnv) => (signUpsOpen(env) ? { termsVersion: TERMS_VERSION } : null);
 
 /** A 303 to `location`, setting `cookies`. */
 function seeOther(_c: Ctx, location: string, cookies: string[] = []): Response {
@@ -211,7 +216,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
 
   /** The finished sign-in for a verified email, or the page that says why it can't be. */
   async function emailVerified(c: Ctx, email: string, next: string | null): Promise<Response> {
-    const found = await accountForVerifiedEmail(c.env.PLATFORM_DB, email, c.get("now"), signUpsOpen(c.env));
+    const found = await accountForVerifiedEmail(c.env.PLATFORM_DB, email, c.get("now"), accountCreation(c.env));
     if (!found) {
       return messagePage({
         title: "Sign-ups aren't open yet",
@@ -223,7 +228,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     if (found.account.disabledAt !== null) return disabledPage();
     await touchIdentity(c.env.PLATFORM_DB, found.account.id, "email", email, c.get("now"));
     if (found.created) {
-      await audit(c.env.PLATFORM_DB, { accountId: found.account.id, actor: "customer", action: "account.created", detail: { method: "email" }, now: c.get("now") });
+      await audit(c.env.PLATFORM_DB, { accountId: found.account.id, actor: "customer", action: "account.created", detail: { method: "email", termsVersion: TERMS_VERSION }, now: c.get("now") });
     }
     return signedIn(c, found.account, "email", next);
   }
@@ -248,6 +253,10 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       });
     });
   }
+
+  // The Terms and the Privacy Policy (src/legal/), signed in or not.
+  app.get(LEGAL_PATHS.terms, () => legalPage("terms"));
+  app.get(LEGAL_PATHS.privacy, () => legalPage("privacy"));
 
   app.get(PASSKEY_SCRIPT_PATH, () =>
     new Response(PASSKEY_SCRIPT, {
@@ -566,7 +575,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
           [clearCeremonyCookie()],
         );
       }
-      const found = await accountForVerifiedEmail(db, user.email, t, signUpsOpen(c.env));
+      const found = await accountForVerifiedEmail(db, user.email, t, accountCreation(c.env));
       if (!found) {
         return withCookies(
           messagePage({
@@ -586,7 +595,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
         )
         .bind(`idn_${crypto.randomUUID()}`, account.id, user.id, user.login, t)
         .run();
-      if (found.created) await audit(db, { accountId: account.id, actor: "customer", action: "account.created", detail: { method: "github" }, now: t });
+      if (found.created) await audit(db, { accountId: account.id, actor: "customer", action: "account.created", detail: { method: "github", termsVersion: TERMS_VERSION }, now: t });
     }
     if (account.disabledAt !== null) return withCookies(disabledPage(), [clearCeremonyCookie()]);
     await db

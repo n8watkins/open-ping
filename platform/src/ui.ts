@@ -135,6 +135,10 @@ section { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 20px
 .address { font-size: 1.0625rem; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; margin: 0 0 4px; }
 .fine { font-size: 0.8125rem; color: var(--ink-faint); margin: 20px 0 0; }
 .switch { text-align: center; font-size: 0.875rem; margin: 20px 0 0; }
+.legal-links { display: flex; flex-wrap: wrap; gap: 0 20px; margin: 4px 0 -10px; font-size: 0.8125rem; }
+.legal-links a { display: inline-flex; align-items: center; min-height: 44px; color: var(--ink-faint); }
+.legal-links a:hover { color: var(--link); }
+.agree { font-size: 0.8125rem; color: var(--ink-faint); margin: 16px 0 0; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.875em; color: var(--ink); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { .button { transition: none; } }
@@ -193,6 +197,12 @@ export function contentSecurityPolicy(withScripts: boolean): string {
     .join("; ");
 }
 
+/** Support, then the Terms and the Privacy Policy (src/legal/), under every customer-facing page. */
+function footer(): Html {
+  return html`<footer class="site-footer"><p class="fine">Questions? Write to <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a>.</p>
+<nav class="legal-links" aria-label="Legal"><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a></nav></footer>`;
+}
+
 export function renderPage(options: PageOptions): Response {
   const scripts = options.scripts ?? [];
   const refresh = options.redirectTo
@@ -215,7 +225,7 @@ ${scripts.map((src) => html`<script src="${src}" defer></script>`)}
 <main${options.admin ? new Html(' class="admin"') : options.wide ? new Html(' class="wide"') : ""}>
 ${options.header ?? html`<a class="brand" href="${options.homeHref ?? "/"}"><span class="dot" aria-hidden="true"></span>OpenPing Hosted</a>`}
 ${options.main}
-${options.footer === false ? "" : html`<p class="fine">Questions? Write to <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a>.</p>`}
+${options.footer === false ? "" : footer()}
 </main>
 </body>
 </html>
