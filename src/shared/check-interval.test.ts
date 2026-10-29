@@ -4,6 +4,7 @@ import {
   CHECK_INTERVAL_CHOICES_MINUTES,
   defaultIntervalSeconds,
   effectiveIntervalSeconds,
+  everyLabel,
   intervalLabel,
   planMinimumSeconds,
 } from "./check-interval";
@@ -44,5 +45,8 @@ describe("check intervals", () => {
     expect(intervalLabel(60)).toBe("1 hour");
     expect(intervalLabel(120)).toBe("2 hours");
     expect(intervalLabel(90)).toBe("90 minutes");
+    expect(everyLabel(1)).toBe("every minute");
+    expect(everyLabel(12)).toBe("every 12 minutes");
+    expect(everyLabel(60)).toBe("every hour");
   });
 });

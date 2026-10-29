@@ -34,6 +34,16 @@ export function usePlan(): PlanState | null {
   return { plan: hosted.plan, limits: hosted.limits, upgradeUrl: hosted.upgradeUrl };
 }
 
+/**
+ * The interval the editor starts a new polled monitor on: every minute on a
+ * plan with fast checks (what the add-on is for), otherwise 12 minutes or the
+ * plan's shortest if longer.
+ */
+export function defaultIntervalMinutes(plan: PlanState): number {
+  const min = plan.limits.minIntervalMinutes;
+  return min <= 1 ? 1 : Math.max(12, Math.ceil(min));
+}
+
 /** The 402 body of a refused create, or null for any other error. */
 export function planLimitFromError(err: unknown): PlanLimitBody | null {
   if (!(err instanceof ApiError) || err.status !== PLAN_LIMIT_STATUS) return null;

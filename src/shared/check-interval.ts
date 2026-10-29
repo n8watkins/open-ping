@@ -39,3 +39,10 @@ export function intervalLabel(minutes: number): string {
   }
   return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
 }
+
+/** "every minute", "every 12 minutes", "every hour". */
+export function everyLabel(minutes: number): string {
+  if (minutes === 1) return "every minute";
+  if (minutes === 60) return "every hour";
+  return `every ${intervalLabel(minutes)}`;
+}
