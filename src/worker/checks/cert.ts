@@ -510,7 +510,7 @@ export async function runCertCheck(config: CertConfig, opts: CertCheckOptions = 
   // numeric or shorthand IP form (127.1, 0x7f.0.0.1, 0177.0.0.1) can't slip
   // past the SSRF guard; the schema already refuses IP literals, and an IP
   // that gets here anyway is refused too, since SNI can't name it.
-  let canonical = host;
+  let canonical: string;
   try {
     canonical = new URL(`http://${host}`).hostname;
   } catch {
