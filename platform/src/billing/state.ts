@@ -9,7 +9,8 @@
  *   past_due                            past_due     checks keep running while Stripe retries (dunning)
  *   unpaid                              suspended    reason unpaid: Stripe's retries ran out
  *   paused                              suspended    reason paused
- *   canceled                            suspended    reason canceled (checks stop at once; data kept 30 days, decision D8)
+ *   canceled                            suspended    reason canceled (checks stop at once; data kept 30 days, decision D8);
+ *                                                    also the end of dunning: Stripe cancels after its last retry (decision D11)
  *   incomplete, incomplete_expired      no change    the first payment never went through
  *
  * With more than one subscription (two Checkouts finished), the best one

@@ -381,6 +381,25 @@ describe("a customer's billing", () => {
     expect(await (await c.browser("/billing")).text()).not.toContain("didn&#39;t go through");
   });
 
+  it("suspends as cancelled when Stripe cancels after its last retry (D11), and offers to subscribe again", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    await deliverAll(stripe.failRenewal(sub.id));
+    expect(await tenantRow(c.tenantId)).toMatchObject({ status: "past_due" });
+    // Stripe's last retry fails: it cancels the subscription and sends customer.subscription.deleted.
+    await deliverAll([stripe.update(sub.id, { status: "canceled" }, "customer.subscription.deleted")]);
+    expect(await tenantRow(c.tenantId)).toMatchObject({ status: "suspended", billing_reason: "canceled", suspended_at: clock.now });
+    expect(await tenantSees(c.slug)).toBe(503);
+    const due = await env.PLATFORM_DB.prepare(DUE_SQL).bind(Date.now() + DAY, Date.now(), 100).all<{ id: string }>();
+    expect(due.results.map((r) => r.id)).not.toContain(c.tenantId);
+    const account = await (await c.browser("/account")).text();
+    expect(account).toContain("see Billing below to turn it back on");
+    expect(account).toContain("Your monitors and history are kept for 30 days.");
+    expect(account).toContain("Subscribe for $24 a year");
+    await subscribe(c);
+    expect(await tenantRow(c.tenantId)).toMatchObject({ status: "active", billing_reason: null, suspended_at: null });
+  });
+
   it("suspends when Stripe's retries run out, takes it off the scheduler, and lifts it when paid", async () => {
     const c = await customer();
     const sub = await subscribe(c);
