@@ -412,6 +412,29 @@ describe("check intervals", () => {
   it("checks every polled monitor every 12 minutes on a plain install, whatever is sent", async () => {
     const res = await call("/api/monitors", { json: site("Plain", { intervalSeconds: 60 }), hosted: false });
     expect(res.status).toBe(201);
-    expect((await intervalOf(res)).intervalSeconds).toBe(720);
+    const created = await intervalOf(res);
+    expect(created.intervalSeconds).toBe(720);
+    // An interval no install accepts is ignored there too, as any field a plain install doesn't use.
+    const odd = await call("/api/monitors", { json: site("Plain odd", { intervalSeconds: 90 }), hosted: false });
+    expect(odd.status).toBe(201);
+    expect((await intervalOf(odd)).intervalSeconds).toBe(720);
+    const { id } = created as unknown as { id: string };
+    const put = await call(`/api/monitors/${id}`, { method: "PUT", json: site("Plain", { intervalSeconds: 30 }), hosted: false });
+    expect(put.status).toBe(200);
+    const patch = await call(`/api/monitors/${id}`, { method: "PATCH", json: { intervalSeconds: "soon" }, hosted: false });
+    expect(patch.status).toBe(200);
+    expect((await intervalOf(patch)).intervalSeconds).toBe(720);
+  });
+
+  it("restores a backup whose interval no install accepts, at the default", async () => {
+    limits = PLAN_LIMITS.hosted;
+    const data = { version: 1, monitors: [site("Odd backup", { intervalSeconds: 90 })], maintenance: [], incidents: [] };
+    for (const hosted of [true, false]) {
+      await env.DB.prepare("DELETE FROM monitors").run();
+      const res = await call("/api/data/import", { json: { data }, hosted });
+      expect(res.status, hosted ? "hosted" : "plain").toBe(200);
+      const row = await env.DB.prepare("SELECT interval_seconds FROM monitors WHERE name = 'Odd backup'").first();
+      expect(row).toEqual({ interval_seconds: 720 });
+    }
   });
 });

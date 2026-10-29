@@ -14,7 +14,13 @@ import {
   listMaintenanceWindows,
 } from "../db/maintenance";
 import { getExportableSettings } from "../db/settings";
-import { hostedPlan, importedCheckInterval, intervalLimit, monitorLimit } from "../lib/plan-limits";
+import {
+  hostedPlan,
+  importedCheckInterval,
+  intervalLimit,
+  monitorLimit,
+  tolerantBackupInterval,
+} from "../lib/plan-limits";
 
 /**
  * Data import/export API mounted at /api/data (PRD §23).
@@ -205,7 +211,7 @@ export function validateImport(raw: unknown): ImportValidation {
     errors.push('Missing or invalid "monitors" array.');
   } else {
     monitors.forEach((m, i) => {
-      const parsed = createMonitorSchema.safeParse(m);
+      const parsed = createMonitorSchema.safeParse(tolerantBackupInterval(m));
       if (parsed.success) {
         counts.monitors++;
       } else {
@@ -357,7 +363,7 @@ data.post("/import", async (c) => {
   // monitor ids that createMonitor() will assign.
   const validMonitors: { oldId: string | null; input: CreateMonitorInput }[] = [];
   for (const m of backup.monitors) {
-    const parsed = createMonitorSchema.safeParse(m);
+    const parsed = createMonitorSchema.safeParse(tolerantBackupInterval(m));
     if (parsed.success) {
       const rawId = (m as { id?: unknown }).id;
       validMonitors.push({

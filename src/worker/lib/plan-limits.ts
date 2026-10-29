@@ -13,7 +13,12 @@ import type { ChannelKind } from "../../shared/notifications";
 import type { AppEnv, Env } from "../types";
 import { hostedProps } from "./hosted";
 import { reportUsage } from "../db/usage";
-import { intervalSecondsOf, POLLED_INTERVAL_SECONDS, type CreateMonitorInput } from "../../shared/schemas";
+import {
+  checkIntervalSecondsSchema,
+  intervalSecondsOf,
+  POLLED_INTERVAL_SECONDS,
+  type CreateMonitorInput,
+} from "../../shared/schemas";
 import { defaultIntervalSeconds, planMinimumSeconds } from "../../shared/check-interval";
 import type { MonitorRecord } from "../db/monitors";
 
@@ -110,6 +115,29 @@ export function withCheckInterval(
     ...input,
     intervalSeconds: input.intervalSeconds ?? kept ?? defaultIntervalSeconds(plan.limits.minIntervalMinutes),
   };
+}
+
+/**
+ * A monitor body with `intervalSeconds` left out when there is no plan: a
+ * plain install never uses it, so like any other field it doesn't know, it is
+ * ignored rather than refused (an API client or a backup from OpenPing Hosted
+ * may send one). Anything that isn't an object is returned as it is.
+ */
+export function ignoreIntervalWithoutPlan(body: unknown, plan: HostedPlan | undefined): unknown {
+  if (plan || !body || typeof body !== "object" || Array.isArray(body) || !("intervalSeconds" in body)) return body;
+  const { intervalSeconds: _ignored, ...rest } = body as Record<string, unknown>;
+  return rest;
+}
+
+/**
+ * A backed-up monitor with an interval no install accepts left out, so it
+ * restores at the default instead of failing the import (backups are meant to
+ * restore, and a hand edit or a newer build may carry one).
+ */
+export function tolerantBackupInterval(monitor: unknown): unknown {
+  if (!monitor || typeof monitor !== "object" || Array.isArray(monitor) || !("intervalSeconds" in monitor)) return monitor;
+  const { intervalSeconds, ...rest } = monitor as Record<string, unknown>;
+  return checkIntervalSecondsSchema.safeParse(intervalSeconds).success ? monitor : rest;
 }
 
 /**

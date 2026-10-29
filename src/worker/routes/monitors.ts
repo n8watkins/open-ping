@@ -31,6 +31,7 @@ import {
   hostedPlan,
   intervalLimit,
   monitorLimit,
+  ignoreIntervalWithoutPlan,
   withCheckInterval,
   type HostedPlan,
   type PlanLimitRefusal,
@@ -140,7 +141,7 @@ export async function createMonitorFromBody(
   body: unknown,
   plan?: HostedPlan,
 ): Promise<MonitorWriteResult> {
-  const parsed = createMonitorSchema.safeParse(body);
+  const parsed = createMonitorSchema.safeParse(ignoreIntervalWithoutPlan(body, plan));
   if (!parsed.success) {
     return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
   }
@@ -194,7 +195,7 @@ export async function replaceMonitor(
   body: unknown,
   plan?: HostedPlan,
 ): Promise<MonitorWriteResult> {
-  const parsed = createMonitorSchema.safeParse(body);
+  const parsed = createMonitorSchema.safeParse(ignoreIntervalWithoutPlan(body, plan));
   if (!parsed.success) {
     return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
   }
@@ -218,7 +219,7 @@ export async function patchMonitor(
   body: unknown,
   plan?: HostedPlan,
 ): Promise<MonitorWriteResult> {
-  const patch = monitorPatchSchema.safeParse(body);
+  const patch = monitorPatchSchema.safeParse(ignoreIntervalWithoutPlan(body, plan));
   if (!patch.success) {
     return { ok: false, status: 400, error: "validation", issues: patch.error.issues };
   }
