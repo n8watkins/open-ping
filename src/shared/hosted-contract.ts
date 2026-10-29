@@ -60,6 +60,13 @@ export interface PlanLimits {
   statusPages: number;
   /** Shortest check interval a monitor may have, in minutes. */
   minIntervalMinutes: number;
+  /**
+   * Polled monitors that may be checked more often than every
+   * STANDARD_CHECK_MINUTES (paused ones count); 0 on a plan without fast
+   * checks. Read it through fastMonitorAllowance, which also answers for a
+   * platform that doesn't send it yet.
+   */
+  fastMonitors: number;
   /** Notification channel kinds that may be created; "all" means every kind. */
   channelKinds: "all" | readonly ChannelKind[];
   /** Emails the platform's mail capability sends for this tenant per UTC day. */
@@ -72,10 +79,90 @@ export interface PlanLimits {
  * (a support grant, a promotion) without a release of OpenPing.
  */
 export const PLAN_LIMITS: Readonly<Record<PlanId, Readonly<PlanLimits>>> = {
-  trial: { monitors: 5, statusPages: 1, minIntervalMinutes: 12, channelKinds: ["email"], emailsPerDay: 50 },
-  hosted: { monitors: 20, statusPages: 2, minIntervalMinutes: 12, channelKinds: "all", emailsPerDay: 500 },
-  hosted_fast: { monitors: 20, statusPages: 2, minIntervalMinutes: 1, channelKinds: "all", emailsPerDay: 500 },
+  trial: { monitors: 5, statusPages: 1, minIntervalMinutes: 12, fastMonitors: 0, channelKinds: ["email"], emailsPerDay: 50 },
+  hosted: { monitors: 20, statusPages: 2, minIntervalMinutes: 12, fastMonitors: 0, channelKinds: "all", emailsPerDay: 500 },
+  hosted_fast: { monitors: 20, statusPages: 2, minIntervalMinutes: 1, fastMonitors: 5, channelKinds: "all", emailsPerDay: 500 },
 };
+
+/**
+ * The interval every plan checks at, in minutes: the self-hosted cron's. A
+ * polled monitor set to check more often than this is a fast monitor, and
+ * counts against `PlanLimits.fastMonitors`.
+ */
+export const STANDARD_CHECK_MINUTES = 12;
+
+/** Is a polled monitor checked every `seconds` a fast monitor? */
+export function isFastInterval(seconds: number): boolean {
+  return Number.isFinite(seconds) && seconds < STANDARD_CHECK_MINUTES * 60;
+}
+
+/**
+ * How many fast monitors the limits allow. A platform older than the
+ * `fastMonitors` field sends none: then every monitor may be fast when the
+ * plan's shortest interval is under 12 minutes, as it was before the field.
+ */
+export function fastMonitorAllowance(limits: Pick<PlanLimits, "monitors" | "minIntervalMinutes"> & { fastMonitors?: unknown }): number {
+  const { fastMonitors } = limits;
+  if (typeof fastMonitors === "number" && Number.isSafeInteger(fastMonitors) && fastMonitors >= 0) return fastMonitors;
+  return limits.minIntervalMinutes < STANDARD_CHECK_MINUTES ? limits.monitors : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Packs: more monitors on a paid plan (decision D13)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a customer can add to a paid plan, each as a quantity on the
+ * subscription. The platform adds them to the plan's limits and sends the
+ * final numbers in `tenant.limits`: a tenant never sees a pack, and never
+ * works out a limit itself.
+ *
+ * - `monitors`: 25 more monitors (checked at the plan's intervals), at most 4.
+ * - `fast_monitors`: 5 more fast monitors, at most 3, only with the fast
+ *   checks add-on (`hosted_fast`).
+ *
+ * Larger accounts ask support, who grant more through the per-tenant
+ * overrides on top of these.
+ */
+export const PACK_KINDS = ["monitors", "fast_monitors"] as const;
+export type PackKind = (typeof PACK_KINDS)[number];
+
+export const PACKS: Readonly<Record<PackKind, Readonly<{ adds: number; max: number; plans: readonly PlanId[] }>>> = {
+  monitors: { adds: 25, max: 4, plans: ["hosted", "hosted_fast"] },
+  fast_monitors: { adds: 5, max: 3, plans: ["hosted_fast"] },
+};
+
+/** How many of each pack an account has. */
+export type PackQuantities = Readonly<Record<PackKind, number>>;
+
+export const NO_PACKS: PackQuantities = { monitors: 0, fast_monitors: 0 };
+
+/**
+ * The packs that count on `plan`: each a whole number from 0 to its maximum,
+ * and 0 on a plan it isn't sold with (a trial, or fast packs without the fast
+ * checks add-on).
+ */
+export function packsForPlan(plan: PlanId, packs: Partial<Record<PackKind, unknown>>): PackQuantities {
+  const out = { ...NO_PACKS };
+  for (const kind of PACK_KINDS) {
+    const pack = PACKS[kind];
+    const raw = packs[kind];
+    const n = typeof raw === "number" && Number.isFinite(raw) ? Math.floor(raw) : 0;
+    out[kind] = pack.plans.includes(plan) ? Math.min(pack.max, Math.max(0, n)) : 0;
+  }
+  return out;
+}
+
+/** A plan's limits with its packs added (platform side; the result is what `tenant.limits` carries). */
+export function planLimitsWithPacks(plan: PlanId, packs: Partial<Record<PackKind, unknown>> = NO_PACKS): PlanLimits {
+  const base = PLAN_LIMITS[plan];
+  const counted = packsForPlan(plan, packs);
+  return {
+    ...base,
+    monitors: base.monitors + counted.monitors * PACKS.monitors.adds,
+    fastMonitors: base.fastMonitors + counted.fast_monitors * PACKS.fast_monitors.adds,
+  };
+}
 
 /** Links into the platform the customer's OpenPing shows (Settings, 402 answers, sign-out). */
 export interface HostedUrls {
@@ -83,7 +170,7 @@ export interface HostedUrls {
   account: string;
   /** Billing (Stripe Customer Portal entry on the platform). */
   billing: string;
-  /** Where a limit answer points: the upgrade or add-on page. */
+  /** Where a limit answer points: the upgrade or add-on page (upgradeUrlFor adds what is needed). */
   upgrade: string;
   /** Platform sign-in; the tenant redirects here when it has no session. */
   signIn: string;
@@ -145,6 +232,8 @@ export type SendEmailResult = { ok: true; id: string } | { ok: false; error: Sen
 /** Counts the customer's OpenPing reports after a change or a run, for the admin console and abuse caps. */
 export interface UsageCounts {
   monitors: number;
+  /** Polled monitors set to check more often than every STANDARD_CHECK_MINUTES. Absent from older bundles. */
+  fastMonitors?: number;
   statusPages: number;
   channels: number;
   /** When these counts were taken (epoch ms). */
@@ -373,14 +462,14 @@ export interface HealthResponse {
 export const PLAN_LIMIT_ERROR = "plan_limit";
 export const PLAN_LIMIT_STATUS = 402;
 
-export const LIMIT_KINDS = ["monitors", "status_pages", "interval", "channel_kind"] as const;
+export const LIMIT_KINDS = ["monitors", "status_pages", "interval", "fast_monitors", "channel_kind"] as const;
 export type LimitKind = (typeof LIMIT_KINDS)[number];
 
 /** The JSON body of a 402 answer from a create or update route. */
 export interface PlanLimitBody {
   error: typeof PLAN_LIMIT_ERROR;
   limit: LimitKind;
-  /** The plan's allowance: a count, a minimum interval in minutes, or the allowed kinds. */
+  /** The plan's allowance: a count (monitors, status pages, fast monitors), a minimum interval in minutes, or the allowed kinds. */
   allowed: number | readonly ChannelKind[];
   /** What was asked for: the count after the create, the interval, or the kind. */
   requested: number | string;
@@ -436,6 +525,26 @@ export function checkIntervalLimit(limits: PlanLimits, minutes: number): Exceede
   };
 }
 
+/**
+ * Would `adding` more fast monitors (when `existing` already are) exceed the
+ * plan? An edit counts the monitor's others: `existing` leaves it out.
+ */
+export function checkFastMonitorLimit(limits: PlanLimits, existing: number, adding = 1): Exceeded | null {
+  const allowed = fastMonitorAllowance(limits);
+  const after = existing + adding;
+  if (adding <= 0 || after <= allowed) return null;
+  return {
+    limit: "fast_monitors",
+    allowed,
+    requested: after,
+    message:
+      allowed === 0
+        ? `Checks more often than every ${STANDARD_CHECK_MINUTES} minutes come with the fast checks add-on.`
+        : `Your plan includes ${plural(allowed, "fast monitor", "fast monitors")}, checked more often than every ${STANDARD_CHECK_MINUTES} minutes. ` +
+          `Set one to ${STANDARD_CHECK_MINUTES} minutes or more, or add more fast monitors.`,
+  };
+}
+
 export function checkChannelKindLimit(limits: PlanLimits, kind: ChannelKind): Exceeded | null {
   if (limits.channelKinds === "all" || limits.channelKinds.includes(kind)) return null;
   return {
@@ -446,9 +555,27 @@ export function checkChannelKindLimit(limits: PlanLimits, kind: ChannelKind): Ex
   };
 }
 
+/** The query parameter an upgrade link names the limit with, so the platform leads with what fixes it. */
+export const UPGRADE_NEED_PARAM = "need";
+
+/**
+ * The upgrade link for a limit: `urls.upgrade` with `?need=<limit kind>`, so
+ * the platform's upgrade page leads with the fast checks add-on, a monitor
+ * pack or a fast monitor pack. A platform that ignores it shows its usual page.
+ */
+export function upgradeUrlFor(upgrade: string, limit: LimitKind): string {
+  try {
+    const url = new URL(upgrade);
+    url.searchParams.set(UPGRADE_NEED_PARAM, limit);
+    return url.href;
+  } catch {
+    return upgrade;
+  }
+}
+
 /** The full 402 body for a check that failed, with the tenant's plan and upgrade link. */
 export function planLimitBody(exceeded: Exceeded, tenant: Pick<TenantInfo, "plan" | "urls">): PlanLimitBody {
-  return { error: PLAN_LIMIT_ERROR, ...exceeded, plan: tenant.plan, upgradeUrl: tenant.urls.upgrade };
+  return { error: PLAN_LIMIT_ERROR, ...exceeded, plan: tenant.plan, upgradeUrl: upgradeUrlFor(tenant.urls.upgrade, exceeded.limit) };
 }
 
 // ---------------------------------------------------------------------------
