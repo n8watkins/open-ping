@@ -138,6 +138,7 @@ h3.minor { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.04em; text-
 .action p { font-size: 0.875rem; }
 .action .field { margin: 0 0 12px; }
 .action.danger { border-color: color-mix(in srgb, var(--down) 45%, var(--line)); }
+.account-delete { margin-top: 24px; } .account-delete summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 650; font-size: 0.9375rem; } .account-delete[open] summary { margin-bottom: 4px; }
 .action input[type=text] { background: var(--canvas); }
 @media (min-width: 640px) { .action .button { width: auto; } }
 .events { list-style: none; margin: 8px 0 0; padding: 0; }
@@ -305,7 +306,16 @@ ${
         f.page > 1 ? html`<a class="button secondary small" href="/admin${query({ ...base, page: f.page - 1 })}">Newer</a>` : html`<span></span>`
       }${f.page < pages ? html`<a class="button secondary small" href="/admin${query({ ...base, page: f.page + 1 })}">Older</a>` : ""}</nav>`
     : ""
-}`;
+}
+<details class="action danger account-delete"><summary>Delete an account by its email</summary>
+<p>For a support request from an account with no OpenPing (one with an OpenPing: its tenant page). The same deletion as the customer's own button; they are emailed.</p>
+<form method="post" action="/admin/accounts/delete">
+<div class="field"><label for="delete-email">Account email</label>
+<input id="delete-email" name="email" type="email" required autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="email"></div>
+<div class="field"><label for="delete-confirm">The same email again, to confirm</label>
+<input id="delete-confirm" name="confirm" type="email" required autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="email"></div>
+${reasonField("account-delete-reason", "Reason", "Asked by email on ...", "Recorded in the audit log.")}
+<button class="button danger" type="submit">Delete the account</button></form></details>`;
   return adminPage({ title: "Tenants", tab: "tenants", main });
 }
 
@@ -436,7 +446,7 @@ function actions(input: TenantPageInput): Html {
   const cards: Html[] = [];
   const paused = d.provision.pausedAt !== null && t.provisionState !== "ready";
 
-  if (paused) {
+  if (paused && d.accountDeletionAt === null) {
     cards.push(html`<div class="action"><h3>Resume provisioning</h3>
 <p>Fix the cause first (the error above). It starts again from ${SETUP_LABELS[t.provisionState].toLowerCase()} with a clean set of retries.</p>
 <form method="post" action="${base}/resume-provisioning"><button class="button primary" type="submit">Resume provisioning</button></form></div>`);
@@ -448,7 +458,20 @@ function actions(input: TenantPageInput): Html {
 <button class="button danger" type="submit">Remove ${t.slug}</button></form></div>`);
   }
 
-  if (d.ownerSuspension) {
+  if (d.accountDeletionAt !== null) {
+    cards.push(html`<div class="action"><h3>Account being deleted</h3>
+<p>Asked ${secondsText(d.accountDeletionAt)}. Its OpenPing stays paused; the lifecycle jobs export it, delete it, then scrub the account.</p></div>`);
+  } else {
+    cards.push(html`<div class="action danger"><h3>Delete this account</h3>
+<p>For a support request from <strong>${d.email}</strong>: cancels its plan, pauses its OpenPing now, then exports and deletes it and scrubs the account, as the customer's own button does. They are emailed.</p>
+<form method="post" action="${base}/delete-account">
+${reasonField("delete-reason", "Reason", "Asked by email on ...", "Recorded in the audit log.")}
+<div class="field"><label for="confirm-email">Type <code>${d.email}</code> to confirm</label>
+<input id="confirm-email" name="confirm" type="email" required autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="email"></div>
+<button class="button danger" type="submit">Delete ${d.email}</button></form></div>`);
+  }
+
+  if (d.ownerSuspension && d.accountDeletionAt === null) {
     cards.push(html`<div class="action"><h3>Resume</h3>
 <p>Lifts your suspension. ${
       t.billingStatus === "suspended"

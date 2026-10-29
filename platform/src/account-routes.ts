@@ -22,6 +22,7 @@ import {
   checkEmailPage,
   confirmLinkPage,
   continuePage,
+  deleteAccountPage,
   emailChangeCodePage,
   emailChangeConfirmPage,
   emailChangePage,
@@ -51,8 +52,10 @@ import {
 import { LIMITS, hitInOrder, ipSubject, isOverLimit } from "./auth/rate-limit";
 import { applyEmailChange, checkEmailChangeCode, consumeEmailChangeLink, emailChangeByToken, startEmailChange, type EmailChangeCheck } from "./auth/email-change";
 import { freshSignIn } from "./auth/fresh";
+import { requestAccountDeletion } from "./account-deletion";
 import { emailChangeCodeEmail, emailChangedEmail } from "./emails";
-import { createSession, endSession, readSession, type Session, type SignInMethod } from "./auth/sessions";
+import { SESSION_COOKIE, createSession, endSession, readSession, type Session, type SignInMethod } from "./auth/sessions";
+import { clearCookie } from "./auth/cookies";
 import { PASSKEY_SCRIPT, PASSKEY_SCRIPT_PATH } from "./client-script";
 import type { PlatformEnv } from "./env";
 import { handoffUrl, mintHandoffToken } from "./handoff";
@@ -788,6 +791,62 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       status: 400,
       action: { href: "/account/email", label: "Start again" },
     });
+
+  // --- Deleting the account ----------------------------------------------------
+  // A fresh sign-in and the typed email, then src/account-deletion.ts.
+
+  async function deletionPage(c: Ctx, session: Session, error?: string) {
+    const db = c.env.PLATFORM_DB;
+    const tenant = await accountTenant(db, session.account.id);
+    const paid = await db
+      .prepare("SELECT 1 AS x FROM subscriptions WHERE account_id = ? AND status NOT IN ('canceled', 'incomplete_expired') LIMIT 1")
+      .bind(session.account.id)
+      .first();
+    return deleteAccountPage({ email: session.account.email, hasOpenPing: tenant !== null, paid: paid !== null, error, status: error ? 400 : 200 });
+  }
+
+  async function needsFreshForDeletion(c: Ctx, session: Session): Promise<Response | null> {
+    const { fresh, hasPasskey } = await freshSignIn(c.env.PLATFORM_DB, session, c.get("now"));
+    if (fresh) return null;
+    return messagePage({
+      title: "Sign in again first",
+      body: hasPasskey
+        ? "Deleting your account can't be undone, so we ask for a sign-in with your passkey from the last 15 minutes first."
+        : "Deleting your account can't be undone, so we ask for a sign-in from the last 15 minutes first.",
+      status: 401,
+      action: { href: "/sign-in?next=%2Faccount%2Fdelete", label: "Sign in again" },
+    });
+  }
+
+  app.get("/account/delete", async (c) => {
+    const session = c.get("session");
+    if (!session) return seeOther(c, "/sign-in?next=%2Faccount%2Fdelete");
+    return (await needsFreshForDeletion(c, session)) ?? deletionPage(c, session);
+  });
+
+  app.post("/account/delete", async (c) => {
+    const session = c.get("session");
+    if (!session) return seeOther(c, "/sign-in?next=%2Faccount%2Fdelete");
+    const stale = await needsFreshForDeletion(c, session);
+    if (stale) return stale;
+    const typed = ((await form(c)).confirm ?? "").trim().toLowerCase();
+    if (typed !== session.account.email) return deletionPage(c, session, "Type your account's email exactly, to show you mean it.");
+    const setup = billing(c.env);
+    const result = await requestAccountDeletion(
+      { db: c.env.PLATFORM_DB, stripe: setup.ok ? setup.stripe : null, mailer: deps.mailer(c.env), now: c.get("now") },
+      { accountId: session.account.id, by: "customer", actorAccountId: session.account.id },
+    );
+    const settled = !result.ok || result.billingSettled;
+    return withCookies(
+      messagePage({
+        title: "Your account is being deleted",
+        body: settled
+          ? "You're signed out. We've emailed you what happens next, and we email again when it's done."
+          : "You're signed out. Our payment provider didn't take the cancellation of your plan just now; we keep trying until it does, and refund anything it charges meanwhile. We've emailed you what happens next, and we email again when it's done.",
+      }),
+      [clearCookie(SESSION_COOKIE)],
+    );
+  });
 
   app.get("/account", async (c) => {
     const session = c.get("session");

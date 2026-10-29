@@ -10,6 +10,7 @@ import type { PlatformEnv } from "../env";
 import { mailerFromEnv } from "../mail";
 import { provisioningSettings, provisioningSetup } from "../provisioning-env";
 import type { TenantRecord } from "../tenants";
+import { billingSetup } from "../billing/config";
 import { D1BillingView } from "./billing-view";
 import type { ExportDeps } from "./exports";
 import type { LifecycleDeps } from "./jobs";
@@ -22,6 +23,7 @@ export function exportDepsFromEnv(env: PlatformEnv): Omit<ExportDeps, "db" | "no
 
 export function lifecycleDepsFromEnv(env: PlatformEnv, capability: (tenant: TenantRecord) => PlatformCapability): LifecycleDeps {
   const provisioning = provisioningSetup(env, capability);
+  const billing = billingSetup(env);
   return {
     db: env.PLATFORM_DB,
     billing: new D1BillingView(env.PLATFORM_DB),
@@ -29,5 +31,6 @@ export function lifecycleDepsFromEnv(env: PlatformEnv, capability: (tenant: Tena
     hostedDomain: env.HOSTED_DOMAIN,
     exports: exportDepsFromEnv(env),
     provisioning: provisioning.ok ? provisioning.deps : null,
+    stripe: billing.ok ? billing.stripe : null,
   };
 }

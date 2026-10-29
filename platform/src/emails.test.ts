@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  accountDeletedEmail,
+  accountDeletionStartedEmail,
   deletionWarningEmail,
   emailChangeCodeEmail,
   emailChangedEmail,
@@ -34,6 +36,9 @@ const all: Record<string, RenderedEmail> = {
   confirm: recipientConfirmEmail({ tenantUrl: TENANT, confirmUrl: "https://app.openping.test/email/confirm?t=abc" }),
   emailChange: emailChangeCodeEmail({ code: "246810", link: "https://app.openping.test/account/email/confirm?token=abc" }),
   emailChanged: emailChangedEmail({ newEmail: "new@example.com", at: AT }),
+  accountDeletion: accountDeletionStartedEmail({ at: AT, byOwner: false, hadOpenPing: true }),
+  accountDeletionByOwner: accountDeletionStartedEmail({ at: AT, byOwner: true, hadOpenPing: false }),
+  accountDeleted: accountDeletedEmail({ at: AT }),
   deletion: deletionWarningEmail({ tenantUrl: TENANT, deleteAt: AT, billingUrl: BILLING, accountUrl: ACCOUNT }),
 };
 

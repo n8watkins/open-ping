@@ -303,7 +303,9 @@ ${
 ${input.tenant?.provisionState === "ready" ? html`<section><h2>Your data</h2><p>Download everything in your OpenPing, with the steps to run it on your own Cloudflare account.</p><div class="stack"><a class="button secondary" href="/account/export">Take your OpenPing with you</a></div></section>` : ""}
 <section id="billing">${billingSection(input.billing, input.now)}</section>
 ${input.isOwner ? html`<section><h2>Owner</h2><div class="stack"><a class="button secondary" href="/admin">Open the admin console</a></div></section>` : ""}
-<section><form method="post" action="/sign-out"><button class="button secondary" type="submit">Sign out</button></form></section>`,
+<section><form method="post" action="/sign-out"><button class="button secondary" type="submit">Sign out</button></form></section>
+<section><h2>Delete your account</h2><p>Stops and deletes your OpenPing and everything in it, then your account.</p>
+<div class="stack"><a class="button danger" href="/account/delete">Delete my account</a></div></section>`,
   });
 }
 
@@ -372,5 +374,34 @@ export function emailChangeConfirmPage(input: { token: string; email: string }):
 <form method="post" action="/account/email/confirm"><input type="hidden" name="token" value="${input.token}">
 <button class="button primary" type="submit">Change my email</button></form>
 <p class="switch"><a href="/account">Not now</a></p>`,
+  });
+}
+
+/** /account/delete: what deleting does, and the typed confirmation. */
+export function deleteAccountPage(input: { email: string; hasOpenPing: boolean; paid: boolean; error?: string | null; status?: number }): Response {
+  return renderPage({
+    title: "Delete your account",
+    status: input.status,
+    homeHref: "/account",
+    style: ".steps { margin: 0 0 16px; padding-left: 1.25rem; color: var(--ink); } .steps li { margin: 0 0 8px; } label strong { overflow-wrap: anywhere; }",
+    main: html`<h1>Delete your account</h1>
+<p class="lead">This can't be undone from here. What happens:</p>
+<ul class="steps">
+${input.hasOpenPing ? html`<li>Your OpenPing's checks stop at once, and its status pages go offline.</li>` : ""}
+${input.paid ? html`<li>Your plan is cancelled, so nothing renews. Payments already made aren't refunded by this; <a href="/terms#7-refunds">the terms</a> say when they are.</li>` : ""}
+<li>You're signed out everywhere, and nobody can sign in to the account any more.</li>
+${input.hasOpenPing ? html`<li>We export your OpenPing once more, then delete it, and keep that export for 30 days in case you write to us in time, then delete it too.</li>` : ""}
+<li>Then your sign-in methods, sessions and email address are deleted. Payment records stay, as tax law requires.</li>
+</ul>
+${input.hasOpenPing ? html`<p>Want your data? <a href="/account/export">Download it first</a>.</p>` : ""}
+${input.error ? html`<p class="notice error" id="confirm-error" role="alert">${input.error}</p>` : ""}
+<form method="post" action="/account/delete" novalidate>
+<div class="field"><label for="confirm">Type your email, <strong>${input.email}</strong>, to confirm</label>
+<input id="confirm" name="confirm" type="email" inputmode="email" autocomplete="off" autocapitalize="off" spellcheck="false" required maxlength="254"${
+      input.error ? new Html(' aria-describedby="confirm-error" aria-invalid="true"') : ""
+    }></div>
+<button class="button danger" type="submit">Delete my account</button>
+</form>
+<p class="switch"><a href="/account">Keep my account</a></p>`,
   });
 }

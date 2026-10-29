@@ -159,6 +159,8 @@ export interface TenantDetail {
   record: TenantRecord;
   email: string;
   accountDisabled: boolean;
+  /** When the account's deletion was asked for (src/account-deletion.ts), or null. */
+  accountDeletionAt: number | null;
   databaseName: string;
   d1Id: string | null;
   limits: PlanLimits;
@@ -186,7 +188,7 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
       `SELECT t.id, t.account_id, t.slug, t.script_name, t.status, t.plan, t.provision_state, t.version, t.limit_overrides,
               t.trial_ends_at, t.d1_id, t.created_at, t.updated_at, t.provisioned_at, t.suspended_at, t.owner_suspended_at,
               t.owner_suspended_reason, t.provision_attempts, t.provision_error, t.provision_next_at, t.provision_paused_at,
-              t.provision_lease_until, a.email, a.disabled_at,
+              t.provision_lease_until, a.email, a.disabled_at, a.deletion_requested_at,
               u.monitors, u.status_pages, u.channels, u.counted_at, u.reported_at
        FROM tenants t JOIN accounts a ON a.id = t.account_id LEFT JOIN tenant_usage u ON u.tenant_id = t.id
        WHERE t.id = ?`,
@@ -217,6 +219,7 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
       provision_lease_until: number | null;
       email: string;
       disabled_at: number | null;
+      deletion_requested_at: number | null;
       monitors: number | null;
       status_pages: number | null;
       channels: number | null;
@@ -229,6 +232,7 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
     record,
     email: row.email,
     accountDisabled: row.disabled_at !== null,
+    accountDeletionAt: row.deletion_requested_at,
     databaseName: tenantDatabaseName(row.id),
     d1Id: row.d1_id,
     limits: effectiveLimits(record),

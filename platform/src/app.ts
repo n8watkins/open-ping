@@ -100,6 +100,8 @@ function appHost(deps: AppDeps): Hono<Platform> {
       capability: deps.capability,
       provisioning: accounts.provisioning,
       releases: deps.releases,
+      mailer: accounts.mailer,
+      billing: accounts.billing ?? ((env: PlatformEnv) => billingSetup(env)),
       now: accounts.now,
     }),
   );

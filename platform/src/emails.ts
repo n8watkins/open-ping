@@ -148,6 +148,43 @@ export function emailChangedEmail(input: { newEmail: string; at: number }): Rend
   });
 }
 
+/** When an account's deletion starts: what stops now and what happens next. */
+export function accountDeletionStartedEmail(input: { at: number; byOwner: boolean; hadOpenPing: boolean }): RenderedEmail {
+  const intro = input.byOwner
+    ? `As you asked, we started deleting your OpenPing Hosted account at ${emailTime(input.at)}.`
+    : `You asked to delete your OpenPing Hosted account at ${emailTime(input.at)}, and we started.`;
+  return email({
+    subject: "Your OpenPing Hosted account is being deleted",
+    preheader: intro,
+    heading: "Your account is being deleted",
+    blocks: [
+      { kind: "p", text: intro },
+      {
+        kind: "p",
+        text: input.hadOpenPing
+          ? "Your OpenPing's checks have stopped, its status pages are offline, and nothing will renew. We export it once more, then delete it, and then your account; we email you when it's done."
+          : "Nothing will renew, and nobody can sign in to the account. We email you when it's done.",
+      },
+      { kind: "note", text: `We keep that last export for 30 days, so if this was a mistake, write to ${SUPPORT_EMAIL} from this address soon and we can bring your OpenPing back. Payment records stay, as tax law requires.` },
+    ],
+  });
+}
+
+/** The last email to a deleted account's address. */
+export function accountDeletedEmail(input: { at: number }): RenderedEmail {
+  const intro = `Your OpenPing Hosted account was deleted at ${emailTime(input.at)}.`;
+  return email({
+    subject: "Your OpenPing Hosted account is deleted",
+    preheader: intro,
+    heading: "Your account is deleted",
+    blocks: [
+      { kind: "p", text: intro },
+      { kind: "p", text: "Its sign-in methods, sessions and this email address are gone from our systems. This is the last email we send to it about the account." },
+      { kind: "note", text: `The last export of your OpenPing is kept for 30 days from when its deletion started, then deleted. Payment records stay, as tax law requires. Questions: ${SUPPORT_EMAIL}.` },
+    ],
+  });
+}
+
 /** The notice every account gets when a passkey is added to it. */
 export function passkeyAddedEmail(input: { label: string; at: number; accountUrl: string }): RenderedEmail {
   const intro = `A passkey named "${input.label}" was added to your OpenPing Hosted account at ${emailTime(input.at)}.`;

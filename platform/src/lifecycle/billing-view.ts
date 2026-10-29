@@ -108,7 +108,11 @@ export class D1BillingView implements BillingView {
   constructor(private readonly db: D1Database) {}
 
   private async all(where: string, binds: (string | number)[], order: string, limit: number): Promise<BillingTenant[]> {
-    const rows = await this.db.prepare(`SELECT ${COLUMNS} WHERE ${where} ORDER BY ${order} LIMIT ?`).bind(...binds, limit).all<Row>();
+    // An account being deleted (src/account-deletion.ts) has its own path, and none of these emails.
+    const rows = await this.db
+      .prepare(`SELECT ${COLUMNS} WHERE (${where}) AND a.deletion_requested_at IS NULL ORDER BY ${order} LIMIT ?`)
+      .bind(...binds, limit)
+      .all<Row>();
     return rows.results.map(fromRow);
   }
 

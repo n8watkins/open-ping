@@ -260,7 +260,14 @@ async function applySubscription(deps: WebhookDeps, lock: BillingLock, fetched: 
     await needsAttention(db, lock.accountId, { reason: "unknown_prices", subscription: sub.id, status: sub.status, event: event.type }, deps.now);
     if (!plan) return null;
   }
-  if (ACTIVE_STATUSES.includes(sub.status)) {
+  // An account being deleted (src/account-deletion.ts) can't start paying
+  // again: a Checkout finished from a page left open is cancelled and refunded.
+  const deleting = ACTIVE_STATUSES.includes(sub.status)
+    ? await db.prepare("SELECT 1 AS x FROM accounts WHERE id = ? AND deletion_requested_at IS NOT NULL").bind(lock.accountId).first()
+    : null;
+  if (deleting) {
+    sub = await refundForDeletedAccount(deps, lock, sub);
+  } else if (ACTIVE_STATUSES.includes(sub.status)) {
     const other = await db
       .prepare(
         `SELECT stripe_subscription_id FROM subscriptions WHERE account_id = ? AND stripe_subscription_id <> ? AND status IN ('active', 'trialing', 'past_due') LIMIT 1`,
@@ -279,22 +286,39 @@ async function applySubscription(deps: WebhookDeps, lock: BillingLock, fetched: 
   return change;
 }
 
-/** Cancels a second paid subscription, refunds what it took, and tells the customer. */
-async function refundDuplicate(deps: WebhookDeps, lock: BillingLock, sub: StripeSubscription, kept: string): Promise<StripeSubscription> {
-  if (!deps.setup.ok) return sub;
-  const { stripe } = deps.setup;
-  log.warn("billing.duplicate_subscription", { account: lock.accountId, duplicate: sub.id, kept });
-  const canceled = await stripe.cancelSubscription(sub.id, `duplicate-cancel-${sub.id}`);
+/** Cancels `sub` now and refunds every payment of its latest invoice in full; idempotent under `key`. */
+async function cancelAndRefund(stripe: StripeApi, sub: StripeSubscription, key: string): Promise<{ canceled: StripeSubscription; refunded: number }> {
+  const canceled = await stripe.cancelSubscription(sub.id, `${key}-cancel-${sub.id}`);
   const invoice = typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
   let refunded = 0;
   if (invoice) {
     const payments = await stripe.listInvoicePayments(invoice);
     for (const p of payments.data) {
       if (p.payment.type !== "payment_intent" || !p.payment.payment_intent) continue;
-      await stripe.createRefund({ paymentIntent: p.payment.payment_intent, reason: "duplicate" }, `duplicate-refund-${p.payment.payment_intent}`);
+      await stripe.createRefund({ paymentIntent: p.payment.payment_intent, reason: "duplicate" }, `${key}-refund-${p.payment.payment_intent}`);
       refunded++;
     }
   }
+  return { canceled, refunded };
+}
+
+/** A subscription that became active on an account being deleted: cancelled and refunded at once, and audited. */
+async function refundForDeletedAccount(deps: WebhookDeps, lock: BillingLock, sub: StripeSubscription): Promise<StripeSubscription> {
+  if (!deps.setup.ok) return sub;
+  log.warn("billing.subscription_on_deleted_account", { account: lock.accountId, subscription: sub.id });
+  const { canceled, refunded } = await cancelAndRefund(deps.setup.stripe, sub, "deleted-account");
+  await deps.db
+    .prepare("INSERT INTO audit_events (at, account_id, tenant_id, actor, action, detail) VALUES (?, ?, NULL, 'system', 'billing.deleted_account_refunded', ?)")
+    .bind(deps.now, lock.accountId, JSON.stringify({ subscription: sub.id, refunds: refunded }))
+    .run();
+  return { ...canceled, latest_invoice: sub.latest_invoice ?? null };
+}
+
+/** Cancels a second paid subscription, refunds what it took, and tells the customer. */
+async function refundDuplicate(deps: WebhookDeps, lock: BillingLock, sub: StripeSubscription, kept: string): Promise<StripeSubscription> {
+  if (!deps.setup.ok) return sub;
+  log.warn("billing.duplicate_subscription", { account: lock.accountId, duplicate: sub.id, kept });
+  const { canceled, refunded } = await cancelAndRefund(deps.setup.stripe, sub, "duplicate");
   await deps.db
     .prepare("INSERT INTO audit_events (at, account_id, tenant_id, actor, action, detail) VALUES (?, ?, NULL, 'system', 'billing.duplicate_refunded', ?)")
     .bind(deps.now, lock.accountId, JSON.stringify({ duplicate: sub.id, kept, refunds: refunded }))

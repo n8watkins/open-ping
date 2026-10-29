@@ -39,6 +39,8 @@ import { forgetTenant, hostedUrls } from "../tenants";
 import type { BillingTenant, BillingView, Unnotified } from "./billing-view";
 import { OPEN_EXPORTS_SQL, advanceExport, expireExports, exportVerificationProblem, latestExport, requestExport, type ExportDeps, type ExportOutcome } from "./exports";
 import { log } from "../log";
+import { DELETING_ACCOUNTS_SQL, scrubAccount, settleAccountBilling, tenantOfDeletingAccount, type DeletingAccount } from "../account-deletion";
+import type { StripeApi } from "../billing/stripe";
 
 const DAY = 86_400_000;
 /** Decision D8: data is kept this long after billing suspends a tenant. */
@@ -67,6 +69,8 @@ export interface LifecycleDeps {
   /** Exports and the teardown need Cloudflare; null while provisioning's settings are missing. */
   exports: Omit<ExportDeps, "db" | "now"> | null;
   provisioning: ProvisioningDeps | null;
+  /** Stripe, when billing is set up: an account being deleted has its plan cancelled through it. */
+  stripe?: StripeApi | null;
   now?: () => number;
 }
 
@@ -74,6 +78,8 @@ export interface LifecycleReport {
   sent: Partial<Record<NoticeKind, number>>;
   exports: ExportOutcome[];
   deleted: string[];
+  /** Accounts scrubbed this run, their OpenPing already gone (src/account-deletion.ts). */
+  accountsDeleted: string[];
   /** Deletions due but waiting: for the export, or for the warning to have gone out a week before. */
   waiting: { tenantId: string; why: string }[];
   expired: number;
@@ -123,7 +129,7 @@ export async function lifecycleTick(deps: LifecycleDeps): Promise<LifecycleRepor
 async function runJobs(deps: LifecycleDeps): Promise<LifecycleReport> {
   const now = deps.now ?? Date.now;
   const db = deps.db;
-  const report: LifecycleReport = { sent: {}, exports: [], deleted: [], waiting: [], expired: 0 };
+  const report: LifecycleReport = { sent: {}, exports: [], deleted: [], accountsDeleted: [], waiting: [], expired: 0 };
   const app = appOrigin(deps.hostedDomain);
   const links = (t: BillingTenant) => ({ tenantUrl: tenantOrigin(t.slug, deps.hostedDomain), ...hostedUrls(t.slug, deps.hostedDomain), exportUrl: `${app}/account/export` });
   const skip = (kind: NoticeKind, cycle: Unnotified["cycle"]): Unnotified => ({ kind, cycle, staleBefore: now() - NOTICE_CLAIM_STALE_MS });
@@ -205,26 +211,44 @@ async function runJobs(deps: LifecycleDeps): Promise<LifecycleReport> {
 
   // --- Exports, and the deletions waiting on them ---------------------------
 
+  /** Set inside the exports block below, where exports are configured. */
+  let trustedExport: ((t: Pick<BillingTenant, "tenantId" | "accountId" | "slug">, since: number) => Promise<Awaited<ReturnType<typeof latestExport>>>) | null = null;
+
   if (deps.exports) {
     const exportDeps: ExportDeps = { ...deps.exports, db, now };
     // Past their 30 days, warned a week or more ago, and not waiting on an export.
     const due = await deps.billing.dueForDeletion(now() - DELETE_AFTER_MS, now() - WARNING_BEFORE_MS, now() - EXPORT_RETRY_AFTER_MS, BATCH);
-    for (const t of due) {
-      const exp = await latestExport(db, t.tenantId, "deletion", t.suspendedAt!);
+    /**
+     * The deletion export of `t` made since `since`, done and read back as
+     * the same OpenPing dump; or null, with a new export asked for (none, or
+     * the last one failed) or the reason it isn't trusted, in the report.
+     */
+    trustedExport = async (t: Pick<BillingTenant, "tenantId" | "accountId" | "slug">, since: number) => {
+      const exp = await latestExport(db, t.tenantId, "deletion", since);
       if (!exp || exp.state === "failed") {
         if (exp) await audit(db, t, "lifecycle.export_retried", { previous: exp.id, error: exp.error }, now());
         await requestExport(db, { tenantId: t.tenantId, accountId: t.accountId, slug: t.slug, reason: "deletion", now: now() });
         report.waiting.push({ tenantId: t.tenantId, why: exp ? `its export failed (${exp.error ?? "no reason"}); a new one has been asked for` : "its export has just been asked for" });
-        continue;
+        return null;
+      }
+      if (exp.state !== "done") {
+        report.waiting.push({ tenantId: t.tenantId, why: "its export is still running" });
+        return null;
       }
       // Done on the row isn't enough: the files must read back as the same OpenPing dump.
-      const problem = await exportVerificationProblem(db, deps.exports.bucket, exp);
+      const problem = await exportVerificationProblem(db, deps.exports!.bucket, exp);
       if (problem) {
         await db.prepare("UPDATE tenant_exports SET state = 'failed', error = ?, finished_at = ? WHERE id = ?").bind(problem, now(), exp.id).run();
         await audit(db, t, "lifecycle.export_failed", { export: exp.id, error: problem }, now());
         report.waiting.push({ tenantId: t.tenantId, why: `its export can't be trusted: ${problem}` });
-        continue;
+        return null;
       }
+      return exp;
+    };
+
+    for (const t of due) {
+      const exp = await trustedExport(t, t.suspendedAt!);
+      if (!exp) continue;
       if (!deps.provisioning) {
         report.waiting.push({ tenantId: t.tenantId, why: "provisioning is off" });
         continue;
@@ -266,6 +290,55 @@ async function runJobs(deps: LifecycleDeps): Promise<LifecycleReport> {
       if (outcome.kind === "failed") log.error("lifecycle.export_failed", { ...outcome });
     }
     report.expired = await expireExports(exportDeps);
+  }
+
+  // Accounts their owner (or the owner, for them) asked to delete
+  // (src/account-deletion.ts): billing settled first (retried until Stripe
+  // takes it), the OpenPing export-first like any deletion but without the 30
+  // days, then the account itself once nothing is left. Outside the exports
+  // block: an account with no OpenPing needs no Cloudflare to be deleted.
+  const deleting = await db.prepare(DELETING_ACCOUNTS_SQL).bind(BATCH).all<DeletingAccount>();
+  for (const account of deleting.results) {
+    const settled = await settleAccountBilling(db, deps.stripe ?? null, account.id, now());
+    const tenant = await tenantOfDeletingAccount(db, account.id);
+    if (!tenant) {
+      if (!settled) {
+        report.waiting.push({ tenantId: account.id, why: "its account is being deleted, and its plan isn't cancelled in Stripe yet" });
+        continue;
+      }
+      if (await scrubAccount(db, deps.mailer, account, now())) report.accountsDeleted.push(account.id);
+      continue;
+    }
+    if (tenant.provision_state === "deleting") {
+      report.waiting.push({ tenantId: tenant.id, why: "its account is being deleted, and its teardown is still running" });
+      continue;
+    }
+    const t = { tenantId: tenant.id, accountId: account.id, slug: tenant.slug };
+    // One that never got as far as a database has nothing to export.
+    const needsExport = tenant.provisioned_at !== null;
+    if (needsExport && !trustedExport) {
+      report.waiting.push({ tenantId: tenant.id, why: "exports are off, so its OpenPing can't be exported before it is deleted" });
+      continue;
+    }
+    const exp = needsExport ? await trustedExport!(t, account.deletion_requested_at) : null;
+    if (needsExport && !exp) continue;
+    if (!deps.provisioning) {
+      report.waiting.push({ tenantId: tenant.id, why: "provisioning is off" });
+      continue;
+    }
+    const marked = await db
+      .prepare(
+        `UPDATE tenants SET provision_state = 'deleting', provision_attempts = 0, provision_error = NULL, provision_next_at = NULL,
+           provision_paused_at = NULL, updated_at = ?1
+         WHERE id = ?2 AND provision_state <> 'deleting'`,
+      )
+      .bind(now(), tenant.id)
+      .run();
+    if ((marked.meta.changes ?? 0) === 0) continue;
+    forgetTenant(tenant.slug);
+    await audit(db, t, "tenant.deletion_started", { export: exp?.id ?? null, accountDeletion: account.deletion_requested_at, bytes: exp?.bytes ?? 0 }, now());
+    await runProvisioning(deps.provisioning, tenant.id, { force: true }).catch((error) => log.error("lifecycle.teardown_failed", { tenant: tenant.id, error }));
+    report.deleted.push(tenant.id);
   }
 
   for (const w of report.waiting) log.warn("lifecycle.deletion_waiting", { ...w });

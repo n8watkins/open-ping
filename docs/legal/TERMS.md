@@ -75,7 +75,7 @@ When a plan is cancelled, a trial ends without a paid plan, or a payment is not 
 - So 60 days after your checks stop, your OpenPing's data is gone from our systems.
 
 If you pay again before the deletion, everything comes back as it was.
-Your account itself (your email and sign-in methods) is not deleted with your OpenPing, so you can come back; ask us if you want it deleted too, as the privacy policy explains.
+Your account itself (your email and sign-in methods) is not deleted with your OpenPing, so you can come back; you can delete it from your account page at any time, as the privacy policy explains.
 
 ## 9. Acceptable use
 

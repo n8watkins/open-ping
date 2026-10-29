@@ -88,7 +88,7 @@ For push notifications, your browser's push service (from Google, Apple, Mozilla
 - **The list of addresses that confirmed email from your OpenPing:** until your OpenPing is deleted.
 - **The account history (audit log):** 2 years; its security part (when your account was made and which terms it accepted, each change of its email address, each support sign-in, each time your key was shown, and each sign-in method added or removed) is kept while your account exists, and then until it is 2 years old.
 - **Your account, sign-in methods and subscription record:** while your account exists; deleting your OpenPing does not delete your account, so you can come back.
-  Ask us and we will delete your account too (section 10).
+  You can delete your account yourself (section 10).
 - **Payment records:** Stripe keeps invoices and payments, and we keep our billing records, for as long as tax and accounting law requires, which is [TO FILL: retention period required by the provider's tax law, for example 7 years].
 - **Support emails:** [TO FILL: retention period for support email, for example 2 years after the last message].
 - **Backups:** Cloudflare keeps 30 days of point-in-time history of each database while it exists, and can restore a deleted database for 7 days after it is deleted; after that it is gone.
@@ -152,7 +152,11 @@ You can, at any time:
 
 - **See and export your data:** your account page shows your account, sign-in methods, support sign-ins and plan, and lets you download a full export of your OpenPing; for a copy of everything else we hold about you, write to support@n8builds.dev.
 - **Correct it:** change your OpenPing's data yourself, and your account's email address on your account page (we send the new address a code first, and tell the old one).
-- **Delete it:** write to support@n8builds.dev from your account's email, and we will delete your OpenPing and your account; we may keep payment records the law requires, and the account history entries needed to show what happened, and we will tell you what we kept.
+- **Delete it:** on your account page, choose "Delete my account" (we ask you to sign in again first, and to type your email), or write to support@n8builds.dev from your account's email and we will do it for you.
+  Your plan is cancelled and your OpenPing's checks stop at once, and you are signed out everywhere.
+  We then export your OpenPing once more and delete it, usually within the hour, and then delete your sign-in methods, sessions and email address; we email you when it starts and when it is done.
+  That last export is kept 30 days, so we can bring your OpenPing back if you write in time, and is then deleted.
+  We keep the payment records the law requires, and the account history for its 2 years (section 4), with the email addresses in it removed.
 - **Object or restrict:** ask us to stop a use of your data based on our legitimate interests.
 - **Complain:** to your local data protection authority, though we would like the chance to help first.
 
