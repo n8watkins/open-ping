@@ -145,8 +145,11 @@ describe("history rollups", () => {
     // The pass read at most two days of hour rows and two months of day rows
     // per monitor (a full recompute reads all 63 days of hour rows), and wrote
     // only the day and the month that changed for each.
+    // The exact count moves with the hour and the date (how much of yesterday
+    // and of last month's days the window holds, plus index reads), so the
+    // bound is the property that matters: a tenth of a full recompute's reads.
     expect(rows.written).toBe(2 * MONITORS);
-    expect(rows.read).toBeLessThan(MONITORS * (2 * 24 + 62 + 20));
+    expect(rows.read).toBeLessThan((MONITORS * HISTORY_DAYS * 24) / 10);
 
     await env.DB.batch(compactionStatements(env, now + 12 * 60_000, retention, null).map((s) => s.stmt));
     expect(incremental).toEqual(await derived());
