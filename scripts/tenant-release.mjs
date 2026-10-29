@@ -42,6 +42,9 @@ export const DEFAULTS = {
   config: "platform/wrangler.jsonc",
 };
 
+/** Written next to the build by `build`: the commit dist/ was built from. */
+export const BUILD_MARKER = "dist/.tenant-release-commit";
+
 /** The same pattern the platform accepts (platform/src/bundle.ts, VERSION_PATTERN). */
 export const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/;
 const SLUG_PATTERN = /^[a-z0-9-]{1,63}$/;
@@ -400,6 +403,7 @@ export async function main(argv, { run = defaultRunner, log = console.log, root 
     case "build": {
       const git = gitCommit(run);
       if (git.dirty && !flags["allow-dirty"]) throw new ReleaseError("The checkout has uncommitted changes; a release is built from a commit (--allow-dirty to build anyway, for a test)");
+      const marker = join(root, BUILD_MARKER);
       if (!flags["skip-build"]) {
         // The plain config, never the canonical install's: drop the override.
         const env = { ...process.env };
@@ -407,6 +411,15 @@ export async function main(argv, { run = defaultRunner, log = console.log, root 
         log("$ npm run build");
         const built = run(["npm", "run", "build"], { env });
         if (built.status !== 0) throw new ReleaseError("The build failed");
+        // Which commit this dist/ is, for a later --skip-build to check.
+        writeFileSync(marker, `${git.commit ?? "unknown"}\n`);
+      } else {
+        const builtFrom = existsSync(marker) ? readFileSync(marker, "utf8").trim() : null;
+        if (!builtFrom || builtFrom !== git.commit) {
+          throw new ReleaseError(
+            `dist/ was built from ${builtFrom ?? "an unknown commit"}, not ${git.commit ?? "this checkout"}; run build without --skip-build`,
+          );
+        }
       }
       const bundle = assembleBundle({ root, out: options.out, commit: git.commit });
       log(

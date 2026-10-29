@@ -193,6 +193,14 @@ export interface CloudflareApi {
    * https://developers.cloudflare.com/api/resources/workers_for_platforms/subresources/dispatch/subresources/namespaces/subresources/scripts/methods/delete/
    */
   deleteScript(namespace: string, scriptName: string): Promise<boolean>;
+
+  /**
+   * GET /accounts/{account_id}/workers/dispatch/namespaces/{namespace}/scripts/{script}:
+   * the Durable Object migration tag most recently applied to the script
+   * (`result.script.migration_tag`), or null for none.
+   * https://developers.cloudflare.com/api/resources/workers_for_platforms/subresources/dispatch/subresources/namespaces/subresources/scripts/methods/get/
+   */
+  getScriptMigrationTag(namespace: string, scriptName: string): Promise<string | null>;
 }
 
 /** One entry of the API's `errors` array. */

@@ -47,7 +47,7 @@ import {
   type ScheduledRequest,
   type ScheduledRunSummary,
 } from "../../../src/shared/hosted-contract";
-import { isBundleVersion, type TenantBundle } from "../bundle";
+import { compareVersions, isBundleVersion, type TenantBundle } from "../bundle";
 import { CloudflareApiError, type CloudflareApi } from "../cloudflare/api";
 import { uploadUserWorker } from "../cloudflare/upload";
 import { callTenant, type TenantDispatcher } from "../dispatch";
@@ -71,6 +71,12 @@ export const HEALTH_TIMEOUT_MS = 10_000;
 export const UPLOAD_MAX_ATTEMPTS = 3;
 /** Times the canary's scheduled run may find another run holding its lease before the rollout stops. */
 export const CANARY_BUSY_MAX = 5;
+/** The canary's scheduled run gets this long (a run is at most a few seconds; a hung one stops the rollout). */
+export const CANARY_RUN_TIMEOUT_MS = 60_000;
+/** Times a tenant found on another version after it was healthy is updated again, before it counts as failed. */
+export const MAX_REQUEUES = 3;
+/** How long one handling of release requests holds its lock. */
+export const REQUEST_LOCK_MS = 2 * 60_000;
 /** What one cron tick may spend on a release (the cron has 15 minutes; provisioning and the scheduler share it). */
 export const RELEASE_TICK_BUDGET_MS = 5 * 60_000;
 
@@ -104,6 +110,8 @@ export interface ReleaseDeps {
   now?: () => number;
   /** Tests only: waits between health checks without sleeping. */
   sleep?: (ms: number) => Promise<void>;
+  /** Tests only: CANARY_RUN_TIMEOUT_MS. */
+  canaryTimeoutMs?: number;
 }
 
 export interface ReleasePlan {
@@ -265,6 +273,25 @@ export interface RequestOutcome {
  */
 export async function handleRequests(deps: ReleaseDeps, limit = 10): Promise<RequestOutcome[]> {
   const now = deps.now ?? Date.now;
+  // One handler at a time, so the console and the cron take requests in order.
+  const token = crypto.randomUUID();
+  const locked = await deps.db
+    .prepare(
+      `INSERT INTO release_locks (name, until, token) VALUES ('requests', ?1, ?2)
+       ON CONFLICT(name) DO UPDATE SET until = excluded.until, token = excluded.token WHERE release_locks.until <= ?3`,
+    )
+    .bind(now() + REQUEST_LOCK_MS, token, now())
+    .run();
+  if ((locked.meta.changes ?? 0) === 0) return [];
+  try {
+    return await handleRequestsLocked(deps, limit);
+  } finally {
+    await deps.db.prepare("DELETE FROM release_locks WHERE name = 'requests' AND token = ?").bind(token).run();
+  }
+}
+
+async function handleRequestsLocked(deps: ReleaseDeps, limit: number): Promise<RequestOutcome[]> {
+  const now = deps.now ?? Date.now;
   const pending = await deps.db
     .prepare(
       `SELECT id, action, version, dry_run, canary, batch_size, requested_by, created_at FROM release_requests
@@ -341,6 +368,7 @@ async function chooseCanary(deps: ReleaseDeps, asked: string | null, version: st
   const oldest = await deps.db
     .prepare(
       `SELECT id, slug FROM tenants WHERE provision_state = 'ready' AND (version IS NULL OR version <> ?)
+         AND status IN ('trial', 'active') AND owner_suspended_at IS NULL
        ORDER BY provisioned_at, created_at, id LIMIT 1`,
     )
     .bind(version)
@@ -448,6 +476,37 @@ async function refuse(deps: ReleaseDeps, request: ReleaseRequest, kind: "rollout
   return { releaseId: id, result: `Refused: ${note}` };
 }
 
+/**
+ * Every version tenants actually run, besides `exclude`: releases/current and
+ * each ready tenant's recorded version, since a stopped or cancelled rollout
+ * leaves tenants on more than one. Each must load: a release is checked
+ * against all of them, so one that can't be read refuses it.
+ */
+async function liveBundles(deps: ReleaseDeps, exclude: string, current: string | null): Promise<{ bundles: TenantBundle[] } | { problem: string }> {
+  const rows = await deps.db
+    .prepare("SELECT DISTINCT version FROM tenants WHERE provision_state = 'ready' AND version IS NOT NULL")
+    .all<{ version: string }>();
+  const versions = new Set<string>(rows.results.map((r) => r.version));
+  if (current) versions.add(current);
+  versions.delete(exclude);
+  const bundles: TenantBundle[] = [];
+  for (const v of [...versions].sort(compareVersions)) {
+    const loaded = await loadOrRefuse(deps, v);
+    if (typeof loaded === "string") return { problem: `Tenants run ${v}, which can't be read to compare with: ${loaded}` };
+    bundles.push(loaded);
+  }
+  return { bundles };
+}
+
+function mergeChecks(all: ReleaseChecks[]): ReleaseChecks {
+  const unique = (xs: string[]) => [...new Set(xs)];
+  return {
+    problems: unique(all.flatMap((c) => c.problems)),
+    newMigrations: unique(all.flatMap((c) => c.newMigrations)),
+    newDurableObjectTags: unique(all.flatMap((c) => c.newDurableObjectTags)),
+  };
+}
+
 async function startRollout(deps: ReleaseDeps, request: ReleaseRequest): Promise<{ releaseId: string | null; result: string }> {
   const version = request.version!;
   const batchSize = request.batchSize ?? RELEASE_BATCH_SIZE;
@@ -458,13 +517,12 @@ async function startRollout(deps: ReleaseDeps, request: ReleaseRequest): Promise
   }
   const next = await loadOrRefuse(deps, version);
   if (typeof next === "string") return refuse(deps, request, "rollout", version, live, next);
-  let liveBundle: TenantBundle | null = null;
-  if (live && live !== version) {
-    const loaded = await loadOrRefuse(deps, live);
-    if (typeof loaded === "string") return refuse(deps, request, "rollout", version, live, `The current release can't be read to compare with: ${loaded}`);
-    liveBundle = loaded;
-  }
-  const checks = await checkRollout(next, liveBundle, (name) => deps.store.migrationSql(version, name));
+  const running = await liveBundles(deps, version, live);
+  if ("problem" in running) return refuse(deps, request, "rollout", version, live, running.problem);
+  const sql = (name: string) => deps.store.migrationSql(version, name);
+  const checks = running.bundles.length
+    ? mergeChecks(await Promise.all(running.bundles.map((b) => checkRollout(next, b, sql))))
+    : await checkRollout(next, null, sql);
   if (checks.problems.length) return refuse(deps, request, "rollout", version, live, checks.problems.join(" "), checks);
 
   const canary = await chooseCanary(deps, request.canary, version);
@@ -539,12 +597,18 @@ async function startRollback(deps: ReleaseDeps, request: ReleaseRequest): Promis
   if (!target) return refuse(deps, request, "rollback", live ?? "none", live, "There's no earlier release to roll back to.");
   const bundle = await loadOrRefuse(deps, target);
   if (typeof bundle === "string") return refuse(deps, request, "rollback", target, from, bundle);
-  let fromBundle: TenantBundle | null = null;
-  if (from && from !== target) {
-    const loaded = await loadOrRefuse(deps, from);
-    if (typeof loaded !== "string") fromBundle = loaded;
+  if (request.version) {
+    // Back means back: to an older version that really went out before.
+    if (from && compareVersions(target, from) >= 0) return refuse(deps, request, "rollback", target, from, `${target} isn't older than ${from}; ship it as a rollout instead.`);
+    const released = await deps.db
+      .prepare("SELECT 1 AS x FROM releases WHERE dry_run = 0 AND state <> 'refused' AND (version = ?1 OR from_version = ?1) LIMIT 1")
+      .bind(target)
+      .first();
+    if (!released) return refuse(deps, request, "rollback", target, from, `${target} was never released to tenants, so there's nothing to go back to.`);
   }
-  const checks = checkRollback(bundle, fromBundle);
+  const running = await liveBundles(deps, target, from);
+  if ("problem" in running) return refuse(deps, request, "rollback", target, from, running.problem);
+  const checks = mergeChecks(running.bundles.map((b) => checkRollback(bundle, b)));
   if (checks.problems.length) return refuse(deps, request, "rollback", target, from, checks.problems.join(" "), checks);
   const pending = await pendingTenants(deps.db, target, null, 10);
   if (pending.count === 0 && live === target && !active) {
@@ -562,7 +626,9 @@ async function startRollback(deps: ReleaseDeps, request: ReleaseRequest): Promis
   const cancel = active
     ? [
         deps.db
-          .prepare("UPDATE releases SET state = 'cancelled', note = ?, finished_at = ?, updated_at = ? WHERE id = ? AND state IN ('canary', 'rolling', 'paused')")
+          .prepare(
+            "UPDATE releases SET state = 'cancelled', note = ?, finished_at = ?, updated_at = ?, lease_until = NULL, lease_token = NULL WHERE id = ? AND state IN ('canary', 'rolling', 'paused')",
+          )
           .bind(`Replaced by the rollback ${id}.`, now, now, active.id),
       ]
     : [];
@@ -582,7 +648,13 @@ async function changeActive(deps: ReleaseDeps, request: ReleaseRequest): Promise
     await db.batch([
       ...extra,
       db
-        .prepare("UPDATE releases SET state = ?, note = ?, updated_at = ?, finished_at = ? WHERE id = ? AND state = ?")
+        // Leaving an active state takes the lease too, so a run in flight writes nothing more.
+        .prepare(
+          `UPDATE releases SET state = ?1, note = ?2, updated_at = ?3, finished_at = ?4,
+             lease_until = CASE WHEN ?1 IN ('canary', 'rolling') THEN lease_until ELSE NULL END,
+             lease_token = CASE WHEN ?1 IN ('canary', 'rolling') THEN lease_token ELSE NULL END
+           WHERE id = ?5 AND state = ?6`,
+        )
         .bind(state, note, now, ACTIVE_STATES.includes(state) ? null : now, active.id, active.state),
     ]);
     await systemAudit(db, `release.${request.action}`, { release: active.id, version: active.version, by: request.requestedBy }, now);
@@ -677,17 +749,18 @@ interface TenantRow {
   trial_ends_at: number | null;
   d1_id: string | null;
   do_migration_tag: string | null;
+  do_migration_pending: string | null;
 }
 
-async function loadTenant(db: D1Database, id: string): Promise<{ record: TenantRecord; d1Id: string | null; doTag: string | null } | null> {
+async function loadTenant(db: D1Database, id: string): Promise<{ record: TenantRecord; d1Id: string | null; doTag: string | null; doPending: string | null } | null> {
   const row = await db
     .prepare(
       `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides,
-              trial_ends_at, d1_id, do_migration_tag FROM tenants WHERE id = ?`,
+              trial_ends_at, d1_id, do_migration_tag, do_migration_pending FROM tenants WHERE id = ?`,
     )
     .bind(id)
     .first<TenantRow>();
-  return row ? { record: tenantFromRow(row), d1Id: row.d1_id, doTag: row.do_migration_tag } : null;
+  return row ? { record: tenantFromRow(row), d1Id: row.d1_id, doTag: row.do_migration_tag, doPending: row.do_migration_pending } : null;
 }
 
 interface MemberRow {
@@ -698,12 +771,27 @@ interface MemberRow {
   updated_at: number;
 }
 
-async function setMember(run: Run, tenantId: string, set: Record<string, string | number | null>): Promise<void> {
+/** Changes a member, only while this run holds the release and it is still running. */
+async function setMember(run: Run, tenantId: string, set: Record<string, string | number | null>): Promise<boolean> {
   const columns = Object.keys(set);
-  await run.deps.db
-    .prepare(`UPDATE release_tenants SET ${columns.map((c) => `${c} = ?`).join(", ")}, updated_at = ? WHERE release_id = ? AND tenant_id = ?`)
-    .bind(...columns.map((c) => set[c]!), run.now(), run.release.id, tenantId)
+  const result = await run.deps.db
+    .prepare(
+      `UPDATE release_tenants SET ${columns.map((c) => `${c} = ?`).join(", ")}, updated_at = ?
+       WHERE release_id = ? AND tenant_id = ?
+         AND EXISTS (SELECT 1 FROM releases WHERE id = ? AND lease_token = ? AND state IN ('canary', 'rolling'))`,
+    )
+    .bind(...columns.map((c) => set[c]!), run.now(), run.release.id, tenantId, run.release.id, run.token)
     .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+/** True while this run still holds the release and it is running: checked right before an upload. */
+async function stillHeld(run: Run): Promise<boolean> {
+  const row = await run.deps.db
+    .prepare("SELECT 1 AS x FROM releases WHERE id = ? AND lease_token = ? AND state IN ('canary', 'rolling')")
+    .bind(run.release.id, run.token)
+    .first();
+  return row !== null;
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | "timeout"> {
@@ -755,20 +843,41 @@ async function updateTenant(run: Run, bundle: TenantBundle, member: MemberRow): 
         // Never a new key: the tenant's data is encrypted under the one it has.
         if (!escrowed) throw new PermanentError("it has no escrowed MASTER_KEY");
         const masterKey = await openEscrowedKey(escrowed, tenant.id, deps.config.platformKey);
-        await uploadUserWorker(deps.api, {
-          namespace: deps.config.namespace,
-          scriptName: tenant.scriptName,
-          bundle,
-          bindings: [{ type: "d1", name: "DB", database_id: loaded.d1Id }],
-          vars: {
-            [HOSTED_ENV.mode]: HOSTED_MODE_ON,
-            [HOSTED_ENV.tenantId]: tenant.id,
-            [HOSTED_ENV.handoffPublicKey]: deps.config.handoffPublicKey,
-          },
-          secrets: { MASTER_KEY: masterKey },
-          tags: tenantTags(tenant.id, bundle.version),
-          previousMigrationTag: loaded.doTag,
-        });
+        // A cancelled or replaced release must not upload anything more.
+        if (!(await stillHeld(run))) return member.state;
+        const target = bundle.migrations.at(-1)?.tag ?? loaded.doTag;
+        // An earlier try may have applied the Durable Object migrations and
+        // died before recording them: then Cloudflare knows the tag, not us.
+        let previousTag = loaded.doPending ? await deps.api.getScriptMigrationTag(deps.config.namespace, tenant.scriptName) : loaded.doTag;
+        if (target !== previousTag) {
+          await deps.db.prepare("UPDATE tenants SET do_migration_pending = ? WHERE id = ?").bind(target, tenant.id).run();
+        }
+        const upload = (tag: string | null) =>
+          uploadUserWorker(deps.api, {
+            namespace: deps.config.namespace,
+            scriptName: tenant.scriptName,
+            bundle,
+            bindings: [{ type: "d1", name: "DB", database_id: loaded.d1Id! }],
+            vars: {
+              [HOSTED_ENV.mode]: HOSTED_MODE_ON,
+              [HOSTED_ENV.tenantId]: tenant.id,
+              [HOSTED_ENV.handoffPublicKey]: deps.config.handoffPublicKey,
+            },
+            secrets: { MASTER_KEY: masterKey },
+            tags: tenantTags(tenant.id, bundle.version),
+            previousMigrationTag: tag,
+          });
+        try {
+          await upload(previousTag);
+        } catch (error) {
+          // Refused, with migrations to send: the recorded tag may be stale.
+          // Ask Cloudflare which one the script is at, and send from there once.
+          if (!(error instanceof CloudflareApiError) || error.retryable || bundle.migrations.length === 0) throw error;
+          const actual = await deps.api.getScriptMigrationTag(deps.config.namespace, tenant.scriptName);
+          if (actual === previousTag) throw error;
+          previousTag = actual;
+          await upload(previousTag);
+        }
       } catch (error) {
         const retryable = error instanceof CloudflareApiError ? error.retryable : !(error instanceof PermanentError);
         const attempts = member.attempts + 1;
@@ -777,7 +886,7 @@ async function updateTenant(run: Run, bundle: TenantBundle, member: MemberRow): 
         return failed ? "failed" : "pending";
       }
       await deps.db
-        .prepare("UPDATE tenants SET version = ?, do_migration_tag = ?, updated_at = ? WHERE id = ? AND provision_state = 'ready'")
+        .prepare("UPDATE tenants SET version = ?, do_migration_tag = ?, do_migration_pending = NULL, updated_at = ? WHERE id = ? AND provision_state = 'ready'")
         .bind(bundle.version, bundle.migrations.at(-1)?.tag ?? loaded.doTag, run.now(), tenant.id)
         .run();
       await systemAudit(deps.db, "tenant.updated", { release: run.release.id, from: tenant.version, to: bundle.version }, run.now(), tenant);
@@ -850,8 +959,10 @@ async function stepCanary(run: Run, bundle: TenantBundle): Promise<StepResult> {
       method: "POST",
       body: request,
     });
-    const result = await call;
-    if (result.kind === "missing") reason = "its Worker isn't in the namespace";
+    const limit = deps.canaryTimeoutMs ?? CANARY_RUN_TIMEOUT_MS;
+    const result = await withTimeout(call, limit);
+    if (result === "timeout") reason = `the scheduled call didn't answer within ${limit / 1000} seconds`;
+    else if (result.kind === "missing") reason = "its Worker isn't in the namespace";
     else if (result.response.status !== 200) reason = `the scheduled call answered HTTP ${result.response.status}`;
     else summary = await result.response.json<ScheduledRunSummary>().catch(() => null);
   } catch (error) {
@@ -919,12 +1030,37 @@ async function stepRolling(run: Run, bundle: TenantBundle): Promise<StepResult> 
     if (nextBatch !== release.batch) await updateRelease(run, { batch: nextBatch });
     return "progress";
   }
+  // Before calling it done: every tenant this release made healthy must
+  // still run its version. An upload of a release cancelled mid-flight (a
+  // rollback replacing a rollout) can land after ours; those go round again.
+  const stragglers = await deps.db
+    .prepare(
+      `SELECT r.tenant_id, r.requeues FROM release_tenants r JOIN tenants t ON t.id = r.tenant_id
+       WHERE r.release_id = ? AND r.state = 'healthy' AND t.provision_state = 'ready' AND (t.version IS NULL OR t.version <> ?)`,
+    )
+    .bind(release.id, release.version)
+    .all<{ tenant_id: string; requeues: number }>();
+  if (stragglers.results.length) {
+    for (const s of stragglers.results) {
+      await setMember(
+        run,
+        s.tenant_id,
+        s.requeues >= MAX_REQUEUES
+          ? { state: "failed", error: `found on another version ${s.requeues + 1} times after it was healthy` }
+          : { state: "pending", attempts: 0, batch: nextBatch, requeues: s.requeues + 1, error: "found on another version after it was healthy" },
+      );
+    }
+    if (nextBatch !== release.batch) await updateRelease(run, { batch: nextBatch });
+    return "progress";
+  }
   const counts = await memberCounts(deps.db, release.id);
   const bad = counts.failed + counts.skipped;
   const note =
     `${release.kind === "rollback" ? "Rolled back to" : "Shipped"} ${release.version}: ${plural(counts.healthy, "tenant")} healthy` +
     (bad ? `, ${counts.failed} failed and ${counts.skipped} skipped (see the list).` : ".");
-  if (release.kind === "rollout" && (await deps.store.currentVersion()) !== release.version) await deps.store.setCurrent(release.version);
+  // A run that died between starting and pointing releases/current (a
+  // rollback sets it first) is repaired here, whichever kind it was.
+  if ((await deps.store.currentVersion()) !== release.version) await deps.store.setCurrent(release.version);
   await updateRelease(run, { state: "done", finished_at: now, note });
   await systemAudit(deps.db, release.kind === "rollback" ? "release.rolled_back" : "release.done", { release: release.id, version: release.version, ...counts }, now);
   return "done";
@@ -970,6 +1106,9 @@ export async function advanceRelease(deps: ReleaseDeps, budgetMs = RELEASE_TICK_
       await stop({ deps, release: first, token, now }, `${first.version} can't be read from the bundle bucket: ${describeError(error)}`);
       return { kind: "ran", releaseId: first.id, steps, state: "paused" };
     }
+    // A rollback points releases/current back first thing; a run that died
+    // before doing so is repaired here, before any tenant is touched.
+    if (first.kind === "rollback" && (await deps.store.currentVersion()) !== first.version) await deps.store.setCurrent(first.version);
     // At least one step, however small the budget.
     while (steps === 0 || now() < deadline) {
       if (!(await renewLease(deps.db, first.id, token, now()))) break;

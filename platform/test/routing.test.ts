@@ -99,6 +99,7 @@ describe("the platform database", () => {
       "lifecycle_notices",
       "platform_sessions",
       "rate_limits",
+      "release_locks",
       "release_requests",
       "release_tenants",
       "releases",

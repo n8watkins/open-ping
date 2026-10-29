@@ -49,6 +49,7 @@ function fixture() {
   write("dist/client/.dev.vars", "MASTER_KEY=secret");
   write("migrations/0001_init.sql", "CREATE TABLE monitors (id TEXT PRIMARY KEY);");
   write("migrations/0021_support.sql", "CREATE TABLE support_activity (id INTEGER PRIMARY KEY);");
+  write("dist/.tenant-release-commit", "abc123\n");
 }
 
 function files(dir) {
@@ -179,6 +180,15 @@ describe("the commands", () => {
     } finally {
       delete process.env.OPENPING_WRANGLER_CONFIG;
     }
+  });
+
+  it("build records the commit it built, and --skip-build refuses a dist/ from another one", async () => {
+    await main(["build"], { run: recorder().run, root, log: () => {} });
+    expect(readFileSync(join(root, "dist/.tenant-release-commit"), "utf8")).toBe("abc123\n");
+    const moved = recorder({ "rev-parse": { status: 0, stdout: "def456\n", stderr: "" } });
+    await expect(main(["build", "--skip-build"], { run: moved.run, root, log: () => {} })).rejects.toThrow(/built from abc123, not def456/);
+    rmSync(join(root, "dist/.tenant-release-commit"));
+    await expect(main(["build", "--skip-build"], { run: recorder().run, root, log: () => {} })).rejects.toThrow(/an unknown commit/);
   });
 
   it("build refuses a dirty checkout unless told", async () => {

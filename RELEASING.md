@@ -134,16 +134,17 @@ npm run tenant-release -- start X.Y.Z              # the rollout
 npm run tenant-release -- status                   # or the admin console's Releases tab
 ```
 
+- `build` records the commit it built in `dist/.tenant-release-commit`, and `build --skip-build` refuses a `dist/` built from another commit.
 - `build` refuses a checkout with uncommitted changes, a `dist/` built from the canonical install's `.wrangler.prod.jsonc`, and any migration after 0020 that drops, renames, or adds a `NOT NULL` column without a default.
 - `start` and the other requests only add a row to the platform's `release_requests` table with `wrangler d1 execute`; the platform's every-minute cron handles it, so it starts within a minute.
-- The platform checks again before anything is touched: the bundle loads, its migrations extend the ones tenants already ran without changing any, the new ones are additive, and its Durable Object migrations extend the live ones.
+- The platform checks again before anything is touched, against every version tenants actually run (a stopped rollout leaves more than one): the bundle loads, its migrations extend the ones tenants already ran without changing any, the new ones are additive, and its Durable Object migrations extend the live ones.
   A failed check is a refused release that touched nothing.
 - The canary is `RELEASE_CANARY` (the owner's own test tenant), or `--canary <slug>`, or else the oldest tenant.
   It gets the new bundle, its `/__platform/health` must answer ok on the new version (that call applies the new migrations), and one scheduled run must come back clean.
   Only then do new sign-ups get the new version, and the batches start.
 - A stopped rollout waits for the owner: `resume` tries the failed tenants again, `skip-failed` goes on without them, `cancel` stops there, and `rollback` undoes it.
 - `npm run tenant-release -- rollback` goes back to the version before: new sign-ups get it at once, then every tenant on another version, in batches, without a canary, and past any failure.
-  `--to X.Y.Z` names another version, and `--dry-run` plans it.
+  `--to X.Y.Z` names another version, which must be older and must have been released to tenants before, and `--dry-run` plans it.
   A rollback across a Durable Object migration is refused: those can't be undone, so ship a fix forward instead.
 - For staging, add `--bucket openping-tenant-bundles-staging --database openping-platform-staging --config <the staging platform config>`; `--print` shows every remote command without running any.
 - Agents never run these against a real account.

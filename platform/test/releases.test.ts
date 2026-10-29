@@ -179,6 +179,7 @@ beforeEach(async () => {
     env.PLATFORM_DB.prepare("DELETE FROM release_tenants"),
     env.PLATFORM_DB.prepare("DELETE FROM releases"),
     env.PLATFORM_DB.prepare("DELETE FROM release_requests"),
+    env.PLATFORM_DB.prepare("DELETE FROM release_locks"),
     env.PLATFORM_DB.prepare("DELETE FROM escrowed_keys"),
     env.PLATFORM_DB.prepare("DELETE FROM audit_events"),
     env.PLATFORM_DB.prepare("DELETE FROM tenants"),
@@ -578,5 +579,116 @@ describe("a rollback", () => {
     await request(w, { action: "rollout", version: "0.16.0" });
     await advanceRelease(w.deps);
     expect((await request(w, { action: "rollback" })).result).toMatch(/can't be undone; ship a fix forward instead/);
+  });
+});
+
+describe("the review's cases", () => {
+  it("recovers when an upload applied its Durable Object migration but died before recording it", async () => {
+    const { w, ids } = await shipped();
+    publish(w.r2, bundle("0.16.0", ["0021_support.sql", "0022_notes.sql"], ["v1", "v2"]));
+    // The upload takes effect at Cloudflare, then the answer is lost.
+    w.api.failNext("putScript", { when: "after", status: 503 });
+    await request(w, { action: "rollout", version: "0.16.0" });
+    expect(await advanceRelease(w.deps)).toMatchObject({ state: "done" });
+    for (const id of Object.values(ids)) {
+      const row = await env.PLATFORM_DB.prepare("SELECT version, do_migration_tag, do_migration_pending FROM tenants WHERE id = ?").bind(id).first();
+      expect(row).toEqual({ version: "0.16.0", do_migration_tag: "v2", do_migration_pending: null });
+    }
+    expect(w.api.count("getScriptMigrationTag")).toBeGreaterThanOrEqual(1);
+  });
+
+  it("asks Cloudflare for the tag when the recorded one is stale", async () => {
+    const { w, ids } = await shipped();
+    publish(w.r2, bundle("0.16.0", ["0021_support.sql", "0022_notes.sql"], ["v1", "v2"]));
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET do_migration_tag = NULL WHERE id = ?").bind(ids.bravo).run();
+    await request(w, { action: "rollout", version: "0.16.0" });
+    expect(await advanceRelease(w.deps)).toMatchObject({ state: "done" });
+    expect(scriptOf(w, ids.bravo).migrationTag).toBe("v2");
+  });
+
+  it("repairs releases/current when a rollback died before setting it", async () => {
+    const { w } = await shipped();
+    await request(w, { action: "rollout", version: "0.15.0" });
+    await advanceRelease(w.deps);
+    await request(w, { action: "rollback" });
+    w.r2.putText("releases/current", "0.15.0"); // as if the run died right after marking it rolling
+    await advanceRelease({ ...w.deps, sleep: undefined }, 0);
+    expect(w.r2.textOf("releases/current")).toBe("0.14.0");
+  });
+
+  it("refuses a rollback whose current bundle can't be read, or to a version that isn't older or never shipped", async () => {
+    const { w } = await shipped();
+    await request(w, { action: "rollout", version: "0.15.0" });
+    await advanceRelease(w.deps);
+    publish(w.r2, bundle("0.13.0", ["0021_support.sql"]));
+    expect((await request(w, { action: "rollback", version: "0.13.0" })).result).toMatch(/0.13.0 was never released to tenants/);
+    publish(w.r2, bundle("0.16.0", ["0021_support.sql", "0022_notes.sql"]));
+    expect((await request(w, { action: "rollback", version: "0.16.0" })).result).toMatch(/isn't older than 0.15.0/);
+    clearLoadedBundles();
+    w.r2.objects.delete("releases/0.15.0/bundle.json");
+    expect((await request(w, { action: "rollback" })).result).toMatch(/^Refused: Tenants run 0.15.0, which can't be read/);
+  });
+
+  it("checks a rollout against every version tenants run, not just the current one", async () => {
+    const { w, ids } = await shipped();
+    // A stopped rollout left bravo on 0.15.0 while releases/current stayed 0.14.0.
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET version = '0.15.0' WHERE id = ?").bind(ids.bravo).run();
+    const edited = bundle("0.16.0", ["0021_support.sql", "0022_notes.sql"]);
+    edited.d1Migrations[1] = { name: "0022_notes.sql", sha256: "edited" };
+    publish(w.r2, edited);
+    expect((await request(w, { action: "rollout", version: "0.16.0" })).result).toMatch(/0022_notes.sql was changed after tenants ran it/);
+  });
+
+  it("picks a default canary that is in good standing", async () => {
+    const { w, ids } = await shipped();
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET status = 'suspended' WHERE id = ?").bind(ids.alpha).run();
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET status = 'past_due' WHERE id = ?").bind(ids.bravo).run();
+    const outcome = await request(w, { action: "rollout", version: "0.15.0", dryRun: true });
+    expect(outcome.result).toMatch(/the canary charlie/);
+  });
+
+  it("stops at a canary whose scheduled run never answers", async () => {
+    const { w, ids } = await shipped();
+    const original = w.dispatcher.dispatch.bind(w.dispatcher);
+    w.dispatcher.dispatch = (script, req, props, limits) =>
+      script === `t-${ids.alpha}` && new URL(req.url).pathname === "/__platform/scheduled" ? new Promise(() => {}) : original(script, req, props, limits);
+    await request(w, { action: "rollout", version: "0.15.0" });
+    expect(await advanceRelease({ ...w.deps, canaryTimeoutMs: 10 })).toMatchObject({ state: "paused" });
+    expect((await activeRelease(env.PLATFORM_DB))!.note).toMatch(/didn't answer within 0.01 seconds/);
+  });
+
+  it("goes round again for a tenant a raced upload left on another version", async () => {
+    const { w, ids } = await shipped();
+    await request(w, { action: "rollout", version: "0.15.0", batchSize: 5 });
+    // Through the canary and the batch, until only the finish is left.
+    for (let i = 0; i < 20; i++) {
+      const members = await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM release_tenants WHERE state = 'healthy'").first<{ n: number }>();
+      if (members!.n === 3) break;
+      await advanceRelease({ ...w.deps, sleep: undefined }, 0);
+    }
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET version = '0.14.0' WHERE id = ?").bind(ids.charlie).run();
+    expect(await advanceRelease(w.deps)).toMatchObject({ state: "done" });
+    expect(await versions()).toEqual({ alpha: "0.15.0", bravo: "0.15.0", charlie: "0.15.0" });
+    const row = await env.PLATFORM_DB.prepare("SELECT requeues FROM release_tenants WHERE tenant_id = ?").bind(ids.charlie).first<{ requeues: number }>();
+    expect(row!.requeues).toBe(1);
+  });
+
+  it("cancelling takes the lease, so a run in flight writes nothing more", async () => {
+    const { w } = await shipped();
+    await request(w, { action: "rollout", version: "0.15.0" });
+    await env.PLATFORM_DB.prepare("UPDATE releases SET lease_until = ?, lease_token = 'inflight' WHERE state = 'canary'").bind(w.clock.now + 60_000).run();
+    await request(w, { action: "cancel" });
+    const row = await env.PLATFORM_DB.prepare("SELECT state, lease_token FROM releases").first();
+    expect(row).toEqual({ state: "cancelled", lease_token: null });
+  });
+
+  it("handles requests one handler at a time, in order", async () => {
+    const { w } = await shipped();
+    await env.PLATFORM_DB.prepare("INSERT INTO release_locks (name, until, token) VALUES ('requests', ?, 'other')").bind(w.clock.now + 60_000).run();
+    await submitRequest(env.PLATFORM_DB, { action: "rollout", version: "0.15.0", dryRun: true, requestedBy: "cli" }, w.clock.now);
+    expect(await handleRequests(w.deps)).toEqual([]);
+    w.clock.now += 61_000;
+    expect(await handleRequests(w.deps)).toHaveLength(1);
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM release_locks").first("n")).toBe(0);
   });
 });

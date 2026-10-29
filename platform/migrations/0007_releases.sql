@@ -43,6 +43,7 @@ CREATE TABLE release_tenants (
   state        TEXT NOT NULL CHECK (state IN ('pending', 'uploaded', 'healthy', 'failed', 'skipped')),
   from_version TEXT,                          -- what it ran before
   attempts     INTEGER NOT NULL DEFAULT 0,    -- health checks that weren't ok yet
+  requeues     INTEGER NOT NULL DEFAULT 0,    -- times it was found on another version after it was healthy (a raced upload)
   error        TEXT,                          -- short, never secret
   updated_at   INTEGER NOT NULL,
   PRIMARY KEY (release_id, tenant_id)
@@ -67,3 +68,17 @@ CREATE TABLE release_requests (
   result       TEXT                           -- what happened, one sentence
 );
 CREATE INDEX idx_release_requests_pending ON release_requests(created_at) WHERE handled_at IS NULL;
+
+-- The Durable Object migration tag an upload is about to apply, written
+-- before the upload and cleared once do_migration_tag (0002) records it: a
+-- run that dies between the two leaves it set, and the next asks Cloudflare
+-- which tag the script is really at.
+ALTER TABLE tenants ADD COLUMN do_migration_pending TEXT;
+
+-- Short locks for the release runner's own steps: 'requests' serializes
+-- handling release_requests, so the console and the cron can't reorder them.
+CREATE TABLE release_locks (
+  name  TEXT PRIMARY KEY,
+  until INTEGER NOT NULL,
+  token TEXT NOT NULL
+);

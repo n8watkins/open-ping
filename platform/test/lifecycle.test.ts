@@ -41,6 +41,7 @@ const BUNDLE: TenantBundle = {
   vars: {},
   durableObjects: [],
   migrations: [],
+  d1Migrations: [],
 };
 
 interface World {
