@@ -72,7 +72,11 @@ export function platformTransport(platform: PlatformCapability, now: () => numbe
         return { ok: false, error: "email_unavailable" satisfies SendEmailError };
       }
       if (result.ok) return { ok: true };
-      const failed: SendResult = { ok: false, error: result.error };
+      // A refused email carries the platform's one-sentence reason (an address
+      // that hasn't confirmed it wants this OpenPing's email), and the channel
+      // shows it as its last error, so the customer knows what to do.
+      const reason = result.error === "email_rejected" && typeof result.message === "string" ? result.message.trim().slice(0, 300) : "";
+      const failed: SendResult = { ok: false, error: reason ? `${result.error}: ${reason}` : result.error };
       // Over the daily cap: nothing can go out before the next UTC day, so the
       // outbox waits for it without spending an attempt (db/outbox.ts markDeferred).
       if (result.error === "email_quota_exceeded") failed.deferUntil = nextUtcDay(now());
