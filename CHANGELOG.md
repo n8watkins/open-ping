@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0 - 2026-10-28
+
+### Faster
+
+- The System page reads one row instead of every past check run to show the last failure, which cut about half of a small install's daily database reads.
+
 ## 0.15.0 - 2026-10-28
 
 ### Fixed
