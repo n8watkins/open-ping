@@ -289,6 +289,9 @@ describe("SSL certificate monitor", () => {
     // Nothing counted, so no uptime figure, and not a success either.
     expect(detail.uptime).toEqual({ d1: null, d7: null, d30: null, d90: null, d365: null });
     expect(detail.state.last_success_at).toBeNull();
+    // The history strip says Can't check, not No data.
+    const history = await (await apiRequest(`/api/monitors/${monitor.id}/history?range=24h`)).json<{ buckets: { state: string }[] }>();
+    expect(history.buckets.at(-1)!.state).toBe("cant_check");
   });
 
   it("is can't check for a TLS 1.3-only server", async () => {
