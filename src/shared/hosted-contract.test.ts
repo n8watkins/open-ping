@@ -7,7 +7,10 @@ import {
   PLAN_LIMITS,
   base64urlDecode,
   base64urlEncode,
+  NO_PACKS,
+  PACKS,
   checkChannelKindLimit,
+  checkFastMonitorLimit,
   checkIntervalLimit,
   checkMonitorLimit,
   checkStatusPageLimit,
@@ -22,8 +25,14 @@ import {
   isTenantId,
   nextScheduledCall,
   parseHandoffToken,
+  fastMonitorAllowance,
+  isFastInterval,
+  packsForPlan,
   planLimitBody,
+  planLimitsWithPacks,
   signHandoffToken,
+  upgradeUrlFor,
+  withLimitGrant,
   tenantDatabaseName,
   tenantScriptName,
   validateHandoffClaims,
@@ -179,7 +188,97 @@ describe("plan limits", () => {
   it("match the Hosted plan", () => {
     expect(PLAN_LIMITS.trial).toMatchObject({ monitors: 5, statusPages: 1, minIntervalMinutes: 12, channelKinds: ["email"] });
     expect(PLAN_LIMITS.hosted).toMatchObject({ monitors: 20, statusPages: 2, minIntervalMinutes: 12, channelKinds: "all" });
-    expect(PLAN_LIMITS.hosted_fast).toMatchObject({ monitors: 20, statusPages: 2, minIntervalMinutes: 1 });
+    expect(PLAN_LIMITS.hosted_fast).toMatchObject({ monitors: 20, statusPages: 2, minIntervalMinutes: 1, fastMonitors: 5 });
+    expect(PLAN_LIMITS.trial.fastMonitors).toBe(0);
+    expect(PLAN_LIMITS.hosted.fastMonitors).toBe(0);
+  });
+
+  it("calls a monitor fast when it is checked more often than every 12 minutes", () => {
+    expect(isFastInterval(60)).toBe(true);
+    expect(isFastInterval(660)).toBe(true);
+    expect(isFastInterval(720)).toBe(false);
+    expect(isFastInterval(3600)).toBe(false);
+    expect(isFastInterval(Number.NaN)).toBe(false);
+  });
+
+  it("reads the fast monitor allowance, and answers for a platform that doesn't send one yet", () => {
+    expect(fastMonitorAllowance(PLAN_LIMITS.hosted_fast)).toBe(5);
+    expect(fastMonitorAllowance(PLAN_LIMITS.hosted)).toBe(0);
+    const { fastMonitors: _fast, ...older } = PLAN_LIMITS.hosted_fast;
+    expect(fastMonitorAllowance(older)).toBe(20);
+    const { fastMonitors: _none, ...olderSlow } = PLAN_LIMITS.hosted;
+    expect(fastMonitorAllowance(olderSlow)).toBe(0);
+    expect(fastMonitorAllowance({ ...PLAN_LIMITS.hosted_fast, fastMonitors: -1 })).toBe(20);
+  });
+
+  it("refuses a fast monitor past the allowance, with a sentence that says how to fix it", () => {
+    expect(checkFastMonitorLimit(PLAN_LIMITS.hosted_fast, 4)).toBeNull();
+    expect(checkFastMonitorLimit(PLAN_LIMITS.hosted_fast, 5, 0)).toBeNull();
+    expect(checkFastMonitorLimit(PLAN_LIMITS.hosted_fast, 5)).toMatchObject({
+      limit: "fast_monitors",
+      allowed: 5,
+      requested: 6,
+      message:
+        "Your plan includes 5 fast monitors, checked more often than every 12 minutes. Set one to 12 minutes or more, or add more fast monitors.",
+    });
+    expect(checkFastMonitorLimit(PLAN_LIMITS.hosted_fast, 3, 3)).toMatchObject({ requested: 6 });
+    expect(checkFastMonitorLimit(PLAN_LIMITS.hosted, 0)?.message).toBe(
+      "Checks more often than every 12 minutes come with the fast checks add-on.",
+    );
+  });
+
+  it("adds packs to a paid plan's limits, capped, and never to a trial", () => {
+    expect(PACKS.monitors).toMatchObject({ adds: 25, max: 4 });
+    expect(PACKS.fast_monitors).toMatchObject({ adds: 5, max: 3 });
+    expect(planLimitsWithPacks("hosted")).toEqual(PLAN_LIMITS.hosted);
+    expect(planLimitsWithPacks("hosted", { monitors: 2 })).toMatchObject({ monitors: 70, fastMonitors: 0 });
+    expect(planLimitsWithPacks("hosted_fast", { monitors: 4, fast_monitors: 3 })).toMatchObject({
+      monitors: 120,
+      fastMonitors: 20,
+      minIntervalMinutes: 1,
+    });
+    // Over the caps: the caps.
+    expect(planLimitsWithPacks("hosted_fast", { monitors: 9, fast_monitors: 9 })).toMatchObject({ monitors: 120, fastMonitors: 20 });
+    // Fast packs need the fast checks add-on; a trial has no packs.
+    expect(planLimitsWithPacks("hosted", { fast_monitors: 2 })).toMatchObject({ fastMonitors: 0 });
+    expect(planLimitsWithPacks("trial", { monitors: 3, fast_monitors: 1 })).toEqual(PLAN_LIMITS.trial);
+    // Nonsense counts as none.
+    expect(packsForPlan("hosted_fast", { monitors: -2, fast_monitors: Number.NaN })).toEqual(NO_PACKS);
+    expect(packsForPlan("hosted_fast", { monitors: 1.7, fast_monitors: "2" })).toEqual({ monitors: 1, fast_monitors: 0 });
+  });
+
+  it("adds a support grant on top of the plan and its packs, never in place of them", () => {
+    const paid = planLimitsWithPacks("hosted_fast", { monitors: 2, fast_monitors: 1 });
+    expect(withLimitGrant(paid, null)).toEqual(paid);
+    expect(withLimitGrant(paid, { monitors: 10, fastMonitors: 5, statusPages: 1, emailsPerDay: 100 })).toMatchObject({
+      monitors: 80,
+      fastMonitors: 15,
+      statusPages: 3,
+      emailsPerDay: 600,
+    });
+    // A grant only ever widens: a shorter interval, more channel kinds.
+    expect(withLimitGrant(PLAN_LIMITS.hosted, { minIntervalMinutes: 5 }).minIntervalMinutes).toBe(5);
+    expect(withLimitGrant(PLAN_LIMITS.hosted_fast, { minIntervalMinutes: 5 }).minIntervalMinutes).toBe(1);
+    expect(withLimitGrant(PLAN_LIMITS.trial, { channelKinds: ["slack"] }).channelKinds).toEqual(["email", "slack"]);
+    expect(withLimitGrant(PLAN_LIMITS.trial, { channelKinds: "all" }).channelKinds).toBe("all");
+    expect(withLimitGrant(PLAN_LIMITS.hosted, { channelKinds: ["slack"] }).channelKinds).toBe("all");
+  });
+
+  it("grants fast monitors only explicitly: a shorter interval alone makes none fast", () => {
+    const interval = withLimitGrant(PLAN_LIMITS.hosted, { minIntervalMinutes: 1 });
+    expect(fastMonitorAllowance(interval)).toBe(0);
+    expect(checkFastMonitorLimit(interval, 0)).not.toBeNull();
+    const both = withLimitGrant(PLAN_LIMITS.hosted, { minIntervalMinutes: 1, fastMonitors: 3 });
+    expect(fastMonitorAllowance(both)).toBe(3);
+    expect(checkIntervalLimit(both, 1)).toBeNull();
+  });
+
+  it("links an upgrade to what the limit needs", () => {
+    expect(upgradeUrlFor(urls.upgrade, "fast_monitors")).toBe("https://app.example.test/billing/upgrade?need=fast_monitors");
+    expect(upgradeUrlFor("https://app.example.test/billing/upgrade?x=1", "monitors")).toBe(
+      "https://app.example.test/billing/upgrade?x=1&need=monitors",
+    );
+    expect(upgradeUrlFor("not a url", "monitors")).toBe("not a url");
   });
 
   it("allows creating up to the limit and refuses the one after", () => {
@@ -224,7 +323,7 @@ describe("plan limits", () => {
       requested: 6,
       plan: "trial",
       message: "Your plan includes 5 monitors. Remove one or upgrade to add more.",
-      upgradeUrl: urls.upgrade,
+      upgradeUrl: `${urls.upgrade}?need=monitors`,
     });
   });
 });

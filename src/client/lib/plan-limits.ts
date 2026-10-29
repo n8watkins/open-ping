@@ -107,6 +107,8 @@ export function planLimitTitle(limit: PlanLimitBody): string {
     }
     case "interval":
       return "Faster checks aren't in your plan";
+    case "fast_monitors":
+      return limit.allowed === 0 ? "Fast checks aren't in your plan" : `All ${limit.allowed} fast monitors in use`;
   }
 }
 

@@ -151,7 +151,7 @@ describe("monitors", () => {
       requested: 6,
       plan: "trial",
       message: "Your plan includes 5 monitors. Remove one or upgrade to add more.",
-      upgradeUrl: UPGRADE,
+      upgradeUrl: `${UPGRADE}?need=monitors`,
     } satisfies PlanLimitBody);
     expect(await count("monitors")).toBe(5);
   });
@@ -223,7 +223,7 @@ describe("monitors", () => {
     const refused = await mcp("create_monitor", heartbeat("One too many"));
     expect(refused.isError).toBe(true);
     expect(refused.content[0]!.text).toBe(
-      `Your plan includes 1 monitor. Remove one or upgrade to add more. Upgrade: ${UPGRADE}`,
+      `Your plan includes 1 monitor. Remove one or upgrade to add more. Upgrade: ${UPGRADE}?need=monitors`,
     );
     expect(refused.structuredContent).toMatchObject({ planLimit: { error: "plan_limit", limit: "monitors" } });
     expect(await count("monitors")).toBe(1);
@@ -285,7 +285,7 @@ describe("status pages", () => {
       allowed: 1,
       requested: 2,
       message: "Your plan includes 1 status page. Remove one or upgrade to add more.",
-      upgradeUrl: UPGRADE,
+      upgradeUrl: `${UPGRADE}?need=status_pages`,
     });
   });
 
@@ -408,7 +408,7 @@ describe("check intervals", () => {
       allowed: 12,
       requested: 1,
       message: "Your plan checks every 12 minutes at the fastest. Add fast checks for 1-minute checks.",
-      upgradeUrl: UPGRADE,
+      upgradeUrl: `${UPGRADE}?need=interval`,
     });
   });
 

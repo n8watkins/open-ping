@@ -1,6 +1,6 @@
 # OpenPing Hosted: the contract
 
-Status: contract version 1, 2026-10-28 (build plan item C0).
+Status: contract version 1, 2026-10-28 (build plan item C0); fast monitors and packs added 2026-10-29 (decision D13), additively.
 This is the agreement between the platform Worker (`platform/`) and a customer's OpenPing running as a user Worker in the dispatch namespace.
 The TypeScript types, constants and pure helpers are in [`src/shared/hosted-contract.ts`](../../src/shared/hosted-contract.ts); both sides import them, and neither side keeps its own copy.
 A change to this contract is its own pull request, which both lanes rebase on ([build plan, section 8](../HOSTED_BUILD_PLAN.md#8-how-the-agents-work-without-stepping-on-each-other)).
@@ -91,7 +91,7 @@ Each method runs inside the platform Worker, already bound to the calling tenant
   `category` (`"alert"`, `"report"`, `"signin"`, ...) feeds per-tenant metrics and the daily cap (`limits.emailsPerDay`).
   It answers `{ ok: true, id }` or `{ ok: false, error, message }` with `error` one of `email_quota_exceeded`, `email_rejected`, `email_unavailable`.
   It never throws for a delivery problem; a thrown error means the RPC itself failed, and the caller treats it like `email_unavailable`.
-- `reportUsage(counts: UsageCounts): Promise<void>` reports `monitors`, `statusPages` and `channels` after a create or delete and at the end of each scheduled run.
+- `reportUsage(counts: UsageCounts): Promise<void>` reports `monitors`, `fastMonitors`, `statusPages` and `channels` after a create, an edit or a delete and at the end of each scheduled run (`fastMonitors` is absent from bundles older than the field).
   The platform uses it for the admin console and abuse signals, not for enforcement; enforcement is the user Worker's, from props.
 - `audit(event: HostedAuditEvent): Promise<void>` records an event in the platform's audit log.
   `action` is dotted lowercase (`AUDIT_ACTION_PATTERN`, for example `session.created`), `actor` is `customer`, `support` or `system`, and `detail` is small, flat and never secret.
@@ -118,23 +118,53 @@ Every email OpenPing sends goes through one transport (`src/worker/notifications
 
 ## 5. Plans and limits
 
-`PlanLimits` has `monitors`, `statusPages`, `minIntervalMinutes`, `channelKinds` (`"all"` or a list of channel kinds) and `emailsPerDay`.
-The platform's defaults (`PLAN_LIMITS`):
+`PlanLimits` has `monitors`, `statusPages`, `minIntervalMinutes`, `fastMonitors`, `channelKinds` (`"all"` or a list of channel kinds) and `emailsPerDay`.
+The platform's defaults (`PLAN_LIMITS`, the launch pricing in [decision D13](./DECISIONS.md#d13-launch-pricing)):
 
-| Plan | Monitors | Status pages | Fastest check | Channels | Emails a day |
-| --- | --- | --- | --- | --- | --- |
-| `trial` | 5 | 1 | 12 minutes | email | 50 |
-| `hosted` | 20 | 2 | 12 minutes | all | 500 |
-| `hosted_fast` | 20 | 2 | 1 minute | all | 500 |
+| Plan | Monitors | Status pages | Fastest check | Fast monitors | Channels | Emails a day |
+| --- | --- | --- | --- | --- | --- | --- |
+| `trial` | 5 | 1 | 12 minutes | 0 | email | 50 |
+| `hosted` | 20 | 2 | 12 minutes | 0 | all | 500 |
+| `hosted_fast` | 20 | 2 | 1 minute | 5 | all | 500 |
 
 The user Worker enforces whatever arrives in `props.tenant.limits`, never `PLAN_LIMITS` directly, so the platform can grant a tenant more without a release.
 The email numbers are starting values, to be measured in the load test.
+
+### Fast monitors
+
+A **fast monitor** is a polled monitor (http, dns, tcp, domain) whose interval is shorter than `STANDARD_CHECK_MINUTES` (12 minutes, `isFastInterval`); paused ones count, and a heartbeat never does.
+`minIntervalMinutes` says how fast a monitor may be checked, and `fastMonitors` says how many may be checked faster than 12 minutes: on `hosted_fast`, 5 of the 20 monitors every minute and the rest at 12 minutes or slower.
+The user Worker reads the allowance with `fastMonitorAllowance(limits)`.
+A platform older than the field sends no `fastMonitors`; then the allowance is every monitor when `minIntervalMinutes` is under 12 and none otherwise, which is what those platforms meant.
+The field is additive, so `HOSTED_CONTRACT_VERSION` stays 1.
+
+### Packs
+
+A paid plan can carry packs (`PACKS`), each a quantity on the customer's subscription:
+
+| Pack | Adds | At most | Sold with |
+| --- | --- | --- | --- |
+| `monitors` | 25 monitors | 4 (120 monitors in all) | `hosted`, `hosted_fast` |
+| `fast_monitors` | 5 fast monitors | 3 (20 fast monitors in all) | `hosted_fast` only |
+
+The platform does all of the arithmetic: `planLimitsWithPacks(plan, packs)` adds the packs to the plan's limits, clamped to the caps and to the plans each pack is sold with (`packsForPlan`), `withLimitGrant` adds any support grant on top, and `tenant.limits` carries the final numbers.
+A tenant never sees a pack, a price or a cap, and never works out a limit itself; a new pack, a new price or a bigger cap needs no release of OpenPing.
+Larger accounts ask support, whose grant is an override.
+
+### Support grants
+
+A support grant (the platform's per-tenant override, `LimitGrant`) is added to what the tenant pays for, never put in its place, so a grant can't take away a pack the customer bought:
+
+- `monitors`, `statusPages`, `fastMonitors` and `emailsPerDay` are added to the plan and its packs;
+- `minIntervalMinutes` only ever lowers the interval, and `channelKinds` only ever adds kinds;
+- fast monitors come only from `fastMonitors`: every monitor faster than 12 minutes is a fast monitor, so a grant of `minIntervalMinutes: 1` alone allows none (on a plan without fast checks), and a grant of fast checks gives both `minIntervalMinutes` and `fastMonitors`.
 
 Enforcement happens on every create or update route, whether it is reached from the dashboard, the API, MCP or the CLI:
 
 - creating a monitor: `checkMonitorLimit(limits, existingCount)`;
 - creating a status page: `checkStatusPageLimit(limits, existingCount)`;
 - creating or editing a monitor's interval: `checkIntervalLimit(limits, minutes)`;
+- creating a fast monitor, or editing a monitor to be fast: `checkFastMonitorLimit(limits, existingFastCount)`, where an edit leaves the monitor itself out of the count;
 - creating a channel: `checkChannelKindLimit(limits, kind)`.
 
 Each returns null when the change fits, or the details for the answer.
@@ -152,9 +182,26 @@ A refused change is HTTP 402 with `planLimitBody(details, props.tenant)`:
 }
 ```
 
-`limit` is one of `monitors`, `status_pages`, `interval`, `channel_kind`.
+`limit` is one of `monitors`, `status_pages`, `interval`, `fast_monitors`, `channel_kind`.
 `message` is one plain sentence the UI shows as is, next to a button to `upgradeUrl`.
+`upgradeUrl` is `urls.upgrade` with `?need=<limit>` (`upgradeUrlFor`), so the platform's upgrade page leads with what lifts that limit: the fast checks add-on for `interval`, a fast monitor pack for `fast_monitors`, a monitor pack for `monitors` on a paid plan, and subscribing on a trial.
+A platform that ignores the parameter shows its usual upgrade page.
+A fast monitor refusal reads, for 5 allowed:
+
+```json
+{
+  "error": "plan_limit",
+  "limit": "fast_monitors",
+  "allowed": 5,
+  "requested": 6,
+  "plan": "hosted_fast",
+  "message": "Your plan includes 5 fast monitors, checked more often than every 12 minutes. Set one to 12 minutes or more, or add more fast monitors.",
+  "upgradeUrl": "https://app.<domain>/billing/upgrade?need=fast_monitors"
+}
+```
+
 A downgrade never deletes anything: existing monitors over the limit keep running, and only new ones are refused.
+Fast monitors over the allowance keep their setting too, and the scheduler checks the extra ones at 12 minutes (below).
 
 ### How OpenPing does it
 
