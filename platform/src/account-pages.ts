@@ -10,6 +10,7 @@ import type { Passkey } from "./auth/passkeys";
 import { SLUG_MAX_LENGTH } from "./slugs";
 import type { ProvisionState } from "./tenants";
 import { GITHUB_ICON, Html, PASSKEY_ICON, SUPPORT_EMAIL, html, notice, renderPage } from "./ui";
+import { BILLING_STYLE, billingSection, type BillingView } from "./billing/pages";
 import type { PlanId, TenantStatus } from "../../src/shared/hosted-contract";
 
 export interface SignInPageInput {
@@ -172,6 +173,10 @@ export interface AccountTenantView {
   /** Provisioning stopped for the owner to look at. */
   paused: boolean;
   trialEndsAt: number | null;
+  /** The owner suspended it (abuse); only support can lift that. */
+  ownerSuspended: boolean;
+  /** Billing suspended it (trial over, unpaid, cancelled); paying lifts that. */
+  billingSuspended: boolean;
 }
 
 const PLAN_NAMES: Record<PlanId, string> = { trial: "Free trial", hosted: "Hosted, yearly", hosted_fast: "Hosted with 1-minute checks" };
@@ -221,7 +226,9 @@ function tenantSection(tenant: AccountTenantView | null, now: number): Html {
 <p>${PLAN_NAMES[tenant.plan]}${tenant.status === "trial" && tenant.trialEndsAt ? `, ends ${dateText(tenant.trialEndsAt)}` : ""}.</p>
 ${
   tenant.status === "suspended"
-    ? html`<p>Its checks are paused and its status page is offline. Your monitors and history are kept for 30 days. Write to support to restore it.</p>`
+    ? tenant.ownerSuspended
+      ? html`<p>Its checks are paused and its status page is offline. Your monitors and history are kept for 30 days. Write to support to restore it.</p>`
+      : html`<p>Its checks are paused and its status page is offline. Your monitors and history are kept for 30 days; see Billing below to turn it back on.</p>`
     : html`<div class="stack"><a class="button primary" href="/open?tenant=${tenant.slug}">Open my OpenPing</a></div>`
 }`;
 }
@@ -237,6 +244,8 @@ export function accountPage(input: {
   supportSignIns?: { at: number; reason: string | null }[];
   /** The platform's owner: link the admin console. */
   isOwner?: boolean;
+  /** The billing section (B5). */
+  billing: BillingView;
   now: number;
 }): Response {
   const settingUp = input.tenant !== null && input.tenant.provisionState !== "ready" && !input.tenant.paused;
@@ -257,6 +266,7 @@ export function accountPage(input: {
   return renderPage({
     title: "Your account",
     wide: true,
+    style: BILLING_STYLE,
     homeHref: "/account",
     refreshSeconds: settingUp ? 3 : undefined,
     scripts: [PASSKEY_SCRIPT_PATH],
@@ -282,7 +292,7 @@ ${
       )}</ul></section>`
     : ""
 }
-<section><h2>Billing</h2><p>Paid plans open soon: $24 a year, and $12 a year more for 1-minute checks. Your trial keeps running until then.</p></section>
+<section id="billing">${billingSection(input.billing, input.now)}</section>
 ${input.isOwner ? html`<section><h2>Owner</h2><div class="stack"><a class="button secondary" href="/admin">Open the admin console</a></div></section>` : ""}
 <section><form method="post" action="/sign-out"><button class="button secondary" type="submit">Sign out</button></form></section>`,
   });

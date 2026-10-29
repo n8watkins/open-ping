@@ -3,7 +3,7 @@
 This is the platform Worker for OpenPing Hosted: the code that owns customers rather than monitoring.
 It is planned in [the build plan](../docs/HOSTED_BUILD_PLAN.md), and it talks to each customer's OpenPing only through [the contract](../docs/hosted/CONTRACT.md).
 
-**Status: skeleton (B1), provisioning (B3), accounts (B2), the admin console (B6) and scheduling (B4), not deployed anywhere.**
+**Status: skeleton (B1), provisioning (B3), accounts (B2), the admin console (B6), scheduling (B4) and billing (B5), not deployed anywhere.**
 Nothing here has been created in a Cloudflare account yet; see [Owner setup](#owner-setup-not-done-yet).
 
 ## What it does today
@@ -63,6 +63,15 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   - never two runs of one tenant at once: the claim records a run id and a lease, the consumer starts only the claimed run and only once per attempt (a conditional write), and the tenant also keeps its own lease (`lease_busy`);
   - a call is never retried through the queue: the backoff above is the retry, so a tenant is never called twice for one run; after the call, the run's bookkeeping is retried in place (3 times) when the platform database fails, and the message is acknowledged either way;
   - each run's numbers go to `scheduler_stats` (one row per tenant: the last run's outcome, platform-measured duration, queue lag, the tenant's own duration, checks, failed checks, deferred monitors, D1 queries, version, error, failures in a row, and today's totals) and, once a day per tenant, to `scheduler_days` (kept 90 days); the admin console's tenant page shows them under "Scheduler".
+- Bills with Stripe (B5, `src/billing/`), in test mode until the owner says otherwise, and tested only against an in-memory Stripe (`test/fake-stripe.ts`):
+  - a new tenant gets a 14-day trial with the trial plan's limits (5 monitors) and no card; on day 15 the cron's trial sweep suspends a trial with no subscription (`billing_reason` `trial_ended`), through a partial index (`idx_tenants_trial_end`, migration 0006) so paying tenants are never read;
+  - `/billing` and the account page show the plan, the renewal date, and what can be done: subscribe through Stripe Checkout (the yearly plan at $24, or with 1-minute checks at $36), add 1-minute checks to a paid plan ($12, the rest of the year invoiced at once and applied only if paid), or open Stripe's Customer Portal (card, invoices, cancel); `/billing/upgrade`, where a tenant's 402 answers link, leads with the next plan up;
+  - Checkout runs in subscription mode for the account's own Stripe Customer (made once, with an idempotency key), with Stripe Tax on (`automatic_tax`, saving the address Checkout collects, and tax ids), and the account and tenant in the session's and the subscription's metadata;
+  - `POST /stripe/webhook` checks the `Stripe-Signature` header exactly as Stripe documents for verifying by hand (HMAC-SHA256 of `t.body` with the endpoint secret, every `v1` compared in constant time, other schemes ignored, 5 minutes of tolerance), refuses an event of the wrong mode, processes each event id once (`stripe_events`; a second delivery while one is running answers 409), and fetches the subscription from Stripe, since events can arrive in any order;
+  - the state machine (`src/billing/state.ts`): active or trialing is `active` (plan `hosted`, or `hosted_fast` with the add-on), `past_due` keeps checking while Stripe retries, `unpaid`, `paused` and `canceled` suspend with a reason, and incomplete subscriptions change nothing; the best of an account's subscriptions decides;
+  - dunning: a failed payment emails the customer at once with Stripe's next try and a link to `/billing`, and the account page shows it until it is paid; Stripe's own retry schedule and its final step (cancel, or mark unpaid) are Stripe settings (owner setup below);
+  - billing writes only `tenants.status`, `.plan`, `.billing_reason` and `.suspended_at`, never the owner's `owner_suspended_*`, so a payment can't lift the owner's suspension; a change reaches the tenant's props on its next call (at once in the isolate that took the webhook, within 30 seconds elsewhere, and on the scheduler's next run);
+  - every Stripe request pins API version `2026-09-30.endive`, and the shapes it reads are checked against Stripe's current reference (links in `src/billing/stripe.ts`).
 - Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit` and `reportUsage` are real, the latter keeping each tenant's latest counts in `tenant_usage` for the console; `sendEmail` is a stub until A5).
 
 ## Layout
@@ -85,6 +94,7 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 | `src/accounts.ts`, `src/mail.ts`, `src/handoff.ts` | Accounts and identities, the Resend mailer, minting hand-off tokens |
 | `src/admin/` | The admin console: `owner.ts` (who may use it), `data.ts` (queries, suspend and resume), `waitlist.ts` (the import), `pages.ts`, `routes.ts` |
 | `src/provisioning.ts` | The provisioning state machine: `requestTenant`, `runProvisioning`, `removeTenant`, and `provisionDue` (the retry sweep) |
+| `src/billing/` | Billing: `stripe.ts` (the Stripe client, pinned version), `signature.ts` (webhook signatures), `webhook.ts`, `state.ts` (the state machine and the trial sweep), `routes.ts`, `pages.ts`, `config.ts` |
 | `src/scheduling.ts` | The scheduler: `enqueueDue` (the cron's claims), `handleScheduleBatch` (the queue consumer), due times, run metrics and the console's `scheduleView` |
 | `src/provisioning-env.ts` | Builds provisioning's dependencies from the env, or names the settings that are missing |
 | `src/cloudflare/api.ts` | `CloudflareApi`: the D1 and Workers for Platforms calls provisioning makes, with links to Cloudflare's docs |
@@ -169,9 +179,16 @@ They are needed before staging in wave 3 ([build plan, section 12](../docs/HOSTE
    - `CF_ACCOUNT_ID`: the account's 32 hex character id, a secret only to keep it out of this public config;
    - `CF_API_TOKEN`: a custom API token for that one account with **Account, Workers Scripts, Edit** and **Account, D1, Edit**, nothing else (O5); the dispatch namespace's scripts are Workers Scripts;
    - `RESEND_API_KEY` and `GITHUB_CLIENT_SECRET`, for sign-in;
-   - `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`, in test mode first (O3);
+   - `STRIPE_SECRET_KEY` (a test-mode secret or restricted key, `sk_test_...` or `rk_test_...`) and `STRIPE_WEBHOOK_SECRET` (`whsec_...`, from step 10), in test mode first (O3);
    - `PLATFORM_OWNERS`, if it names the owner by email rather than by account id (otherwise the var in `wrangler.jsonc`).
    The owner signs in once and adds a passkey on the account page, then opens `/admin`: the "Confirm it's you" page lists the account's passkeys with their credential ids.
    They copy the id of the passkey they hold (and check there is none they don't recognise) into `PLATFORM_OWNER_PASSKEYS`, then sign in with that passkey.
    Their account id then appears in the console's audit log (`by: acc_...` on each of their changes), and can replace the email in the public var.
 9. **Support address:** support@n8builds.dev, decided; forward it with Cloudflare Email Routing (O4).
+10. **Stripe, in test mode** (owner action O3), in the Stripe dashboard:
+    - two Products with yearly recurring Prices in USD: "OpenPing Hosted" at $24.00 and "1-minute checks" at $12.00, each with tax behavior "exclusive" and the tax code for software as a service; put their `price_...` ids in `STRIPE_PRICE_HOSTED` and `STRIPE_PRICE_FAST`;
+    - Stripe Tax: turn it on, set the business's origin address, and add a registration wherever the business must collect tax (Stripe's dashboard lists where sales cross a threshold); `STRIPE_TAX` stays `on`;
+    - the Customer Portal: allow updating the payment method, viewing invoices, and cancelling at the end of the period; leave plan switching off (the add-on is added from `/billing`); its default configuration is used unless `STRIPE_PORTAL_CONFIGURATION` names another;
+    - failed payments (Billing, Revenue recovery): Smart Retries on, and after the last retry "cancel the subscription" (recommended: Stripe stops invoicing, and the tenant is suspended as `canceled`) or "mark as unpaid" (also suspended, as `unpaid`); either stops checks (decision D8); Stripe's own customer emails for failed payments can stay on alongside the platform's;
+    - a webhook endpoint at `https://app.<domain>/stripe/webhook`, snapshot payload, API version `2026-09-30.endive`, with the eight events in `WEBHOOK_EVENTS` (`src/billing/webhook.ts`); its signing secret is `STRIPE_WEBHOOK_SECRET`;
+    - at launch: the same in live mode with live keys and prices, and `STRIPE_MODE` set to `live` (owner action O8).

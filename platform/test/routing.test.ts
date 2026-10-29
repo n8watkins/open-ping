@@ -96,6 +96,7 @@ describe("the platform database", () => {
       "scheduler_days",
       "scheduler_stats",
       "slug_holds",
+      "stripe_events",
       "subscriptions",
       "tenant_usage",
       "tenants",
