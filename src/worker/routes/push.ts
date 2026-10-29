@@ -10,7 +10,11 @@ import {
   deleteSubscription,
   setDisabled,
   recordPushResult,
+  upsertFcmDevice,
 } from "../db/push";
+import { fcmProjectId, isFcmToken, sendFcm, serviceAccount } from "../notifications/push/fcm";
+import { fcmAlert } from "../notifications/dispatcher";
+import { configuredOrigin } from "../lib/app-origin";
 import { getSetting } from "../db/settings";
 import { getVapid, ensureVapidPublicKey } from "../notifications/push/vapid";
 import { sendWebPush } from "../notifications/push/webpush";
@@ -60,6 +64,41 @@ push.post("/subscribe", async (c) => {
   return c.json({ subscription }, 201);
 });
 
+/**
+ * The OpenPing Android app's notifications (docs/ANDROID.md): whether this
+ * install can send them (FCM_SERVICE_ACCOUNT is set), and through which
+ * Firebase project. The app's token only works with that project.
+ */
+push.get("/fcm", (c) => {
+  const projectId = fcmProjectId(c.env);
+  return c.json({ available: projectId !== null, projectId });
+});
+
+const fcmSchema = z.object({
+  token: z.string().refine(isFcmToken, "Not an FCM registration token"),
+  /** The Firebase project the app's build belongs to. */
+  projectId: z.string().min(1).max(100),
+  /** The phone, for the device list: "Pixel 8". */
+  label: z.string().max(80).optional(),
+});
+
+/** Register the Android app on this phone: its FCM token, revocable like any push device. */
+push.post("/fcm", async (c) => {
+  const projectId = fcmProjectId(c.env);
+  if (!projectId) return c.json({ error: "fcm_not_configured" }, 404);
+  const parsed = fcmSchema.safeParse(await c.req.json().catch(() => undefined));
+  if (!parsed.success) return c.json({ error: "validation", issues: parsed.error.issues }, 400);
+  // A token from another Firebase project would only ever fail to send.
+  if (parsed.data.projectId !== projectId) return c.json({ error: "fcm_project_mismatch", projectId }, 409);
+  const device = await upsertFcmDevice(c.env, {
+    token: parsed.data.token,
+    label: parsed.data.label ? `OpenPing app on ${parsed.data.label}` : "OpenPing app",
+    userAgent: c.req.header("user-agent") ?? undefined,
+  });
+  const { endpoint: _token, p256dh: _p, auth: _a, ...summary } = device;
+  return c.json({ device: summary }, 201);
+});
+
 push.get("/devices", async (c) => {
   const devices = await listDevices(c.env);
   return c.json({ devices });
@@ -96,6 +135,27 @@ push.post("/generate-vapid", async (c) => {
 push.post("/devices/:id/test", async (c) => {
   const sub = await getSubscription(c.env, c.req.param("id"));
   if (!sub) return c.json({ error: "not_found" }, 404);
+  if (sub.kind === "fcm") {
+    const sa = serviceAccount(c.env);
+    if (!sa) return c.json({ error: "fcm_not_configured" }, 400);
+    const origin = (await configuredOrigin(c.env)) ?? new URL(c.req.url).origin;
+    const result = await sendFcm(
+      sa,
+      sub.endpoint,
+      fcmAlert(origin, {
+        event: "test",
+        monitorId: "test",
+        monitorName: "OpenPing",
+        state: "up",
+        title: "✅ OpenPing test",
+        body: "Notifications from this OpenPing reach the app.",
+        url: `${origin}/`,
+        detectedAt: Date.now(),
+      }),
+    );
+    await recordPushResult(c.env, sub.id, result.ok, { expired: result.expired || result.invalid });
+    return c.json({ ok: result.ok, error: result.error }, result.ok ? 200 : 502);
+  }
   const vapid = await getVapid(c.env);
   if (!vapid) return c.json({ error: "vapid_not_configured" }, 400);
   const appUrl = c.env.APP_URL ?? (await getSetting(c.env, "app_url")) ?? undefined;

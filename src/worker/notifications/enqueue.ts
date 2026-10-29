@@ -15,6 +15,7 @@ import { listActiveSubscriptionIds } from "../db/push";
 import { enqueue, type NewOutboxEntry } from "../db/outbox";
 import { getSetting } from "../db/settings";
 import { isVapidConfigured } from "./push/vapid";
+import { fcmProjectId } from "./push/fcm";
 import { channelWantsEvent, type ChannelKind, type NotifyEvent } from "../../shared/notifications";
 import { buildIncidentPayload, buildIncidentUpdatePayload, type NotificationPayload } from "./payload";
 
@@ -50,7 +51,7 @@ export interface NotifyContext {
   /** Every channel, as listChannels returns them. */
   channels: ChannelRecord[];
   appUrl: string | undefined;
-  /** Active Web Push device ids; empty when Web Push isn't configured. */
+  /** Active push device ids (Web Push and the Android app) this install can send to. */
   pushIds: string[];
 }
 
@@ -150,7 +151,8 @@ async function fanOut(
   buildPayload: (appUrl: string | undefined) => NotificationPayload,
 ): Promise<number> {
   const channels = await listChannels(env);
-  const pushIds = (await isVapidConfigured(env)) ? await listActiveSubscriptionIds(env) : [];
+  const senders = { webpush: await isVapidConfigured(env), fcm: fcmProjectId(env) !== null };
+  const pushIds = senders.webpush || senders.fcm ? await listActiveSubscriptionIds(env, senders) : [];
   // Push devices are a destination of their own: a phone may be the only one.
   if (!channels.some((c) => c.enabled && c.type !== "push") && pushIds.length === 0) return 0;
   const appUrl = env.APP_URL ?? (await getSetting(env, "app_url")) ?? undefined;

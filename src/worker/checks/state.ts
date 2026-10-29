@@ -28,7 +28,8 @@ import {
 } from "../notifications/enqueue";
 import { enqueueStatements, type NewOutboxEntry } from "../db/outbox";
 import { channelsFromRows, listChannelsStatement } from "../db/channels";
-import { activeSubscriptionIdsStatement } from "../db/push";
+import { activeSubscriptionIdsStatement, sendableIds } from "../db/push";
+import { fcmProjectId } from "../notifications/push/fcm";
 import { settingsFromRows, settingsStatement, type SettingRow } from "../db/settings";
 import { batchEach, runWritePlan, type LabeledStatement, type WriteGroup, type WriteUnit } from "../lib/batch";
 import type { NotifyEvent } from "../../shared/notifications";
@@ -248,7 +249,10 @@ export async function readWriteContext(
         notify = {
           channels: await channelsFromRows(env, channelRows),
           appUrl: env.APP_URL ?? settings.get("app_url") ?? undefined,
-          pushIds: vapid ? (pushRows ?? []).map((r) => (r as { id: string }).id) : [],
+          pushIds: sendableIds((pushRows ?? []) as Array<{ id: string; kind?: string | null }>, {
+            webpush: vapid,
+            fcm: fcmProjectId(env) !== null,
+          }),
         };
       } catch (e) {
         console.error("[state] reading the alert channels failed", e);

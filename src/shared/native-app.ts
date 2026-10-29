@@ -66,7 +66,9 @@ export type AppBridgeRequest =
   /** Show the app's list of installs. */
   | { type: "switch" }
   /** Ask for notification permission and an FCM token for this install. */
-  | { type: "push.register" };
+  | { type: "push.register" }
+  /** The FCM token again, without asking anything (only when notifications are already allowed). */
+  | { type: "push.refresh" };
 
 export type AppBridgeReply =
   | {
@@ -76,5 +78,12 @@ export type AppBridgeReply =
       /** Whether this build can receive push notifications (Firebase is configured). */
       push: boolean;
     }
-  | { type: "push.token"; token: string; projectId: string }
+  | {
+      type: "push.token";
+      token: string;
+      /** The Firebase project this build of the app belongs to. */
+      projectId: string;
+      /** The phone, for the device list: "Pixel 8". */
+      device?: string;
+    }
   | { type: "push.error"; reason: "unavailable" | "denied" | "failed" };

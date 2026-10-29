@@ -128,6 +128,13 @@ export interface Env {
    * Optional: the app signs in through the browser without it.
    */
   ANDROID_APP_LINKS?: string;
+
+  /**
+   * A Firebase service account's JSON key (a secret), to push alerts to the
+   * OpenPing Android app through FCM (notifications/push/fcm.ts). Unset, the
+   * app's notifications are off and nothing else changes.
+   */
+  FCM_SERVICE_ACCOUNT?: string;
 }
 
 /** Hono generics for this app. */
