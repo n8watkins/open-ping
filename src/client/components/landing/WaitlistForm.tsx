@@ -10,6 +10,13 @@ export const WAITLIST_URL =
   (import.meta as ImportMeta & { env?: { VITE_WAITLIST_URL?: string } }).env?.VITE_WAITLIST_URL ??
   "https://openping.n8builds.dev/api/waitlist";
 
+/**
+ * What the OpenPing website does with a waitlist address: section 13 of the
+ * privacy policy (docs/legal/PRIVACY.md). Its GitHub copy until the Hosted
+ * domain serves it at app.<domain>/privacy.
+ */
+export const PRIVACY_NOTICE_URL = "https://github.com/n8watkins/open-ping/blob/main/docs/legal/PRIVACY.md#13-the-openping-website-openpingn8buildsdev";
+
 type State = { kind: "idle" } | { kind: "sending" } | { kind: "done" } | { kind: "error"; message: string };
 
 /** A light check before posting; the server validates for real. */
@@ -101,7 +108,10 @@ export function WaitlistForm({ onJoined }: { onJoined?: () => void } = {}) {
         </p>
       )}
       <p id="waitlist-note" className="mt-3 text-xs leading-relaxed text-ink-faint">
-        No date yet. I'll email you once when it opens, with early pricing. No newsletter, never shared.
+        No date yet. I'll email you once when it opens, with early pricing. No newsletter, never shared.{" "}
+        <a href={PRIVACY_NOTICE_URL} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-ink">
+          Privacy notice
+        </a>
       </p>
     </form>
   );
