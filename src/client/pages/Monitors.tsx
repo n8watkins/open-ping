@@ -49,6 +49,7 @@ const NEW_MONITOR_OPTIONS = [
   { type: "dns", label: "DNS record" },
   { type: "tcp", label: "TCP port" },
   { type: "domain", label: "Domain expiry" },
+  { type: "cert", label: "SSL certificate" },
 ] as const;
 
 export default function Monitors() {
@@ -302,6 +303,7 @@ export default function Monitors() {
                   <option value="scheduled_off">Scheduled off</option>
                   <option value="maintenance">Maintenance</option>
                   <option value="paused">Paused</option>
+                  <option value="cant_check">Can't check</option>
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-2.5 size-3.5 text-ink-faint" />
               </label>

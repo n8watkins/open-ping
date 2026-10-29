@@ -14,7 +14,7 @@ does not reduce uptime.
 > Status: **V1 shipped and running live at
 > [openping.n8builds.dev](https://openping.n8builds.dev).** It has since grown
 > beyond core uptime checks - monitor categories and multiple public status
-> pages, five monitor types, a free `/tools` suite, an embeddable widget/badge,
+> pages, six monitor types, a free `/tools` suite, an embeddable widget/badge,
 > and a marketing landing page (all listed below). Hardened by multiple review
 > passes plus a live-deploy verification round that fixed several real production
 > bugs (see [`CODE_REVIEW.md`](./CODE_REVIEW.md)); the test suite, `tsc -b`, and
@@ -28,6 +28,7 @@ does not reduce uptime.
 - DNS record monitoring (A/AAAA/CNAME/MX/TXT) with optional value assertions
 - TCP port monitoring (connection-accepted checks)
 - Domain-expiry monitoring (RDAP) with an early-warning window
+- SSL certificate expiry monitoring, with an alert at 30, 14 and 7 days (configurable)
 - Timezone-aware operating schedules with warm-up handling
 - Distinct **Suspended** status for hosts that signal suspension (e.g. Render free-tier)
 - Incidents with automatic recovery, flapping protection, MTBF/MTTR

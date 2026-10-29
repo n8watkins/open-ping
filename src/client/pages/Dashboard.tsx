@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
 import { usePlan } from "../lib/plan-limits";
+import { attentionDetail, degradedTitle } from "../lib/attention";
 import { monitorTypeLabel, type MonitorSummary, type OverviewResponse } from "../lib/types";
 import { useTimeRange } from "../lib/time-range";
 import { StatusPill } from "../components/ui/StatusPill";
@@ -73,7 +74,7 @@ const ATTENTION_RANK: Partial<Record<MonitorSummary["state"], number>> = {
 };
 
 /** The one-line verdict at the top, from the same counts as the sidebar. */
-function verdict(counts: OverviewResponse["counts"] | undefined) {
+function verdict(counts: OverviewResponse["counts"] | undefined, monitors: MonitorSummary[]) {
   const down = (counts?.down ?? 0) + (counts?.suspended ?? 0);
   const degraded = counts?.degraded ?? 0;
   if (down > 0)
@@ -86,10 +87,17 @@ function verdict(counts: OverviewResponse["counts"] | undefined) {
     return {
       tone: "degraded" as const,
       icon: CircleAlert,
-      title: `${degraded} monitor${degraded === 1 ? " is" : "s are"} slow or degraded`,
+      title: degradedTitle(
+        monitors.filter((m) => m.state === "degraded"),
+        degraded,
+      ),
     };
   if ((counts?.openIncidents ?? 0) > 0)
     return { tone: "degraded" as const, icon: CircleAlert, title: "Recovering from an incident" };
+  // Only certificates that can't be read from a Worker (and nothing else being
+  // checked): don't claim everything was found working.
+  if ((counts?.up ?? 0) === 0 && (counts?.cant_check ?? 0) > 0)
+    return { tone: "up" as const, icon: CheckCircle2, title: "Nothing wrong found" };
   return { tone: "up" as const, icon: CheckCircle2, title: "All systems operational" };
 }
 
@@ -262,7 +270,7 @@ function HeroStatus({
   counts: OverviewResponse["counts"] | undefined;
   monitors: MonitorSummary[];
 }) {
-  const v = verdict(counts);
+  const v = verdict(counts, monitors);
   const lastChecked = monitors.reduce<number | null>(
     (max, m) => (m.lastCheckedAt != null && (max == null || m.lastCheckedAt > max) ? m.lastCheckedAt : max),
     null,
@@ -274,6 +282,7 @@ function HeroStatus({
     { n: down, label: "down", dot: "bg-down", text: "text-down" },
     { n: counts?.scheduled_off ?? 0, label: "off-hours", dot: "bg-scheduled", text: "text-ink" },
     { n: counts?.paused ?? 0, label: "paused", dot: "bg-paused", text: "text-ink" },
+    { n: counts?.cant_check ?? 0, label: "can't check", dot: "bg-paused", text: "text-ink" },
     { n: counts?.maintenance ?? 0, label: "in maintenance", dot: "bg-maint", text: "text-maint" },
     {
       n: counts?.openIncidents ?? 0,
@@ -348,13 +357,7 @@ function NeedsAttention({
             <span className="min-w-0 flex-1">
               <span className="block truncate font-medium">{m.name}</span>
               <span className="block truncate text-xs text-ink-faint">
-                {m.state === "degraded" && m.lastDurationMs != null
-                  ? `Responding in ${formatMs(m.lastDurationMs)}`
-                  : m.state === "suspended"
-                    ? "Suspended by the host"
-                    : m.lastStatusCode != null
-                      ? `Last response ${m.lastStatusCode}`
-                      : "Not responding"}
+                {attentionDetail(m)}
                 {m.stateSince != null && `, since ${formatRelativeTime(m.stateSince)}`}
               </span>
             </span>

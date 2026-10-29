@@ -6,6 +6,7 @@ export const NOTIFY_EVENTS = [
   "heartbeat_missed",
   "flapping",
   "degraded",
+  "cert_expiring",
   "maintenance_start",
   "maintenance_end",
   "incident_update",
@@ -30,6 +31,9 @@ export const NOTIFY_DEFAULTS: Record<NotifyEvent, Record<ChannelKind, boolean>> 
   heartbeat_missed: { push: true, email: true, discord: true, slack: true, teams: true, telegram: true, webhook: true },
   flapping: { push: true, email: true, discord: true, slack: true, teams: true, telegram: true, webhook: true },
   degraded: { push: false, email: false, discord: false, slack: false, teams: false, telegram: false, webhook: false },
+  // A certificate monitor crossed one of its warning thresholds (checks/cert.ts):
+  // the whole point of the monitor, so every channel hears it by default.
+  cert_expiring: { push: true, email: true, discord: true, slack: true, teams: true, telegram: true, webhook: true },
   maintenance_start: { push: false, email: false, discord: false, slack: false, teams: false, telegram: false, webhook: true },
   maintenance_end: { push: false, email: false, discord: false, slack: false, teams: false, telegram: false, webhook: true },
   // The admin posts these; their own devices don't need to hear back about it.

@@ -16,6 +16,7 @@ const STATUS_PRIORITY: Record<MonitorState, number> = {
   degraded: 2,
   warming_up: 3,
   unknown: 4,
+  cant_check: 4,
   maintenance: 5,
   scheduled_off: 6,
   paused: 7,

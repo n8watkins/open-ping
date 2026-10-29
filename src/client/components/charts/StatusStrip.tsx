@@ -180,7 +180,17 @@ function summarize(buckets: StripBucket[], bucketMs: number): string {
 
 /** A small key for the states present in a strip. */
 export function StripLegend({ states, className }: { states: BucketState[]; className?: string }) {
-  const order: BucketState[] = ["up", "degraded", "down", "suspended", "maintenance", "scheduled_off", "paused", "nodata"];
+  const order: BucketState[] = [
+    "up",
+    "degraded",
+    "down",
+    "suspended",
+    "maintenance",
+    "scheduled_off",
+    "paused",
+    "cant_check",
+    "nodata",
+  ];
   const present = order.filter((s) => states.includes(s));
   if (present.length === 0) return null;
   return (

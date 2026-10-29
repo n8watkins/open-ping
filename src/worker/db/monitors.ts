@@ -6,6 +6,7 @@ import { intervalSecondsOf } from "../../shared/schemas";
 import type {
   Assertion,
   ConfirmFailures,
+  CertConfig,
   CreateMonitorInput,
   DnsConfig,
   DomainConfig,
@@ -23,7 +24,8 @@ type MonitorConfig =
   | HeartbeatConfig
   | DnsConfig
   | TcpConfig
-  | DomainConfig;
+  | DomainConfig
+  | CertConfig;
 
 /**
  * Monitor CRUD data layer. The `monitors` table stores config/schedule/

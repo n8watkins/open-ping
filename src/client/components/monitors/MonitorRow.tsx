@@ -38,6 +38,7 @@ const STATE_ICON_CLASS: Record<MonitorState, string> = {
   scheduled_off: "bg-scheduled/10 text-scheduled",
   paused: "bg-surface-2 text-paused",
   unknown: "bg-surface-2 text-paused",
+  cant_check: "bg-surface-2 text-paused",
 };
 
 function recentCheckSegments(checks: { at: number; state: MonitorState }[]) {

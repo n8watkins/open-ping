@@ -97,6 +97,12 @@ See [`WIDGET.md`](./WIDGET.md) for the full embedding guide.
 
 ---
 
+## Expiry warnings
+
+An SSL certificate or domain monitor inside its expiry warning window shows **Degraded** on its own row, but doesn't turn the page banner to Degraded: the service still works, it only needs renewing.
+An expired certificate or domain is down and counts toward the banner like any outage.
+An SSL certificate monitor that can't be checked from a Worker (behind Cloudflare, TLS 1.3 only) shows as unknown and never affects the banner.
+
 ## Off-hours (scheduled off)
 
 A monitor with an operating schedule is not checked outside its hours, and its public page says so.

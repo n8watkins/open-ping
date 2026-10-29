@@ -12,6 +12,7 @@ const SEGMENT: Record<MonitorState, string> = {
   paused: "bg-paused",
   warming_up: "bg-warming",
   unknown: "bg-paused",
+  cant_check: "bg-paused",
 };
 
 /**

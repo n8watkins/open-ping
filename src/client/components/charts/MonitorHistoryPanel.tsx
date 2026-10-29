@@ -13,7 +13,14 @@ import { ResponseChart } from "./ResponseChart";
 import { StatusStrip, StripLegend } from "./StatusStrip";
 import { offHourBands, outlierThreshold } from "./chart-math";
 
-export type UptimeWindows = { d1: number; d7: number; d30: number; d90?: number; d365: number };
+/** Uptime per window; null when the window has no counted checks. */
+export type UptimeWindows = {
+  d1: number | null;
+  d7: number | null;
+  d30: number | null;
+  d90?: number | null;
+  d365: number | null;
+};
 export interface WindowDowntime {
   downtimeSeconds: number;
   suspendedSeconds: number;

@@ -1,6 +1,6 @@
 # Spike: an SSL certificate expiry monitor
 
-Status: research done and measured on a deployed Worker 2026-10-28, no monitor type shipped yet.
+Status: research done and measured on a deployed Worker 2026-10-28; built as the [SSL certificate](./MONITOR_TYPES.md#ssl-certificate) monitor type (`cert`).
 Roadmap item: stage 2, "SSL certificate expiry monitor" ([ROADMAP.md](./ROADMAP.md)).
 
 ## The question

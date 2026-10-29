@@ -1,7 +1,7 @@
 import type { MonitorState } from "../../shared/states";
 
 /** Every monitor kind the client can render/label. */
-export type MonitorType = "http" | "heartbeat" | "dns" | "tcp" | "domain";
+export type MonitorType = "http" | "heartbeat" | "dns" | "tcp" | "domain" | "cert";
 
 const MONITOR_TYPE_LABELS: Record<MonitorType, string> = {
   http: "HTTP",
@@ -9,6 +9,7 @@ const MONITOR_TYPE_LABELS: Record<MonitorType, string> = {
   dns: "DNS",
   tcp: "TCP",
   domain: "Domain",
+  cert: "SSL",
 };
 
 /** Friendly display label for a monitor type (falls back to upper-casing). */

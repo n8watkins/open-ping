@@ -8,6 +8,7 @@ import type { MonitorState } from "../../shared/states";
 import type { MonitorRecord } from "../db/monitors";
 import type {
   DnsConfig,
+  CertConfig,
   DomainConfig,
   HttpConfig,
   TcpConfig,
@@ -73,6 +74,10 @@ export function monitorTarget(monitor: MonitorRecord): string | null {
       return `${(monitor.config as TcpConfig).host}:${(monitor.config as TcpConfig).port}`;
     case "domain":
       return (monitor.config as DomainConfig).domain;
+    case "cert": {
+      const c = monitor.config as CertConfig;
+      return c.port === 443 ? c.host : `${c.host}:${c.port}`;
+    }
     case "heartbeat":
       return null;
   }
@@ -298,6 +303,7 @@ export async function buildOverview(env: Env, now: number = Date.now()) {
     paused: 0,
     maintenance: 0,
     warming_up: 0,
+    cant_check: 0,
     unknown: 0,
   };
 

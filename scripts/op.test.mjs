@@ -131,6 +131,20 @@ describe("flag builders", () => {
     expect(() => configFromFlags("dns", { url: "https://a" })).toThrow(/--url is for http monitors/);
   });
 
+  it("builds certificate and domain thresholds from --warn-days", () => {
+    expect(configFromFlags("cert", { host: "example.com", "warn-days": "30, 14,7" })).toEqual({
+      host: "example.com",
+      warnDays: [30, 14, 7],
+    });
+    expect(configFromFlags("domain", { domain: "example.com", "warn-days": "21" })).toEqual({
+      domain: "example.com",
+      warnDays: 21,
+    });
+    expect(() => configFromFlags("domain", { "warn-days": "30,7" })).toThrow(/one number/);
+    expect(() => configFromFlags("cert", { "warn-days": "soon" })).toThrow(/whole number/);
+    expect(() => configFromFlags("http", { host: "example.com" })).toThrow(/--host is for tcp or cert monitors/);
+  });
+
   it("builds and adjusts business-hours schedules", () => {
     expect(scheduleFromFlags({}, null)).toBeNull();
     expect(scheduleFromFlags({ schedule: "always" }, null)).toEqual({ mode: "always" });
@@ -300,6 +314,17 @@ describe("incident updates and the monthly report", () => {
     expect(missing.code).toBe(2);
     expect(missing.stderr).toContain("--message is required");
     expect(missing.calls).toHaveLength(0);
+  });
+
+  it("shows a monitor whose uptime windows have no counted checks as -", async () => {
+    const detail = {
+      monitor: { id: "mon_1", name: "Office hours", type: "cert", paused: false, enabled: true, schedule: { mode: "always" }, config: { host: "a.test", port: 443 }, public: {} },
+      state: { state: "cant_check", state_since: 1, last_checked_at: 2 },
+      uptime: { d1: null, d7: 99.5, d30: null, d90: null, d365: null },
+    };
+    const r = await cli(["monitors", "get", "mon_1"], { "GET /api/monitors/mon_1/detail": [200, detail] });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("uptime     24h -, 7d 99.5%, 30d -");
   });
 
   it("shows an incident with its updates", async () => {

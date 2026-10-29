@@ -21,6 +21,7 @@ import { checkSampleStatement, type CheckSampleTotals } from "../history/rollups
 import {
   ALERT_COOLDOWN_MS,
   COOLDOWN_EVENTS,
+  deliveriesFor,
   incidentDeliveries,
   recentAlertsStatement,
   type NotifyContext,
@@ -31,6 +32,7 @@ import { activeSubscriptionIdsStatement } from "../db/push";
 import { settingsFromRows, settingsStatement, type SettingRow } from "../db/settings";
 import { batchEach, runWritePlan, type LabeledStatement, type WriteGroup, type WriteUnit } from "../lib/batch";
 import type { NotifyEvent } from "../../shared/notifications";
+import { buildCertExpiringPayload } from "../notifications/payload";
 
 /**
  * Persists check results: mutable current state, recent samples, incident
@@ -64,7 +66,7 @@ export const HEARTBEAT_DOWN_SLICE_SECONDS = 12 * 60;
 /** The monitor_state columns the check path reads; the scheduler preloads them. */
 export const STATE_COLUMNS = `state, state_since, last_success_at, last_beat_at, last_error,
             consecutive_failures, consecutive_successes, active_incident_id, is_flapping,
-            domain_cache`;
+            domain_cache, cert_cache`;
 
 export interface StateRow {
   state: MonitorState;
@@ -78,6 +80,8 @@ export interface StateRow {
   is_flapping: number;
   /** A domain monitor's cached RDAP read (checks/domain.ts parseDomainCache). */
   domain_cache: string | null;
+  /** A certificate monitor's cached read (checks/cert.ts parseCertCache). */
+  cert_cache: string | null;
 }
 
 export async function readState(env: Env, monitorId: string): Promise<StateRow | null> {
@@ -261,7 +265,9 @@ export async function readWriteContext(
  * common case, and why a run of passing checks reads nothing more).
  */
 export function checkNeedsIncident(outcome: CheckOutcome, cur: StateRow | null): boolean {
-  if (outcome.state === "warming_up") return false;
+  // A certificate that can't be read resolves an open incident without the
+  // reads (planCheckResult), since it sends no alert.
+  if (outcome.state === "warming_up" || outcome.state === "cant_check") return false;
   return !(outcome.ok && cur && !cur.active_incident_id);
 }
 
@@ -373,6 +379,8 @@ async function assembleGroup(
     sample?: D1PreparedStatement | null;
     incident: IncidentPlan | null;
     extras?: WriteUnit[];
+    /** Units that land only after the core, independent of the incident (a certificate warning). */
+    notices?: WriteUnit[];
   },
 ): Promise<WriteGroup> {
   const sample = parts.sample ? [parts.sample] : [];
@@ -383,14 +391,17 @@ async function assembleGroup(
     ...sample,
   ]);
   const deliveries = incident?.deliveries ?? [];
-  const afterCore = deliveries.length
-    ? [
-        unit(`${label}: alert`, [
-          ...(await enqueueStatements(env, deliveries)),
-          ...(incident?.notifies ? [markNotifiedStatement(env, incident.notifies)] : []),
-        ]),
-      ]
-    : [];
+  const afterCore = [
+    ...(deliveries.length
+      ? [
+          unit(`${label}: alert`, [
+            ...(await enqueueStatements(env, deliveries)),
+            ...(incident?.notifies ? [markNotifiedStatement(env, incident.notifies)] : []),
+          ]),
+        ]
+      : []),
+    ...(parts.notices ?? []).filter((u) => u.statements.length),
+  ];
   const bare = parts.state(false);
   const fallbacks =
     incident?.statements.length || sample.length
@@ -410,7 +421,7 @@ export interface PlannedWrite {
   nextCheckAt?: number;
 }
 
-/** Plan an HTTP/DNS/TCP/domain check outcome: state, sample, incident, interval, rollup. */
+/** Plan an HTTP/DNS/TCP/domain/cert check outcome: state, sample, incident, interval, rollup. */
 export async function planCheckResult(
   env: Env,
   monitor: MonitorRecord,
@@ -426,13 +437,26 @@ export async function planCheckResult(
   const stateSince = stateChanged ? now : (cur?.state_since ?? now);
   const consecutiveFailures = outcome.ok ? 0 : (cur?.consecutive_failures ?? 0) + 1;
   const consecutiveSuccesses = outcome.ok ? (cur?.consecutive_successes ?? 0) + 1 : 0;
-  const lastSuccessAt = outcome.ok ? now : (cur?.last_success_at ?? null);
+  // A certificate that can't be read from here isn't a success either.
+  const succeeded = outcome.ok && outcome.state !== "cant_check";
+  const lastSuccessAt = succeeded ? now : (cur?.last_success_at ?? null);
   const next = opts.nextAt ?? nextCheckAt(monitor.schedule, new Date(now), monitor.intervalSeconds).getTime();
 
   // A failed warm-up cycle does NOT open an incident - it is the one grace cycle
   // a cold start gets. Preserve any existing incident pointer untouched.
   // A passing check on a monitor with no open incident has nothing to resolve.
-  const incident: IncidentPlan | null = !checkNeedsIncident(outcome, cur)
+  // A certificate that can't be read from here (cant_check) closes an open
+  // incident quietly, as leaving a schedule window does: no "recovered" alert,
+  // since nobody knows whether it recovered.
+  const incident: IncidentPlan | null =
+    outcome.state === "cant_check"
+      ? {
+          activeIncidentId: null,
+          isFlapping: false,
+          statements: cur?.active_incident_id ? resolveIncidentByIdStatements(env, cur.active_incident_id, now) : [],
+          deliveries: [],
+        }
+      : !checkNeedsIncident(outcome, cur)
     ? {
         activeIncidentId: outcome.state === "warming_up" ? (cur?.active_incident_id ?? null) : null,
         isFlapping: outcome.state === "warming_up" ? cur?.is_flapping === 1 : false,
@@ -460,7 +484,7 @@ export async function planCheckResult(
          last_duration_ms = ?, last_status_code = ?, last_error = ?,
          consecutive_failures = ?, consecutive_successes = ?, next_check_at = ?,
          warmup = ?, ${withIncident ? "active_incident_id = ?, is_flapping = ?," : ""}
-         domain_cache = COALESCE(?, domain_cache), updated_at = ?
+         domain_cache = COALESCE(?, domain_cache), cert_cache = COALESCE(?, cert_cache), updated_at = ?
        WHERE monitor_id = ?`,
     ).bind(
       outcome.state,
@@ -477,6 +501,8 @@ export async function planCheckResult(
       ...(withIncident ? [incident?.activeIncidentId ?? null, incident?.isFlapping ? 1 : 0] : []),
       // A domain check's new cached read; NULL keeps the stored one.
       outcome.domainCache ? JSON.stringify(outcome.domainCache) : null,
+      // A certificate check's new cached read; NULL keeps the stored one.
+      outcome.certCache ? JSON.stringify(outcome.certCache) : null,
       now,
       monitor.id,
     );
@@ -511,9 +537,10 @@ export async function planCheckResult(
     meta: Object.keys(sampleMeta).length ? sampleMeta : undefined,
   });
   // Warm-up cycles are excluded from uptime accounting (like scheduled-off):
-  // they neither count as a successful check nor as downtime.
+  // they neither count as a successful check nor as downtime. So is a
+  // certificate that can't be read from here: it says nothing either way.
   const rollup: CheckSampleTotals | null =
-    outcome.state === "warming_up"
+    outcome.state === "warming_up" || outcome.state === "cant_check"
       ? null
       : {
           at: now,
@@ -531,6 +558,7 @@ export async function planCheckResult(
     state,
     sample,
     incident,
+    notices: [await certWarningUnit(env, monitor, outcome, ctx, label)],
     extras: [
       unit(`${label}: rollup`, rollup ? [checkSampleStatement(env, monitor.id, rollup)] : []),
       unit(
@@ -540,6 +568,38 @@ export async function planCheckResult(
     ],
   });
   return { group, prevState, stateChanged, nextCheckAt: next };
+}
+
+/**
+ * A certificate monitor's warning alert (checks/cert.ts certWarning): its
+ * deliveries, and the marker on monitor_state.cert_cache that says this
+ * threshold was alerted for this certificate, in one unit, so the alert is
+ * queued exactly once: if the unit fails, the next cycle finds the threshold
+ * unmarked and tries again. With no channel that wants it, only the marker is
+ * written. Nothing when the alert channels couldn't be read (the next cycle
+ * tries again) or no threshold was crossed.
+ */
+async function certWarningUnit(
+  env: Env,
+  monitor: MonitorRecord,
+  outcome: CheckOutcome,
+  ctx: WriteContext,
+  label: string,
+): Promise<WriteUnit> {
+  const w = outcome.certWarning;
+  if (!w || !ctx.notify) return unit(`${label}: certificate warning`, []);
+  const deliveries = deliveriesFor(
+    monitor,
+    "cert_expiring",
+    `${monitor.id}:${w.validTo}:${w.threshold}`,
+    (appUrl) => buildCertExpiringPayload(monitor, w, outcome.at, appUrl),
+    ctx.notify,
+  );
+  const marker = env.DB.prepare(
+    `UPDATE monitor_state SET cert_cache = json_set(cert_cache, '$.warned', json(?))
+      WHERE monitor_id = ? AND cert_cache IS NOT NULL`,
+  ).bind(JSON.stringify({ validTo: w.validTo, days: w.threshold }), monitor.id);
+  return { label: `${label}: certificate warning`, statements: [...(await enqueueStatements(env, deliveries)), marker] };
 }
 
 /**
@@ -916,9 +976,15 @@ export async function applyCheckResult(
   known?: StateRow | null,
 ): Promise<{ prevState: MonitorState; stateChanged: boolean }> {
   const cur = known !== undefined ? known : await readState(env, monitor.id);
-  const ctx = checkNeedsIncident(outcome, cur)
-    ? await readWriteContext(env, { incidents: [{ monitorId: monitor.id, at: outcome.at }] })
-    : EMPTY_WRITE_CONTEXT;
+  // A certificate warning needs the alert channels even when no incident changes.
+  const needsIncident = checkNeedsIncident(outcome, cur);
+  const ctx =
+    needsIncident || outcome.certWarning
+      ? await readWriteContext(env, {
+          incidents: needsIncident ? [{ monitorId: monitor.id, at: outcome.at }] : [],
+          notify: !!outcome.certWarning,
+        })
+      : EMPTY_WRITE_CONTEXT;
   const planned = await planCheckResult(env, monitor, outcome, cur, ctx);
   await writeOne(env, planned.group);
   return { prevState: planned.prevState, stateChanged: planned.stateChanged };

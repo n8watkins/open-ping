@@ -12,7 +12,7 @@ import {
 } from "./range";
 import { HOUR_MS, DAY_MS, parseTimeRange, rangeBounds } from "../../shared/time-range";
 
-const zero: StateSeconds = { up: 0, down: 0, suspended: 0, degraded: 0, off: 0, maintenance: 0, paused: 0 };
+const zero: StateSeconds = { up: 0, down: 0, suspended: 0, degraded: 0, off: 0, maintenance: 0, paused: 0, cantCheck: 0 };
 
 describe("rangeBounds", () => {
   it("aligns hour ranges to UTC hours and ends with the current hour", () => {
@@ -106,6 +106,12 @@ describe("distributeIntervals", () => {
 });
 
 describe("classifyBucket", () => {
+  it("shows a certificate that can't be read as Can't check, not No data, and below anything real", () => {
+    expect(classifyBucket(0, 0, { ...zero, cantCheck: 3600 })).toBe("cant_check");
+    expect(classifyBucket(1, 1, { ...zero, cantCheck: 1800, up: 1800 })).toBe("up");
+    expect(classifyBucket(1, 0, { ...zero, cantCheck: 1800, down: 1800 })).toBe("down");
+  });
+
   it("never shows off-hours as downtime", () => {
     expect(classifyBucket(0, 0, { ...zero, off: 3600 })).toBe("scheduled_off");
   });

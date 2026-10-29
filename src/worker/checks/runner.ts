@@ -1,6 +1,7 @@
 import type { MonitorRecord } from "../db/monitors";
 import type {
   Assertion,
+  CertConfig,
   DnsConfig,
   DomainConfig,
   HttpConfig,
@@ -11,11 +12,12 @@ import { MAX_REDIRECTS, runHttpCheck } from "./http";
 import { runDnsCheck } from "./dns";
 import { runTcpCheck } from "./tcp";
 import { planDomainCheck, runDomainCheck, type DomainCache } from "./domain";
+import { CERT_PROBE_FETCHES, planCertCheck, runCertCheck, type CertCache } from "./cert";
 import { evaluateAssertions } from "./assertions";
 
 /**
  * Runs one check cycle (PRD §8, §9) for any polled monitor type
- * (http/dns/tcp/domain): the check itself, then, if it failed, one
+ * (http/dns/tcp/domain/cert): the check itself, then, if it failed, one
  * confirmation re-check a few seconds later, warm-up handling, HTTP assertion
  * evaluation, and classification into up/degraded/down. Pure orchestration -
  * persistence is handled separately by checks/state.
@@ -39,21 +41,29 @@ import { evaluateAssertions } from "./assertions";
  *     the real count, so this worst case is only held while the check runs;
  *   - domain asks rdap.org, which redirects to the registry's RDAP server, and
  *     the runtime follows that hop, so it costs two; a cycle judged from the
- *     cached read (checks/domain.ts) costs none, which `domain` tells it;
+ *     cached read (checks/domain.ts) costs none, which `cached` tells it;
+ *   - cert opens one TCP socket, plus one DNS lookup when the connection fails
+ *     without saying why (checks/cert.ts), and a cycle judged from the cached
+ *     read costs none, which `cached` tells it;
  *   - dns and tcp make one request.
  */
 export function probeFetchLimit(
   monitor: Pick<MonitorRecord, "type" | "config">,
-  /** A domain monitor's cached read and the time the cycle is planned at. */
-  domain?: { cache: DomainCache | null; now: number },
+  /** A domain or cert monitor's cached read and the time the cycle is planned at. */
+  cached?: { cache: DomainCache | CertCache | null; now: number },
 ): number {
   switch (monitor.type) {
     case "http":
       return (monitor.config as HttpConfig).followRedirects ? 1 + MAX_REDIRECTS : 1;
     case "domain":
-      return domain && !planDomainCheck(monitor.config as DomainConfig, domain.cache, domain.now).lookup
+      return cached &&
+        !planDomainCheck(monitor.config as DomainConfig, cached.cache as DomainCache | null, cached.now).lookup
         ? 0
         : 2;
+    case "cert":
+      return cached && !planCertCheck(monitor.config as CertConfig, cached.cache as CertCache | null, cached.now).read
+        ? 0
+        : CERT_PROBE_FETCHES;
     default:
       return 1;
   }
@@ -82,6 +92,10 @@ export interface RunOptions {
   plannedAt?: number;
   /** Domain monitors: ask RDAP even if the cached read is fresh (a manual test). */
   refreshDomain?: boolean;
+  /** Certificate monitors: the cached read (monitor_state.cert_cache). */
+  certCache?: CertCache | null;
+  /** Certificate monitors: read the server even if the cached read is fresh (a manual test). */
+  refreshCert?: boolean;
   /** Awaited before each RDAP request, so one run spaces its lookups out. */
   paceLookup?: () => Promise<void>;
   /**
@@ -135,6 +149,8 @@ export function classifyCheck(input: ClassifyInput): Omit<CheckOutcome, "at" | "
   // cold start to grant grace for. A failed warm-up otherwise reports
   // `warming_up`, not `down`, granting one grace cycle (PRD §8 warm-up).
   if (!ok) state = result.suspended ? "suspended" : warmup ? "warming_up" : "down";
+  // The certificate can't be read from a Worker: neither up nor down.
+  else if (result.cantCheck) state = "cant_check";
   else if (result.degraded) state = "degraded";
   else state = "up";
 
@@ -209,6 +225,16 @@ export async function probe(
       });
       return { result: r, ok: r.ok };
     }
+    case "cert": {
+      const run = opts.run;
+      const at = run.plannedAt ?? run.now;
+      const r = await runCertCheck(monitor.config as CertConfig, {
+        cache: run.certCache ?? null,
+        ...(at !== undefined ? { now: at } : {}),
+        ...(run.refreshCert ? { force: true } : {}),
+      });
+      return { result: r, ok: r.ok };
+    }
     default:
       // Heartbeat monitors are push-driven and never routed through here.
       throw new Error(`runMonitorCheck: unsupported monitor type "${monitor.type}"`);
@@ -278,6 +304,8 @@ export async function runMonitorCheck(
     ...(confirmedFrom ? { confirmedFrom } : {}),
     meta: decided.result.meta,
     ...(decided.result.domainCache ? { domainCache: decided.result.domainCache } : {}),
+    ...(decided.result.certCache ? { certCache: decided.result.certCache } : {}),
+    ...(decided.result.certWarning ? { certWarning: decided.result.certWarning } : {}),
     fetches,
     at: opts.now ?? Date.now(),
   };

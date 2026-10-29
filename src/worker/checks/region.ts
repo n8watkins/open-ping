@@ -63,7 +63,11 @@ export const TRACE_URL = "https://www.cloudflare.com/cdn-cgi/trace";
 /** How long the data-center lookup may take before the run goes on without it. */
 const TRACE_TIMEOUT_MS = 5_000;
 
-/** Monitor types whose re-check means something from elsewhere (not domain: RDAP answers the same everywhere). */
+/**
+ * Monitor types whose re-check means something from elsewhere (not domain:
+ * RDAP answers the same everywhere; not cert: its failures are mostly judged
+ * from the cached read, and a re-check reads the same server again here).
+ */
 export function supportsRemoteRecheck(type: MonitorRecord["type"]): boolean {
   return type === "http" || type === "dns" || type === "tcp";
 }

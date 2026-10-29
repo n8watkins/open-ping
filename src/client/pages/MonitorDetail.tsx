@@ -42,6 +42,8 @@ import { useTimeRange } from "../lib/time-range";
 import type { MonitorHistoryResponse } from "../../shared/time-range";
 import { Stat } from "../components/ui/Stat";
 import { EmptyState } from "../components/ui/EmptyState";
+import { CertificatePanel } from "../components/monitors/CertificatePanel";
+import type { CertificateDetail } from "../components/monitors/certificate";
 
 // --- Wire shape of GET /api/monitors/:id/detail (see worker routes/monitors.ts) ---
 interface MonitorInfo {
@@ -108,6 +110,8 @@ interface DetailResponse {
   };
   recentSamples: Sample[];
   recentIncidents: IncidentRow[];
+  /** SSL certificate monitors: the last read, or null before the first. */
+  certificate?: CertificateDetail | null;
 }
 
 interface TestOutcome {
@@ -128,6 +132,8 @@ interface SampleMeta {
   checkedAt?: number;
   /** Domain monitors: the latest RDAP refresh failed, so the earlier read was used. */
   lookupError?: { code: string; at: number };
+  /** Certificate monitors: why the certificate can't be read from a Worker. */
+  cantCheck?: { message: string };
 }
 
 /** Why a domain monitor's latest RDAP refresh failed, in words. */
@@ -157,6 +163,8 @@ function readMeta(meta: unknown): SampleMeta {
   if (le && typeof le === "object" && typeof le.code === "string" && typeof le.at === "number") {
     out.lookupError = { code: le.code, at: le.at };
   }
+  const cc = m.cantCheck as Record<string, unknown> | undefined;
+  if (cc && typeof cc === "object" && typeof cc.message === "string") out.cantCheck = { message: cc.message };
   return out;
 }
 
@@ -295,6 +303,9 @@ export default function MonitorDetail() {
   const tcpHost = typeof cfg.host === "string" ? cfg.host : null;
   const tcpPort = typeof cfg.port === "number" ? cfg.port : null;
   const domainName = typeof cfg.domain === "string" ? cfg.domain : null;
+  const certWarnDays = Array.isArray(cfg.warnDays)
+    ? cfg.warnDays.filter((d): d is number => typeof d === "number")
+    : [];
 
   // Latest sample's type-specific detail (resolved DNS records, domain expiry).
   const latestMeta = readMeta(recentSamples.at(-1)?.meta);
@@ -323,6 +334,7 @@ export default function MonitorDetail() {
               meta.daysUntil != null ? ` (in ${meta.daysUntil}d)` : ""
             }`
           : null,
+        meta.cantCheck ? meta.cantCheck.message : null,
       ].filter(Boolean);
       setNotice({ tone: o.ok ? "ok" : "error", text: `Test: ${parts.join(" · ")}` });
     } catch (e) {
@@ -566,6 +578,11 @@ export default function MonitorDetail() {
                   {tcpHost ?? "-"}
                   {tcpPort != null ? `:${tcpPort}` : ""}
                 </span>
+              ) : monitor.type === "cert" ? (
+                <span className="mt-1 block truncate font-mono text-sm text-ink">
+                  {tcpHost ?? "-"}
+                  {tcpPort != null && tcpPort !== 443 ? `:${tcpPort}` : ""}
+                </span>
               ) : (
                 <>
                   <span className="mt-1 block truncate font-mono text-sm text-ink">
@@ -597,6 +614,8 @@ export default function MonitorDetail() {
           </div>
         )}
       </Card>
+
+      {monitor.type === "cert" && <CertificatePanel detail={data.certificate} warnDays={certWarnDays} />}
 
       {/* History over the chosen range */}
       <section className="mt-8" aria-labelledby="history-heading">

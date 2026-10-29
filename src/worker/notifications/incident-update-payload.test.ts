@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCertExpiringPayload,
   buildIncidentPayload,
   buildIncidentUpdatePayload,
   isNotificationPayload,
@@ -160,5 +161,42 @@ describe("incident update on each channel", () => {
     expect(text).toContain("Status: Resolved");
     expect(text).toContain("Posted: ");
     expect(text).toContain("https://status.example.com/incidents?incident=inc_1");
+  });
+});
+
+describe("buildCertExpiringPayload", () => {
+  const warning = { daysUntil: 14, validTo: Date.UTC(2026, 10, 11, 23, 59, 59), host: "example.com" };
+  const p = buildCertExpiringPayload({ id: "mon_c", name: "Shop TLS" }, warning, POSTED, "https://ping.test/");
+
+  it("says when the certificate expires, links the monitor and validates", () => {
+    expect(p).toMatchObject({
+      event: "cert_expiring",
+      state: "up",
+      title: "🟠 Shop TLS: certificate expires in 14 days",
+      url: "https://ping.test/monitors/mon_c",
+      detectedAt: POSTED,
+    });
+    expect(p.body).toBe(
+      "The SSL certificate for example.com expires in 14 days, on Wed, 11 Nov 2026. Renew it before then, or visitors will see a security warning.",
+    );
+    expect(isNotificationPayload(p)).toBe(true);
+  });
+
+  it("renders amber on every channel, with a View monitor button", () => {
+    expect(toEmailHtml(p)).toContain("View monitor");
+    expect(toEmailText(p)).toContain("expires in 14 days");
+    expect(toDiscordEmbed(p).title).toContain("certificate expires");
+    expect(toSlackMessage(p)).toBeTruthy();
+    expect(toTeamsMessage(p)).toBeTruthy();
+    expect(toTelegramMessage("42", p).text).toContain("View monitor");
+  });
+
+  it("goes to every channel kind by default", () => {
+    for (const kind of CHANNEL_KINDS) expect(channelWantsEvent(kind, "cert_expiring", null)).toBe(true);
+  });
+
+  it("says tomorrow and today", () => {
+    expect(buildCertExpiringPayload(MONITOR, { ...warning, daysUntil: 1 }, POSTED).title).toContain("expires tomorrow");
+    expect(buildCertExpiringPayload(MONITOR, { ...warning, daysUntil: 0 }, POSTED).title).toContain("expires today");
   });
 });

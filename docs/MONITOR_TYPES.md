@@ -18,6 +18,7 @@ the honest list.
 | [DNS record](#dns-record) | A DNS record resolves (and optionally matches) | Polled (DNS-over-HTTPS) |
 | [TCP port](#tcp-port) | A `host:port` accepts a connection | Polled (`connect()`) |
 | [Domain expiry](#domain-expiry) | A domain's registration isn't lapsing | Polled (RDAP) |
+| [SSL certificate](#ssl-certificate) | A site's certificate isn't about to expire | Polled (TLS 1.2 handshake over `connect()`) |
 
 Every monitor also shares the common settings - a **name**, an optional
 **operating schedule** (schedule-aware monitoring), **notification** channels,
@@ -29,7 +30,7 @@ also have **Confirm failures** (below). This page focuses on the per-type
 
 A new monitor is checked as soon as you create it, from the web editor, the API (`POST /api/monitors`), MCP `create_monitor` or `op monitors create`.
 The dashboard shows a real state within seconds instead of after the next cron run, up to 12 minutes later.
-It makes the same decision the scheduler would: inside a maintenance window it shows Maintenance, outside its schedule it shows Scheduled off, and a polled monitor is checked once and the result stored.
+It makes the same decision the scheduler would: inside a maintenance window it shows Maintenance, outside its schedule it shows Scheduled off, and a polled monitor is checked once and the result stored (an SSL certificate monitor that can't be read shows Can't check).
 That first check is a warm-up cycle, like the first check of any monitor: if it fails, the monitor shows Warming up, no incident opens and nothing alerts, and the next scheduled check is a normal one.
 A heartbeat monitor waits for its first ping.
 The create request waits up to 5 seconds for the check and returns it as `firstCheck` (`checked`, `scheduled_off`, `maintenance`, `skipped` or `running`); a slower check finishes in the background and the monitor page refreshes until its state arrives.
@@ -55,6 +56,8 @@ Details:
 - **Heartbeats aren't confirmed.**
   A missed heartbeat is the absence of a ping, so there is nothing to re-check; the grace period is the heartbeat's confirmation.
 - **SSRF-blocked targets** (`blocked_url`, `blocked_host`) aren't re-checked: the answer can't change.
+- **SSL certificate monitors** re-check only a failed read with no recent read to fall back on, and never an expired or not-yet-valid date, which the server itself sent.
+  "Can't check" is not a failure, so it is never re-checked.
 - **Domain monitors** re-check only a failed lookup with no recent read to fall back on, and not a rate-limited one (HTTP 429), which waits for the next run instead; an expired date isn't re-checked.
   See [Domain expiry](#when-a-lookup-fails).
 - **It fits the free plan.**
@@ -314,6 +317,7 @@ The date it read is cached on the monitor, so most checks are judged from that r
 
 - **Down** - the domain has already expired (`daysUntil <= 0`), or there is no usable expiry date at all: the lookup failed or returned no parseable expiration event, and there is no read from the last 7 days to fall back on.
 - **Degraded** - expiry is within `warnDays` (your early warning).
+  On a public status page that shows on the domain's own row only, not in the page banner ([STATUS_PAGES.md](./STATUS_PAGES.md#expiry-warnings)).
 - **Up** - expiry is further out than `warnDays`.
 
 Each result carries the `expiresAt` timestamp and `daysUntil` count for display, plus `checkedAt` (when the date was read from RDAP) and `source` (`rdap` when it was read on this check, `cache` when an earlier read was used).
@@ -357,18 +361,103 @@ Besides caching, each scheduler run spaces its RDAP lookups 2 seconds apart.
 
 ---
 
+## SSL certificate
+
+Warns you before a site's SSL/TLS certificate expires, while there is still time to renew it.
+An HTTP monitor already goes down once a certificate has expired (`tls_error`); this one warns weeks before that.
+
+**What it does.** Opens a plain TCP socket to `host:port` with `connect()` and sends a TLS 1.2 ClientHello that names the host (SNI) and offers no TLS 1.3.
+In TLS 1.2 the server answers with its certificate in the clear, so OpenPing reads the leaf certificate's issuer, subject, validity and subjectAltNames from it and closes the socket without finishing the handshake.
+No key exchange, no cryptography and no third-party service are involved; it connects only to your server, like any HTTPS client.
+The design and its measurement on Cloudflare's network are in [SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md).
+
+**Config fields.**
+
+- `host` - the host name whose certificate to read, such as `example.com` (no scheme or path; the editor takes a pasted URL apart for you).
+- `port` - the TLS port (default `443`; not 25, which the runtime blocks).
+- `warnDays` - up to 5 warning thresholds in days before expiry (default `[30, 14, 7]`, each `1`-`365`), stored largest first.
+- `timeoutMs` - how long to wait for the certificate (default `10000`, max `30000`).
+
+**How up / degraded / down is decided.**
+
+- **Down** - the certificate has expired, or isn't valid yet; or the server couldn't be read at all (refused, timed out, not TLS) and there is no read from the last 7 days to fall back on.
+- **Degraded** - the certificate expires within the largest of `warnDays` (whole days left).
+- **Up** - it expires further out than that.
+- **Can't check** - the certificate can't be read from a Worker (below).
+
+The monitor page shows the last read: days left, the expiry date, the issuer (for example "Let's Encrypt (R11)"), who it was issued to, the validity dates, the names it covers and its serial number.
+When the certificate doesn't list the monitored host, the page says so: browsers would refuse it for that name.
+Each sample carries `expiresAt`, `daysUntil`, `issuer`, `coversHost`, `checkedAt` and `source` (`tls` when read this cycle, `cache` when an earlier read was used).
+
+### Alerts
+
+- **Each threshold alerts once.** When the days left reach a threshold (30, then 14, then 7 by default), OpenPing sends one `cert_expiring` alert, "Shop: certificate expires in 14 days", to every channel by default.
+  A new monitor whose certificate is already inside the window gets one alert for the smallest threshold it is under.
+  A renewed certificate starts over.
+  No incident opens: the site is still up.
+- **Expiry is an outage.** An expired certificate is down, opens an incident and sends the down alert, exactly like an expired domain; the renewal resolves it with the recovered alert.
+
+### Can't check (never Down)
+
+Two kinds of host can't be read from a Cloudflare Worker, and the monitor says so instead of guessing:
+
+- **Behind Cloudflare's proxy.** Workers can't open TCP sockets to Cloudflare's own IP ranges, so a proxied host (every Render app, for example, and about a fifth of the hosts measured) can't be reached.
+  Cloudflare issues and renews those edge certificates itself.
+  OpenPing knows by the runtime's "cannot connect to the specified address" error, and, for any other connection failure, by checking whether the host resolves into Cloudflare's published IPv4 ranges.
+- **TLS 1.3 only.** In TLS 1.3 the certificate is encrypted, so a server that refuses TLS 1.2 (protocol_version alert) can't be read.
+  A server that turns the hello down with another fatal alert OpenPing can't blame on the server (internal_error, decode_error, and so on) is treated the same way.
+
+Two fatal alerts are a failed read instead, which alerts once confirmed (or falls back to a recent read): handshake_failure and unrecognized_name.
+To a broad TLS 1.2 hello that names the host, they mean the server is misconfigured for that name (no certificate for it, or no usable cipher); the spike's 160 hosts never answered that way.
+Warning-level alerts (an unrecognized_name warning, say) don't end the handshake: OpenPing reads on.
+
+Such a monitor shows **Can't check** with the reason in plain words on its page.
+It is neutral: never down, no incident, no alert, and no uptime or downtime counted.
+If the monitor had an open incident (an expired certificate, then the site moved behind Cloudflare), the incident is closed without a "recovered" alert.
+On the public status page it shows as unknown.
+Inside the warning window, the public status page shows the monitor as degraded on its own row but keeps the page banner as it would be without it, since the site still works ([STATUS_PAGES.md](./STATUS_PAGES.md#expiry-warnings)); domain monitors behave the same way.
+
+### How often the certificate is read
+
+A certificate changes rarely, so each monitor keeps its last read (`monitor_state.cert_cache`) and judges most checks from it, with no connection:
+
+- **Once a day** normally, and once a day for a host that can't be checked (it may have moved).
+- **Every hour** inside the warning window and once expired, so a renewal clears the warning within the hour.
+- **At once** when the cached expiry passes, and when the host or port changes.
+- **Test now** on the monitor page always reads the server.
+
+Days left are recomputed on every check.
+A read costs one socket (plus one DNS-over-HTTPS lookup when the connection fails without the runtime saying why); a check judged from the cache costs no fetch and no database query, because the cache rides on the state row every check already reads and writes ([FREE_TIER.md](./FREE_TIER.md)).
+
+### When a read fails
+
+As for domain monitors, a failed read says little about the certificate:
+with a read from the last **7 days**, the check is judged from it, the sample's meta carries `lookupError`, the page says "The last read failed", and the server isn't read again for an hour.
+With no usable read, a failed read is a failed check, confirmed by a second read 5 seconds later like any monitor.
+The re-check runs where the check did, not from a [second region](./SECOND_REGION.md).
+
+**Limits.**
+
+- It reads what one Cloudflare location is served; behind a load balancer or CDN, other locations may be served other certificates (HTTP checks share this).
+- It checks the expiry date and the host name, not the chain of trust or revocation.
+- `wrangler dev` connects from your own machine, so locally a Cloudflare-proxied host is read (its edge certificate) instead of showing Can't check.
+
+> **Private / internal hosts are rejected**, with the same SSRF guard as TCP monitors.
+
+---
+
 ## Not supported (and why)
 
 OpenPing runs its checks inside the Cloudflare Workers runtime. That's what makes
 it free and infrastructure-free - but the runtime genuinely can't do a few things
 other monitoring tools offer. We'd rather be upfront than pretend:
 
-- **SSL / TLS certificate expiry (not yet).** The Workers `fetch()` and TLS
-  `connect()` APIs do **not** expose the peer's TLS certificate to your code. A
-  TCP check to port 443 tells you the port is *open*, but not what the cert
-  says. A hand-written TLS 1.2 handshake over a plain TCP socket can read the
-  expiry date, with gaps (Cloudflare-proxied sites, TLS 1.3-only servers); see
-  [SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md) for the research and the plan.
+- **SSL certificates of Cloudflare-proxied and TLS 1.3-only hosts.** The
+  Workers `fetch()` and TLS `connect()` APIs don't expose the peer certificate,
+  so the [SSL certificate](#ssl-certificate) monitor reads it with its own
+  TLS 1.2 handshake. Workers can't connect to Cloudflare's own IPs, and TLS 1.3
+  encrypts the certificate, so those hosts show "Can't check"
+  ([SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md)).
 
 - **ICMP ping.** Classic `ping` uses ICMP echo, which needs a **raw socket**.
   Workers can't send ICMP or open raw sockets, so there's no true ICMP ping. Use
@@ -388,6 +477,6 @@ other monitoring tools offer. We'd rather be upfront than pretend:
   runs where the cron does.
 
 > The short version: OpenPing is honest about being an edge-Worker monitor. What
-> it does - HTTP, heartbeat, DNS-over-HTTPS, TCP `connect()`, and RDAP domain
-> expiry - it does well and for free. What needs raw sockets, the peer TLS cert,
+> it does - HTTP, heartbeat, DNS-over-HTTPS, TCP `connect()`, RDAP domain
+> expiry and SSL certificate expiry - it does well and for free. What needs raw sockets, the peer TLS cert,
 > or region control lives outside the runtime, and we don't paper over that.

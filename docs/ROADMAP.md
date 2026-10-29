@@ -42,11 +42,12 @@ These are the gaps a buyer is likely to notice, most valuable first:
   The re-check runs from the same Cloudflare location; a second-location check (a Durable Object with a location hint) stays in Hosted stage 2.
 - [ ] **Second-region confirmation** (M, Hosted stage 2, built and measured).
   The re-check runs from a Durable Object in another region, and the incident says where ("Confirmed from Atlanta") ([Second-region confirmation](./SECOND_REGION.md)).
-- [ ] **SSL certificate expiry monitor** (M, spike and measurement done).
+- [x] **SSL certificate expiry monitor** (M).
   UptimeRobot, StatusCake and HetrixTools warn before a certificate expires.
   A Worker's `fetch()` doesn't expose the certificate; a TLS 1.2 handshake over a plain TCP socket can read it, except for Cloudflare-proxied and TLS 1.3-only hosts.
-  Measured 2026-10-28 on a deployed Worker: 78% of 160 hosts readable, 21% behind Cloudflare (including every Render app), 1% TLS 1.3 only.
-  Next: build the monitor type, with "behind Cloudflare, can't be checked" as a neutral state ([SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md)).
+  Measured 2026-10-28 on a deployed Worker: 78% of 160 hosts readable, 21% behind Cloudflare (including every Render app), 1% TLS 1.3 only ([SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md)).
+  Built as the "SSL certificate" monitor type: issuer, validity, days left and names on the monitor page, one alert at each warning threshold (30, 14 and 7 days by default), down once expired, and a neutral "Can't check" state for Cloudflare-proxied and TLS 1.3-only hosts ([SSL certificate](./MONITOR_TYPES.md#ssl-certificate)).
+  Later, optional: a bring-your-own Cert Spotter key to cover Cloudflare-proxied hosts from Certificate Transparency, labelled "issued", not "served".
 - [x] **Incident updates on the status page** (M) (#30).
   A timeline of posts ("Investigating", "Identified", "Fixed") instead of a single message, as Instatus and Better Stack show.
 - [x] **Status page feeds** (S): RSS and Atom for incidents, so people can follow a page without an account (#30).
@@ -85,6 +86,8 @@ Follow [the Hosted plan](./HOSTED_PLAN.md) stages 2 to 7; summary:
 - [ ] Billing and plan limits (Hosted stage 5).
 - [ ] Support, backups, export to self-host, terms and privacy (Hosted stage 6).
 - [ ] Launch: the hero switches to Hosted first, self-host second (Hosted stage 7, landing plan items 7.1 to 7.4).
+
+Monitor types ship to Hosted unchanged: the SSL certificate monitor (2026-10-28) runs the same code on a customer's Worker as on a self-hosted one, counts against the plan's monitors and shortest interval like any polled monitor, and is just as blind to Cloudflare-proxied hosts on both, since every Worker is refused TCP to Cloudflare's IPs.
 
 ## Phones: installable web app and Android app (added 2026-10-28)
 
