@@ -1,6 +1,10 @@
 import { Cloud, Sparkles } from "lucide-react";
 import {
   HOSTED_FAST_CHECKS_YEARLY,
+  HOSTED_FAST_LIMITS,
+  HOSTED_MAX_MONITORS,
+  HOSTED_MONITOR_PACK_YEARLY,
+  HOSTED_PACKS,
   HOSTED_PLAN_LIMITS,
   HOSTED_PRICE_YEARLY,
   HOSTED_SUPPORT_EMAIL,
@@ -25,11 +29,20 @@ interface Row {
   hosted: string;
 }
 
+/**
+ * Hosted's cells once it opens, from the launch pricing (decision D13). The
+ * waitlist rows below change only the numbers they already showed.
+ */
+const PRICE = `$${HOSTED_PRICE_YEARLY} a year; $${HOSTED_FAST_CHECKS_YEARLY} a year more for 1-minute checks on ${HOSTED_FAST_LIMITS.fastMonitors} monitors`;
+const MONITORS = `${HOSTED_PLAN_LIMITS.monitors}, or up to ${HOSTED_MAX_MONITORS} with packs of ${HOSTED_PACKS.monitors.adds} ($${HOSTED_MONITOR_PACK_YEARLY} a year each)`;
+// A non-breaking hyphen, so "add-on" never splits across lines.
+const CHECKS = `Every 12 minutes, or every minute on ${HOSTED_FAST_LIMITS.fastMonitors} monitors with the add\u2011on`;
+
 const ROWS: Row[] = [
   {
     label: "Price",
     own: "Free on Cloudflare's free plan; Workers Paid is $5 a month if you outgrow it",
-    hosted: "$24 a year; 1-minute checks $12 a year more",
+    hosted: `$${HOSTED_PRICE_YEARLY} a year; 1-minute checks $${HOSTED_FAST_CHECKS_YEARLY} a year more`,
   },
   {
     label: "Set-up",
@@ -39,14 +52,14 @@ const ROWS: Row[] = [
   {
     label: "Monitors",
     own: "No cap of its own; about 24 at once on the free plan, up to 200 a run on Workers Paid",
-    hosted: "20",
+    hosted: String(HOSTED_PLAN_LIMITS.monitors),
   },
   {
     label: "Checks",
     own: "Every 12 minutes by default; you can change it",
     hosted: "Every 12 minutes, or every minute with the add-on",
   },
-  { label: "Status pages", own: "As many as you like", hosted: "2" },
+  { label: "Status pages", own: "As many as you like", hosted: String(HOSTED_PLAN_LIMITS.statusPages) },
   {
     label: "Where your data lives",
     own: "Your D1 database, in your Cloudflare account",
@@ -76,7 +89,7 @@ const ROWS_OPEN: Row[] = [
   {
     label: "Price",
     own: "Free on Cloudflare's free plan; Workers Paid is $5 a month if you outgrow it",
-    hosted: `$${HOSTED_PRICE_YEARLY} a year; 1-minute checks $${HOSTED_FAST_CHECKS_YEARLY} a year more`,
+    hosted: PRICE,
   },
   {
     label: "Free trial",
@@ -91,13 +104,12 @@ const ROWS_OPEN: Row[] = [
   {
     label: "Monitors",
     own: "No cap of its own; about 24 at once on the free plan, up to 200 a run on Workers Paid",
-    hosted: String(HOSTED_PLAN_LIMITS.monitors),
+    hosted: MONITORS,
   },
   {
     label: "Checks",
     own: "Every 12 minutes by default; you can change it",
-    // A non-breaking hyphen, so "add-on" never splits across lines.
-    hosted: "Every 12 minutes, or every minute with the add\u2011on",
+    hosted: CHECKS,
   },
   { label: "Status pages", own: "As many as you like", hosted: String(HOSTED_PLAN_LIMITS.statusPages) },
   {

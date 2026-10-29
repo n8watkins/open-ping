@@ -19,7 +19,7 @@ Last updated: 2026-10-28.
   `HOSTED_SIGNUP_URL` (empty by default) is the launch switch for Hosted: set on the canonical install to the platform's sign-up page, the landing page swaps the waitlist for "Start a free trial" (`src/shared/hosted-offer.ts`).
 - **Encryption:** values are `v2:<kid>:<iv>:<ct>`; `MASTER_KEY_PREVIOUS` allows an online key change ([SECURITY.md](./SECURITY.md)).
   Releases before v0.4.0 cannot read v2 values, so never roll production back below v0.4.0.
-- The paid hosted version is planned in [the Hosted plan](./HOSTED_PLAN.md): $24 a year (20 monitors, 12-minute checks, 2 status pages), plus $12 a year for 1-minute checks; no free hosted plan.
+- The paid hosted version is planned in [the Hosted plan](./HOSTED_PLAN.md): $24 a year (20 monitors, 12-minute checks, 2 status pages), plus $24 a year for 1-minute checks on 5 monitors, packs of 25 more monitors at $24 a year and of 5 more fast monitors at $36 a year, and a 30-day trial ([decision D13](./hosted/DECISIONS.md#d13-launch-pricing)); no free hosted plan.
 - Tagline: "Uptime monitoring on your own Cloudflare".
 - `v0.1.0` is a baseline tag at `5ff032c`; releases since then are cut with release-kit.
 

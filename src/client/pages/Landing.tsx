@@ -50,6 +50,10 @@ import { HostingTable } from "../components/landing/HostingTable";
 import { prefersReducedMotion, useCountUp, useReveal } from "../components/landing/useReveal";
 import {
   HOSTED_FAST_CHECKS_YEARLY,
+  HOSTED_FAST_LIMITS,
+  HOSTED_MAX_MONITORS,
+  HOSTED_MONITOR_PACK_YEARLY,
+  HOSTED_PACKS,
   HOSTED_PLAN_LIMITS,
   HOSTED_PRICE_YEARLY,
   HOSTED_SUPPORT_EMAIL,
@@ -305,7 +309,11 @@ function useOffer(): HostedOffer {
 
 const TRIAL = HOSTED_TRIAL_LIMITS;
 const PLAN = HOSTED_PLAN_LIMITS;
-/** "14 days with 5 monitors, 1 status page and email alerts" */
+/** "Optional 1-minute checks on 5 monitors for $24 a year more" (decision D13). */
+const FAST_POINT = `Optional 1-minute checks on ${HOSTED_FAST_LIMITS.fastMonitors} monitors for $${HOSTED_FAST_CHECKS_YEARLY} a year more`;
+/** "Up to 120 monitors with packs of 25, $24 a year each" */
+const PACKS_POINT = `Up to ${HOSTED_MAX_MONITORS} monitors with packs of ${HOSTED_PACKS.monitors.adds}, $${HOSTED_MONITOR_PACK_YEARLY} a year each`;
+/** "30 days with 5 monitors, 1 status page and email alerts" */
 const TRIAL_INCLUDES = `${HOSTED_TRIAL_DAYS} days with ${TRIAL.monitors} monitors, ${TRIAL.statusPages} status page and email alerts`;
 
 /** A "Start a free trial" button: the platform's sign-up page, in this tab. Renders nothing while Hosted is closed. */
@@ -1491,12 +1499,17 @@ const OWN_ACCOUNT_POINTS = [
   "About 20 minutes, step by step",
 ];
 
+/**
+ * The waitlist card: only the numbers it has always shown change with the
+ * pricing (the add-on's price); the packs and "on 5 monitors" wait for the
+ * open page, so the waitlist makes no new claims before Hosted opens.
+ */
 const HOSTED_POINTS = [
   "Nothing to set up: sign in and add your sites",
-  "20 monitors, checked every 12 minutes",
-  "2 status pages and every alert channel",
+  `${PLAN.monitors} monitors, checked every 12 minutes`,
+  `${PLAN.statusPages} status pages and every alert channel`,
   "A failure confirmed from a second region before it alerts",
-  "Optional 1-minute checks for $12 a year more",
+  `Optional 1-minute checks for $${HOSTED_FAST_CHECKS_YEARLY} a year more`,
 ];
 
 /** Count the pricing section once per page view, when most of a card is on screen. */
@@ -1532,7 +1545,8 @@ const HOSTED_POINTS_OPEN = [
   `${PLAN.monitors} monitors, checked every 12 minutes`,
   `${PLAN.statusPages} status pages and every alert channel`,
   "A failure confirmed from a second region before it alerts",
-  `Optional 1-minute checks for $${HOSTED_FAST_CHECKS_YEARLY} a year more`,
+  FAST_POINT,
+  PACKS_POINT,
   "Updates and the servers are on me",
 ];
 
@@ -1619,7 +1633,8 @@ function HostedWaitlistCard() {
         </span>
       </div>
       <p className="mt-2 text-4xl font-semibold tracking-tight text-ink">
-        $24<span className="text-lg font-medium text-ink-muted"> a year</span>
+        ${HOSTED_PRICE_YEARLY}
+        <span className="text-lg font-medium text-ink-muted"> a year</span>
       </p>
       <ul className="mt-5 space-y-2.5 text-sm text-ink-muted">
         {HOSTED_POINTS.map((p) => (
@@ -1883,7 +1898,7 @@ const FAQS: FaqItem[] = [
     q: "Is there a hosted version?",
     a: (
       <>
-        Planned, not open yet. OpenPing Hosted will be $24 a year for people who'd rather not run it themselves.{" "}
+        Planned, not open yet. OpenPing Hosted will be ${HOSTED_PRICE_YEARLY} a year for people who'd rather not run it themselves.{" "}
         <a
           href="#pricing"
           onClick={(e) => {
@@ -1949,8 +1964,10 @@ const FAQS_OPEN: FaqItem[] = [
     a: (
       <>
         The same OpenPing, run for you by me: ${HOSTED_PRICE_YEARLY} a year for {PLAN.monitors} monitors checked every 12
-        minutes, {PLAN.statusPages} status pages and every alert channel, with 1-minute checks for{" "}
-        {`$${HOSTED_FAST_CHECKS_YEARLY}`} a year more. Each customer gets their own OpenPing with a database of its own.{" "}
+        minutes, {PLAN.statusPages} status pages and every alert channel. 1-minute checks on{" "}
+        {HOSTED_FAST_LIMITS.fastMonitors} monitors are {`$${HOSTED_FAST_CHECKS_YEARLY}`} a year more, and packs of{" "}
+        {HOSTED_PACKS.monitors.adds} more monitors are {`$${HOSTED_MONITOR_PACK_YEARLY}`} a year each. Each customer gets
+        their own OpenPing with a database of its own.{" "}
         <TrialLink event="pricing_trial" className="text-accent underline">
           Start a free trial
         </TrialLink>
@@ -1984,7 +2001,7 @@ const FAQS_OPEN: FaqItem[] = [
   },
   {
     q: "How often does it check?",
-    a: "Every 12 minutes, each monitor that's due, most overdue first. On Hosted, the 1-minute add-on checks every minute. In your own account, the schedule is one line in wrangler.jsonc if your Cloudflare plan allows more runs.",
+    a: `Every 12 minutes, each monitor that's due, most overdue first. On Hosted, the 1-minute add-on checks up to ${HOSTED_FAST_LIMITS.fastMonitors} monitors every minute, and packs add ${HOSTED_PACKS.fast_monitors.adds} more at a time. In your own account, the schedule is one line in wrangler.jsonc if your Cloudflare plan allows more runs.`,
   },
   sharedFaq("How do I deploy it?"),
   {

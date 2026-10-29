@@ -47,6 +47,15 @@ describe("the landing page while Hosted is a waitlist (switch unset)", () => {
     expect(html).toContain('id="waitlist-email"');
   });
 
+  it("changes only the numbers it already showed (D13), and makes no new claims before Hosted opens", () => {
+    expect(copy).toContain("Optional 1-minute checks for $24 a year more");
+    expect(copy).toContain("$24 a year; 1-minute checks $24 a year more");
+    expect(copy).toContain("Every 12 minutes, or every minute with the add-on");
+    expect(copy).not.toContain("$12");
+    // The packs and the 5-monitor add-on wording are for the open page only.
+    expect(copy).not.toMatch(/packs? of|up to 120|on 5 monitors/i);
+  });
+
   it("says nothing about a trial and links nowhere outside the waitlist for Hosted", () => {
     expect(copy).not.toMatch(/free trial|Start a|no card/i);
     expect(copy).not.toContain("Can I move between Hosted and self-hosted?");
@@ -94,7 +103,9 @@ describe("the landing page once Hosted opens (switch set)", () => {
 
   it("prices the plan and the trial as decided (D5)", () => {
     expect(copy).toContain("$24 a year");
-    expect(copy).toContain("Optional 1-minute checks for $24 a year more");
+    expect(copy).toContain("Optional 1-minute checks on 5 monitors for $24 a year more");
+    expect(copy).toContain("Up to 120 monitors with packs of 25, $24 a year each");
+    expect(copy).toContain("20, or up to 120 with packs of 25 ($24 a year each)");
     expect(copy).toContain("20 monitors, checked every 12 minutes");
     expect(copy).toContain("2 status pages and every alert channel");
     expect(copy).toContain("Free for 30 days with 5 monitors, 1 status page and email alerts. No card needed");
@@ -122,7 +133,7 @@ describe("the landing page once Hosted opens (switch set)", () => {
 
   it("adds a Hosted column to the comparison with the SaaS tools", () => {
     expect(copy).toContain("OpenPing (self-hosted)");
-    expect(copy).toContain("20, one plan, no tiers");
+    expect(copy).toContain("20, up to 120 with packs of 25");
   });
 });
 

@@ -82,7 +82,7 @@ At that point:
 
 **Buttons:**
 
-- Primary: `Start a 14-day trial` (to Hosted sign-up; no card)
+- Primary: `Start a 30-day trial` (to Hosted sign-up; no card)
 - Secondary: `Deploy free to your Cloudflare` (to `/install`)
 
 Which path is primary flips at launch because the Hosted visitor is the one who needs the least persuading to start, and the developer will find the free path anyway.
@@ -140,7 +140,7 @@ Do not show the waitlist count until it passes the stage 1 gate (about 20); a sm
 **Hosted card (after launch)**
 
 - Badge: none, or `New`.
-- Button: `Start a 14-day trial`, then "No card needed. Cancel any time. Export everything, or move it to your own Cloudflare."
+- Button: `Start a 30-day trial`, then "No card needed. Cancel any time. Export everything, or move it to your own Cloudflare."
 
 ### Comparison table: Self-host vs Hosted
 
@@ -148,7 +148,7 @@ Put this directly under the two pricing cards, and use the same table in `/insta
 
 | | In your own Cloudflare | OpenPing Hosted |
 |---|---|---|
-| Price | Free (Cloudflare's free plan; Workers Paid is $5 a month if you outgrow it) | $24 a year; 1-minute checks $12 a year more |
+| Price | Free (Cloudflare's free plan; Workers Paid is $5 a month if you outgrow it) | $24 a year; $24 a year more for 1-minute checks on 5 monitors; packs of 25 more monitors at $24 a year |
 | Set-up | About 20 minutes: a Cloudflare account, a terminal and a few commands | About a minute: sign in and add a site |
 | Monitors | No cap of its own; about 24 at once on Cloudflare's free plan, up to 200 per run on Workers Paid | 20 |
 | Check interval | Every 12 minutes by default; you can change it | Every 12 minutes, or 1 minute with the add-on |
@@ -397,7 +397,7 @@ I did not create accounts; first screens were checked in Chrome, and later steps
 
 | | UptimeRobot | Checkly | Better Stack | OpenPing self-host today | OpenPing Hosted target |
 |---|---|---|---|---|---|
-| Promise on the home page | "Start monitoring in 30 seconds" | "Start for free" | "The most reliable uptime monitoring" | "Deploy your own" | "Start a 14-day trial" |
+| Promise on the home page | "Start monitoring in 30 seconds" | "Start for free" | "The most reliable uptime monitoring" | "Deploy your own" | "Start a 30-day trial" |
 | First screen asks for | The website to monitor, then Google, GitHub or email | Email, or Google or GitHub | Email only | A terminal | Google, GitHub or email |
 | Fields before the first monitor | 1 (the URL) plus a sign-in | 1 (email) or 0 with social | 1 (email) | About 6 secrets and IDs | 1 (the URL) |
 | Social buttons | Google and GitHub side by side, under the URL field | Google and GitHub stacked under the email field | None | GitHub only | Google and GitHub stacked, above email |
@@ -450,7 +450,7 @@ Landing pricing card              app.openping.n8builds.dev/start
 +--------------------------+      +-----------------------------------+
 | OpenPing Hosted          |      | What should OpenPing watch?       |
 | $24 a year               |----->| [https://example.com            ] |
-| [Start a 14-day trial]   |      | [Continue]                        |
+| [Start a 30-day trial]   |      | [Continue]                        |
 | No card. Cancel any time |      +-----------------------------------+
 +--------------------------+                       |
                                                    v
@@ -599,7 +599,7 @@ Notes on how 2.1 and 2.2 were built (branch `feat/passkeys`):
 
 | # | Change | Effort | Metric |
 |---|---|---|---|
-| 7.1 | New hero headline and subhead, "Start a 14-day trial" primary, "Deploy free" secondary | S | Trial starts per 100 visitors; `/install` visits should not fall by more than a third |
+| 7.1 | New hero headline and subhead, "Start a 30-day trial" primary, "Deploy free" secondary | S | Trial starts per 100 visitors; `/install` visits should not fall by more than a third |
 | 7.2 | Nav gets "Log in" (to the Hosted app) and "Start trial" | S | Log-in clicks that land on the Hosted app, not `/login` |
 | 7.3 | "Two ways to run it" moves up to position 4 | S | Scroll depth to pricing |
 | 7.4 | Pricing card switches from waitlist to trial; waitlist email sent once | S | Waitlist-to-trial conversion |
