@@ -86,7 +86,8 @@ For push notifications, your browser's push service (from Google, Apple, Mozilla
 - **The last export made before that deletion:** kept 30 more days, then deleted with its copy of your key.
   So 60 days after your checks stop, your OpenPing's data is gone from our systems.
 - **The list of addresses that confirmed email from your OpenPing:** until your OpenPing is deleted.
-- **Your account, sign-in methods, subscription record and account history:** while your account exists; deleting your OpenPing does not delete your account, so you can come back.
+- **The account history (audit log):** 2 years; its security part (when your account was made and which terms it accepted, each change of its email address, each support sign-in, each time your key was shown, and each sign-in method added or removed) is kept while your account exists, and then until it is 2 years old.
+- **Your account, sign-in methods and subscription record:** while your account exists; deleting your OpenPing does not delete your account, so you can come back.
   Ask us and we will delete your account too (section 10).
 - **Payment records:** Stripe keeps invoices and payments, and we keep our billing records, for as long as tax and accounting law requires, which is [TO FILL: retention period required by the provider's tax law, for example 7 years].
 - **Support emails:** [TO FILL: retention period for support email, for example 2 years after the last message].

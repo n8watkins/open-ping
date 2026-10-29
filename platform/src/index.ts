@@ -18,6 +18,7 @@ import type {
 } from "../../src/shared/hosted-contract";
 import { createApp } from "./app";
 import { endTrials } from "./billing/state";
+import { auditCleanup } from "./audit-retention";
 import { billingRecordsCleanup } from "./billing/webhook";
 import { ceremonyCleanup } from "./auth/ceremonies";
 import { emailSignInCleanup } from "./auth/email-sign-in";
@@ -161,6 +162,15 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
     new Date(controller.scheduledTime).getUTCMinutes() === 7
       ? [schedulerDaysCleanup(db, now), schedulerMinutesCleanup(db, now), ...billingRecordsCleanup(db, now)]
       : [];
+  if (hourly.length) {
+    ctx.waitUntil(
+      auditCleanup(db, now)
+        .then((deleted) => {
+          if (deleted) log.info("audit.expired_deleted", { deleted });
+        })
+        .catch((error) => log.error("audit.cleanup_failed", { error })),
+    );
+  }
   if (new Date(controller.scheduledTime).getUTCMinutes() % LIFECYCLE_EVERY_MINUTES === 0) ctx.waitUntil(lifecycle(env, ctx));
   ctx.waitUntil(releases(env, ctx));
   await db

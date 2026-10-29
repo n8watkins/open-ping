@@ -537,7 +537,8 @@ describe("the review's cases", () => {
     await sentNotice(last.id, "deletion_warning", String(at + 60_000), at + 60_000);
     await tick(w);
     expect((await accountExports(env.PLATFORM_DB, last.accountId)).map((e) => e.reason)).toEqual(["deletion"]);
-  });
+    // 52 tenants through a whole tick take about 3.5 s alone, past the 5 s default when every suite runs at once.
+  }, 30_000);
 
   it("keeps a deleted tenant's key with its export, shows it for that export, and drops both when it expires", async () => {
     const w = world();
