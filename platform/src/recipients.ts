@@ -92,7 +92,7 @@ export async function requestConfirmation(
 }
 
 /**
- * The unsubscribe link of a confirmed address (migration 0013): its token,
+ * The unsubscribe link of a confirmed address (migration 0014): its token,
  * made the first time it is mailed and the same on every email after, or
  * null when the address isn't confirmed for this tenant.
  */
