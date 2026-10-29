@@ -89,6 +89,8 @@ describe("the platform database", () => {
       "accounts",
       "audit_events",
       "auth_ceremonies",
+      "billing_emails",
+      "billing_locks",
       "email_logins",
       "escrowed_keys",
       "platform_sessions",

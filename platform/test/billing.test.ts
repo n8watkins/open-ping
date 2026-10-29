@@ -12,6 +12,7 @@ import { HttpStripeApi, STRIPE_API_VERSION, StripeApiError, checkoutParams, stri
 import type { PlatformEnv } from "../src/env";
 import type { Mailer, OutgoingEmail } from "../src/mail";
 import { DUE_SQL } from "../src/scheduling";
+import { OLD_EMAILS_SQL, OLD_EVENTS_SQL, billingRecordsCleanup } from "../src/billing/webhook";
 import { clearTenantCache } from "../src/tenants";
 import { FakeDispatcher } from "./fake-dispatcher";
 import { FakeStripe, type FakeEvent } from "./fake-stripe";
@@ -246,6 +247,24 @@ describe("the Stripe client", () => {
     expect(Object.fromEntries(new URLSearchParams(seen[2]!.body))).toEqual({ customer: "cus_1", return_url: `${APP}/billing` });
   });
 
+  it("expires sessions, cancels without proration, lists an invoice's payments and refunds, as Stripe documents", async () => {
+    const { api, seen } = recording(() => Response.json({ id: "x", status: "expired", data: [] }));
+    await api.expireCheckoutSession("cs_test_1");
+    await api.cancelSubscription("sub_1", "duplicate-cancel-sub_1");
+    await api.listInvoicePayments("in_1");
+    await api.createRefund({ paymentIntent: "pi_1", reason: "duplicate" }, "duplicate-refund-pi_1");
+    await api.retrieveSubscription("sub_1", { expandInvoice: true });
+    expect(seen.map((r) => `${r.method} ${r.url}`)).toEqual([
+      "POST https://api.stripe.com/v1/checkout/sessions/cs_test_1/expire",
+      "DELETE https://api.stripe.com/v1/subscriptions/sub_1?invoice_now=false&prorate=false",
+      "GET https://api.stripe.com/v1/invoice_payments?invoice=in_1&status=paid",
+      "POST https://api.stripe.com/v1/refunds",
+      "GET https://api.stripe.com/v1/subscriptions/sub_1?expand[]=latest_invoice",
+    ]);
+    expect(seen[1]!.headers.get("idempotency-key")).toBe("duplicate-cancel-sub_1");
+    expect(Object.fromEntries(new URLSearchParams(seen[3]!.body))).toEqual({ payment_intent: "pi_1", reason: "duplicate" });
+  });
+
   it("turns Stripe's errors into StripeApiError, retryable only when trying again can help", async () => {
     const { api } = recording(() => Response.json({ error: { type: "card_error", code: "card_declined", message: "Your card was declined." } }, { status: 402 }));
     const error = await api.createCustomer({ email: "a@example.com", accountId: "acc_1" }, "k").catch((e: unknown) => e);
@@ -320,14 +339,18 @@ describe("a customer's billing", () => {
       successUrl: `${APP}/billing?done=welcome`,
       cancelUrl: `${APP}/billing`,
     });
-    // One Customer per account, however often Checkout starts.
+    // One Customer per account, however often Checkout starts, and one open session:
+    // starting again expires the first, so only the latest can take a payment.
     await c.browser("/billing/checkout", { form: { plan: "hosted_fast" } });
+    await c.browser("/billing/checkout", { form: { plan: "hosted" } });
     expect(stripe.customers.size).toBe(1);
     expect(stripe.calls.filter((x) => x.method === "createCustomer")).toHaveLength(1);
+    const sessions = [...stripe.sessions.values()];
+    expect(sessions.map((x) => x.status)).toEqual(["expired", "expired", "open"]);
 
     // Nothing changes until Stripe says so.
     expect(await tenantRow(c.tenantId)).toMatchObject({ status: "trial", plan: "trial" });
-    await deliverAll(stripe.completeCheckout(session!.id).events);
+    await deliverAll(stripe.completeCheckout(sessions[2]!.id).events);
     expect(await tenantRow(c.tenantId)).toMatchObject({ status: "active", plan: "hosted", billing_reason: null });
     // The next call to the tenant carries the new plan's limits.
     expect(await tenantSees(c.slug)).toMatchObject({ status: "active", plan: "hosted", limits: { monitors: 20, minIntervalMinutes: 12 }, trialEndsAt: null });
@@ -580,5 +603,205 @@ describe("the trial", () => {
     expect(billing).toContain("Your free trial ended on Nov 2, 2026.");
     await subscribe(over);
     expect(await tenantRow(over.tenantId)).toMatchObject({ status: "active", plan: "hosted", billing_reason: null });
+  });
+});
+
+describe("review fixes (wave 3 review of #64)", () => {
+  async function auditActions(accountId: string): Promise<string[]> {
+    const rows = await env.PLATFORM_DB.prepare("SELECT action FROM audit_events WHERE account_id = ? ORDER BY id").bind(accountId).all<{ action: string }>();
+    return rows.results.map((r) => r.action);
+  }
+
+  it("never lets a stale copy saved last win: two deliveries for one account take turns", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    // Delivery A fetches the subscription while it is still active, then stalls.
+    const staleEvent = stripe.update(sub.id, {});
+    let release!: () => void;
+    let reached!: () => void;
+    const atFetch = new Promise<void>((r) => (reached = r));
+    stripe.onRetrieve = () => {
+      stripe.onRetrieve = null;
+      reached();
+      return new Promise<void>((r) => (release = r));
+    };
+    const a = deliver(staleEvent);
+    await atFetch;
+    // Meanwhile Stripe cancels it, and delivery B arrives: the account is busy, so B is told to come back.
+    const canceled = stripe.update(sub.id, { status: "canceled" }, "customer.subscription.deleted");
+    expect((await deliver(canceled)).status).toBe(409);
+    release();
+    expect((await a).status).toBe(200);
+    // A fetched again after saving, saw the cancellation, and saved that.
+    expect(await tenantRow(c.tenantId)).toMatchObject({ status: "suspended", billing_reason: "canceled" });
+    expect((await deliver(canceled)).status).toBe(200);
+    expect(await tenantRow(c.tenantId)).toMatchObject({ status: "suspended", billing_reason: "canceled" });
+  });
+
+  it("changes nothing for a delivery that stalled past its lock, and runs it again later", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    const staleEvent = stripe.update(sub.id, {});
+    let release!: () => void;
+    let reached!: () => void;
+    const atFetch = new Promise<void>((r) => (reached = r));
+    stripe.onRetrieve = () => {
+      stripe.onRetrieve = null;
+      reached();
+      return new Promise<void>((r) => (release = r));
+    };
+    const a = deliver(staleEvent);
+    await atFetch;
+    // A stalls for over a minute: its lock runs out, and B processes the cancellation.
+    clock.now += 61_000;
+    stripe.clock += 61;
+    await deliverAll([stripe.update(sub.id, { status: "canceled" }, "customer.subscription.deleted")]);
+    expect(await tenantRow(c.tenantId)).toMatchObject({ status: "suspended", billing_reason: "canceled" });
+    // A wakes holding its active copy: its writes find the lock gone, so nothing changes, and Stripe retries it.
+    release();
+    expect((await a).status).toBe(500);
+    expect(await tenantRow(c.tenantId)).toMatchObject({ status: "suspended", billing_reason: "canceled" });
+  });
+
+  it("keeps one open Checkout per account, whichever button and however long apart", async () => {
+    const c = await customer();
+    await c.browser("/billing/checkout", { form: { plan: "hosted" } });
+    clock.now += 61_000;
+    await c.browser("/billing/checkout", { form: { plan: "hosted_fast" } });
+    const [first, second] = [...stripe.sessions.values()];
+    expect(first!.status).toBe("expired");
+    expect(second!.status).toBe("open");
+    // The first page can't take a payment any more.
+    expect(() => stripe.completeCheckout(first!.id)).toThrow(/expired/);
+    await deliverAll(stripe.completeCheckout(second!.id).events);
+    expect(await tenantRow(c.tenantId)).toMatchObject({ status: "active", plan: "hosted_fast" });
+  });
+
+  it("cancels and refunds a second paid subscription, keeps the first, and tells the customer", async () => {
+    const c = await customer();
+    const first = await subscribe(c);
+    // A second Checkout finished anyway (made before the expiry, say): Stripe has two active subscriptions.
+    const customerId = [...stripe.customers.keys()][0]!;
+    const extra = await stripe.createCheckoutSession(
+      { ...[...stripe.sessions.values()][0]!.input, customer: customerId, prices: [PRICE_HOSTED, PRICE_FAST] },
+      "second-tab",
+    );
+    const second = stripe.completeCheckout(extra.id);
+    await deliverAll(second.events);
+    expect(stripe.subscriptions.get(second.subscription.id)!.status).toBe("canceled");
+    expect(stripe.refunds).toHaveLength(1);
+    expect(stripe.refunds[0]!.reason).toBe("duplicate");
+    expect(stripe.subscriptions.get(first.id)!.status).toBe("active");
+    expect(await tenantRow(c.tenantId)).toMatchObject({ status: "active", plan: "hosted" });
+    expect(await auditActions(c.accountId)).toContain("billing.duplicate_refunded");
+    expect(outbox.sent.filter((m) => m.subject === "We refunded a second OpenPing Hosted payment")).toHaveLength(1);
+  });
+
+  it("sends the customer to the invoice when the add-on's payment needs more, and adds it only once paid", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    stripe.declineNextUpdate = true;
+    const res = await c.browser("/billing/add-fast", { form: {} });
+    expect(res.status).toBe(200);
+    const page = await res.text();
+    expect(page).toContain("Finish the payment");
+    expect(page).not.toContain("on their way");
+    expect(page).toMatch(/content="0;url=https:\/\/invoice\.stripe\.com\/i\/acct_fake\/test_in_fake/);
+    // Stripe's events for the failed proration payment.
+    await deliverAll([stripe.update(sub.id, {}), stripe.pendingPaymentFailed(sub.id)]);
+    expect(await tenantRow(c.tenantId)).toMatchObject({ status: "active", plan: "hosted" });
+    const mail = outbox.sent.at(-1)!;
+    expect(mail.subject).toBe("Your 1-minute checks weren't added: the payment didn't go through");
+    expect(mail.text).toContain("Your plan and your checks are unchanged.");
+    expect(mail.text).not.toContain("keep running in the meantime");
+    const billing = await (await c.browser("/billing")).text();
+    expect(billing).toContain("checks are waiting on a payment");
+    expect(billing).toContain("Pay the invoice");
+    expect(billing).not.toContain("Add for $12 a year");
+
+    await deliverAll(stripe.payPending(sub.id));
+    expect(await tenantRow(c.tenantId)).toMatchObject({ plan: "hosted_fast" });
+    expect(await (await c.browser("/billing")).text()).not.toContain("waiting on a payment");
+  });
+
+  it("drops the waiting add-on when Stripe lets it expire", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    stripe.declineNextUpdate = true;
+    await c.browser("/billing/add-fast", { form: {} });
+    await deliverAll([stripe.update(sub.id, {})]);
+    expect(await (await c.browser("/billing")).text()).toContain("waiting on a payment");
+    await deliverAll([stripe.expirePending(sub.id)]);
+    const billing = await (await c.browser("/billing")).text();
+    expect(billing).not.toContain("waiting on a payment");
+    expect(billing).toContain("Add for $12 a year");
+    expect(await tenantRow(c.tenantId)).toMatchObject({ plan: "hosted" });
+  });
+
+  it("emails a failed payment once, even when the event comes again before it was marked done", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    const [updated, failed] = stripe.failRenewal(sub.id);
+    await deliverAll([updated!, failed!]);
+    const count = () => outbox.sent.filter((m) => m.subject === "Your OpenPing Hosted payment didn't go through").length;
+    expect(count()).toBe(1);
+    // A delivery that died after sending, before processed_at: Stripe delivers it again.
+    await env.PLATFORM_DB.prepare("UPDATE stripe_events SET processed_at = NULL WHERE id = ?").bind(failed!.id).run();
+    expect((await deliver(failed!)).status).toBe(200);
+    expect(count()).toBe(1);
+  });
+
+  it("orders dunning by when invoices happened: a late payment_failed after a later invoice.paid shows nothing", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    const [, failed] = stripe.failRenewal(sub.id);
+    const paid = stripe.pay(sub.id);
+    await deliverAll(paid);
+    await deliverAll([failed!]);
+    const billing = await (await c.browser("/billing")).text();
+    expect(billing).not.toContain("didn&#39;t go through");
+    expect(outbox.sent.filter((m) => m.subject.includes("didn't go through"))).toHaveLength(0);
+  });
+
+  it("records subscriptions it can't place for the owner, and still stops a known one that is cancelled", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    // The price changed in Stripe's dashboard, then the subscription was cancelled.
+    stripe.subscriptions.get(sub.id)!.items.data[0]!.price.id = "price_changedInDashboard";
+    await deliverAll([stripe.update(sub.id, { status: "canceled" }, "customer.subscription.deleted")]);
+    expect(await tenantRow(c.tenantId)).toMatchObject({ status: "suspended", billing_reason: "canceled", plan: "hosted" });
+    expect(await auditActions(c.accountId)).toContain("billing.needs_attention");
+    const detail = await env.PLATFORM_DB.prepare("SELECT detail FROM audit_events WHERE account_id = ? AND action = 'billing.needs_attention'").bind(c.accountId).first<{ detail: string }>();
+    expect(JSON.parse(detail!.detail)).toMatchObject({ reason: "unknown_prices", subscription: sub.id, status: "canceled" });
+  });
+
+  it("ends trials past due even behind tenants being removed", async () => {
+    const removed: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await customer({ trialEndsAt: clock.now - 2000 });
+      await env.PLATFORM_DB.prepare("UPDATE tenants SET provision_state = 'deleting' WHERE id = ?").bind(r.tenantId).run();
+      removed.push(r.tenantId);
+    }
+    const live = await customer({ trialEndsAt: clock.now - 1000 });
+    const ended = await endTrials(env.PLATFORM_DB, clock.now, 2);
+    expect(ended.map((t) => t.tenantId)).toContain(live.tenantId);
+    for (const id of removed) expect((await tenantRow(id)).status).toBe("trial");
+  });
+
+  it("forgets old Stripe events and billing emails through their indexes", async () => {
+    for (const sql of [OLD_EVENTS_SQL, OLD_EMAILS_SQL]) {
+      const plan = await env.PLATFORM_DB.prepare(`EXPLAIN QUERY PLAN ${sql}`).bind(0).all<{ detail: string }>();
+      expect(plan.results.map((r) => r.detail).join(" | ")).toMatch(/USING (COVERING )?INDEX idx_(stripe_events_received|billing_emails_sent)/);
+    }
+    await env.PLATFORM_DB.batch([
+      env.PLATFORM_DB.prepare("INSERT INTO stripe_events (id, type, created, received_at, processed_at) VALUES ('evt_old', 'x', 0, ?, ?)").bind(clock.now - 91 * DAY, clock.now - 91 * DAY),
+      env.PLATFORM_DB.prepare("INSERT INTO stripe_events (id, type, created, received_at, processed_at) VALUES ('evt_new', 'x', 0, ?, ?)").bind(clock.now - DAY, clock.now - DAY),
+      env.PLATFORM_DB.prepare("INSERT INTO billing_emails (key, sent_at) VALUES ('old', ?), ('new', ?)").bind(clock.now - 91 * DAY, clock.now - DAY),
+    ]);
+    await env.PLATFORM_DB.batch(billingRecordsCleanup(env.PLATFORM_DB, clock.now));
+    const events = await env.PLATFORM_DB.prepare("SELECT id FROM stripe_events WHERE id IN ('evt_old', 'evt_new')").all<{ id: string }>();
+    expect(events.results.map((r) => r.id)).toEqual(["evt_new"]);
+    const emails = await env.PLATFORM_DB.prepare("SELECT key FROM billing_emails WHERE key IN ('old', 'new')").all<{ key: string }>();
+    expect(emails.results.map((r) => r.key)).toEqual(["new"]);
   });
 });

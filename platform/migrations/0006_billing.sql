@@ -38,3 +38,36 @@ CREATE TABLE stripe_events (
   error            TEXT                       -- the last failure, short and never secret
 ) WITHOUT ROWID;
 CREATE INDEX idx_stripe_events_received ON stripe_events(received_at);
+
+-- When the last payment went through (epoch ms, from the event's time), so a
+-- payment_failed that arrives after a later invoice.paid doesn't bring the
+-- "payment due" banner back.
+ALTER TABLE subscriptions ADD COLUMN last_paid_at INTEGER;
+
+-- The account's open Checkout Session, expired before another is made, so
+-- two tabs or the two plan buttons can't leave two payable sessions.
+ALTER TABLE accounts ADD COLUMN checkout_session_id TEXT;
+
+-- One holder at a time for an account's billing: the webhook and Checkout
+-- take it, so two deliveries for one subscription can't interleave their
+-- fetch and their save (a stale copy saved last would win). Every write the
+-- holder makes checks the token; a holder that stalls past `until` loses it.
+CREATE TABLE billing_locks (
+  account_id TEXT PRIMARY KEY,
+  token      TEXT NOT NULL,
+  until      INTEGER NOT NULL
+) WITHOUT ROWID;
+
+-- Billing emails already sent, by what they are about ('payment_failed:<invoice>:<attempt>'),
+-- so a redelivered event never sends one twice. Kept 90 days, like stripe_events.
+CREATE TABLE billing_emails (
+  key     TEXT PRIMARY KEY,
+  sent_at INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX idx_billing_emails_sent ON billing_emails(sent_at);
+
+-- A change waiting for its invoice to be paid (the 1-minute add-on with
+-- payment_behavior=pending_if_incomplete): until when Stripe keeps it, and
+-- the invoice's hosted payment page, for the billing page's "finish paying".
+ALTER TABLE subscriptions ADD COLUMN pending_until INTEGER;
+ALTER TABLE subscriptions ADD COLUMN pending_invoice_url TEXT;

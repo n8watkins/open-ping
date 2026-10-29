@@ -643,7 +643,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       flash: FLASH[c.req.query("done") ?? ""] ?? null,
       supportSignIns: tenant ? await supportSignIns(db, tenant.id) : [],
       isOwner: isOwner(session.account, c.env),
-      billing: await billingView(db, session.account.id, billing(c.env).ok),
+      billing: await billingView(db, session.account.id, billing(c.env).ok, c.get("now")),
       now: c.get("now"),
     });
   });

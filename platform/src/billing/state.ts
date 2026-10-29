@@ -25,8 +25,9 @@
 
 import type { PlanId, TenantStatus } from "../../../src/shared/hosted-contract";
 import { forgetTenant } from "../tenants";
+import { BillingLockLostError, HOLDS, holdsBinds, type BillingLock } from "./lock";
 import type { BillingConfig } from "./config";
-import type { StripeSubscription, SubscriptionStatus } from "./stripe";
+import type { StripeInvoice, StripeSubscription, SubscriptionStatus } from "./stripe";
 
 export type PaidPlan = Exclude<PlanId, "trial">;
 export const BILLING_REASONS = ["trial_ended", "unpaid", "canceled", "paused"] as const;
@@ -70,26 +71,39 @@ export function renewsAt(sub: StripeSubscription): number | null {
   return ends.length ? Math.max(...ends) * 1000 : null;
 }
 
-/** Records the subscription as Stripe has it now (by Stripe's id, so a repeat changes nothing). */
+/** The open invoice a pending update waits on, when Stripe expanded it. */
+function pendingInvoice(sub: StripeSubscription): StripeInvoice | null {
+  return sub.pending_update && sub.latest_invoice && typeof sub.latest_invoice === "object" ? sub.latest_invoice : null;
+}
+
+/**
+ * Records the subscription as Stripe has it now (by Stripe's id, so a repeat
+ * changes nothing), only while `lock` is held; throws BillingLockLostError
+ * when it isn't.
+ */
 export async function saveSubscription(
   db: D1Database,
-  input: { sub: StripeSubscription; accountId: string; tenantId: string | null; plan: PaidPlan; now: number },
+  lock: BillingLock,
+  input: { sub: StripeSubscription; tenantId: string | null; plan: PaidPlan; now: number },
 ): Promise<void> {
   const { sub } = input;
-  await db
+  const pending = sub.pending_update ?? null;
+  const written = await db
     .prepare(
       `INSERT INTO subscriptions (id, account_id, tenant_id, stripe_customer_id, stripe_subscription_id, status, plan, current_period_end,
-         cancel_at_period_end, price_ids, ended_at, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)
+         cancel_at_period_end, price_ids, ended_at, pending_until, pending_invoice_url, created_at, updated_at)
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14 WHERE ${HOLDS}
        ON CONFLICT(stripe_subscription_id) DO UPDATE SET account_id = excluded.account_id,
          tenant_id = COALESCE(excluded.tenant_id, subscriptions.tenant_id), stripe_customer_id = excluded.stripe_customer_id,
          status = excluded.status, plan = excluded.plan, current_period_end = excluded.current_period_end,
          cancel_at_period_end = excluded.cancel_at_period_end, price_ids = excluded.price_ids, ended_at = excluded.ended_at,
+         pending_until = excluded.pending_until,
+         pending_invoice_url = CASE WHEN excluded.pending_until IS NULL THEN NULL ELSE COALESCE(excluded.pending_invoice_url, subscriptions.pending_invoice_url) END,
          updated_at = excluded.updated_at`,
     )
     .bind(
       `sub_${crypto.randomUUID()}`,
-      input.accountId,
+      lock.accountId,
       input.tenantId,
       sub.customer,
       sub.id,
@@ -99,9 +113,19 @@ export async function saveSubscription(
       sub.cancel_at_period_end ? 1 : 0,
       JSON.stringify(sub.items.data.map((i) => i.price.id)),
       sub.ended_at ? sub.ended_at * 1000 : null,
+      pending ? pending.expires_at * 1000 : null,
+      pendingInvoice(sub)?.hosted_invoice_url ?? null,
       input.now,
+      ...holdsBinds(lock),
     )
     .run();
+  if ((written.meta.changes ?? 0) === 0) throw new BillingLockLostError(lock.accountId);
+}
+
+/** The plan a subscription row was saved with, for one whose prices aren't ours any more. */
+export async function savedPlan(db: D1Database, stripeSubscriptionId: string): Promise<PaidPlan | null> {
+  const row = await db.prepare("SELECT plan FROM subscriptions WHERE stripe_subscription_id = ?").bind(stripeSubscriptionId).first<{ plan: PaidPlan }>();
+  return row?.plan ?? null;
 }
 
 export interface BillingChange {
@@ -117,7 +141,8 @@ export interface BillingChange {
  * subscription, or already there). The tenant's next call carries it: this
  * isolate forgets its cached row at once, the others within 30 seconds.
  */
-export async function applyAccountBilling(db: D1Database, accountId: string, now: number): Promise<BillingChange | null> {
+export async function applyAccountBilling(db: D1Database, lock: BillingLock, now: number): Promise<BillingChange | null> {
+  const accountId = lock.accountId;
   const [tenantRows, subRows] = await db.batch<Record<string, unknown>>([
     db
       .prepare("SELECT id, slug, status, plan, billing_reason FROM tenants WHERE account_id = ? AND provision_state <> 'deleting' ORDER BY created_at LIMIT 1")
@@ -135,20 +160,22 @@ export async function applyAccountBilling(db: D1Database, accountId: string, now
   if (!best) return null;
   const to = { status: best.state.status, plan: best.plan, reason: best.state.reason };
   if (tenant.status === to.status && tenant.plan === to.plan && tenant.billing_reason === to.reason) return null;
-  await db
-    .prepare(
-      `UPDATE tenants SET status = ?1, plan = ?2, billing_reason = ?3,
-         suspended_at = CASE WHEN ?1 = 'suspended' THEN COALESCE(suspended_at, ?4) ELSE NULL END, updated_at = ?4
-       WHERE id = ?5`,
-    )
-    .bind(to.status, to.plan, to.reason, now, tenant.id)
-    .run();
-  forgetTenant(tenant.slug);
   const change: BillingChange = { tenantId: tenant.id, slug: tenant.slug, from: { status: tenant.status, plan: tenant.plan, reason: tenant.billing_reason }, to };
-  await db
-    .prepare("INSERT INTO audit_events (at, account_id, tenant_id, actor, action, detail) VALUES (?, ?, ?, 'system', 'billing.changed', ?)")
-    .bind(now, accountId, tenant.id, JSON.stringify({ from: `${change.from.status}/${change.from.plan}`, to: `${to.status}/${to.plan}`, reason: to.reason }))
-    .run();
+  // One batch, both writes conditional on the lock: the state and its audit line land together or not at all.
+  const [updated] = await db.batch([
+    db
+      .prepare(
+        `UPDATE tenants SET status = ?1, plan = ?2, billing_reason = ?3,
+           suspended_at = CASE WHEN ?1 = 'suspended' THEN COALESCE(suspended_at, ?4) ELSE NULL END, updated_at = ?4
+         WHERE id = ?5 AND ${HOLDS}`,
+      )
+      .bind(to.status, to.plan, to.reason, now, tenant.id, ...holdsBinds(lock)),
+    db
+      .prepare(`INSERT INTO audit_events (at, account_id, tenant_id, actor, action, detail) SELECT ?, ?, ?, 'system', 'billing.changed', ? WHERE ${HOLDS}`)
+      .bind(now, accountId, tenant.id, JSON.stringify({ from: `${change.from.status}/${change.from.plan}`, to: `${to.status}/${to.plan}`, reason: to.reason }), ...holdsBinds(lock)),
+  ]);
+  if ((updated?.meta.changes ?? 0) === 0) throw new BillingLockLostError(accountId);
+  forgetTenant(tenant.slug);
   return change;
 }
 
@@ -159,7 +186,7 @@ export async function applyAccountBilling(db: D1Database, accountId: string, now
  * trial), so only the ended trials are read (test/billing.test.ts checks the plan).
  */
 export const ENDED_TRIALS_SQL = `SELECT id FROM tenants INDEXED BY idx_tenants_trial_end
-  WHERE status = 'trial' AND trial_ends_at <= ?1 ORDER BY trial_ends_at LIMIT ?2`;
+  WHERE status = 'trial' AND trial_ends_at <= ?1 AND provision_state <> 'deleting' ORDER BY trial_ends_at LIMIT ?2`;
 
 /**
  * From the every-minute cron: a trial past its 14 days, with no subscription,
@@ -171,7 +198,7 @@ export async function endTrials(db: D1Database, now: number, limit = 100): Promi
   const rows = await db
     .prepare(
       `UPDATE tenants SET status = 'suspended', billing_reason = 'trial_ended', suspended_at = ?1, updated_at = ?1
-       WHERE id IN (${ENDED_TRIALS_SQL.replace("?2", "?3")}) AND provision_state <> 'deleting'
+       WHERE id IN (${ENDED_TRIALS_SQL.replace("?2", "?3")}) AND status = 'trial'
        RETURNING id, slug, account_id`,
     )
     .bind(now, now, limit)

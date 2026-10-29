@@ -18,6 +18,7 @@ import type {
 } from "../../src/shared/hosted-contract";
 import { createApp } from "./app";
 import { endTrials } from "./billing/state";
+import { billingRecordsCleanup } from "./billing/webhook";
 import { ceremonyCleanup } from "./auth/ceremonies";
 import { emailSignInCleanup } from "./auth/email-sign-in";
 import { rateLimitCleanup } from "./auth/rate-limit";
@@ -107,7 +108,7 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
       if (r.sent || r.returned) console.log("[schedule] enqueued", r);
     })
     .catch((error) => console.error("[schedule] enqueue failed", error));
-  const hourly = new Date(controller.scheduledTime).getUTCMinutes() === 7 ? [schedulerDaysCleanup(db, now)] : [];
+  const hourly = new Date(controller.scheduledTime).getUTCMinutes() === 7 ? [schedulerDaysCleanup(db, now), ...billingRecordsCleanup(db, now)] : [];
   await db
     .batch([sessionCleanup(db, now), emailSignInCleanup(db, now), ceremonyCleanup(db, now), rateLimitCleanup(db, now), ...hourly])
     .catch((error) => console.error("[cleanup] failed", error));

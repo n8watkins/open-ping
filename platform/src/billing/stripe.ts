@@ -18,6 +18,16 @@
  *   - invoices:          https://docs.stripe.com/api/invoices/object
  *     (the subscription is `parent.subscription_details.subscription`)
  *   - idempotent requests: https://docs.stripe.com/api/idempotent_requests
+ *   - pending updates:   https://docs.stripe.com/billing/subscriptions/pending-updates
+ *     (a failed payment leaves `pending_update` set and the open invoice as
+ *     `latest_invoice`; the update applies when that invoice is paid, and is
+ *     dropped after about 23 hours)
+ *   - expiring a Checkout Session: https://docs.stripe.com/api/checkout/sessions/expire
+ *     (only an `open` one; anything else answers an error)
+ *   - cancelling:        https://docs.stripe.com/api/subscriptions/cancel
+ *   - invoice payments:  https://docs.stripe.com/api/invoice-payment/object
+ *     (`GET /v1/invoice_payments?invoice=`; each names its `payment.payment_intent`)
+ *   - refunds:           https://docs.stripe.com/api/refunds/create
  * Requests are form encoded (`a[b][0]=c`), as the v1 API takes them.
  */
 
@@ -39,6 +49,18 @@ export interface StripeSubscription {
   ended_at: number | null;
   metadata: Record<string, string>;
   items: { data: { id: string; price: { id: string }; current_period_end: number }[] };
+  /** Set while a change waits for its invoice to be paid (payment_behavior=pending_if_incomplete). */
+  pending_update?: { expires_at: number; subscription_items?: { id?: string; price: string }[] } | null;
+  /** An id, or the invoice itself when expanded (retrieveSubscription with expandInvoice). */
+  latest_invoice?: string | StripeInvoice | null;
+}
+
+/** The parts of an Invoice billing reads. */
+export interface StripeInvoice {
+  id: string;
+  status: string | null;
+  billing_reason: string | null;
+  hosted_invoice_url: string | null;
 }
 
 export interface CheckoutInput {
@@ -62,8 +84,16 @@ export interface StripeApi {
   createCheckoutSession(input: CheckoutInput, idempotencyKey: string): Promise<{ id: string; url: string }>;
   /** POST /v1/billing_portal/sessions. */
   createPortalSession(input: { customer: string; returnUrl: string; configuration?: string }): Promise<{ url: string }>;
-  /** GET /v1/subscriptions/:id: the current truth, whatever order the webhooks came in. */
-  retrieveSubscription(id: string): Promise<StripeSubscription>;
+  /** GET /v1/subscriptions/:id: the current truth, whatever order the webhooks came in; `expandInvoice` expands latest_invoice. */
+  retrieveSubscription(id: string, options?: { expandInvoice?: boolean }): Promise<StripeSubscription>;
+  /** POST /v1/checkout/sessions/:id/expire: an open session can't be paid any more. */
+  expireCheckoutSession(id: string): Promise<{ id: string; status: string }>;
+  /** DELETE /v1/subscriptions/:id: ends it now, no proration. */
+  cancelSubscription(id: string, idempotencyKey: string): Promise<StripeSubscription>;
+  /** GET /v1/invoice_payments?invoice=...&status=paid: the PaymentIntents that paid an invoice. */
+  listInvoicePayments(invoice: string): Promise<{ data: { payment: { type: string; payment_intent?: string } }[] }>;
+  /** POST /v1/refunds for the whole of a PaymentIntent. */
+  createRefund(input: { paymentIntent: string; reason: "duplicate" }, idempotencyKey: string): Promise<{ id: string }>;
   /** POST /v1/subscription_items: adds the 1-minute add-on to a paid subscription, invoiced now. */
   addSubscriptionItem(input: { subscription: string; price: string }, idempotencyKey: string): Promise<{ id: string }>;
 }
@@ -133,7 +163,7 @@ export class HttpStripeApi implements StripeApi {
     this.fetcher = (input, init) => f(input, init);
   }
 
-  private async request<T>(method: "GET" | "POST", path: string, params?: Record<string, FormValue>, idempotencyKey?: string): Promise<T> {
+  private async request<T>(method: "GET" | "POST" | "DELETE", path: string, params?: Record<string, FormValue>, idempotencyKey?: string): Promise<T> {
     const headers = new Headers({ authorization: `Bearer ${this.secretKey}`, "stripe-version": STRIPE_API_VERSION });
     let body: string | undefined;
     if (params) {
@@ -172,8 +202,27 @@ export class HttpStripeApi implements StripeApi {
     });
   }
 
-  retrieveSubscription(id: string): Promise<StripeSubscription> {
-    return this.request("GET", `/v1/subscriptions/${encodeURIComponent(id)}`);
+  retrieveSubscription(id: string, options: { expandInvoice?: boolean } = {}): Promise<StripeSubscription> {
+    const query = options.expandInvoice ? "?expand[]=latest_invoice" : "";
+    return this.request("GET", `/v1/subscriptions/${encodeURIComponent(id)}${query}`);
+  }
+
+  expireCheckoutSession(id: string): Promise<{ id: string; status: string }> {
+    return this.request("POST", `/v1/checkout/sessions/${encodeURIComponent(id)}/expire`, {});
+  }
+
+  cancelSubscription(id: string, idempotencyKey: string): Promise<StripeSubscription> {
+    // Stripe's libraries send a DELETE's parameters in the query string.
+    const query = stripeForm({ invoice_now: false, prorate: false }).toString();
+    return this.request("DELETE", `/v1/subscriptions/${encodeURIComponent(id)}?${query}`, undefined, idempotencyKey);
+  }
+
+  listInvoicePayments(invoice: string): Promise<{ data: { payment: { type: string; payment_intent?: string } }[] }> {
+    return this.request("GET", `/v1/invoice_payments?${stripeForm({ invoice, status: "paid" }).toString()}`);
+  }
+
+  createRefund(input: { paymentIntent: string; reason: "duplicate" }, idempotencyKey: string): Promise<{ id: string }> {
+    return this.request("POST", "/v1/refunds", { payment_intent: input.paymentIntent, reason: input.reason }, idempotencyKey);
   }
 
   addSubscriptionItem(input: { subscription: string; price: string }, idempotencyKey: string): Promise<{ id: string }> {

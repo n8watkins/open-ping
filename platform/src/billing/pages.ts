@@ -29,6 +29,8 @@ export interface BillingView {
     endedAt: number | null;
     paymentFailedAt: number | null;
     nextPaymentAttempt: number | null;
+    /** A change (the add-on) waiting for its invoice to be paid, until Stripe drops it. */
+    pending: { until: number; invoiceUrl: string } | null;
   } | null;
   /** A Stripe Customer exists, so the Customer Portal can open. */
   hasCustomer: boolean;
@@ -134,8 +136,15 @@ ${h("Billing")}
     : renews
       ? `Renews on ${renews} for ${fast ? PRICE_TEXT.both : PRICE_TEXT.hosted}.`
       : "";
+  if (sub?.pending && !fast) {
+    lines.push(
+      html`<div class="offer lead-offer"><h3>${ONE_MINUTE} checks are waiting on a payment</h3>
+<p>The payment for them didn't go through, so they weren't added. Pay the invoice by ${dateText(sub.pending.until)} to add them; nothing changes until then.</p>
+<div class="stack"><a class="button primary" href="${sub.pending.invoiceUrl}" rel="noreferrer">Pay the invoice</a></div></div>`,
+    );
+  }
   const upgrade =
-    !fast && !pastDue
+    !fast && !pastDue && !sub?.pending
       ? html`<div class="offer${focus === "upgrade" ? " lead-offer" : ""}"><h3>${ONE_MINUTE} checks</h3>
 <p>Check every monitor as often as once a minute, for ${PRICE_TEXT.fast} more. You pay for the rest of this year now, then it renews with your plan.</p>
 ${form("/billing/add-fast", `Add for ${PRICE_TEXT.fast}`, focus === "upgrade" ? "primary" : "secondary")}</div>`
@@ -160,6 +169,7 @@ export const BILLING_STYLE = `
 .offer h3 { font-size: 0.9375rem; font-weight: 650; margin: 0 0 4px; color: var(--ink); }
 .offer p { font-size: 0.9375rem; }
 .offer.lead-offer { border-color: var(--accent); }
+.offer + p { margin-top: 16px; }
 .stack.spaced { margin-top: 16px; }
 .stack form + form { margin-top: 12px; }
 `;

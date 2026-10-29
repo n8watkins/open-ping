@@ -9,7 +9,7 @@
  */
 
 import { signStripePayload } from "../src/billing/signature";
-import type { CheckoutInput, StripeApi, StripeSubscription, SubscriptionStatus } from "../src/billing/stripe";
+import type { CheckoutInput, StripeApi, StripeInvoice, StripeSubscription, SubscriptionStatus } from "../src/billing/stripe";
 import { StripeApiError } from "../src/billing/stripe";
 
 export interface FakeEvent {
@@ -22,11 +22,32 @@ export interface FakeEvent {
   data: { object: Record<string, unknown> };
 }
 
-type Method = "createCustomer" | "createCheckoutSession" | "createPortalSession" | "retrieveSubscription" | "addSubscriptionItem";
+type Method =
+  | "createCustomer"
+  | "createCheckoutSession"
+  | "createPortalSession"
+  | "retrieveSubscription"
+  | "addSubscriptionItem"
+  | "expireCheckoutSession"
+  | "cancelSubscription"
+  | "listInvoicePayments"
+  | "createRefund";
+
+interface FakeInvoice extends StripeInvoice {
+  subscription: string;
+  payment_intent: string | null;
+  attempt_count: number;
+}
 
 export class FakeStripe implements StripeApi {
   readonly customers = new Map<string, { id: string; email: string; metadata: Record<string, string> }>();
-  readonly sessions = new Map<string, { id: string; url: string; input: CheckoutInput }>();
+  readonly sessions = new Map<string, { id: string; url: string; input: CheckoutInput; status: "open" | "complete" | "expired" }>();
+  readonly invoices = new Map<string, FakeInvoice>();
+  readonly refunds: { paymentIntent: string; reason: string }[] = [];
+  /** The next addSubscriptionItem's payment fails: the change waits as a pending update (Stripe's pending_if_incomplete). */
+  declineNextUpdate = false;
+  /** Runs inside retrieveSubscription after the copy is taken, so a test can stall a reader holding a stale copy. */
+  onRetrieve: (() => Promise<void>) | null = null;
   readonly subscriptions = new Map<string, StripeSubscription>();
   readonly portals: { customer: string; returnUrl: string; configuration?: string }[] = [];
   readonly calls: { method: Method; idempotencyKey?: string }[] = [];
@@ -80,7 +101,7 @@ export class FakeStripe implements StripeApi {
     if (!this.customers.has(input.customer)) throw new StripeApiError(400, "invalid_request_error", "resource_missing", "No such customer");
     return this.once(`checkout:${idempotencyKey}`, () => {
       const id = this.id("cs_test");
-      const session = { id, url: `https://checkout.stripe.com/c/pay/${id}`, input };
+      const session = { id, url: `https://checkout.stripe.com/c/pay/${id}`, input, status: "open" as const };
       this.sessions.set(id, session);
       return { id, url: session.url };
     });
@@ -93,11 +114,108 @@ export class FakeStripe implements StripeApi {
     return { url: `https://billing.stripe.com/p/session/test_${this.portals.length}` };
   }
 
-  async retrieveSubscription(id: string): Promise<StripeSubscription> {
+  async retrieveSubscription(id: string, options: { expandInvoice?: boolean } = {}): Promise<StripeSubscription> {
     this.enter("retrieveSubscription");
     const sub = this.subscriptions.get(id);
     if (!sub) throw new StripeApiError(404, "invalid_request_error", "resource_missing", `No such subscription: '${id}'`);
-    return structuredClone(sub);
+    const copy = structuredClone(sub);
+    if (options.expandInvoice && typeof copy.latest_invoice === "string") {
+      const inv = this.invoices.get(copy.latest_invoice);
+      if (inv) copy.latest_invoice = { id: inv.id, status: inv.status, billing_reason: inv.billing_reason, hosted_invoice_url: inv.hosted_invoice_url };
+    }
+    if (this.onRetrieve) await this.onRetrieve();
+    return copy;
+  }
+
+  async expireCheckoutSession(id: string) {
+    this.enter("expireCheckoutSession");
+    const session = this.sessions.get(id);
+    if (!session) throw new StripeApiError(404, "invalid_request_error", "resource_missing", "No such checkout session");
+    if (session.status !== "open") throw new StripeApiError(400, "invalid_request_error", null, `Session is ${session.status} and can't be expired`);
+    session.status = "expired";
+    return { id, status: "expired" };
+  }
+
+  async cancelSubscription(id: string, idempotencyKey: string) {
+    this.enter("cancelSubscription", idempotencyKey);
+    return this.once(`cancel:${idempotencyKey}`, () => {
+      const sub = this.subscriptions.get(id);
+      if (!sub) throw new StripeApiError(404, "invalid_request_error", "resource_missing", "No such subscription");
+      Object.assign(sub, { status: "canceled", canceled_at: this.clock, ended_at: this.clock });
+      return structuredClone(sub);
+    });
+  }
+
+  async listInvoicePayments(invoice: string) {
+    this.enter("listInvoicePayments");
+    const inv = this.invoices.get(invoice);
+    return { data: inv?.status === "paid" && inv.payment_intent ? [{ payment: { type: "payment_intent", payment_intent: inv.payment_intent } }] : [] };
+  }
+
+  async createRefund(input: { paymentIntent: string; reason: "duplicate" }, idempotencyKey: string) {
+    this.enter("createRefund", idempotencyKey);
+    return this.once(`refund:${idempotencyKey}`, () => {
+      this.refunds.push({ paymentIntent: input.paymentIntent, reason: input.reason });
+      return { id: this.id("re") };
+    });
+  }
+
+  private newInvoice(sub: StripeSubscription, status: "paid" | "open", billingReason: string): FakeInvoice {
+    const id = this.id("in");
+    const inv: FakeInvoice = {
+      id,
+      status,
+      billing_reason: billingReason,
+      hosted_invoice_url: `https://invoice.stripe.com/i/acct_fake/test_${id}`,
+      subscription: sub.id,
+      payment_intent: status === "paid" ? this.id("pi") : null,
+      attempt_count: 1,
+    };
+    this.invoices.set(id, inv);
+    sub.latest_invoice = id;
+    return inv;
+  }
+
+  private readonly pendingItems = new Map<string, { id: string; price: { id: string }; current_period_end: number }>();
+
+  /** The customer pays the pending update's invoice: Stripe applies the change. */
+  payPending(subId: string): FakeEvent[] {
+    const sub = this.subscriptions.get(subId)!;
+    const inv = this.invoices.get(sub.latest_invoice as string)!;
+    Object.assign(inv, { status: "paid", payment_intent: this.id("pi") });
+    sub.items.data.push(this.pendingItems.get(subId)!);
+    sub.pending_update = null;
+    return [this.event("customer.subscription.pending_update_applied", structuredClone(sub) as unknown as Record<string, unknown>), this.event("invoice.paid", this.invoiceObject(inv, sub))];
+  }
+
+  /** Nobody paid: after 23 hours Stripe voids the invoice and drops the change. */
+  expirePending(subId: string): FakeEvent {
+    const sub = this.subscriptions.get(subId)!;
+    const inv = this.invoices.get(sub.latest_invoice as string)!;
+    inv.status = "void";
+    sub.pending_update = null;
+    return this.event("customer.subscription.pending_update_expired", structuredClone(sub) as unknown as Record<string, unknown>);
+  }
+
+  /** The event Stripe sends for the pending update's failed payment. */
+  pendingPaymentFailed(subId: string): FakeEvent {
+    const sub = this.subscriptions.get(subId)!;
+    const inv = this.invoices.get(sub.latest_invoice as string)!;
+    return this.event("invoice.payment_failed", this.invoiceObject(inv, sub));
+  }
+
+  invoiceObject(inv: FakeInvoice, sub: StripeSubscription, nextAttempt: number | null = null): Record<string, unknown> {
+    return {
+      id: inv.id,
+      object: "invoice",
+      customer: sub.customer,
+      status: inv.status,
+      attempt_count: inv.attempt_count,
+      next_payment_attempt: nextAttempt,
+      billing_reason: inv.billing_reason,
+      hosted_invoice_url: inv.hosted_invoice_url,
+      parent: { type: "subscription_details", subscription_details: { subscription: sub.id, metadata: sub.metadata } },
+    };
   }
 
   /** Items added with addSubscriptionItem, by subscription; events the test delivers itself. */
@@ -111,7 +229,17 @@ export class FakeStripe implements StripeApi {
       this.addedItems.push(input);
       const end = sub.items.data[0]!.current_period_end;
       const item = { id: this.id("si"), price: { id: input.price }, current_period_end: end };
+      if (this.declineNextUpdate) {
+        // The proration invoice's payment fails: the change waits, for 23 hours, on an open invoice.
+        this.declineNextUpdate = false;
+        this.clock += 60;
+        this.newInvoice(sub, "open", "subscription_update");
+        sub.pending_update = { expires_at: this.clock + 23 * 3600, subscription_items: [{ price: input.price }] };
+        this.pendingItems.set(sub.id, item);
+        return { id: item.id };
+      }
       sub.items.data.push(item);
+      this.newInvoice(sub, "paid", "subscription_update");
       return { id: item.id };
     });
   }
@@ -125,6 +253,8 @@ export class FakeStripe implements StripeApi {
   /** The customer pays in Checkout: a subscription with one item per price, and Stripe's events. */
   completeCheckout(sessionId: string): { subscription: StripeSubscription; events: FakeEvent[] } {
     const session = this.sessions.get(sessionId)!;
+    if (session.status !== "open") throw new Error(`fake Stripe: Checkout Session ${sessionId} is ${session.status}; it can't be paid`);
+    session.status = "complete";
     const year = 365 * 86_400;
     const sub: StripeSubscription = {
       id: this.id("sub"),
@@ -137,6 +267,7 @@ export class FakeStripe implements StripeApi {
       items: { data: session.input.prices.map((price) => ({ id: this.id("si"), price: { id: price }, current_period_end: this.clock + year })) },
     };
     this.subscriptions.set(sub.id, sub);
+    const first = this.newInvoice(sub, "paid", "subscription_create");
     return {
       subscription: sub,
       events: [
@@ -152,22 +283,16 @@ export class FakeStripe implements StripeApi {
           status: "complete",
           payment_status: "paid",
         }),
-        this.event("invoice.paid", this.invoice(sub, "paid")),
+        this.event("invoice.paid", this.invoiceObject(first, sub)),
       ],
     };
   }
 
+  /** A renewal invoice, open (failing) or paid. */
   invoice(sub: StripeSubscription, status: "paid" | "open", nextAttempt: number | null = null): Record<string, unknown> {
-    return {
-      id: this.id("in"),
-      object: "invoice",
-      customer: sub.customer,
-      status,
-      attempt_count: status === "paid" ? 1 : 2,
-      next_payment_attempt: nextAttempt,
-      billing_reason: "subscription_cycle",
-      parent: { type: "subscription_details", subscription_details: { subscription: sub.id, metadata: sub.metadata } },
-    };
+    const inv = this.newInvoice(sub, status, "subscription_cycle");
+    inv.attempt_count = status === "paid" ? 1 : 2;
+    return this.invoiceObject(inv, sub, nextAttempt);
   }
 
   /** Changes the subscription the way Stripe would, and answers the updated event. */
@@ -183,6 +308,8 @@ export class FakeStripe implements StripeApi {
 
   /** A renewal payment fails; Stripe will retry in three days. */
   failRenewal(subId: string): FakeEvent[] {
+    // Some time after the last payment: dunning orders invoices by when they happened.
+    this.clock += 60;
     const sub = this.subscriptions.get(subId)!;
     const updated = this.update(subId, { status: "past_due" as SubscriptionStatus });
     return [updated, this.event("invoice.payment_failed", this.invoice(sub, "open", this.clock + 3 * 86_400))];
@@ -190,6 +317,7 @@ export class FakeStripe implements StripeApi {
 
   /** A payment finally succeeds. */
   pay(subId: string): FakeEvent[] {
+    this.clock += 60;
     const sub = this.subscriptions.get(subId)!;
     return [this.update(subId, { status: "active" }), this.event("invoice.paid", this.invoice(sub, "paid"))];
   }
