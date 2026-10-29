@@ -156,7 +156,7 @@ You can, at any time:
   Your plan is cancelled and your OpenPing's checks stop at once, and you are signed out everywhere.
   We then export your OpenPing once more and delete it, usually within the hour, and then delete your sign-in methods, sessions and email address; we email you when it starts and when it is done.
   That last export is kept 30 days, so we can bring your OpenPing back if you write in time, and is then deleted.
-  We keep the payment records the law requires, and the account history for its 2 years (section 4), with your email address removed from the account.
+  We keep the payment records the law requires, and the account history for its 2 years (section 4), with the email addresses in it removed.
 - **Object or restrict:** ask us to stop a use of your data based on our legitimate interests.
 - **Complain:** to your local data protection authority, though we would like the chance to help first.
 
