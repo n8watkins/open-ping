@@ -280,8 +280,15 @@ describe("SSL certificate monitor", () => {
     expect(await incidents(monitor.id)).toEqual([]);
     expect(await downSeconds(monitor.id)).toBe(0);
 
-    const detail = await (await apiRequest(`/api/monitors/${monitor.id}/detail`)).json<{ certificate: unknown }>();
+    const detail = await (await apiRequest(`/api/monitors/${monitor.id}/detail`)).json<{
+      certificate: unknown;
+      uptime: Record<string, number | null>;
+      state: { last_success_at: number | null };
+    }>();
     expect(detail.certificate).toMatchObject({ cantCheck: { reason: "cloudflare" } });
+    // Nothing counted, so no uptime figure, and not a success either.
+    expect(detail.uptime).toEqual({ d1: null, d7: null, d30: null, d90: null, d365: null });
+    expect(detail.state.last_success_at).toBeNull();
   });
 
   it("is can't check for a TLS 1.3-only server", async () => {

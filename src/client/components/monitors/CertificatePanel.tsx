@@ -3,6 +3,10 @@ import { AlertTriangle, ChevronDown, ShieldOff } from "lucide-react";
 import { Card, CardHeader, CardTitle } from "../ui/Card";
 import { cn } from "../../lib/cn";
 import { formatDateTime, formatRelativeTime } from "../../lib/format";
+
+/** "Nov 29, 2026, 11:59 PM": a validity bound, without the seconds. */
+const dateTime = (ts: number) =>
+  new Date(ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 import { certLookupFailure, daysLeftLabel, type CertificateDetail } from "./certificate";
 
 /** How many names show before "Show all". */
@@ -125,8 +129,8 @@ export function CertificatePanel({
       <dl className="mt-3 divide-y divide-line border-t border-line">
         <Row label="Issuer">{cert.issuer ?? "-"}</Row>
         <Row label="Issued to">{cert.subject ?? "-"}</Row>
-        <Row label="Valid from">{formatDateTime(cert.validFrom)}</Row>
-        <Row label="Valid to">{formatDateTime(cert.validTo)}</Row>
+        <Row label="Valid from">{dateTime(cert.validFrom)}</Row>
+        <Row label="Valid to">{dateTime(cert.validTo)}</Row>
         <Row label={cert.sanCount === 1 ? "Name" : `Names (${cert.sanCount})`}>
           {cert.sans.length === 0 ? (
             "-"

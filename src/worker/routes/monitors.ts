@@ -418,12 +418,15 @@ monitors.get("/:id/detail", async (c) => {
     ...(monitor.type === "cert"
       ? { certificate: certificateDetail(monitor.config as CertConfig, parseCertCache(certCacheRaw), now) }
       : {}),
+    // null for a window with no counted checks (never checked yet, always off
+    // hours, or a certificate that can't be read from here), shown as "-"
+    // rather than a 100% nothing earned.
     uptime: {
-      d1: d1.uptimePct,
-      d7: d7.uptimePct,
-      d30: d30.uptimePct,
-      d90: d90.uptimePct,
-      d365: d365.uptimePct,
+      d1: d1.checks ? d1.uptimePct : null,
+      d7: d7.checks ? d7.uptimePct : null,
+      d30: d30.checks ? d30.uptimePct : null,
+      d90: d90.checks ? d90.uptimePct : null,
+      d365: d365.checks ? d365.uptimePct : null,
     },
     downtime,
     latency: { avg: latency?.avg ?? null, min: latency?.min ?? null, max: latency?.max ?? null },

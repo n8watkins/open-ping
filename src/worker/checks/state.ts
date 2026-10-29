@@ -437,7 +437,9 @@ export async function planCheckResult(
   const stateSince = stateChanged ? now : (cur?.state_since ?? now);
   const consecutiveFailures = outcome.ok ? 0 : (cur?.consecutive_failures ?? 0) + 1;
   const consecutiveSuccesses = outcome.ok ? (cur?.consecutive_successes ?? 0) + 1 : 0;
-  const lastSuccessAt = outcome.ok ? now : (cur?.last_success_at ?? null);
+  // A certificate that can't be read from here isn't a success either.
+  const succeeded = outcome.ok && outcome.state !== "cant_check";
+  const lastSuccessAt = succeeded ? now : (cur?.last_success_at ?? null);
   const next = opts.nextAt ?? nextCheckAt(monitor.schedule, new Date(now), monitor.intervalSeconds).getTime();
 
   // A failed warm-up cycle does NOT open an incident - it is the one grace cycle
