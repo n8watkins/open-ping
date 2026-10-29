@@ -1,6 +1,7 @@
 # Alert channels
 
-OpenPing sends alerts to notification channels, which you add under **Integrations & API > Notification channels**, and to phones and browsers through Web Push.
+OpenPing sends alerts to notification channels, which you add under **Integrations & API > Notification channels**, to phones and browsers through Web Push, and to the OpenPing Android app through Firebase Cloud Messaging when the install has `FCM_SERVICE_ACCOUNT` ([ANDROID.md](./ANDROID.md#push-notifications)).
+The app's devices are listed with the Web Push ones and get the same alerts.
 Every channel has a **Send test** button that delivers a test alert right away and shows whether it worked.
 
 | Channel | What you paste in | What is secret |
