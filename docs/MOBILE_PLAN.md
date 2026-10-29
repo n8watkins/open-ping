@@ -1,6 +1,6 @@
 # OpenPing on phones: the mobile plan
 
-Status: M1 built 2026-10-28; M2 and M3 planned.
+Status: M1 built 2026-10-28; M2 built 2026-10-29 (the store listing waits on the owner); M3 planned.
 The owner wants people to use OpenPing from their phones: as a web app they install from the browser, and as an Android app.
 This plan covers both, for every install (self-hosted, the owner's, and Hosted), and makes "works well on a phone" a rule for all future UI work.
 
@@ -72,6 +72,21 @@ That fits a single site, but OpenPing is many sites: every self-hosted install a
 A TWA for Hosted alone remains an option later if the Hosted platform moves customers under one shared address.
 
 **Why not a full native app:** two codebases (web and native) for one product would double every UI change; the shell keeps one.
+
+### M2 as built (2026-10-29)
+
+The full description is [ANDROID.md](./ANDROID.md); in short:
+
+- `apps/android`: a Capacitor 8 shell with its own `package.json`. Its bundled screens are only "Where is your OpenPing?", the list of installs and the offline screen; each install's own web app loads from its address, so web changes reach the app without a release.
+- Loading rules (`NavigationPolicy.java`): https only, only the open install inside the app, other links in the browser, no bad certificates; install pages get only a message bridge limited to their origin, never Capacitor's.
+- Sign-in through the phone's browser for every install and every method (`/auth/app/start`, `/finish`, `/exchange`, PKCE). Passkeys inside the web view work where an install serves `assetlinks.json` (`ANDROID_APP_LINKS`).
+- Push through FCM HTTP v1 from the Worker (`FCM_SERVICE_ACCOUNT`), as an "Android app" push device; taps open the page in the right install.
+  A store build can only receive from installs holding the owner's Firebase key (the owner's and Hosted); a push relay for other self-hosted installs is a follow-up.
+- CI (`.github/workflows/android.yml`) builds a debug APK and an unsigned release bundle on every change to the app.
+- The web app hides its Install button in the app and shows Switch OpenPing instead.
+- Not built yet: the home-screen status widget and biometric unlock from the plan above; the push relay; the Hosted choice waits on Hosted's domain (`VITE_HOSTED_DOMAIN`).
+- Found and fixed on the way: push devices got no alert unless some other channel existed (#82, v0.17.1).
+- After an independent review (2026-10-29): app sign-ins only start from the app and always need a fresh sign-in, the admin gets an email for each, Settings lists every session to sign out, exchanges refuse other sites' forms, removed or turned-off phones stay that way, notification taps can't be forged by other apps, old web views can't open installs, and removing an install signs out on the server. What remains is in ANDROID.md, "Security".
 
 ## Stage M3: iPhone (later, if asked)
 

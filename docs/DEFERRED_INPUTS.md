@@ -3,7 +3,7 @@
 This is the owner's to-do list: things that need a person, a decision, a device or an account, not code.
 It intentionally contains no secret values.
 When you finish an item, tick it here (or tell the agent, who will).
-Last reviewed: 2026-10-28.
+Last reviewed: 2026-10-29.
 
 ## To do
 
@@ -105,6 +105,22 @@ Decide:
   Cloudflare's and Stripe's are part of their standard terms; check that each is accepted in its dashboard, and accept Resend's.
 
 Then tell the agent, which will fill the text, change the "Last updated" date (new accounts then accept the new version), and tick this item.
+### 8. Later: the Android app in Google Play
+
+The app is built and CI makes a debug APK you can install now ([ANDROID.md](./ANDROID.md#ci-and-installing-a-build-on-your-phone)).
+These are for the store and for notifications; the agent walks you through each one and never needs a key in chat.
+
+- [ ] Try the debug APK on your phone: add openping.n8builds.dev, sign in, switch to a second install and back, open a link to another site, and turn on airplane mode for the offline screen.
+- [ ] Create a Google Play developer account ($25 once) and verify your identity.
+  A new personal account must run a closed test with at least 12 testers for 14 days before the first public release.
+- [ ] Create a Firebase project, add the Android app `dev.n8builds.openping`, and put its four values in the repository's Actions variables (`FIREBASE_PROJECT_ID`, `FIREBASE_APP_ID`, `FIREBASE_API_KEY`, `FIREBASE_SENDER_ID`).
+- [ ] Generate a Firebase service account key and set it on openping.n8builds.dev as the `FCM_SERVICE_ACCOUNT` secret; keep the file in your password manager and delete the download.
+- [ ] Make the upload key (`keytool`, in ANDROID.md, "Signing") and save the file and its passwords in your password manager.
+- [ ] Store listing: descriptions, a feature graphic, phone screenshots, category Tools, a contact email, and the privacy policy link (the draft in section 7, with a short section on the app added).
+- [ ] Optional: after the first upload, set `ANDROID_APP_LINKS` to the app signing certificate's SHA-256 so passkeys also work inside the app.
+
+Why: Google charges the developer account once; FCM is free.
+Until the Firebase steps are done the app works fully except notifications, which come by email, chat or webhook as today.
 
 ## Not needed
 
