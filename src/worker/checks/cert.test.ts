@@ -61,6 +61,12 @@ describe("certConfigSchema", () => {
       { host: "https://example.test" },
       { host: "example.test/path" },
       { host: "localhost" },
+      { host: "127.0.0.1" },
+      { host: "10.1" },
+      { host: "0x7f.0.0.1" },
+      { host: "0177.0.0.1" },
+      { host: "0251.0376.0251.0376" },
+      { host: "192.168.1.1." },
       { host: "example.test", port: 25 },
       { host: "example.test", warnDays: [] },
       { host: "example.test", warnDays: [1, 2, 3, 4, 5, 6] },
@@ -337,10 +343,12 @@ describe("runCertCheck", () => {
     });
   });
 
-  it("refuses internal hosts without dialing", async () => {
+  it("refuses internal hosts and IPs in any form without dialing, even past the schema", async () => {
     const read = fakeReader(ok());
-    const r = await runCertCheck({ ...c, host: "127.0.0.1" }, { now: NOW });
-    expect(r).toMatchObject({ ok: false, error: "blocked_host", fetches: 0 });
+    for (const host of ["127.0.0.1", "127.1", "0x7f.0.0.1", "0177.0.0.1", "10.1", "0251.0376.0251.0376", "8.8.8.8", "metadata.google.internal", "printer.local"]) {
+      const r = await runCertCheck({ ...c, host }, { now: NOW });
+      expect(r, host).toMatchObject({ ok: false, error: "blocked_host", fetches: 0 });
+    }
     expect(read).not.toHaveBeenCalled();
   });
 });

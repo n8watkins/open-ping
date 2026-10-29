@@ -1,6 +1,6 @@
 import type { CertConfig } from "../../shared/schemas";
 import type { ProbeResult } from "./types";
-import { assertSafeHost, assertSafeUrl } from "../lib/ssrf";
+import { assertSafeHost, assertSafeUrl, isIPv4 } from "../lib/ssrf";
 import {
   ALERT_PROTOCOL_VERSION,
   certificateCovers,
@@ -489,7 +489,21 @@ export async function runCertCheck(config: CertConfig, opts: CertCheckOptions = 
   const now = opts.now ?? Date.now();
   const host = certHostKey(config.host);
 
-  const safe = assertSafeHost(host);
+  // Canonicalize as the HTTP and TCP paths do (WHATWG URL parsing), so a
+  // numeric or shorthand IP form (127.1, 0x7f.0.0.1, 0177.0.0.1) can't slip
+  // past the SSRF guard; the schema already refuses IP literals, and an IP
+  // that gets here anyway is refused too, since SNI can't name it.
+  let canonical = host;
+  try {
+    canonical = new URL(`http://${host}`).hostname;
+  } catch {
+    canonical = "";
+  }
+  const safe = !canonical
+    ? { ok: false as const, reason: "not a valid host name" }
+    : isIPv4(canonical) || canonical.startsWith("[")
+      ? { ok: false as const, reason: "an IP address can't be checked (SNI needs a host name)" }
+      : assertSafeHost(canonical);
   if (!safe.ok) {
     return {
       ok: false,

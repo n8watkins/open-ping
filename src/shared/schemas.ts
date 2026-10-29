@@ -233,7 +233,16 @@ export const domainConfigSchema = z.object({
 export const certConfigSchema = z.object({
   // The host name whose certificate is read: sent as SNI, so it picks the
   // certificate the server serves for that name. No scheme, path or port.
-  host: z.string().min(1).max(253).regex(domainRegex, "must be a host name such as example.com"),
+  host: z
+    .string()
+    .min(1)
+    .max(253)
+    .regex(domainRegex, "must be a host name such as example.com")
+    // Not an IP address in any form (127.0.0.1, 10.1, 0x7f.0.0.1, 0177.0.0.1):
+    // SNI can't carry one, and URL parsing reads a numeric last label as IPv4.
+    .refine((h) => !/^(0x[0-9a-f]*|\d+)$/i.test(h.replace(/\.$/, "").split(".").pop() ?? ""), {
+      message: "must be a host name, not an IP address",
+    }),
   port: z
     .number()
     .int()
