@@ -45,6 +45,12 @@ nav.tabs a { display: flex; align-items: center; min-height: 44px; padding: 0 12
 nav.tabs a:hover { color: var(--ink); }
 nav.tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
 @media (max-width: 419px) { nav.tabs { gap: 0; } nav.tabs a { padding: 0 6px; font-size: 0.875rem; } nav.tabs a:first-child { padding-left: 0; } }
+@media (max-width: 379px) { nav.tabs a { padding: 0 5px; font-size: 0.8125rem; } }
+.tab-short { display: none; }
+@media (max-width: 639px) {
+  .tab-short { display: inline; }
+  .tab-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
 .title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 4px; }
 .title-row h1 { margin: 0; }
 .title-row .badge { margin: 0; }
@@ -147,12 +153,14 @@ h3.minor { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.04em; text-
 .issues { margin: 8px 0 0; padding: 0 0 0 18px; font-size: 0.8125rem; color: var(--ink-muted); }
 `;
 
-export type Tab = "tenants" | "releases" | "audit" | "waitlist";
+export type Tab = "tenants" | "operations" | "releases" | "audit" | "waitlist";
 
-const TABS: { id: Tab; href: string; label: string }[] = [
+/** `short` is what a phone shows, so all five tabs fit at 360 px; screen readers always hear `label`. */
+const TABS: { id: Tab; href: string; label: string; short?: string }[] = [
   { id: "tenants", href: "/admin", label: "Tenants" },
+  { id: "operations", href: "/admin/operations", label: "Operations", short: "Ops" },
   { id: "releases", href: "/admin/releases", label: "Releases" },
-  { id: "audit", href: "/admin/audit", label: "Audit log" },
+  { id: "audit", href: "/admin/audit", label: "Audit log", short: "Audit" },
   { id: "waitlist", href: "/admin/waitlist", label: "Waitlist" },
 ];
 
@@ -164,7 +172,10 @@ function header(current: Tab | null): Html {
 ${
   current
     ? html`<nav class="tabs" aria-label="Admin sections">${TABS.map(
-        (t) => html`<a href="${t.href}"${t.id === current ? new Html(' aria-current="page"') : ""}>${t.label}</a>`,
+        (t) =>
+          html`<a href="${t.href}"${t.id === current ? new Html(' aria-current="page"') : ""}>${
+            t.short ? html`<span class="tab-long">${t.label}</span><span class="tab-short" aria-hidden="true">${t.short}</span>` : t.label
+          }</a>`,
       )}</nav>`
     : ""
 }`;

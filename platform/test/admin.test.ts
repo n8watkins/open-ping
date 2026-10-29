@@ -29,6 +29,8 @@ import { FakeDispatcher } from "./fake-dispatcher";
 import { fakeOpenPing, type FakeOpenPingState } from "./fake-openping";
 import { FakeR2Bucket } from "./fake-r2";
 import type { ReleaseSetup } from "../src/releases/env";
+import { FAILING_LIST_SQL, OVERDUE_LIST_SQL } from "../src/admin/operations";
+import { runMinuteStatements } from "../src/observability/metrics";
 
 const DOMAIN = "openping.test";
 const APP = `https://app.${DOMAIN}`;
@@ -284,7 +286,7 @@ beforeEach(async () => {
 // --- Who gets in ------------------------------------------------------------
 
 describe("who can open the admin console", () => {
-  const paths = ["/admin", "/admin/", "/admin/audit", "/admin/waitlist", "/admin/tenants/abcdefghijklmnop", "/admin/nothing-here"];
+  const paths = ["/admin", "/admin/", "/admin/audit", "/admin/waitlist", "/admin/operations", "/admin/tenants/abcdefghijklmnop", "/admin/nothing-here"];
 
   it("is the plain 404 for a signed-out visitor, on every path and method", async () => {
     const someone = await addTenant();
@@ -974,6 +976,60 @@ describe("the waitlist import, under pressure", () => {
     expect(a.added + b.added).toBe(180);
     expect(a.added + a.existing).toBe(120);
     expect(b.added + b.existing).toBe(120);
+  });
+});
+
+describe("the Operations tab", () => {
+  it("shows the platform's health, run metrics, and the failing and overdue tenants, linked", async () => {
+    const { browser } = await owner();
+    const failing = await addTenant({ slug: "ops-failing" });
+    const late = await addTenant({ slug: "ops-late" });
+    const db = env.PLATFORM_DB;
+    await db.batch([
+      db
+        .prepare(
+          `INSERT INTO scheduler_stats (tenant_id, last_run_id, last_at, last_outcome, last_duration_ms, last_lag_ms, last_error, streak, day, day_runs, day_errors, day_checked, day_failures, day_d1_queries, day_ms, day_max_ms)
+           VALUES (?, 'r1', ?, 'timeout', 90000, 0, 'no answer in 90 s', 99, 0, 1, 1, 0, 0, 0, 90000, 90000)`,
+        )
+        .bind(failing.id, clock - 60_000),
+      db.prepare("UPDATE tenants SET schedule_next_at = ? WHERE id = ?").bind(clock - 86_400_000, late.id),
+      ...runMinuteStatements(db, [
+        { at: clock - 120_000, outcome: "ran", durationMs: 800, lagMs: 3_000, checked: 5, failures: 0 },
+        { at: clock - 120_000, outcome: "timeout", durationMs: 90_000, lagMs: 4_000, checked: 0, failures: 0 },
+      ]),
+    ]);
+    const res = await browser.fetch("/admin/operations");
+    expect(res.status).toBe(200);
+    const page = await text(res);
+    expect(page).toContain('<a href="/admin/operations" aria-current="page">');
+    // No heartbeat in this database: the same verdict as /__health, with why.
+    expect(page).toContain("Degraded.");
+    expect(page).toContain("The cron has never run.");
+    expect(page).toContain("The scheduler is behind");
+    expect(page).toContain("Last 15 minutes");
+    expect(page).toContain("Timed out");
+    expect(page).toContain(`<a href="/admin/tenants/${failing.id}">ops-failing</a>`);
+    expect(page).toContain("no answer in 90 s");
+    expect(page).toContain(`<a href="/admin/tenants/${late.id}">ops-late</a>`);
+    expect(page).toContain("24 h");
+    // Nothing on it runs a script.
+    expect(page).not.toMatch(/<script(?![^>]*src=)/);
+    await db.prepare("DELETE FROM scheduler_stats WHERE tenant_id = ?").bind(failing.id).run();
+    await db.prepare("UPDATE tenants SET schedule_next_at = 0 WHERE id = ?").bind(late.id).run();
+  });
+
+  it("lists the failing and overdue tenants from their partial indexes only", async () => {
+    for (const [sql, index, binds] of [
+      [FAILING_LIST_SQL, "idx_scheduler_stats_failing", []],
+      [OVERDUE_LIST_SQL, "idx_tenants_schedule_due", [clock]],
+    ] as const) {
+      const plan = await env.PLATFORM_DB.prepare(`EXPLAIN QUERY PLAN ${sql}`).bind(...binds).all<{ detail: string }>();
+      const details = plan.results.map((r) => r.detail).join(" | ");
+      expect(details).toContain(index);
+      expect(details).not.toMatch(/SCAN (tenants|t|s)\b/);
+      // Already in the order shown: no sort.
+      expect(details).not.toContain("TEMP B-TREE");
+    }
   });
 });
 
