@@ -422,10 +422,30 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       NO_STORE,
     );
 
+  /**
+   * Adding or removing a way to sign in needs what changing the email does
+   * (./auth/fresh.ts): otherwise a stale session could add its own passkey,
+   * sign in with it, and pass every "sign in again" check after that.
+   */
+  const signInStale = (c: Ctx, session: Session) => freshSignIn(c.env.PLATFORM_DB, session, c.get("now")).then((f) => (f.fresh ? null : f));
+  const staleJson = (c: Ctx, hasPasskey: boolean) =>
+    c.json(
+      {
+        error: "sign_in_again",
+        message: hasPasskey
+          ? "To change how you sign in, sign in again with your passkey first."
+          : "To change how you sign in, sign in again first: it has been more than 15 minutes.",
+      },
+      401,
+      NO_STORE,
+    );
+
   app.post("/account/passkeys/options", async (c) => {
     const session = c.get("session");
     if (!session) return c.json({ error: "signed_out", message: "Please sign in again." }, 401, NO_STORE);
     if (!(await mayChangePasskeys(c.env.PLATFORM_DB, session, c.env, c.get("now")))) return passkeysLocked(c);
+    const stale = await signInStale(c, session);
+    if (stale) return staleJson(c, stale.hasPasskey);
     const existing = await listPasskeys(c.env.PLATFORM_DB, session.account.id);
     if (existing.length >= MAX_PASSKEYS) {
       return c.json({ error: "too_many", message: `An account can have up to ${MAX_PASSKEYS} passkeys. Remove one first.` }, 400, NO_STORE);
@@ -441,6 +461,8 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     const session = c.get("session");
     if (!session) return c.json({ error: "signed_out", message: "Please sign in again." }, 401, NO_STORE);
     if (!(await mayChangePasskeys(c.env.PLATFORM_DB, session, c.env, c.get("now")))) return passkeysLocked(c);
+    const staleNow = await signInStale(c, session);
+    if (staleNow) return staleJson(c, staleNow.hasPasskey);
     const ceremony = await takeCeremony(c.env.PLATFORM_DB, c.req.raw, "passkey_register", c.get("now"));
     if (!ceremony || ceremony.accountId !== session.account.id) {
       return c.json({ error: "expired", message: "That took too long. Please try again." }, 400, NO_STORE);
@@ -479,6 +501,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     const session = c.get("session");
     if (!session) return seeOther(c, "/sign-in");
     if (!(await mayChangePasskeys(c.env.PLATFORM_DB, session, c.env, c.get("now")))) return seeOther(c, "/account?done=passkey-locked");
+    if (await signInStale(c, session)) return seeOther(c, "/account?done=sign-in-again");
     if (await removePasskey(c.env.PLATFORM_DB, session.account.id, c.req.param("id"))) {
       await audit(c.env.PLATFORM_DB, { accountId: session.account.id, actor: "customer", action: "passkey.removed", now: c.get("now") });
     }
@@ -494,6 +517,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     if (!config) return messagePage({ title: "GitHub sign-in isn't available", body: "Please sign in with email instead.", status: 404, action: { href: "/sign-in", label: "Sign in with email" } });
     const session = c.get("session");
     const linking = c.req.query("link") === "1" && session !== null;
+    if (linking && (await signInStale(c, session!))) return seeOther(c, "/account?done=sign-in-again");
     const state = newOAuthState();
     const verifier = newCodeVerifier();
     const cookie = await startCeremony(c.env.PLATFORM_DB, {
@@ -615,6 +639,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
   app.post("/account/github/unlink", async (c) => {
     const session = c.get("session");
     if (!session) return seeOther(c, "/sign-in");
+    if (await signInStale(c, session)) return seeOther(c, "/account?done=sign-in-again");
     // Email always remains, so this never locks anyone out.
     await c.env.PLATFORM_DB.prepare("DELETE FROM account_identities WHERE account_id = ? AND kind = 'github'").bind(session.account.id).run();
     await audit(c.env.PLATFORM_DB, { accountId: session.account.id, actor: "customer", action: "github.unlinked", now: c.get("now") });
@@ -629,6 +654,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     "passkey-locked": { message: "Passkeys on this account change only within 10 minutes of signing in with a pinned passkey.", tone: "error" },
     github: { message: "GitHub connected.", tone: "ok" },
     "github-removed": { message: "GitHub disconnected.", tone: "ok" },
+    "sign-in-again": { message: "To change how you sign in, sign in again first (with your passkey, if you have one).", tone: "error" },
     email: { message: "Your email is changed. Sign in with the new one from now on.", tone: "ok" },
     "github-taken": { message: "That GitHub account is already connected to another OpenPing Hosted account.", tone: "error" },
   };

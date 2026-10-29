@@ -430,7 +430,9 @@ describe("passkeys", () => {
     expect(phished.cookies.has("__Host-op_platform")).toBe(false);
 
     const id = /action="\/account\/passkeys\/([^/]+)\/delete"/.exec(page)![1]!;
-    expect((await browser.fetch(`/account/passkeys/${id}/delete`, { method: "POST" })).headers.get("location")).toBe("/account?done=passkey-removed");
+    // The email-only browser can't remove it: with a passkey on the account, only a passkey sign-in changes sign-in methods.
+    expect((await browser.fetch(`/account/passkeys/${id}/delete`, { method: "POST" })).headers.get("location")).toBe("/account?done=sign-in-again");
+    expect((await fresh.fetch(`/account/passkeys/${id}/delete`, { method: "POST" })).headers.get("location")).toBe("/account?done=passkey-removed");
     const again = new Browser();
     const o3 = (await (await again.fetch("/sign-in/passkey/options", { json: {} })).json()) as any;
     expect((await again.fetch("/sign-in/passkey", { json: { credential: await authenticator.authenticate(o3, APP) } })).status).toBe(400);
@@ -887,3 +889,30 @@ describe("changing the sign-in email", () => {
     expect(await accountOf(oldEmail)).not.toBeNull();
   });
 });
+
+describe("a stale session", () => {
+  it("can't add its own passkey and then pass the fresh sign-in checks with it", async () => {
+    const email = newEmail();
+    const browser = new Browser();
+    await browser.signInWithCode(email);
+    const { id } = (await env.PLATFORM_DB.prepare("SELECT id FROM accounts WHERE email = ?").bind(email).first<{ id: string }>())!;
+    // Someone holding a 16-minute-old session (a borrowed laptop, a stolen cookie).
+    await env.PLATFORM_DB.prepare("UPDATE platform_sessions SET created_at = created_at - ? WHERE account_id = ?").bind(16 * 60_000, id).run();
+    const options = await browser.fetch("/account/passkeys/options", { json: {} });
+    expect(options.status).toBe(401);
+    expect(((await options.json()) as { error: string }).error).toBe("sign_in_again");
+    expect((await browser.fetch("/account/passkeys", { json: { credential: {} } })).status).toBe(401);
+    expect(await count("SELECT COUNT(*) AS n FROM account_identities WHERE account_id = ? AND kind = 'passkey'", id)).toBe(0);
+    // Nor link a GitHub account of its own, or unlink one.
+    const link = await browser.fetch("/auth/github?link=1");
+    expect(link.headers.get("location")).toBe("/account?done=sign-in-again");
+    expect((await browser.fetch("/account/github/unlink", { method: "POST" })).headers.get("location")).toBe("/account?done=sign-in-again");
+    // So the email change, and everything else behind a fresh sign-in, stays closed to it.
+    expect((await browser.fetch("/account/email", { form: { email: newEmail() } })).status).toBe(401);
+    expect(await accountEmailIs(id, email)).toBe(true);
+  });
+});
+
+async function accountEmailIs(id: string, email: string): Promise<boolean> {
+  return (await count("SELECT COUNT(*) AS n FROM accounts WHERE id = ? AND email = ?", id, email)) === 1;
+}
