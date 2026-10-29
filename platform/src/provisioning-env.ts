@@ -13,6 +13,7 @@ import type { PlatformEnv } from "./env";
 import { isValidPlatformKey } from "./keys";
 import type { ProvisioningConfig, ProvisioningDeps } from "./provisioning";
 import type { TenantRecord } from "./tenants";
+import { log } from "./log";
 
 export type ProvisioningSetup = { ok: true; deps: ProvisioningDeps } | { ok: false; missing: string[] };
 
@@ -35,8 +36,12 @@ export function provisioningSettings(
   if (!env.CF_API_TOKEN) missing.push("CF_API_TOKEN");
   if (!isValidPlatformKey(env.PLATFORM_KEY)) missing.push("PLATFORM_KEY");
   if (base64urlDecode(env.HANDOFF_PUBLIC_KEY?.trim() ?? "")?.length !== 32) missing.push("HANDOFF_PUBLIC_KEY");
-  const sampling = tenantLogSampling(env.TENANT_LOG_SAMPLING);
-  if (sampling === null) missing.push("TENANT_LOG_SAMPLING (a number from 0 to 1)");
+  // A bad sampling rate never stops provisioning, releases or lifecycle: it falls back to logging everything, and says so.
+  let sampling = tenantLogSampling(env.TENANT_LOG_SAMPLING);
+  if (sampling === null) {
+    log.warn("config.tenant_log_sampling_invalid", { expected: "a number from 0 to 1", using: 1 });
+    sampling = 1;
+  }
   if (missing.length) return { ok: false, missing };
   return {
     ok: true,
@@ -47,7 +52,7 @@ export function provisioningSettings(
       namespace: env.DISPATCH_NAMESPACE!,
       platformKey: env.PLATFORM_KEY!,
       handoffPublicKey: env.HANDOFF_PUBLIC_KEY!.trim(),
-      tenantLogSampling: sampling!,
+      tenantLogSampling: sampling,
     },
   };
 }

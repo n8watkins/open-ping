@@ -258,13 +258,15 @@ describe("uploading a user Worker", () => {
     ]);
     expect(metadata.assets).toEqual({ jwt: "completion", config: { not_found_handling: "none" } });
     expect(metadata.compatibility_flags).toEqual(["nodejs_compat"]);
-    expect(metadata.observability).toEqual({ enabled: true, logs: { enabled: true, invocation_logs: true, head_sampling_rate: 1 } });
+    // Invocation logs (the request, its URL and headers) stay off: a tenant's requests carry secrets.
+    expect(metadata.observability).toEqual({ enabled: true, redact_query_string: true, logs: { enabled: true, invocation_logs: false, head_sampling_rate: 1 } });
   });
 
   it("turns on Workers Logs for the user Worker at the platform's sampling rate", () => {
     expect(userWorkerMetadata(upload({ logSampling: 0.25 }), "j").observability).toEqual({
       enabled: true,
-      logs: { enabled: true, invocation_logs: true, head_sampling_rate: 0.25 },
+      redact_query_string: true,
+      logs: { enabled: true, invocation_logs: false, head_sampling_rate: 0.25 },
     });
     // Out of range or not a number: held to 0 to 1, never dropped.
     expect(userWorkerMetadata(upload({ logSampling: 7 }), "j").observability?.logs?.head_sampling_rate).toBe(1);

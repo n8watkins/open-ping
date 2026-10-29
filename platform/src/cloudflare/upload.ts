@@ -122,14 +122,18 @@ export interface UserWorkerUpload {
 }
 
 /**
- * The user Worker's observability: Workers Logs on, with invocation logs, at
- * the platform's sampling rate. Head sampling keeps or drops a whole
- * invocation, errors included, so 1 (everything) is the default and a lower
- * rate is a cost lever for later (platform/README.md, "Observability costs").
+ * The user Worker's observability: Workers Logs on for what the Worker
+ * writes (console lines and uncaught exceptions), with invocation logs OFF
+ * and query strings redacted. An invocation log records the request (its
+ * URL and headers), and a customer's OpenPing gets secrets there: heartbeat
+ * ping paths (/hb/<token>), magic-link and recipient tokens in query
+ * strings, and Bearer API tokens in headers. Head sampling keeps or drops a
+ * whole invocation, errors included, so 1 (everything) is the default and a
+ * lower rate is a cost lever for later (docs/hosted/OBSERVABILITY.md).
  */
 export function tenantObservability(sampling = 1): WorkerObservability {
   const rate = Number.isFinite(sampling) ? Math.min(1, Math.max(0, sampling)) : 1;
-  return { enabled: true, logs: { enabled: true, invocation_logs: true, head_sampling_rate: rate } };
+  return { enabled: true, redact_query_string: true, logs: { enabled: true, invocation_logs: false, head_sampling_rate: rate } };
 }
 
 /**

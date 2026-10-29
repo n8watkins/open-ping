@@ -202,7 +202,7 @@ export function registerBillingRoutes(app: Hono<Env>, deps: BillingDeps): void {
     } catch (error) {
       if (error instanceof BillingBusyError) return back(c, "busy", 409);
       if (!(error instanceof StripeApiError)) throw error;
-      log.error("billing.checkout_failed", { account: session.account.id, status: error.status, code: error.code, error: error.message });
+      log.error("billing.checkout_failed", { account: session.account.id, status: error.status, errorCode: error.code, error: error.message });
       return back(c, "stripe-error", 502);
     }
   });
@@ -223,7 +223,7 @@ export function registerBillingRoutes(app: Hono<Env>, deps: BillingDeps): void {
       return continuePage({ href: portal.url, title: "Going to Stripe", body: "Opening your billing on Stripe.", label: "Continue to billing" });
     } catch (error) {
       if (!(error instanceof StripeApiError)) throw error;
-      log.error("billing.portal_failed", { account: session.account.id, status: error.status, code: error.code, error: error.message });
+      log.error("billing.portal_failed", { account: session.account.id, status: error.status, errorCode: error.code, error: error.message });
       return back(c, "stripe-error", 502);
     }
   });
@@ -255,7 +255,7 @@ export function registerBillingRoutes(app: Hono<Env>, deps: BillingDeps): void {
       }
     } catch (error) {
       if (!(error instanceof StripeApiError)) throw error;
-      log.error("billing.addon_failed", { account: session.account.id, status: error.status, code: error.code, error: error.message });
+      log.error("billing.addon_failed", { account: session.account.id, status: error.status, errorCode: error.code, error: error.message });
       return back(c, error.status === 402 ? "card-declined" : "stripe-error", error.status === 402 ? 402 : 502);
     }
     return back(c, "upgrading");

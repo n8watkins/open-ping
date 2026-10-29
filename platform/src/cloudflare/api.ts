@@ -119,6 +119,8 @@ export interface WorkerUploadMetadata {
 
 export interface WorkerObservability {
   enabled: boolean;
+  /** Removes query strings from request URLs in logs and traces (Wrangler's `observability.redact_query_string`, passed through to this metadata as is). */
+  redact_query_string?: boolean;
   logs?: {
     enabled: boolean;
     /** One log per invocation (request, cron, queue) besides the console lines. */
