@@ -221,8 +221,8 @@ describe("when a tenant is due", () => {
     expect(next % MINUTE).toBe(0);
   });
 
-  it("follows the contract's rule for the next call", () => {
-    const base = { tick: T0, claimedNext: T0 + 12 * MINUTE, interval: 12 * MINUTE, streak: 0 };
+  it("follows the contract's rule for the next call (nextScheduledCall), on ticks", () => {
+    const base = { tick: T0, startedAt: T0 + 1_500, now: T0 + 2_000, claimedNext: T0 + 12 * MINUTE, interval: 12 * MINUTE, streak: 0 };
     const ran = (nextDueAt?: number) => ({ ...base, summary: { outcome: "ran" as const, ...(nextDueAt === undefined ? {} : { nextDueAt }) } });
     // No nextDueAt (an older bundle): the plan's interval, as claimed.
     expect(nextDueAfterRun(ran())).toBe(T0 + 12 * MINUTE);
@@ -240,6 +240,8 @@ describe("when a tenant is due", () => {
     expect(nextDueAfterRun({ ...base, summary: null, streak: 3 })).toBe(T0 + 4 * MINUTE);
     expect(nextDueAfterRun({ ...base, summary: null, streak: 9 })).toBe(T0 + 12 * MINUTE);
     expect(nextDueAfterRun({ ...base, interval: MINUTE, summary: null, streak: 9 })).toBe(T0 + MINUTE);
+    // An older bundle (no nextDueAt) on a 1-minute plan keeps its plan's cadence, sooner than the contract's 12 minutes.
+    expect(nextDueAfterRun({ ...ran(), interval: MINUTE, claimedNext: T0 + MINUTE })).toBe(T0 + MINUTE);
   });
 
   it("reads nextDueAt only when the tenant sends a time", () => {

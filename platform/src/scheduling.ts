@@ -17,16 +17,16 @@
  * One message per tenant, so a slow or broken tenant delays nobody else, and
  * a message whose consumer dies is delivered again.
  *
- When a tenant is due (the contract, section 6, "When to call next"), on
- * minute ticks:
+ When a tenant is due: the contract's `nextScheduledCall` (section 6, "When
+ * to call next"), on minute ticks:
  *   - a new tenant at once, its next run spread over its interval by its id;
  *   - after a run that answered `ran` with `nextDueAt` (when the tenant next
  *     has work): the first tick at or after it, never later than
  *     SCHEDULED_MAX_GAP_MS (12 minutes) after this run, so alerts, reports
  *     and cleanup keep at least the self-hosted cadence;
- *   - after `ran` without `nextDueAt` (a bundle older than the field): every
- *     `minIntervalMinutes` of its effective limits (12 minutes on the trial
- *     and the yearly plan, 1 minute with fast checks), keeping its phase;
+ *   - after `ran` without `nextDueAt` (a bundle older than the field): the
+ *     contract's 12 minutes, or the plan's `minIntervalMinutes` when sooner
+ *     (1 minute with fast checks), keeping its phase;
  *   - after `lease_busy`: the next tick;
  *   - after `failed` or no answer: the next tick, then backing off (1, 2, 4,
  *     8 minutes...) while it keeps failing, never slower than its interval.
@@ -60,6 +60,8 @@
 
 import {
   PLATFORM_SCHEDULED_PATH,
+  SCHEDULED_MAX_GAP_MS,
+  nextScheduledCall,
   SCHEDULED_OUTCOMES,
   isTenantId,
   type PlatformCapability,
@@ -100,7 +102,7 @@ export interface SchedulingDeps {
 // ---------------------------------------------------------------------------
 
 /** The longest a tenant goes without a run, whatever its `nextDueAt` says (the contract's SCHEDULED_MAX_GAP_MS). */
-export const MAX_GAP_MS = 12 * 60_000;
+export const MAX_GAP_MS = SCHEDULED_MAX_GAP_MS;
 export const MINUTE_MS = 60_000;
 /** A message waits at most this long in the queue before the tenant can be claimed again. */
 export const QUEUE_LEASE_MS = 3 * 60_000;
@@ -179,13 +181,24 @@ export function nextDueAfterClaim(tenantId: string, previous: number, tick: numb
 }
 
 /**
- * After a run: when the tenant is due next (see the top of this file).
- * `claimedNext` is what the claim recorded; `summary` is null when the call
- * got no answer; `streak` counts the runs in a row, this one included, that
- * failed or got none.
+ * After a run: when the tenant is due next. The rule is the contract's own
+ * `nextScheduledCall` (section 6, "When to call next"), shared with the
+ * tenant; the platform adds only what the contract leaves to it:
+ *   - calls land on minute ticks (tickFor), and never on this tick again;
+ *   - a tenant that keeps failing, or gets no answer, backs off (1, 2, 4, 8
+ *     minutes...), never slower than its interval;
+ *   - a run without `nextDueAt` (a bundle older than the field) is called at
+ *     the plan's interval when that is sooner than the contract's 12 minutes,
+ *     so a 1-minute plan keeps its cadence on such a bundle.
+ * `claimedNext` is what the claim recorded (the plan's interval); `summary`
+ * is null when the call got no answer; `startedAt` is when the platform
+ * called (the platform's clock, not the tenant's); `streak` counts the runs
+ * in a row, this one included, that failed or got none.
  */
 export function nextDueAfterRun(input: {
   tick: number;
+  startedAt: number;
+  now: number;
   claimedNext: number;
   interval: number;
   summary: Pick<ScheduledRunSummary, "outcome"> & { nextDueAt?: unknown } | null;
@@ -197,10 +210,13 @@ export function nextDueAfterRun(input: {
     const backoff = MINUTE_MS * 2 ** Math.min(10, Math.max(0, input.streak - 1));
     return input.tick + Math.min(input.interval, backoff);
   }
-  if (summary.outcome === "lease_busy") return nextTick;
   const nextDueAt = readNextDueAt(summary);
-  if (nextDueAt === null) return input.claimedNext;
-  return Math.max(nextTick, tickFor(Math.min(nextDueAt, input.tick + MAX_GAP_MS)));
+  const at = nextScheduledCall(
+    { outcome: summary.outcome, startedAt: input.startedAt, ...(nextDueAt === null ? {} : { nextDueAt }) },
+    input.now,
+  );
+  if (summary.outcome === "ran" && nextDueAt === null) return Math.min(input.claimedNext, Math.max(nextTick, tickFor(at)));
+  return Math.max(nextTick, tickFor(at));
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +456,8 @@ async function runOne(deps: SchedulingDeps, message: Message<unknown>): Promise<
 
   const next = nextDueAfterRun({
     tick: msg.tick,
+    startedAt,
+    now: finishedAt,
     claimedNext: loaded.nextAt,
     interval,
     summary: call.kind === "answered" ? call.summary : null,
