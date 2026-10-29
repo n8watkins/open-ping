@@ -28,7 +28,7 @@ The offer, the prices and the cost model stay as in [the Hosted plan](./HOSTED_P
 
 A customer goes to the Hosted sign-up page, signs in with an email link, a passkey or GitHub, and within a minute has their own OpenPing: the same dashboard, monitors, alerts and status pages as a self-hosted install, at an address like `acme.<hosted-domain>`.
 They never see Cloudflare, keys or a setup token.
-They get a 14-day trial with small limits and no card, then pay $24 a year (plus $12 a year for 1-minute checks).
+They get a 30-day trial with small limits and no card, then pay $24 a year (plus $24 a year for 1-minute checks on 5 monitors, and packs of more monitors; [decision D13](./hosted/DECISIONS.md#d13-launch-pricing)).
 
 Under the hood every customer is still a separate OpenPing: their own Worker and their own D1 database, in a Cloudflare dispatch namespace in the owner's account.
 No customer can reach another customer's data, and the code each customer runs is the same code self-hosters run, built in a "hosted" mode.
@@ -104,7 +104,7 @@ Each one is the owner's call; the plan assumes the recommendation until told oth
 | D2 | Hosted address | Buy a short dedicated domain now (about $10 to $15 a year) and use `app.<domain>` and `<slug>.<domain>`; keep `app.openping.n8builds.dev` as a redirect | Free wildcard certificate, customer cookies never share a parent domain with the owner's portfolio, and it is the stage 5 rename done early. The alternative, `<slug>.app.openping.n8builds.dev`, needs Advanced Certificate Manager at $10 a month and puts every customer under the portfolio domain. |
 | D3 | Customer sign-in | One platform account per customer (email link with a 6-digit code, passkey, GitHub), and the customer's OpenPing trusts a short-lived signed hand-off from the platform | One account across devices and billing, no second sign-up inside their OpenPing, and the existing passkey and magic-link code is reused. Google sign-in after launch (landing plan section 3). |
 | D4 | Who holds each customer's `MASTER_KEY` | The platform generates it, sets it as the user Worker's secret, and keeps a copy encrypted with `PLATFORM_KEY` | Needed to restore a customer's backup and to rotate keys; the copy is useless without `PLATFORM_KEY`, which lives only as a platform secret and in the owner's password manager. |
-| D5 | Prices and trial | Keep the Hosted plan: $24 a year, $12 a year for 1-minute checks, 14-day trial with 5 monitors and no card | Already researched; break-even about 20 to 25 customers. |
+| D5 | Prices and trial | Keep the Hosted plan: $24 a year, $12 a year for 1-minute checks, 14-day trial with 5 monitors and no card (superseded by [D13](./hosted/DECISIONS.md#d13-launch-pricing): $24 for 1-minute checks on 5 monitors, monitor packs, a 30-day trial) | Already researched; break-even about 20 to 25 customers. |
 | D6 | Custom domains for customers' status pages | After launch, with Cloudflare for SaaS | Not needed to launch; the default `<slug>.<domain>/status` works. |
 | D7 | Second-region confirmation | Build in parallel, ship when measured | It improves both paths and is independent of everything else. |
 | D8 | Cancelled or unpaid accounts | Checks stop at once, data kept 30 days with an export link, then the Worker and database are deleted | Matches the Hosted plan and keeps costs bounded. |
@@ -181,7 +181,7 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
 ### D. Product, content and launch
 
 - [x] **D1 Landing and pricing (M), copy done; live links at launch.** The hero's Hosted card becomes "Start a free trial"; pricing, FAQ and comparison updated; sign-up and sign-in pages styled like the app. Needs: B2 for the live links; copy can start at once.
-  Built behind one switch, the `HOSTED_SIGNUP_URL` var (`src/shared/hosted-offer.ts`): unset, the landing page is the waitlist exactly as before; set on the canonical install to the platform's sign-up page, it offers the 14-day trial everywhere the waitlist was.
+  Built behind one switch, the `HOSTED_SIGNUP_URL` var (`src/shared/hosted-offer.ts`): unset, the landing page is the waitlist exactly as before; set on the canonical install to the platform's sign-up page, it offers the free trial (30 days since D13) everywhere the waitlist was.
   At launch the owner sets it in `deploy.local.json` and deploys; nothing else changes.
 - **D2 Emails (S), templates done.** Welcome, sign-in code, trial ending (3 days and 1 day), receipt (Stripe), payment failed, suspended, deletion warning. Needs: nothing for the templates.
   `platform/src/emails.ts` has each as plain HTML and text; the platform's mail (`platform/src/mail.ts`) sends them, the sign-in code already, the rest from the lifecycle jobs (B7).

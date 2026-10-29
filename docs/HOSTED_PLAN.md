@@ -7,11 +7,22 @@ The research behind the numbers: the short plan (https://claude.ai/artifact/BARz
 
 ## The offer
 
+The launch pricing is decided ([decision D13](./hosted/DECISIONS.md#d13-launch-pricing), 2026-10-29).
+
 - **In your own Cloudflare account:** free and MIT licensed, every feature, set up with the guide at `/install` (and `docs/INSTALL.md`).
 - **OpenPing Hosted: $24 a year.** 20 monitors checked every 12 minutes, 2 status pages, every alert channel, and a failure confirmed from a second region before it alerts.
-- **Fast checks add-on:** planned at $12 a year for 1-minute checks; the measured cost doesn't fit, and the recommendation is $24 a year for 1-minute checks on up to 5 monitors (see [Cost per customer, measured](#cost-per-customer-measured)).
-- **Trial:** 14 days, no card, if it stays cheap to support (5 monitors, 12-minute checks, 1 status page, email alerts).
+- **Fast checks add-on: $24 a year more ($48 in total).** 1-minute checks on up to 5 of the monitors; the rest stay at 12 minutes.
+- **More monitors:** a pack of 25 more monitors at 12-minute checks is $24 a year, at most 4 packs (120 monitors); a pack of 5 more fast monitors (1-minute checks, with the add-on) is $36 a year, at most 3 packs (20 fast monitors).
+  Larger accounts ask support.
+- **Trial:** 30 days, no card (5 monitors, 12-minute checks, 1 status page, email alerts).
+- **Yearly billing only**, because of Stripe's 30 cent fee per charge.
 - **Not offered:** checks faster than a minute, a global probe network, or SMS and voice (revisit only if customers ask).
+
+Every number above lives in one place in the code, and the landing page, the platform's billing pages and the limits the platform sends each customer's OpenPing all read it:
+
+- the plans' limits, the packs and their caps: `PLAN_LIMITS` and `PACKS` in `src/shared/hosted-contract.ts` (the contract, [section 5](./hosted/CONTRACT.md#5-plans-and-limits));
+- the dollar amounts and the trial length: `src/shared/hosted-offer.ts` (`HOSTED_TRIAL_DAYS` is the platform's `TRIAL_DAYS`);
+- what Stripe charges: the four yearly Prices of [platform/README.md](../platform/README.md), step 11, whose ids are config.
 
 ## Why it can be this cheap
 
@@ -21,7 +32,7 @@ The research behind the numbers: the short plan (https://claude.ai/artifact/BARz
 - Stripe's 30 cent fee is why billing is yearly: it takes about 5% of $24, but 14% of a $3 monthly charge.
 - Break-even is about 20 to 25 customers.
 - Measured on 2026-10-29, the per-customer cost is higher than the two lines above: about 80 cents a month for 20 monitors at 12-minute checks, and about $7.30 a month for 20 monitors at 1-minute checks, past the first 50 million rows Workers Paid includes.
-  1-minute checks for 20 monitors do not fit the $12 add-on; see [Cost per customer, measured](#cost-per-customer-measured).
+  1-minute checks for 20 monitors did not fit the $12 add-on first planned, which is why the add-on is $24 a year for 5 monitors; see [Cost per customer, measured](#cost-per-customer-measured).
 
 ## Cost per customer, measured
 
@@ -58,15 +69,18 @@ The options, with what each costs for one customer:
    About 2 days of work; it makes options 1 and 2 comfortable but doesn't close the gap alone, and it coarsens the 24-hour chart for 1-minute monitors.
 5. **Launch as is and watch it**: the first 6 or so fast customers fit in the included rows, and the invoice shows the real cost before the allowance is used up.
 
-**Recommended pricing (2026-10-29, pending the owner's yes):**
+**Launch pricing (recommended 2026-10-29, decided as D13 the same day, with the packs added):**
 
 | Plan | Price | What it includes | Cost to us a month (worst case) |
 | --- | --- | --- | --- |
 | Self-hosted | free | everything, in the customer's own Cloudflare account | none |
-| Trial | free for 14 days, no card | 5 monitors at 12-minute checks, 1 status page, email alerts | about $0.20 |
+| Trial | free for 30 days, no card | 5 monitors at 12-minute checks, 1 status page, email alerts | about $0.20 |
 | OpenPing Hosted | $24 a year | 20 monitors at 12-minute checks, 2 status pages, every alert channel, second-region confirmation | about $0.83 against $2.00 |
 | Fast checks add-on | $24 a year more ($48 in total) | 1-minute checks on up to 5 of the 20 monitors; the rest stay at 12 minutes | about $2.50 against $4.00 |
+| Monitor pack | $24 a year each, at most 4 | 25 more monitors at 12-minute checks | about $0.70 against $2.00 |
+| Fast monitor pack | $36 a year each, at most 3, with the add-on | 5 more monitors at 1-minute checks | about $1.60 against $3.00 |
 
+- A pack's cost is its checks' rows alone, from the same measurements (about 7.3 rows a check; the calls and the upkeep are already paid for by the plan): 25 monitors every 12 minutes write about 0.66 million rows a month, and 5 monitors every minute about 1.6 million.
 - This is option 1 priced at $24 a year instead of $12: at $12 it clears only about 50 cents a month, too little to absorb card fees (about 8 to 15 cents a month) and busier customers.
 - Option 4 (fewer rows per check) comes after launch, because it roughly halves every plan's cost, the base plan included.
 - Yearly billing only, as before, because of Stripe's 30 cent fee per charge.
@@ -83,14 +97,14 @@ The options, with what each costs for one customer:
 - While the account stays inside the 50 million rows written that Workers Paid includes (about 60 base-plan customers), the base plan's margin is about 94%: Stripe's fee is then the main cost.
 - Not included: email beyond Resend's free tier, the domain, and support time.
 
-**The trial (pending the owner's choice).**
+**The trial (decided: 30 days with 5 monitors, D13).**
 There is no free plan: self-hosting is the free offering.
 A trial costs what its monitors cost to run for its length, and no Stripe fee:
 
 | Trial | Cost per trial | Per paying customer at 5% / 10% / 20% conversion | As a share of the first year's $24 |
 | --- | --- | --- | --- |
-| 14 days, 5 monitors (as built) | about $0.10 | $2.00 / $1.00 / $0.50 | 8% / 4% / 2% |
-| 30 days, 5 monitors (recommended) | about $0.20 | $4.00 / $2.00 / $1.00 | 17% / 8% / 4% |
+| 14 days, 5 monitors (first built) | about $0.10 | $2.00 / $1.00 / $0.50 | 8% / 4% / 2% |
+| 30 days, 5 monitors (decided) | about $0.20 | $4.00 / $2.00 / $1.00 | 17% / 8% / 4% |
 | 30 days, the full plan (20 monitors) | about $0.83 | $16.60 / $8.30 / $4.15 | 69% / 35% / 17% |
 
 - The conversion rates are assumptions to show the range, not measurements.
@@ -170,10 +184,10 @@ Nothing past stage 2 starts until the stage 1 gate passes.
 
 - **Goal:** take payment and enforce what each plan includes.
 - **Scope:**
-  - Stripe Checkout for the $24 yearly plan and the $12 yearly add-on, and the Stripe Customer Portal for cards, invoices and cancelling.
-  - A webhook that writes subscription state to the platform database and turns plans and the add-on on and off.
+  - Stripe Checkout for the $24 yearly plan, the $24 yearly fast checks add-on and the monitor packs ($24 and $36 a year each), adding and removing packs from the billing page, and the Stripe Customer Portal for cards, invoices and cancelling.
+  - A webhook that writes subscription state to the platform database and turns plans, the add-on and the packs on and off.
   - Stripe Tax for sales tax and VAT.
-  - Plan limits enforced in the customer Worker: 20 monitors, 2 status pages, 12-minute or 1-minute checks.
+  - Plan limits enforced in the customer Worker: 20 monitors (more with packs), 2 status pages, 12-minute checks, and 1-minute checks on as many monitors as the add-on and its packs allow.
 - **Acceptance:** test-mode purchase, renewal, add-on, cancellation and a failed card all reach the right state; limits can't be exceeded through the dashboard or the API.
 - **Effort:** 4 days.
 - **Cost:** Stripe's fees per charge; Stripe Tax's fee per transaction.

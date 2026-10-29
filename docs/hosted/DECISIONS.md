@@ -11,6 +11,7 @@ Each one is the owner's call.
 | D4 | Who holds each customer's `MASTER_KEY` | Recommended, pending owner |
 | O4 | Support address | Decided 2026-10-28: support@n8builds.dev |
 | D12 | How long a deleted tenant's export is kept, and who may see its `MASTER_KEY` | Decided 2026-10-29 |
+| D13 | Launch pricing | Decided 2026-10-29 |
 
 ## D2: the Hosted address
 
@@ -114,3 +115,4 @@ The customer may see an export's key on the account page, after a sign-in from t
 
 **Why:** the measured cost per customer (docs/HOSTED_PLAN.md, "Cost per customer, measured" and the margins table): every plan clears a profit even for a customer using everything the plan allows, and the prices are still well under every paid competitor (docs/LANDING_AND_LOGIN_PLAN.md).
 **What changes in code:** a `fastMonitors` plan limit (5), pack quantities that add to the monitor and fast-monitor limits, and the contract change for it, the add-on price in billing, and the trial length (14 days to 30 days) in the platform, the landing page's trial copy and the lifecycle emails.
+**How the code does it:** the limits and the packs are `PLAN_LIMITS` and `PACKS` in the contract, and the platform sends the final numbers in `tenant.limits` ([CONTRACT.md, section 5](./CONTRACT.md#5-plans-and-limits)); the prices and the trial length are `src/shared/hosted-offer.ts`, which the landing page and the platform's billing pages both read; Stripe's four Prices are config ([platform/README.md](../../platform/README.md), step 11).
