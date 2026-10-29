@@ -1,0 +1,31 @@
+{
+  "name": "openping-android",
+  "version": "1.0.0",
+  "description": "The OpenPing Android app: a small Capacitor shell that opens your OpenPing (docs/ANDROID.md).",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "sync": "npm run build && cap sync android",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "open": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/core": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3",
+    "typescript": "5.9.3",
+    "vite": "6.4.5",
+    "vitest": "4.1.12"
+  },
+  "allowScripts": {
+    "esbuild": true
+  }
+}

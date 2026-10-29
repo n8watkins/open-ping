@@ -8,7 +8,16 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default defineConfig([
-  globalIgnores(["dist/", ".tenant-bundle/", ".wrangler/", "coverage/", "worker-configuration.d.ts"]),
+  globalIgnores([
+    "dist/",
+    ".tenant-bundle/",
+    ".wrangler/",
+    "coverage/",
+    "worker-configuration.d.ts",
+    // The Android app's build output and its generated native project files.
+    "apps/android/dist/",
+    "apps/android/android/",
+  ]),
   { linterOptions: { reportUnusedDisableDirectives: "error" } },
   js.configs.recommended,
   tseslint.configs.recommended,
@@ -39,8 +48,13 @@ export default defineConfig([
     languageOptions: { globals: globals.serviceworker },
   },
   {
+    // The Android app's own screens (apps/android, docs/ANDROID.md).
+    files: ["apps/android/src/**/*.ts"],
+    languageOptions: { globals: globals.browser },
+  },
+  {
     // Node tooling: scripts and configs.
-    files: ["scripts/**/*.{mjs,ts}", "*.config.{js,ts}", "platform/*.config.ts"],
+    files: ["scripts/**/*.{mjs,ts}", "*.config.{js,ts}", "platform/*.config.ts", "apps/android/*.config.ts"],
     languageOptions: { globals: globals.node },
   },
   {

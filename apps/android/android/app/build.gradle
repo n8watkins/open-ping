@@ -1,0 +1,80 @@
+import groovy.json.JsonSlurper
+
+apply plugin: 'com.android.application'
+
+// One version for the app: apps/android/package.json. The version code Google
+// Play needs (always increasing) comes from it: 1.2.3 -> 10203.
+def appVersion = new JsonSlurper().parse(file('../../package.json')).version as String
+def (major, minor, patch) = appVersion.tokenize('.').collect { it.replaceAll(/\D.*/, '') as int }
+
+// Release signing, only when the upload key is given (docs/ANDROID.md, "Signing").
+// Nothing here is ever committed: the key and its passwords come from the
+// environment, so a build without them makes an unsigned release bundle.
+def uploadKeystore = System.getenv('OPENPING_UPLOAD_KEYSTORE')
+
+android {
+    namespace = "dev.n8builds.openping"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "dev.n8builds.openping"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode major * 10000 + minor * 100 + patch
+        versionName appVersion
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildFeatures {
+        buildConfig = true
+    }
+    signingConfigs {
+        if (uploadKeystore) {
+            release {
+                storeFile file(uploadKeystore)
+                storePassword System.getenv('OPENPING_UPLOAD_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('OPENPING_UPLOAD_KEY_ALIAS')
+                keyPassword System.getenv('OPENPING_UPLOAD_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            // Same package as the store build (the sign-in scheme, Firebase and
+            // assetlinks all name it), so a debug build replaces it on a phone.
+            versionNameSuffix "-debug"
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (uploadKeystore) signingConfig signingConfigs.release
+        }
+    }
+    lint {
+        // Lint runs in CI; a warning there is worth reading, an error stops the build.
+        abortOnError true
+        warningsAsErrors false
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.activity:activity:$androidxActivityVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"
+    implementation "androidx.browser:browser:$androidxBrowserVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'

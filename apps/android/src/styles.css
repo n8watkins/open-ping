@@ -1,0 +1,299 @@
+/* The OpenPing look (src/client/index.css in the web app): dark navy. */
+:root {
+  --canvas: #0b1220;
+  --surface: #111b2e;
+  --surface-2: #16223a;
+  --line: #1f2c44;
+  --ink: #e6edf6;
+  --ink-muted: #9fb0c5;
+  --ink-faint: #8595ad;
+  --accent: #6d8bff;
+  --accent-soft: #1b2547;
+  --down: #f2555a;
+  --up: #22c55e;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+main {
+  width: 100%;
+  max-width: 28rem;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 2.5rem 1rem 2rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0 0 2rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.brand svg { width: 32px; height: 32px; }
+.brand .ping { color: var(--accent); }
+
+h1 {
+  margin: 0;
+  font-size: 1.375rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  text-align: center;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.lead {
+  margin: 0.5rem 0 1.75rem;
+  color: var(--ink-muted);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.choices, .installs { display: flex; flex-direction: column; gap: 0.75rem; margin: 0; padding: 0; list-style: none; }
+
+.choice, .install {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  width: 100%;
+  min-height: 4.5rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.875rem;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 120ms, border-color 120ms;
+}
+.choice:active, .install-open:active { background: var(--surface-2); }
+.choice:focus-visible, .install-open:focus-visible, .button:focus-visible, .link:focus-visible, .icon-button:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.choice[aria-disabled="true"] { cursor: default; opacity: 0.6; }
+.choice-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.625rem;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.choice-icon svg { width: 1.25rem; height: 1.25rem; }
+.choice-text { flex: 1; min-width: 0; }
+.choice-title { display: block; font-size: 1rem; font-weight: 600; }
+.choice-sub { display: block; margin-top: 0.125rem; color: var(--ink-muted); font-size: 0.875rem; line-height: 1.4; }
+.chevron { flex: none; width: 1.25rem; height: 1.25rem; color: var(--ink-faint); }
+.badge {
+  display: inline-block;
+  margin-left: 0.375rem;
+  padding: 0.0625rem 0.4375rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-faint);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  vertical-align: 0.125rem;
+}
+
+.install { padding: 0; gap: 0; }
+.install-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  min-height: 4.5rem;
+  padding: 0.875rem 0 0.875rem 1rem;
+  border: 0;
+  border-radius: 0.875rem 0 0 0.875rem;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.install-host { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; font-weight: 600; }
+.install.active { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.icon-button {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  margin-right: 0.5rem;
+  border: 0;
+  border-radius: 0.625rem;
+  background: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+.icon-button:active { background: var(--surface-2); color: var(--ink); }
+.icon-button svg { width: 1.25rem; height: 1.25rem; }
+
+.section-label {
+  margin: 0 0 0.625rem;
+  color: var(--ink-faint);
+  font-size: 0.6875rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+form { display: flex; flex-direction: column; gap: 0.75rem; }
+label { font-size: 0.875rem; font-weight: 600; }
+.field {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 0.625rem;
+  background: var(--surface);
+}
+.field:focus-within { border-color: var(--accent); }
+.field input {
+  flex: 1;
+  min-width: 0;
+  height: 3rem;
+  padding: 0 0.875rem;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  /* 16 px: no zoom on focus (the mobile standard). */
+  font: inherit;
+  font-size: 1rem;
+}
+.field input:focus-visible { outline: none; }
+.field .suffix {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  max-width: 55%;
+  padding: 0 0.875rem;
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+  border-radius: 0 0.625rem 0.625rem 0;
+  background: var(--surface-2);
+  color: var(--ink-muted);
+  font-size: 0.9375rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hint { margin: 0; color: var(--ink-faint); font-size: 0.8125rem; line-height: 1.5; }
+.error {
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--down) 40%, transparent);
+  border-radius: 0.625rem;
+  background: color-mix(in srgb, var(--down) 10%, transparent);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0 1rem;
+  border: 0;
+  border-radius: 0.625rem;
+  background: var(--ink);
+  color: var(--canvas);
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 650;
+  text-decoration: none;
+  cursor: pointer;
+}
+.button:disabled { opacity: 0.6; cursor: default; }
+.button.secondary { border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); }
+.button svg { width: 1.125rem; height: 1.125rem; }
+.spinner { width: 1.125rem; height: 1.125rem; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 700ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.stack { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1.5rem; }
+.link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0 0.5rem;
+  border: 0;
+  background: none;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 0.875rem;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+.link svg { width: 1rem; height: 1rem; margin-left: 0.375rem; flex: none; }
+.back {
+  align-self: flex-start;
+  margin: -1rem 0 1rem -0.5rem;
+  text-decoration: none;
+  gap: 0.25rem;
+}
+.back svg { width: 1.125rem; height: 1.125rem; }
+
+.status-icon {
+  display: grid;
+  place-items: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  margin: 0 auto 1.25rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-muted);
+}
+.status-icon svg { width: 1.75rem; height: 1.75rem; }
+
+.footer { margin-top: auto; padding-top: 2rem; color: var(--ink-faint); font-size: 0.75rem; text-align: center; }
+
+.boot { flex: 1; display: grid; place-items: center; }
+.boot .brand { margin: 0; }
+
+dialog {
+  width: calc(100% - 2rem);
+  max-width: 24rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 0.875rem;
+  background: var(--surface);
+  color: var(--ink);
+}
+dialog::backdrop { background: rgb(0 0 0 / 0.6); }
+dialog h2 { margin: 0; font-size: 1.0625rem; font-weight: 650; }
+dialog p { margin: 0.5rem 0 1.25rem; color: var(--ink-muted); font-size: 0.875rem; line-height: 1.55; overflow-wrap: anywhere; }
+.dialog-actions { display: flex; gap: 0.625rem; }
+.button.danger { background: var(--down); color: #fff; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
