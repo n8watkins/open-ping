@@ -9,6 +9,7 @@ import { appOrigin } from "../lib/app-origin";
 import { hitRateLimit } from "../db/rate-limit";
 import { homePage } from "../lib/home-page";
 import { countEvent } from "./events";
+import { afterSignInPath } from "./app-signin";
 
 /**
  * Browser-facing auth flows mounted at /auth. GitHub OAuth (PRD §13):
@@ -161,5 +162,5 @@ auth.get("/github/callback", async (c) => {
 
   // Rotate: a fresh session is issued on every login.
   await createSession(c, login, "github");
-  return c.redirect(`${base}/`, 302);
+  return c.redirect(`${base}${afterSignInPath(c)}`, 302);
 });

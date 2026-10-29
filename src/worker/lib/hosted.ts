@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { isAppUserAgent } from "../../shared/native-app";
 import {
   HOSTED_CONTRACT_VERSION,
   HOSTED_ERRORS,
@@ -212,6 +213,9 @@ export const signOutRedirect: MiddlewareHandler<AppEnv> = async (c, next) => {
   const props = hostedProps(c);
   if (!props || !getCookie(c, SIGNED_OUT_COOKIE)) return next();
   deleteCookie(c, SIGNED_OUT_COOKIE, { path: "/login", secure: true });
+  // The Android app stays on its own sign-in screen: the platform's pages
+  // open in the phone's browser, not in the app (docs/ANDROID.md).
+  if (isAppUserAgent(c.req.header("user-agent"))) return next();
   c.header("Cache-Control", "no-store");
   return c.redirect(props.tenant.urls.signOut, 302);
 };

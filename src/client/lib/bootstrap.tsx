@@ -41,6 +41,8 @@ export interface AuthStatus {
    * and signs its customer in (docs/hosted/CONTRACT.md).
    */
   hosted?: { signInUrl: string };
+  /** The Android app's browser sign-in version (absent on an older Worker). */
+  appSignIn?: number;
 }
 
 /** The OpenPing Hosted account a signed-in customer sees in Settings (hosted mode only). */

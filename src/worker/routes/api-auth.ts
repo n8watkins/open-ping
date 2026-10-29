@@ -62,6 +62,7 @@ apiAuth.get("/status", async (c) => {
       homePage: homePage(c.env),
       waitlistEnabled: waitlistEnabled(c.env),
       hosted: hostedStatus(hosted),
+      appSignIn: APP_SIGNIN_VERSION,
     });
   }
   return c.json({
@@ -77,10 +78,18 @@ apiAuth.get("/status", async (c) => {
     passkeyOrigin: rp.origin,
     homePage: homePage(c.env),
     waitlistEnabled: waitlistEnabled(c.env),
+    appSignIn: APP_SIGNIN_VERSION,
     // Only once Hosted opens, so the answer is unchanged until then.
     ...hostedOffer(c.env),
   });
 });
+
+/**
+ * The version of the Android app's browser sign-in this install speaks
+ * (routes/app-signin.ts). The app reads it before it adds an install, and asks
+ * an older one to update first.
+ */
+export const APP_SIGNIN_VERSION = 1;
 
 /** `hostedSignupUrl` for the landing page's trial buttons, present only when the var is set and valid. */
 function hostedOffer(env: AppEnv["Bindings"]): { hostedSignupUrl?: string } {

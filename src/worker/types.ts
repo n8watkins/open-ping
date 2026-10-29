@@ -121,6 +121,13 @@ export interface Env {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
+
+  /**
+   * The OpenPing Android app's signing-certificate SHA-256 fingerprints, comma
+   * separated, to serve /.well-known/assetlinks.json (lib/android-app-links.ts).
+   * Optional: the app signs in through the browser without it.
+   */
+  ANDROID_APP_LINKS?: string;
 }
 
 /** Hono generics for this app. */
