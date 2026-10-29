@@ -191,6 +191,24 @@ describe("per-monitor intervals on the platform", () => {
     expect(stored).toEqual({ interval_seconds: 60 });
   });
 
+  it("checks no more fast monitors than the plan allows: the oldest keep their speed", async () => {
+    // Created newest first, so the oldest aren't simply the first rows.
+    const made: { name: string; id: string }[] = [];
+    for (const [i, name] of ["Newest", "Newer", "Older", "Oldest"].entries()) {
+      vi.setSystemTime(T0 - (i + 2) * MINUTE);
+      made.push({ name, id: (await addMonitor(name, { intervalSeconds: 60 })).id });
+    }
+    const slow = await addMonitor("Hourly", { intervalSeconds: 3600 });
+    // Down to 2 fast monitors (a pack removed): nothing in the database changes.
+    const capped = platformCadence(1, 2);
+    for (let k = 0; k <= 24; k++) await tick(T0 + k * MINUTE, capped);
+    const samples = Object.fromEntries(await Promise.all(made.map(async (m) => [m.name, await samplesOf(m.id)] as const)));
+    expect(samples).toEqual({ Oldest: 25, Older: 25, Newer: 3, Newest: 3 });
+    expect(await samplesOf(slow.id)).toBe(1);
+    const stored = await env.DB.prepare("SELECT COUNT(*) AS n FROM monitors WHERE interval_seconds = 60").first<{ n: number }>();
+    expect(stored?.n).toBe(4);
+  });
+
   it("keeps one run record and does the upkeep once per 12 minutes", async () => {
     await addMonitor("Fast", { intervalSeconds: 60 });
     const upkeep: boolean[] = [];

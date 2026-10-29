@@ -1,4 +1,5 @@
 import { defaultIntervalSeconds } from "../../shared/check-interval";
+import { fastMonitorAllowance, STANDARD_CHECK_MINUTES, type PlanLimits } from "../../shared/hosted-contract";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { Env } from "../types";
@@ -65,6 +66,13 @@ function alertSentence(requested: boolean, queued: number, error?: string): stri
   if (error) return "The update is posted, but its alerts could not be queued; check the diagnostics.";
   if (queued === 0) return "No notification channel takes incident updates for this monitor, so no alerts were queued.";
   return `Queued ${queued} alert${queued === 1 ? "" : "s"}; they go out with the next check run, within 12 minutes.`;
+}
+
+/** The intervalSeconds hint's note on fast monitors, for a plan that has any. */
+function fastMonitorsHint(limits: PlanLimits): string {
+  const allowance = fastMonitorAllowance(limits);
+  if (allowance === 0 || limits.minIntervalMinutes >= STANDARD_CHECK_MINUTES) return "";
+  return ` Up to ${allowance} monitors may be checked more often than every ${STANDARD_CHECK_MINUTES} minutes (${STANDARD_CHECK_MINUTES * 60} seconds).`;
 }
 
 /** What every tool can see about the request it serves. */
@@ -613,7 +621,8 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
             .int()
             .optional()
             .describe(
-              `Polled monitors: seconds between checks, a whole number of minutes from ${ctx.plan.limits.minIntervalMinutes * 60} (this plan's shortest) to 86400. New monitors default to ${defaultIntervalSeconds(ctx.plan.limits.minIntervalMinutes)}.`,
+              `Polled monitors: seconds between checks, a whole number of minutes from ${ctx.plan.limits.minIntervalMinutes * 60} (this plan's shortest) to 86400. New monitors default to ${defaultIntervalSeconds(ctx.plan.limits.minIntervalMinutes)}.` +
+                fastMonitorsHint(ctx.plan.limits),
             ),
         }
       : {}),
@@ -683,6 +692,8 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     async ({ id, ...patch }) => {
       const r = await patchMonitor(env, id, patch, ctx.plan);
       if (!r.ok) return writeFailure(r);
+      // An interval change can make it fast or not: the platform counts those.
+      if (patch.intervalSeconds !== undefined) ctx.usageChanged?.();
       const tz = await zone();
       return ok(`Updated "${r.monitor.name}" [${r.monitor.id}].`, { monitor: redactMonitorForMcp(r.monitor) }, tz);
     },

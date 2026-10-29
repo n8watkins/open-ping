@@ -6,6 +6,7 @@ import {
   type MonitorRow,
 } from "./db/monitors";
 import { isActiveAt, nextCheckAt } from "./lib/schedule";
+import { keptFastMonitorIds } from "../shared/check-interval";
 import {
   alignNextCheck,
   checkIntervalSeconds,
@@ -235,9 +236,13 @@ export async function runScheduled(
   let stats: RunStats;
   try {
     // Each polled monitor at the interval this cadence checks it at
-    // (lib/cadence.ts): 12 minutes on the cron, its own on the platform.
-    const monitors = (await monitorsFromRows(env, (monitorsRes?.results ?? []) as MonitorRow[])).map((m) => {
-      const intervalSeconds = checkIntervalSeconds(m, cadence);
+    // (lib/cadence.ts): 12 minutes on the cron, its own on the platform, and
+    // never more fast monitors than the plan allows (the oldest keep their
+    // speed, shared/check-interval.ts).
+    const stored = await monitorsFromRows(env, (monitorsRes?.results ?? []) as MonitorRow[]);
+    const keptFast = cadence.fastMonitors === null ? undefined : keptFastMonitorIds(stored, cadence.fastMonitors);
+    const monitors = stored.map((m) => {
+      const intervalSeconds = checkIntervalSeconds(m, cadence, keptFast);
       return intervalSeconds === m.intervalSeconds ? m : { ...m, intervalSeconds };
     });
     const settings = await settingsFromRows(

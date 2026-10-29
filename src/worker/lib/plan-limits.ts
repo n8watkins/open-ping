@@ -1,9 +1,12 @@
 import type { Context, MiddlewareHandler } from "hono";
 import {
   checkChannelKindLimit,
+  checkFastMonitorLimit,
   checkIntervalLimit,
   checkMonitorLimit,
   checkStatusPageLimit,
+  fastMonitorAllowance,
+  isFastInterval,
   planLimitBody,
   PLAN_LIMIT_STATUS,
   type PlanLimitBody,
@@ -95,6 +98,61 @@ export function intervalLimit(plan: HostedPlan | undefined, monitor: CreateMonit
   return refusal(plan, checkIntervalLimit(plan.limits, intervalSecondsOf(monitor) / 60));
 }
 
+/** Polled monitors set faster than every 12 minutes (paused ones count), leaving out `except`. */
+async function countFast(env: Env, except: string | null): Promise<number> {
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM monitors WHERE type <> 'heartbeat' AND interval_seconds < ?1 AND id <> COALESCE(?2, '')",
+  )
+    .bind(POLLED_INTERVAL_SECONDS, except)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/**
+ * May this monitor be a fast one (checked more often than every 12 minutes)?
+ * Only a create or an edit that sets a fast interval is held to it: an edit
+ * that keeps the stored interval passes, so a fast monitor kept from a bigger
+ * plan can still be renamed. An edit leaves the monitor itself out of the
+ * count. Run it after intervalLimit, which answers first for an interval the
+ * plan doesn't offer at all.
+ */
+export async function fastMonitorLimit(
+  env: Env,
+  plan: HostedPlan | undefined,
+  monitor: CreateMonitorInput,
+  existing?: Pick<MonitorRecord, "id" | "type" | "intervalSeconds"> | null,
+): Promise<PlanLimitRefusal | null> {
+  if (!plan || monitor.type === "heartbeat") return null;
+  const seconds = intervalSecondsOf(monitor);
+  if (!isFastInterval(seconds)) return null;
+  if (existing && existing.type !== "heartbeat" && existing.intervalSeconds === seconds) return null;
+  return refusal(plan, checkFastMonitorLimit(plan.limits, await countFast(env, existing?.id ?? null)));
+}
+
+/**
+ * A backup import's fast monitors, in the backup's order, within what the
+ * plan allows next to the fast monitors already here; any past that are
+ * restored at 12 minutes instead of refusing the restore (the editor can make
+ * them fast again once the plan allows more). Run on what importedCheckInterval
+ * resolved. A plain install has no plan and stores 12 minutes anyway.
+ */
+export async function importedFastIntervals(
+  env: Env,
+  plan: HostedPlan | undefined,
+  inputs: readonly CreateMonitorInput[],
+): Promise<CreateMonitorInput[]> {
+  if (!plan || !inputs.some((m) => m.type !== "heartbeat" && isFastInterval(intervalSecondsOf(m)))) return [...inputs];
+  let free = fastMonitorAllowance(plan.limits) - (await countFast(env, null));
+  return inputs.map((m) => {
+    if (m.type === "heartbeat" || !isFastInterval(intervalSecondsOf(m))) return m;
+    if (free > 0) {
+      free--;
+      return m;
+    }
+    return { ...m, intervalSeconds: POLLED_INTERVAL_SECONDS };
+  });
+}
+
 /**
  * The check interval a create or an edit of a polled monitor stores. On a plain
  * install it is always the cron's 12 minutes, whatever was sent (a backup or a
@@ -175,7 +233,11 @@ export function usageReporter(c: Context<AppEnv>): (() => void) | undefined {
 /** Collection paths (create) and item paths (delete) whose change the platform counts. */
 const USAGE_PATH = /^\/api\/(monitors|status-pages|channels)(\/[^/]+)?$/;
 
-/** After a successful create, delete or backup import through the REST API, report usage (hosted mode). */
+/**
+ * After a successful create, delete or backup import through the REST API,
+ * and an edit of a monitor (its interval may make it fast or not), report
+ * usage (hosted mode).
+ */
 export const reportUsageAfterChange: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
   if (c.res.status < 200 || c.res.status >= 300) return;
@@ -183,6 +245,7 @@ export const reportUsageAfterChange: MiddlewareHandler<AppEnv> = async (c, next)
   const match = USAGE_PATH.exec(path);
   const changed =
     (method === "POST" && ((match && !match[2]) || path === "/api/data/import")) ||
-    (method === "DELETE" && !!match?.[2]);
+    (method === "DELETE" && !!match?.[2]) ||
+    ((method === "PUT" || method === "PATCH") && match?.[1] === "monitors" && !!match[2]);
   if (changed) usageReporter(c)?.();
 };

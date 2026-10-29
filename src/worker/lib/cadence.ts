@@ -21,29 +21,52 @@ export interface Cadence {
   tickMs: number;
   /** The plan's shortest check interval, in minutes (platform only). */
   minIntervalMinutes: number | null;
+  /**
+   * How many polled monitors may be checked faster than every 12 minutes
+   * (platform only; null: no cap, as on a platform older than the limit).
+   */
+  fastMonitors: number | null;
 }
 
 /** A plain install: the 12-minute cron (wrangler.jsonc). */
-export const CRON_CADENCE: Cadence = { kind: "cron", tickMs: POLLED_INTERVAL_SECONDS * 1000, minIntervalMinutes: null };
+export const CRON_CADENCE: Cadence = {
+  kind: "cron",
+  tickMs: POLLED_INTERVAL_SECONDS * 1000,
+  minIntervalMinutes: null,
+  fastMonitors: null,
+};
 
 /** The platform's scheduler ticks every minute. */
 export const PLATFORM_TICK_MS = 60 * 1000;
 
-/** OpenPing Hosted, on a plan whose shortest interval is `minIntervalMinutes` (props.tenant.limits). */
-export function platformCadence(minIntervalMinutes: number): Cadence {
-  return { kind: "platform", tickMs: PLATFORM_TICK_MS, minIntervalMinutes };
+/**
+ * OpenPing Hosted, on a plan whose shortest interval is `minIntervalMinutes`
+ * and which allows `fastMonitors` fast monitors (props.tenant.limits, through
+ * fastMonitorAllowance); no `fastMonitors` means no cap.
+ */
+export function platformCadence(minIntervalMinutes: number, fastMonitors?: number): Cadence {
+  return { kind: "platform", tickMs: PLATFORM_TICK_MS, minIntervalMinutes, fastMonitors: fastMonitors ?? null };
 }
 
 /**
  * How often a monitor is checked: its own interval on the platform, at least
- * the plan's shortest; the cron's 12 minutes on a plain install, whatever is
- * stored (a database brought over from Hosted may hold another). A heartbeat's
- * interval is how often its job pings, and never changes.
+ * the plan's shortest, and at least 12 minutes for a fast monitor over the
+ * plan's fast monitor allowance (`keptFast` holds the ones within it,
+ * keptFastMonitorIds; omitted, all of them are); the cron's 12 minutes on a
+ * plain install, whatever is stored (a database brought over from Hosted may
+ * hold another). A heartbeat's interval is how often its job pings, and never
+ * changes.
  */
-export function checkIntervalSeconds(m: { type: string; intervalSeconds: number }, cadence: Cadence): number {
+export function checkIntervalSeconds(
+  m: { id?: string; type: string; intervalSeconds: number },
+  cadence: Cadence,
+  keptFast?: ReadonlySet<string>,
+): number {
   if (m.type === "heartbeat") return m.intervalSeconds;
   if (cadence.kind === "cron") return POLLED_INTERVAL_SECONDS;
-  return effectiveIntervalSeconds(m.intervalSeconds, cadence.minIntervalMinutes ?? 12);
+  const effective = effectiveIntervalSeconds(m.intervalSeconds, cadence.minIntervalMinutes ?? 12);
+  if (keptFast && m.id !== undefined && !keptFast.has(m.id)) return Math.max(effective, POLLED_INTERVAL_SECONDS);
+  return effective;
 }
 
 /**

@@ -6,10 +6,14 @@
  * and the plan sets the shortest one allowed (`PlanLimits.minIntervalMinutes`).
  * The scheduler never checks faster than the plan's current minimum, so after
  * a downgrade a 1-minute monitor runs at the plan's fastest and keeps its
- * setting for when the plan allows it again. A plain install has no plan and
+ * setting for when the plan allows it again. The plan also caps how many
+ * monitors may be fast (`PlanLimits.fastMonitors`); when more are set fast
+ * than that (after a downgrade), the oldest keep their speed and the rest are
+ * checked every 12 minutes (keptFastMonitorIds). A plain install has no plan and
  * checks every polled monitor on each 12-minute cron run, as it always has.
  */
 
+import { isFastInterval } from "./hosted-contract";
 import { POLLED_INTERVAL_SECONDS } from "./schemas";
 
 /** The intervals the editor offers, in minutes. Any whole minute from 1 to 1,440 is valid. */
@@ -29,6 +33,33 @@ export function planMinimumSeconds(minIntervalMinutes: number): number {
 export function effectiveIntervalSeconds(storedSeconds: number, minIntervalMinutes: number): number {
   const stored = Number.isFinite(storedSeconds) && storedSeconds > 0 ? storedSeconds : POLLED_INTERVAL_SECONDS;
   return Math.max(stored, planMinimumSeconds(minIntervalMinutes));
+}
+
+/** The fields keptFastMonitorIds reads. */
+export interface FastCandidate {
+  id: string;
+  type: string;
+  intervalSeconds: number;
+  createdAt: number;
+}
+
+/** Is this a fast monitor: polled, and set to check more often than every 12 minutes? Paused ones count. */
+export function isFastMonitor(m: Pick<FastCandidate, "type" | "intervalSeconds">): boolean {
+  return m.type !== "heartbeat" && isFastInterval(m.intervalSeconds);
+}
+
+/**
+ * Which fast monitors are checked at their own interval when the plan allows
+ * `allowance` of them: all of them while they fit; otherwise the oldest
+ * (created first, then by id, so the choice never changes between runs), and
+ * the others are checked every 12 minutes until one is slowed, removed or the
+ * plan allows more. Nothing is changed in the database.
+ */
+export function keptFastMonitorIds(monitors: readonly FastCandidate[], allowance: number): Set<string> {
+  const fast = monitors.filter(isFastMonitor);
+  if (fast.length <= allowance) return new Set(fast.map((m) => m.id));
+  const oldest = [...fast].sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return new Set(oldest.slice(0, Math.max(0, allowance)).map((m) => m.id));
 }
 
 /** "1 minute", "12 minutes", "1 hour", for a whole number of minutes. */
