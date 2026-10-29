@@ -92,6 +92,7 @@ describe("the platform database", () => {
       "billing_emails",
       "billing_locks",
       "email_logins",
+      "email_recipients",
       "escrowed_keys",
       "platform_sessions",
       "rate_limits",

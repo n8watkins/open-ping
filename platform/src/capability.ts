@@ -10,6 +10,7 @@
  */
 
 import { tenantMailFrom, type Mailer, type MailEnv } from "./mail";
+import { recipientState, refusalMessage, requestConfirmation } from "./recipients";
 import { effectiveLimits, tenantFromRow } from "./tenants";
 import {
   AUDIT_ACTION_PATTERN,
@@ -28,12 +29,26 @@ export const AUDIT_DETAIL_MAX_BYTES = 2048;
 export interface TenantMail {
   mailer: Mailer;
   from: string;
+  /** For the confirmation links (app.<domain>/email/confirm). */
+  hostedDomain: string;
 }
 
 /** The tenant mail for this env: Resend with the platform's key, from the Hosted domain. */
 export function tenantMailFromEnv(env: MailEnv, mailer: Mailer | null): TenantMail | null {
   const from = tenantMailFrom(env);
-  return mailer && from ? { mailer, from } : null;
+  return mailer && from ? { mailer, from, hostedDomain: env.HOSTED_DOMAIN } : null;
+}
+
+/**
+ * Resend's Idempotency-Key for a tenant's email: the same message to the
+ * same address within 24 hours goes out once, so a retry after a lost
+ * answer doesn't send it twice. (Resend: unique per request, up to 256
+ * characters, kept 24 hours.)
+ */
+export async function tenantIdempotencyKey(tenantId: string, to: string, message: HostedEmail): Promise<string> {
+  const data = new TextEncoder().encode(JSON.stringify([to, message.subject, message.text, message.html ?? "", message.category]));
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return `tenant-${tenantId}-${Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /** Limits on what one sendEmail may carry; OpenPing's own mail is far below them. */
@@ -104,18 +119,43 @@ export class TenantCapability implements PlatformCapability {
     if (!this.mail) return { ok: false, error: "email_unavailable", message: "Email isn't set up on OpenPing Hosted yet." };
     const row = await this.db
       .prepare(
-        `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at
-         FROM tenants WHERE id = ?`,
+        `SELECT t.id, t.account_id, t.slug, t.script_name, t.status, t.owner_suspended_at, t.plan, t.provision_state, t.version,
+                t.limit_overrides, t.trial_ends_at, a.email AS account_email
+         FROM tenants t JOIN accounts a ON a.id = t.account_id WHERE t.id = ?`,
       )
       .bind(this.tenantId)
-      .first<Parameters<typeof tenantFromRow>[0]>();
+      .first<Parameters<typeof tenantFromRow>[0] & { account_email: string }>();
     if (!row || row.provision_state === "deleting") return { ok: false, error: "email_unavailable", message: "This OpenPing is being removed." };
     const tenant = tenantFromRow(row);
     if (tenant.status === "suspended") return { ok: false, error: "email_unavailable", message: "This OpenPing is paused, so it sends no email." };
 
+    // Only the account's own email and addresses that said yes get mail.
+    const allowed: string[] = [];
+    const refusals: string[] = [];
+    for (const address of [...new Set(message.to.map((t) => t.trim().toLowerCase()))]) {
+      const state = await recipientState(this.db, this.tenantId, row.account_email, address);
+      if (state === "own" || state === "confirmed") {
+        allowed.push(address);
+        continue;
+      }
+      const asked =
+        state !== "declined" &&
+        (await requestConfirmation({ db: this.db, mailer: this.mail.mailer, hostedDomain: this.mail.hostedDomain, now: this.now() }, tenant, address));
+      refusals.push(refusalMessage(state, address, asked));
+    }
+    if (allowed.length === 0) return { ok: false, error: "email_rejected", message: refusals.join(" ") };
+    if (refusals.length) console.warn("[mail] some recipients unconfirmed", { tenant: this.tenantId, refused: refusals.length });
+    // A reply-to that isn't one of those is dropped: the Hosted domain's mail never points at a stranger.
+    let replyTo: string | undefined;
+    if (message.replyTo) {
+      const state = await recipientState(this.db, this.tenantId, row.account_email, message.replyTo.trim().toLowerCase());
+      if (state === "own" || state === "confirmed") replyTo = message.replyTo;
+      else console.warn("[mail] reply-to dropped: not confirmed", { tenant: this.tenantId });
+    }
+
     const limit = effectiveLimits(tenant).emailsPerDay;
     const day = utcDay(this.now());
-    const recipients = [...new Set(message.to.map((t) => t.trim().toLowerCase()))];
+    const recipients = allowed;
     // Reserve them all at once: one statement, so two sends at the same
     // moment can't both take the last places.
     const reserved = await this.db
@@ -148,9 +188,10 @@ export class TenantCapability implements PlatformCapability {
         subject: message.subject.trim(),
         text: message.text,
         html: message.html ?? "",
-        ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+        ...(replyTo ? { replyTo } : {}),
         category: message.category,
         tenantId: this.tenantId,
+        idempotencyKey: await tenantIdempotencyKey(this.tenantId, to, message),
       });
       if (result.ok) {
         firstId ??= result.id;

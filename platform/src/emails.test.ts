@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   deletionWarningEmail,
+  recipientConfirmEmail,
   emailDate,
   passkeyAddedEmail,
   paymentFailedEmail,
@@ -28,6 +29,7 @@ const all: Record<string, RenderedEmail> = {
   suspendedTrial: suspendedEmail({ tenantUrl: TENANT, reason: "trial_ended", billingUrl: BILLING, accountUrl: ACCOUNT, deleteAt: AT }),
   suspendedPayment: suspendedEmail({ tenantUrl: TENANT, reason: "payment", billingUrl: BILLING, accountUrl: ACCOUNT, deleteAt: AT }),
   suspendedOwner: suspendedEmail({ tenantUrl: TENANT, reason: "owner", billingUrl: BILLING, accountUrl: ACCOUNT, deleteAt: null }),
+  confirm: recipientConfirmEmail({ tenantUrl: TENANT, confirmUrl: "https://app.openping.test/email/confirm?t=abc" }),
   deletion: deletionWarningEmail({ tenantUrl: TENANT, deleteAt: AT, billingUrl: BILLING, accountUrl: ACCOUNT }),
 };
 

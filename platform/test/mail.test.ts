@@ -5,6 +5,10 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PLAN_LIMITS, type HostedEmail } from "../../src/shared/hosted-contract";
 import { EMAIL_LIMITS, TenantCapability, emailUsageCleanup, emailsToday, hostedEmailProblem, tenantMailFromEnv, utcDay } from "../src/capability";
 import { ResendMailer, classifyResendError, isOnDomain, mailProblem, mailerFromEnv, tenantMailFrom } from "../src/mail";
+import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import { createApp } from "../src/app";
+import type { PlatformEnv } from "../src/env";
+import { CONFIRMS_PER_DAY } from "../src/recipients";
 import { FakeMailer } from "./fake-mailer";
 
 const DOMAIN = "openping.test";
@@ -38,17 +42,26 @@ let clock = Date.UTC(2026, 10, 2, 23, 59, 0);
 async function tenant(fields: { status?: string; plan?: string; overrides?: string | null; ownerSuspended?: boolean; state?: string } = {}) {
   await env.PLATFORM_DB.batch([
     env.PLATFORM_DB.prepare("DELETE FROM tenant_email_usage"),
+    env.PLATFORM_DB.prepare("DELETE FROM email_recipients"),
     env.PLATFORM_DB.prepare("DELETE FROM tenants"),
     env.PLATFORM_DB.prepare("INSERT OR IGNORE INTO accounts (id, email, created_at, updated_at) VALUES ('acc_mail', 'owner@customer.example', 0, 0)"),
     env.PLATFORM_DB.prepare(
       `INSERT INTO tenants (id, account_id, slug, script_name, status, plan, provision_state, limit_overrides, owner_suspended_at, created_at, updated_at)
        VALUES (?, 'acc_mail', 'mailer', ?, ?, ?, ?, ?, ?, 0, 0)`,
     ).bind(TENANT, `t-${TENANT}`, fields.status ?? "active", fields.plan ?? "hosted", fields.state ?? "ready", fields.overrides ?? null, fields.ownerSuspended ? 1 : null),
+    // The addresses these tests mail have said yes (src/recipients.ts); the confirmation itself is tested below.
+    ...CONFIRMED.map((a) =>
+      env.PLATFORM_DB.prepare(
+        "INSERT INTO email_recipients (tenant_id, address, state, requested_at, requested_day, expires_at, confirmed_at) VALUES (?, ?, 'confirmed', 0, '1970-01-01', 0, 0)",
+      ).bind(TENANT, a),
+    ),
   ]);
 }
 
+const CONFIRMED = ["ops@customer.example", "a@x.example", "b@x.example", "c@x.example", "d@x.example", "me@customer.example"];
+
 function capability(mailer: FakeMailer | ResendMailer | null = new FakeMailer()) {
-  return new TenantCapability(env.PLATFORM_DB, TENANT, "acc_mail", () => clock, mailer ? { mailer, from: FROM } : null);
+  return new TenantCapability(env.PLATFORM_DB, TENANT, "acc_mail", () => clock, mailer ? { mailer, from: FROM, hostedDomain: DOMAIN } : null);
 }
 
 beforeAll(async () => {
@@ -110,7 +123,7 @@ describe("the Resend mailer", () => {
         expect(r.message).not.toContain(KEY);
       }
     }
-    expect(errors).toEqual(["rejected", "rejected", "unavailable", "quota", "unavailable", "unavailable", "unavailable", "rejected"]);
+    expect(errors).toEqual(["rejected", "rejected", "unavailable", "quota", "quota", "unavailable", "unavailable", "rejected"]);
     expect(classifyResendError(409, "concurrent_idempotent_requests")).toBe("unavailable");
     expect(classifyResendError(409, "invalid_idempotent_request")).toBe("rejected");
   });
@@ -137,6 +150,13 @@ describe("a tenant's email through the platform", () => {
     expect(result).toEqual({ ok: true, id: "m1" });
     expect(mailer.sent.map((m) => m.to)).toEqual(["a@x.example", "b@x.example"]);
     expect(mailer.sent[0]).toMatchObject({ from: FROM, replyTo: "me@customer.example", category: "alert", tenantId: TENANT, subject: "DOWN: api.customer.example" });
+    // Resend's idempotency key: the same message to the same address is one send.
+    expect(mailer.sent[0]!.idempotencyKey).toMatch(new RegExp(`^tenant-${TENANT}-[0-9a-f]{64}$`));
+    await capability(mailer).sendEmail(alert({ to: ["a@x.example"], replyTo: "me@customer.example" }));
+    expect(mailer.sent[2]!.idempotencyKey).toBe(mailer.sent[0]!.idempotencyKey);
+    expect(mailer.sent[1]!.idempotencyKey).not.toBe(mailer.sent[0]!.idempotencyKey);
+    await env.PLATFORM_DB.prepare("DELETE FROM tenant_email_usage WHERE tenant_id = ?").bind(TENANT).run();
+    await capability(mailer).sendEmail(alert({ to: ["a@x.example", "b@x.example"] }));
     expect(await emailsToday(env.PLATFORM_DB, TENANT, clock)).toEqual({ sent: 2, failed: 0, refused: 0 });
   });
 
@@ -233,5 +253,91 @@ describe("a tenant's email through the platform", () => {
     await emailUsageCleanup(env.PLATFORM_DB, clock).run();
     const left = await env.PLATFORM_DB.prepare("SELECT day FROM tenant_email_usage").all<{ day: string }>();
     expect(left.results.map((r) => r.day)).toEqual([utcDay(clock)]);
+  });
+});
+
+describe("who a tenant may email", () => {
+  const app = createApp({ dispatcher: () => { throw new Error("no dispatch"); }, capability: () => { throw new Error("no capability"); }, accounts: { mailer: () => null, provisioning: () => ({ ok: false, missing: [] }), now: () => clock } });
+  async function visit(path: string, form?: Record<string, string>) {
+    const ctx = createExecutionContext();
+    const res = await app.fetch(
+      new Request(`https://app.${DOMAIN}${path}`, form ? { method: "POST", body: new URLSearchParams(form), headers: { origin: `https://app.${DOMAIN}` } } : {}),
+      env as unknown as PlatformEnv,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    return res;
+  }
+  const tokenOf = (m: { text: string }) => decodeURIComponent(/\/email\/confirm\?t=([^\s]+)/.exec(m.text)![1]!);
+
+  it("always mails the account's own email", async () => {
+    const mailer = new FakeMailer();
+    expect((await capability(mailer).sendEmail(alert({ to: ["Owner@Customer.example"] }))).ok).toBe(true);
+    expect(mailer.sent.map((m) => m.to)).toEqual(["owner@customer.example"]);
+  });
+
+  it("refuses an address that hasn't said yes, asks it once a day, and mails it once it does", async () => {
+    const mailer = new FakeMailer();
+    const cap = capability(mailer);
+    const first = await cap.sendEmail(alert({ to: ["stranger@else.example"] }));
+    expect(first).toEqual({
+      ok: false,
+      error: "email_rejected",
+      message: "stranger@else.example hasn't confirmed it wants email from this OpenPing yet; we've sent it a link to confirm.",
+    });
+    // The one email it got is the platform's question, from the platform's own address.
+    expect(mailer.sent).toHaveLength(1);
+    expect(mailer.sent[0]).toMatchObject({ to: "stranger@else.example", category: "recipient_confirm", subject: `Get alerts from mailer.${DOMAIN}?` });
+    expect(mailer.sent[0]!.from).toBeUndefined();
+    expect(await cap.sendEmail(alert({ to: ["stranger@else.example"] }))).toMatchObject({ message: expect.stringMatching(/check its inbox/) });
+    expect(mailer.sent).toHaveLength(1);
+
+    // A mail scanner opening the link changes nothing; the button does.
+    const token = tokenOf(mailer.sent[0]!);
+    const page = await visit(`/email/confirm?t=${encodeURIComponent(token)}`);
+    expect(await page.text()).toContain("stranger@else.example");
+    expect(await cap.sendEmail(alert({ to: ["stranger@else.example"] }))).toMatchObject({ error: "email_rejected" });
+    expect(await (await visit("/email/confirm", { t: token, answer: "yes" })).text()).toContain("Confirmed");
+    expect((await cap.sendEmail(alert({ to: ["stranger@else.example"] }))).ok).toBe(true);
+    expect(await (await visit("/email/confirm", { t: token, answer: "yes" })).text()).toContain("This link has expired");
+  });
+
+  it("never mails an address that said no, nor asks it again", async () => {
+    const mailer = new FakeMailer();
+    const cap = capability(mailer);
+    await cap.sendEmail(alert({ to: ["no@else.example"] }));
+    await visit("/email/confirm", { t: tokenOf(mailer.sent[0]!), answer: "no" });
+    clock += 3 * 86_400_000;
+    expect(await cap.sendEmail(alert({ to: ["no@else.example"] }))).toMatchObject({ error: "email_rejected", message: "no@else.example asked not to get email from this OpenPing." });
+    expect(mailer.sent).toHaveLength(1);
+  });
+
+  it("asks at most a few new addresses a day, and refuses a cross-site answer", async () => {
+    const mailer = new FakeMailer();
+    const cap = capability(mailer);
+    for (let i = 0; i < CONFIRMS_PER_DAY + 3; i++) await cap.sendEmail(alert({ to: [`n${i}@else.example`] }));
+    expect(mailer.sent.filter((m) => m.category === "recipient_confirm")).toHaveLength(CONFIRMS_PER_DAY);
+    const ctx = createExecutionContext();
+    const res = await app.fetch(
+      new Request(`https://app.${DOMAIN}/email/confirm`, { method: "POST", body: new URLSearchParams({ t: tokenOf(mailer.sent[0]!), answer: "yes" }), headers: { origin: "https://evil.example" } }),
+      env as unknown as PlatformEnv,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(403);
+  });
+
+  it("drops a reply-to that isn't the account's or a confirmed address", async () => {
+    const mailer = new FakeMailer();
+    await capability(mailer).sendEmail(alert({ replyTo: "phish@else.example" }));
+    expect(mailer.sent[0]!.replyTo).toBeUndefined();
+    await capability(mailer).sendEmail(alert({ replyTo: "owner@customer.example" }));
+    expect(mailer.sent[1]!.replyTo).toBe("owner@customer.example");
+  });
+
+  it("sends to the confirmed ones of several and says nothing went to none", async () => {
+    const mailer = new FakeMailer();
+    expect((await capability(mailer).sendEmail(alert({ to: ["a@x.example", "new@else.example"] }))).ok).toBe(true);
+    expect(mailer.sent.filter((m) => m.category === "alert").map((m) => m.to)).toEqual(["a@x.example"]);
   });
 });

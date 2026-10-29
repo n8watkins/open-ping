@@ -236,3 +236,18 @@ export function deletionWarningEmail(input: { tenantUrl: string; deleteAt: numbe
     ],
   });
 }
+
+/** Sent to an address a customer's OpenPing wants to email, before any of its mail. */
+export function recipientConfirmEmail(input: { tenantUrl: string; confirmUrl: string }): RenderedEmail {
+  const address = host(input.tenantUrl);
+  return email({
+    subject: `Get alerts from ${address}?`,
+    preheader: `The OpenPing at ${address} wants to send you its alerts. Nothing is sent until you say yes.`,
+    heading: "Get alerts from this OpenPing?",
+    blocks: [
+      { kind: "p", text: `Someone using OpenPing Hosted at ${address} added this address for its uptime alerts and reports. Nothing is sent until you say yes.` },
+      { kind: "button", label: "Answer yes or no", href: input.confirmUrl },
+      { kind: "note", text: "If you don't know them, ignore this email or answer no, and it never emails you. The link works for a week." },
+    ],
+  });
+}

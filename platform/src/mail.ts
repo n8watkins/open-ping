@@ -50,8 +50,9 @@ const RETRYABLE_NAMES = new Set(["rate_limit_exceeded", "application_error", "se
 
 /** What Resend's answer means for this message. */
 export function classifyResendError(status: number, name: string | undefined): MailError {
-  if (name === "daily_quota_exceeded") return "quota";
-  if (name === "monthly_quota_exceeded") return "unavailable";
+  // Both are spent until a reset, so the mail waits for the next day instead
+  // of being retried every few minutes (a month's quota is a day at a time).
+  if (name === "daily_quota_exceeded" || name === "monthly_quota_exceeded") return "quota";
   if ((name && RETRYABLE_NAMES.has(name)) || status === 429 || status >= 500 || status === 0) return "unavailable";
   return "rejected";
 }
