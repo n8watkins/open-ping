@@ -41,6 +41,7 @@ import { verifyStripeSignature } from "./signature";
 import { BillingBusyError, HOLDS, holdsBinds, withBillingLock, type BillingLock } from "./lock";
 import { applyAccountBilling, planForPrices, savedPlan, saveSubscription, type BillingChange } from "./state";
 import type { StripeApi, StripeSubscription } from "./stripe";
+import { log } from "../log";
 
 export const WEBHOOK_EVENTS = [
   "checkout.session.completed",
@@ -113,7 +114,7 @@ export function subscriptionOf(event: StripeEvent): string | null {
 
 export async function handleStripeWebhook(request: Request, deps: WebhookDeps): Promise<Response> {
   if (!deps.setup.ok) {
-    console.warn("[billing] webhook received while billing is off:", deps.setup.missing.join(", "));
+    log.warn("billing.webhook_while_off", { missing: deps.setup.missing });
     return json({ error: "billing_off" }, 503);
   }
   const { config } = deps.setup;
@@ -124,7 +125,7 @@ export async function handleStripeWebhook(request: Request, deps: WebhookDeps): 
 
   const signature = await verifyStripeSignature({ body, header: request.headers.get("stripe-signature"), secret: config.webhookSecret, now: deps.now });
   if (!signature.ok) {
-    console.warn("[billing] webhook refused", { reason: signature.reason });
+    log.warn("billing.webhook_refused", { reason: signature.reason });
     return json({ error: "bad_signature" }, 400);
   }
   let event: unknown;
@@ -135,7 +136,7 @@ export async function handleStripeWebhook(request: Request, deps: WebhookDeps): 
   }
   if (!isEvent(event)) return json({ error: "bad_payload" }, 400);
   if (event.livemode !== config.live) {
-    console.error("[billing] event from the wrong mode refused", { id: event.id, livemode: event.livemode });
+    log.error("billing.webhook_wrong_mode", { stripeEvent: event.id, livemode: event.livemode });
     return json({ error: "wrong_mode" }, 400);
   }
 
@@ -161,10 +162,11 @@ export async function handleStripeWebhook(request: Request, deps: WebhookDeps): 
     await deps.db.prepare("UPDATE stripe_events SET processing_until = NULL, error = ? WHERE id = ?").bind(message, event.id).run();
     // Another delivery holds the account: Stripe delivers this one again later.
     if (error instanceof BillingBusyError) return json({ error: "in_progress" }, 409);
-    console.error("[billing] event failed; Stripe will deliver it again", { id: event.id, type: event.type, error: message });
+    log.error("billing.webhook_failed", { stripeEvent: event.id, type: event.type, error: message });
     return json({ error: "failed" }, 500);
   }
   await deps.db.prepare("UPDATE stripe_events SET processed_at = ?, processing_until = NULL, error = NULL WHERE id = ?").bind(deps.now, event.id).run();
+  log.info("billing.webhook_processed", { stripeEvent: event.id, type: event.type });
   return json({ received: true });
 }
 
@@ -191,7 +193,7 @@ async function accountOf(event: StripeEvent, subscriptionId: string, deps: Webho
 
 /** Recorded for the owner (the admin console's audit log, action prefix "billing."): something billing couldn't place. */
 async function needsAttention(db: D1Database, accountId: string | null, detail: Record<string, string | number | null>, now: number): Promise<void> {
-  console.warn("[billing] needs attention", detail);
+  log.warn("billing.needs_attention", { account: accountId, ...detail });
   const tenant = accountId
     ? await db.prepare("SELECT id FROM tenants WHERE account_id = ? AND provision_state <> 'deleting' ORDER BY created_at LIMIT 1").bind(accountId).first<{ id: string }>()
     : null;
@@ -273,7 +275,7 @@ async function applySubscription(deps: WebhookDeps, lock: BillingLock, fetched: 
     .first<{ id: string }>();
   await saveSubscription(db, lock, { sub, tenantId: tenant?.id ?? null, plan, now: deps.now });
   const change = await applyAccountBilling(db, lock, deps.now);
-  if (change) console.log("[billing] tenant billing changed", { tenant: change.tenantId, from: change.from, to: change.to });
+  if (change) log.info("billing.tenant_changed", { tenant: change.tenantId, from: change.from, to: change.to });
   return change;
 }
 
@@ -281,7 +283,7 @@ async function applySubscription(deps: WebhookDeps, lock: BillingLock, fetched: 
 async function refundDuplicate(deps: WebhookDeps, lock: BillingLock, sub: StripeSubscription, kept: string): Promise<StripeSubscription> {
   if (!deps.setup.ok) return sub;
   const { stripe } = deps.setup;
-  console.warn("[billing] a second subscription for one account; cancelling and refunding it", { account: lock.accountId, duplicate: sub.id, kept });
+  log.warn("billing.duplicate_subscription", { account: lock.accountId, duplicate: sub.id, kept });
   const canceled = await stripe.cancelSubscription(sub.id, `duplicate-cancel-${sub.id}`);
   const invoice = typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
   let refunded = 0;
@@ -374,7 +376,7 @@ async function sendOnce(
   build: (account: { email: string }) => { subject: string; lines: string[] },
 ): Promise<void> {
   if (!deps.mailer) {
-    console.warn("[billing] an email for the customer, and no mailer", { account: accountId, key });
+    log.warn("billing.email_no_mailer", { account: accountId, emailKey: key });
     return;
   }
   const account = await getAccount(deps.db, accountId);
@@ -389,7 +391,7 @@ async function sendOnce(
     text: lines.join("\n\n"),
     html: lines.map((l) => `<p>${link(l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"))}</p>`).join(""),
   });
-  if (!sent.ok) console.error("[billing] email not sent", { account: accountId, key, error: sent.error });
+  if (!sent.ok) log.error("billing.email_not_sent", { account: accountId, emailKey: key, error: sent.error });
 }
 
 /** Stripe's events and the billing emails, kept this long (from the cron, through their indexes). */

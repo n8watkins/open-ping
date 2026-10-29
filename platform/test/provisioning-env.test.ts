@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { generateHandoffKeyPair } from "../../src/shared/hosted-contract";
 import type { PlatformEnv } from "../src/env";
 import { generateMasterKey } from "../src/keys";
-import { provisioningSettings, provisioningSetup } from "../src/provisioning-env";
+import { provisioningSettings, provisioningSetup, tenantLogSampling } from "../src/provisioning-env";
 
 const base = { HOSTED_DOMAIN: "openping.test" } as PlatformEnv;
 
@@ -48,6 +48,25 @@ describe("provisioning settings", () => {
     if (setup.ok) {
       expect(setup.deps.config.namespace).toBe("openping-tenants");
       expect(setup.deps.config.handoffPublicKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      // TENANT_LOG_SAMPLING unset: every invocation of every user Worker is logged.
+      expect(setup.deps.config.tenantLogSampling).toBe(1);
     }
+  });
+});
+
+describe("TENANT_LOG_SAMPLING", () => {
+  it("is a rate from 0 to 1, and 1 when empty", () => {
+    expect(tenantLogSampling(undefined)).toBe(1);
+    expect(tenantLogSampling(" ")).toBe(1);
+    expect(tenantLogSampling("0.25")).toBe(0.25);
+    expect(tenantLogSampling("0")).toBe(0);
+    expect(tenantLogSampling("1.0")).toBe(1);
+  });
+
+  it("names a value that isn't one, so a typo can't quietly turn the logs off", () => {
+    for (const bad of ["1.5", "-0.1", "half", "50%", "1e-1"]) expect(tenantLogSampling(bad)).toBeNull();
+    expect(provisioningSettings({ ...base, TENANT_LOG_SAMPLING: "half" }).ok).toBe(false);
+    const result = provisioningSettings({ ...base, TENANT_LOG_SAMPLING: "half" });
+    expect(!result.ok && result.missing).toContain("TENANT_LOG_SAMPLING (a number from 0 to 1)");
   });
 });

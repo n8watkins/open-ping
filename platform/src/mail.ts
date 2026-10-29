@@ -10,6 +10,7 @@
  */
 
 import { SUPPORT_EMAIL } from "./ui";
+import { errorText, log } from "./log";
 
 export interface OutgoingEmail {
   to: string;
@@ -99,15 +100,22 @@ export class ResendMailer implements Mailer {
         }),
         signal: AbortSignal.timeout(10_000),
       });
-    } catch {
+    } catch (error) {
+      log.warn("mail.send_failed", { category: message.category, tenant: message.tenantId, error: "unavailable", detail: errorText(error) });
       return { ok: false, error: "unavailable", message: "no answer from the mail provider" };
     }
     const body = (await res.json().catch(() => null)) as { id?: string; name?: string; message?: string } | null;
-    if (res.ok && typeof body?.id === "string") return { ok: true, id: body.id };
+    // Never the address or the subject: which email it was is the category and the tenant.
+    if (res.ok && typeof body?.id === "string") {
+      log.info("mail.sent", { category: message.category, tenant: message.tenantId, providerId: body.id });
+      return { ok: true, id: body.id };
+    }
     const name = typeof body?.name === "string" ? body.name : undefined;
     // Resend's message names the field or the problem; it never echoes the key.
     const detail = typeof body?.message === "string" ? `: ${body.message.slice(0, 200)}` : "";
-    return { ok: false, error: classifyResendError(res.status, name), message: `mail provider answered ${res.status}${name ? ` ${name}` : ""}${detail}` };
+    const error = classifyResendError(res.status, name);
+    log.warn("mail.send_failed", { category: message.category, tenant: message.tenantId, status: res.status, error, name });
+    return { ok: false, error, message: `mail provider answered ${res.status}${name ? ` ${name}` : ""}${detail}` };
   }
 }
 

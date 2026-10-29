@@ -56,6 +56,7 @@ import { activeEscrowedKey, openEscrowedKey } from "../keys";
 import { describeError, tenantTags, type ProvisioningConfig } from "../provisioning";
 import { tenantFromRow, type TenantRecord } from "../tenants";
 import { checkRollback, checkRollout, type ReleaseChecks } from "./checks";
+import { log } from "../log";
 
 /** Tenants per batch after the canary (build plan, section 11). */
 export const RELEASE_BATCH_SIZE = 50;
@@ -318,7 +319,7 @@ async function handleRequestsLocked(deps: ReleaseDeps, limit: number): Promise<R
     try {
       outcome = problem ? { releaseId: null, result: `Refused: ${problem}.` } : await applyRequest(deps, request);
     } catch (error) {
-      console.error("[release] request failed", { request: row.id, error: describeError(error) });
+      log.error("release.request_failed", { request: row.id, error: describeError(error) });
       outcome = { releaseId: null, result: `Failed: ${describeError(error)}` };
     }
     await deps.db
@@ -342,6 +343,8 @@ async function applyRequest(deps: ReleaseDeps, request: ReleaseRequest): Promise
 }
 
 async function systemAudit(db: D1Database, action: string, detail: Record<string, unknown>, now: number, tenant?: TenantRecord) {
+  // Every release step the audit log records is a log line too, with the same name (release.started, release.canary_passed, ...).
+  log.info(action, { tenant: tenant?.id, ...detail });
   await db
     .prepare("INSERT INTO audit_events (at, account_id, tenant_id, actor, action, detail) VALUES (?, ?, ?, 'system', ?, ?)")
     .bind(now, tenant?.accountId ?? null, tenant?.id ?? null, action, JSON.stringify(detail))
@@ -731,7 +734,7 @@ async function updateRelease(run: Run, set: Record<string, string | number | nul
 async function stop(run: Run, note: string): Promise<"stopped"> {
   await updateRelease(run, { state: "paused", note: note.slice(0, 1000) });
   await systemAudit(run.deps.db, "release.paused", { release: run.release.id, version: run.release.version, reason: note.slice(0, 200) }, run.now());
-  console.warn("[release] stopped", { release: run.release.id, note });
+  log.warn("release.stopped", { release: run.release.id, version: run.release.version, note });
   return "stopped";
 }
 
@@ -866,6 +869,7 @@ async function updateTenant(run: Run, bundle: TenantBundle, member: MemberRow): 
             secrets: { MASTER_KEY: masterKey },
             tags: tenantTags(tenant.id, bundle.version),
             previousMigrationTag: tag,
+            logSampling: deps.config.tenantLogSampling,
           });
         try {
           await upload(previousTag);

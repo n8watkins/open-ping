@@ -22,6 +22,7 @@ import type {
   UploadedScript,
   WorkerBinding,
   WorkerMigrations,
+  WorkerObservability,
   WorkerUploadMetadata,
 } from "./api";
 import { PermanentError } from "../errors";
@@ -116,6 +117,19 @@ export interface UserWorkerUpload {
    * script (provisioning), the recorded tag for an update (the release runner).
    */
   previousMigrationTag: string | null;
+  /** Workers Logs' head sampling for this user Worker, 0 to 1 (TENANT_LOG_SAMPLING); 1 when absent. */
+  logSampling?: number;
+}
+
+/**
+ * The user Worker's observability: Workers Logs on, with invocation logs, at
+ * the platform's sampling rate. Head sampling keeps or drops a whole
+ * invocation, errors included, so 1 (everything) is the default and a lower
+ * rate is a cost lever for later (platform/README.md, "Observability costs").
+ */
+export function tenantObservability(sampling = 1): WorkerObservability {
+  const rate = Number.isFinite(sampling) ? Math.min(1, Math.max(0, sampling)) : 1;
+  return { enabled: true, logs: { enabled: true, invocation_logs: true, head_sampling_rate: rate } };
 }
 
 /**
@@ -157,7 +171,7 @@ export function userWorkerMetadata(input: UserWorkerUpload, assetsJwt: string): 
     tags: input.tags,
     assets: { jwt: assetsJwt, config: input.bundle.assetsConfig },
     ...(migrations ? { migrations } : {}),
-    observability: { enabled: true },
+    observability: tenantObservability(input.logSampling),
   };
 }
 

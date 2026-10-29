@@ -108,7 +108,24 @@ export interface WorkerUploadMetadata {
   tags?: string[];
   assets?: { jwt: string; config?: AssetsConfig };
   migrations?: WorkerMigrations;
-  observability?: { enabled: boolean };
+  /**
+   * Workers Logs for the user Worker, set per upload (Workers for Platforms
+   * observability: https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/observability/).
+   * Its logs land in the account's `cloudflare-workers` dataset with
+   * `$metadata.service` set to the script name (t-<tenant id>).
+   */
+  observability?: WorkerObservability;
+}
+
+export interface WorkerObservability {
+  enabled: boolean;
+  logs?: {
+    enabled: boolean;
+    /** One log per invocation (request, cron, queue) besides the console lines. */
+    invocation_logs: boolean;
+    /** 0 to 1: the share of invocations logged, all of each one's lines or none. */
+    head_sampling_rate: number;
+  };
 }
 
 /** One module part of a script upload. */

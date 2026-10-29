@@ -21,6 +21,7 @@ import {
   type SendEmailResult,
   type UsageCounts,
 } from "../../src/shared/hosted-contract";
+import { log } from "./log";
 
 /** Upper bound on an audit event's JSON detail. */
 export const AUDIT_DETAIL_MAX_BYTES = 2048;
@@ -144,13 +145,13 @@ export class TenantCapability implements PlatformCapability {
       refusals.push(refusalMessage(state, address, asked));
     }
     if (allowed.length === 0) return { ok: false, error: "email_rejected", message: refusals.join(" ") };
-    if (refusals.length) console.warn("[mail] some recipients unconfirmed", { tenant: this.tenantId, refused: refusals.length });
+    if (refusals.length) log.warn("mail.recipients_unconfirmed", { tenant: this.tenantId, refused: refusals.length });
     // A reply-to that isn't one of those is dropped: the Hosted domain's mail never points at a stranger.
     let replyTo: string | undefined;
     if (message.replyTo) {
       const state = await recipientState(this.db, this.tenantId, row.account_email, message.replyTo.trim().toLowerCase());
       if (state === "own" || state === "confirmed") replyTo = message.replyTo;
-      else console.warn("[mail] reply-to dropped: not confirmed", { tenant: this.tenantId });
+      else log.warn("mail.reply_to_dropped", { tenant: this.tenantId });
     }
 
     const limit = effectiveLimits(tenant).emailsPerDay;
@@ -198,7 +199,7 @@ export class TenantCapability implements PlatformCapability {
         continue;
       }
       failed++;
-      console.error("[mail] tenant email not sent", { tenant: this.tenantId, category: message.category, error: result.error, message: result.message });
+      log.error("mail.tenant_not_sent", { tenant: this.tenantId, category: message.category, error: result.error, detail: result.message });
       failure ??=
         result.error === "rejected"
           ? { ok: false, error: "email_rejected", message: "The mail provider refused this email." }
@@ -215,7 +216,7 @@ export class TenantCapability implements PlatformCapability {
     }
     // Every address got it, or none did, for a single-recipient email (all OpenPing sends).
     if (failure && failed === recipients.length) return failure;
-    if (failure) console.warn("[mail] tenant email reached only some recipients", { tenant: this.tenantId, failed, of: recipients.length });
+    if (failure) log.warn("mail.tenant_partly_sent", { tenant: this.tenantId, failed, of: recipients.length });
     return { ok: true, id: firstId! };
   }
 

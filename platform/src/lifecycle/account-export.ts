@@ -29,6 +29,7 @@ import { openEscrowedKey } from "../keys";
 import { PLATFORM_REPLY_TO, type Mailer } from "../mail";
 import { Html, html, notice, renderPage } from "../ui";
 import { accountExports, advanceExport, getExport, requestExport, type ExportDeps, type TenantExport } from "./exports";
+import { log } from "../log";
 
 export interface AccountExportDeps {
   /** Exports need Cloudflare and the bucket: null while provisioning's settings or EXPORTS are missing. */
@@ -173,7 +174,7 @@ export function accountExportRoutes(deps: AccountExportDeps): Hono<Env> {
       advanceExport({ ...exportDeps, db, now: clock }, id, {
         tenantUrl: requestTenantOrigin(c.req.url, tenant.slug, c.env.HOSTED_DOMAIN),
         accountUrl: `${appOrigin(c.env.HOSTED_DOMAIN)}/account/export`,
-      }).catch((error) => console.error("[export] first run failed", error)),
+      }).catch((error) => log.error("export.first_run_failed", { export: id, error })),
     );
     return seeOther("/account/export?done=started");
   });
@@ -245,7 +246,7 @@ export function accountExportRoutes(deps: AccountExportDeps): Hono<Env> {
         tenantId: tenant.id,
         replyTo: PLATFORM_REPLY_TO,
       });
-      if (!sent.ok) console.error("[export] key notice not sent", { error: sent.error });
+      if (!sent.ok) log.error("export.key_notice_not_sent", { error: sent.error });
     }
     const res = renderPage({
       title: "Your key",

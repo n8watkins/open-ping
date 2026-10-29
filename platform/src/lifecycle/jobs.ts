@@ -38,6 +38,7 @@ import { runProvisioning, type ProvisioningDeps } from "../provisioning";
 import { forgetTenant, hostedUrls } from "../tenants";
 import type { BillingTenant, BillingView, Unnotified } from "./billing-view";
 import { OPEN_EXPORTS_SQL, advanceExport, expireExports, exportVerificationProblem, latestExport, requestExport, type ExportDeps, type ExportOutcome } from "./exports";
+import { log } from "../log";
 
 const DAY = 86_400_000;
 /** Decision D8: data is kept this long after billing suspends a tenant. */
@@ -155,11 +156,12 @@ async function runJobs(deps: LifecycleDeps): Promise<LifecycleReport> {
     });
     if (!result.ok) {
       await db.prepare("DELETE FROM lifecycle_notices WHERE tenant_id = ? AND kind = ? AND cycle = ? AND state = 'sending'").bind(t.tenantId, kind, cycle).run();
-      console.error("[lifecycle] email not sent", { tenant: t.tenantId, kind, error: result.error });
+      log.error("lifecycle.email_not_sent", { tenant: t.tenantId, kind, error: result.error });
       return false;
     }
     await db.prepare("UPDATE lifecycle_notices SET state = 'sent', sent_at = ? WHERE tenant_id = ? AND kind = ? AND cycle = ?").bind(now(), t.tenantId, kind, cycle).run();
     report.sent[kind] = (report.sent[kind] ?? 0) + 1;
+    log.info("lifecycle.email_sent", { tenant: t.tenantId, kind });
     await audit(db, t, "lifecycle.email_sent", { kind }, now());
     return true;
   }
@@ -241,7 +243,7 @@ async function runJobs(deps: LifecycleDeps): Promise<LifecycleReport> {
       forgetTenant(t.slug);
       await audit(db, t, "tenant.deletion_started", { export: exp.id, suspendedAt: t.suspendedAt, bytes: exp.bytes }, now());
       // The teardown deletes the escrowed key; the export keeps its own copy (export_keys).
-      await runProvisioning(deps.provisioning, t.tenantId, { force: true }).catch((error) => console.error("[lifecycle] teardown failed", { tenant: t.tenantId }, error));
+      await runProvisioning(deps.provisioning, t.tenantId, { force: true }).catch((error) => log.error("lifecycle.teardown_failed", { tenant: t.tenantId, error }));
       report.deleted.push(t.tenantId);
     }
 
@@ -261,11 +263,11 @@ async function runJobs(deps: LifecycleDeps): Promise<LifecycleReport> {
       const row = await db.prepare("SELECT slug FROM tenant_exports WHERE id = ?").bind(id).first<{ slug: string }>();
       const outcome = await advanceExport(exportDeps, id, { tenantUrl: tenantOrigin(row?.slug ?? "", deps.hostedDomain), accountUrl: `${app}/account/export` });
       report.exports.push(outcome);
-      if (outcome.kind === "failed") console.error("[lifecycle] export failed for good", outcome);
+      if (outcome.kind === "failed") log.error("lifecycle.export_failed", { ...outcome });
     }
     report.expired = await expireExports(exportDeps);
   }
 
-  for (const w of report.waiting) console.warn("[lifecycle] deletion waiting", w);
+  for (const w of report.waiting) log.warn("lifecycle.deletion_waiting", { ...w });
   return report;
 }

@@ -49,6 +49,7 @@ import { auditPage, tenantListPage, tenantPage, verifyPage, waitlistPage, type H
 import { releaseRoutes } from "./releases";
 import type { ReleaseSetup } from "../releases/env";
 import { WAITLIST_MAX_BYTES, importWaitlist, parseWaitlistExport, readBodyCapped, waitlistSummary } from "./waitlist";
+import { log } from "../log";
 
 export interface AdminDeps {
   dispatcher(env: PlatformEnv): TenantDispatcher;
@@ -187,7 +188,7 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
       if (!body || typeof body.ok !== "boolean") return { kind: "unreachable", reason: `It answered HTTP ${result.response.status} without a health report.` };
       return { kind: "answered", status: result.response.status, health: body };
     } catch (error) {
-      console.error("[admin] health call failed", { tenant: tenant.id }, error);
+      log.error("admin.tenant_health_failed", { tenant: tenant.id, error });
       return { kind: "unreachable", reason: "The call to it failed; the platform's logs have the error." };
     }
   }
@@ -262,7 +263,7 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
     if (c.env.PROVISION_QUEUE) {
       await enqueueProvisioning(c.env.PROVISION_QUEUE, tenantId);
     } else if (setup.ok) {
-      c.executionCtx.waitUntil(runProvisioning(setup.deps, tenantId, { force: true }).catch((error) => console.error("[admin] provisioning run failed", error)));
+      c.executionCtx.waitUntil(runProvisioning(setup.deps, tenantId, { force: true }).catch((error) => log.error("admin.provision_run_failed", { tenant: tenantId, error })));
     }
   }
 
