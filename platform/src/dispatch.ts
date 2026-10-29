@@ -93,7 +93,7 @@ export function platformRequest(
   hostedDomain: string,
   path: string,
   callId: string,
-  init: { method?: string; body?: unknown } = {},
+  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
 ): Request {
   if (!isInternalPath(path)) throw new Error(`not an internal path: ${path}`);
   const headers = new Headers({ [INTERNAL_HEADER]: callId });
@@ -106,6 +106,7 @@ export function platformRequest(
     method: init.method ?? (body === undefined ? "GET" : "POST"),
     headers,
     body,
+    signal: init.signal,
   });
 }
 
@@ -150,7 +151,7 @@ export async function callTenant(
   dispatcher: TenantDispatcher,
   input: { tenant: TenantRecord; hostedDomain: string; platform: PlatformCapability },
   path: string,
-  init: { method?: string; body?: unknown } = {},
+  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<DispatchResult> {
   const callId = newCallId();
   const request = platformRequest(input.tenant, input.hostedDomain, path, callId, init);

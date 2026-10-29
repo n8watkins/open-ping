@@ -51,8 +51,8 @@
     // ids, safe here.
     "PLATFORM_OWNER_PASSKEYS": ""
   },
-  // Every minute: the safety net for provisioning (src/provisioning.ts);
-  // the scheduler (B4) runs from the same trigger.
+  // Every minute: the scheduler enqueues the due customers (src/scheduling.ts),
+  // and the safety net for provisioning (src/provisioning.ts) runs alongside.
   "triggers": {
     "crons": ["* * * * *"]
   },
@@ -82,7 +82,7 @@
       "bucket_name": "openping-tenant-bundles"
     }
   ],
-  // The per-minute scheduler puts each due customer on this queue (B4).
+  // The per-minute scheduler puts each due customer on openping-schedule (B4).
   // Provisioning runs (src/provisioning-queue.ts): one message per new
   // tenant and per retry. A consumer gets minutes per batch, where the
   // sign-up request's waitUntil would be cut after 30 seconds.
@@ -98,6 +98,18 @@
       }
     ],
     "consumers": [
+      // The scheduler (src/scheduling.ts): a batch of due tenants, called all
+      // at once, each with its own timeout (40 s at 1-minute checks, 90 s
+      // otherwise), so a batch takes at most about 90 s of wall time and
+      // very little CPU. A tenant call is never retried through the queue
+      // (the scheduler backs off instead); max_retries covers the platform's
+      // own database failing before the call, and a consumer that dies.
+      {
+        "queue": "openping-schedule",
+        "max_batch_size": 25,
+        "max_batch_timeout": 1,
+        "max_retries": 3
+      },
       {
         "queue": "openping-provision",
         "max_batch_size": 5,

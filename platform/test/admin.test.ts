@@ -488,6 +488,42 @@ describe("a tenant's page", () => {
     expect(dispatcher.calls.at(-1)!.props.invocation).toBe("platform");
   });
 
+  it("shows its scheduler: cadence, the last run's numbers, and the days before", async () => {
+    const { browser } = await owner();
+    const tenant = await addTenant({ slug: "runsco", plan: "hosted_fast" });
+    const day = Math.floor(clock / 86_400_000);
+    await env.PLATFORM_DB.batch([
+      env.PLATFORM_DB.prepare("UPDATE tenants SET schedule_next_at = ? WHERE id = ?").bind(clock + 45_000, tenant.id),
+      env.PLATFORM_DB.prepare(
+        `INSERT INTO scheduler_stats (tenant_id, last_run_id, last_at, last_outcome, last_duration_ms, last_tenant_ms, last_lag_ms, last_checked,
+           last_failures, last_deferred, last_d1_queries, last_version, last_error, last_ok_at, streak, day, day_runs, day_errors, day_checked,
+           day_failures, day_d1_queries, day_ms, day_max_ms)
+         VALUES (?, 'run-1', ?, 'timeout', 40000, NULL, 1200, NULL, NULL, NULL, NULL, '0.15.0', 'no answer in 40 s', ?, 2, ?, 300, 3, 5400, 12, 2700, 96000, 40000)`,
+      ).bind(tenant.id, clock - 15_000, clock - 120_000, day),
+      env.PLATFORM_DB.prepare(
+        "INSERT INTO scheduler_days (tenant_id, day, runs, errors, checked, failures, d1_queries, total_ms, max_ms) VALUES (?, ?, 1440, 0, 28800, 4, 12960, 288000, 900)",
+      ).bind(tenant.id, day - 1),
+    ]);
+    const page = await text(await browser.fetch(`/admin/tenants/${tenant.id}`));
+    for (const expected of [
+      "<h2>Scheduler</h2>",
+      "Every minute",
+      "Timed out",
+      "Failed in a row",
+      "40.0 s",
+      "1,200 ms",
+      "no answer in 40 s",
+      "Last clean run",
+      "Last 2 days",
+      'data-label="Runs">300<',
+      'data-label="Runs">1,440<',
+      'data-label="Checks">28,800<',
+      'data-label="Average">200 ms<',
+    ]) {
+      expect(page, expected).toContain(expected);
+    }
+  });
+
   it("says so when the tenant doesn't answer, and doesn't ask one that isn't ready", async () => {
     const { browser } = await owner();
     const missing = await addTenant();
