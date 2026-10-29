@@ -357,7 +357,7 @@ ${input.error ? html`<p class="notice error" id="code-error" role="alert">${inpu
     }></div>
 <button class="button primary" type="submit">Change my email</button>
 </form>
-<p class="hint">No email after a minute? Check the address, or it may already have an OpenPing Hosted account of its own; write to ${SUPPORT_EMAIL} if you need it moved.</p>
+<p class="hint">No email after a minute? Check the address and <a href="/account/email">try again</a>; or it may already have an OpenPing Hosted account of its own; write to ${SUPPORT_EMAIL} if you need it moved.</p>
 <p class="switch"><a href="/account/email">Use another address</a></p>`,
   });
 }

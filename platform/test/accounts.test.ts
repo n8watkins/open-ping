@@ -16,6 +16,7 @@ import { StaticBundleSource, type TenantBundle } from "../src/bundle";
 import type { PlatformEnv } from "../src/env";
 import { generateMasterKey } from "../src/keys";
 import { LEGAL_DOCUMENTS, TERMS_VERSION } from "../src/legal/documents";
+import { applyEmailChange } from "../src/auth/email-change";
 import { FakeMailer } from "./fake-mailer";
 import type { ProvisioningDeps } from "../src/provisioning";
 import { FakeCloudflareApi } from "./fake-cloudflare";
@@ -874,6 +875,19 @@ describe("changing the sign-in email", () => {
     ] as const) {
       expect(await textOf(await browser.fetch("/account/email", { form: { email } }))).toContain(message);
     }
+  });
+
+  it("changes nothing at all when the account's email moved on meanwhile (a doubled confirm)", async () => {
+    const email = newEmail();
+    const browser = new Browser();
+    await browser.signInWithCode(email);
+    const other = new Browser();
+    await other.signInWithCode(email);
+    const { id } = (await accountOf(email))!;
+    const result = await applyEmailChange(env.PLATFORM_DB, { accountId: id, oldEmail: "not-current@example.com", newEmail: newEmail(), keepSessionHash: "x", now: Date.now() });
+    expect(result).toBe("stale");
+    expect(await count("SELECT COUNT(*) AS n FROM account_identities WHERE account_id = ? AND kind = 'email' AND subject = ?", id, email)).toBe(1);
+    expect(await count("SELECT COUNT(*) AS n FROM platform_sessions WHERE account_id = ?", id)).toBe(2);
   });
 
   it("refuses an address that signed up meanwhile, and changes nothing", async () => {

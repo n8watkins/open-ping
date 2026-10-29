@@ -707,16 +707,17 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     );
     if (limited) return page(tooMany(), 429);
     const started = await startEmailChange(db, { accountId: session.account.id, newEmail: email, now: c.get("now") });
-    // An address another account holds gets nothing, and the page reads the same,
-    // so this form can't tell anyone which addresses have accounts.
-    if (!(await findAccountByEmail(db, email))) {
-      const link = `${origin(c)}/account/email/confirm?token=${encodeURIComponent(started.token)}`;
-      const sent = await mailer.send({ to: email, ...emailChangeCodeEmail({ code: started.code, link }), category: "email_change", replyTo: PLATFORM_REPLY_TO });
-      if (!sent.ok) {
-        log.error("account.email_change_not_sent", { error: sent.error });
-        return page("We couldn't send the email just now. Please try again in a minute.", 502);
-      }
-    }
+    // An address another account holds gets nothing, and the page reads the
+    // same and comes back as fast (the lookup and the send happen after the
+    // answer), so this form can't tell anyone which addresses have accounts.
+    const link = `${origin(c)}/account/email/confirm?token=${encodeURIComponent(started.token)}`;
+    c.executionCtx.waitUntil(
+      (async () => {
+        if (await findAccountByEmail(db, email)) return;
+        const sent = await mailer.send({ to: email, ...emailChangeCodeEmail({ code: started.code, link }), category: "email_change", replyTo: PLATFORM_REPLY_TO });
+        if (!sent.ok) log.error("account.email_change_not_sent", { error: sent.error });
+      })().catch((error: unknown) => log.error("account.email_change_not_sent", { error })),
+    );
     return emailChangeCodePage({ email, changeId: started.changeId });
   });
 
@@ -754,7 +755,8 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     if (!check.ok) return emailChangeExpired();
     const oldEmail = session.account.email;
     const applied = await applyEmailChange(db, { accountId: session.account.id, oldEmail, newEmail: check.newEmail, keepSessionHash: session.tokenHash, now });
-    if (!applied) {
+    if (applied === "stale") return emailChangeExpired();
+    if (applied === "taken") {
       return messagePage({
         title: "That address has its own account",
         body: `${check.newEmail} signed up for OpenPing Hosted meanwhile, so it can't be this account's email. Write to ${SUPPORT_EMAIL} if you need the two joined.`,

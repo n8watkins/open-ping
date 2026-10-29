@@ -36,7 +36,7 @@ These counters hold the address and a number, nothing else.
 
 **The account history (audit log).**
 We keep a record of important events on your account: sign-ins and the method used, a new or removed passkey, an export, each time your encryption key was shown, plan changes, a support sign-in and its reason, and a suspension and its reason.
-It includes the email addresses that confirmed or declined email from your OpenPing.
+It includes the email addresses that confirmed or declined email from your OpenPing, and, when you change your account's email address, the old and the new address.
 It never holds passwords, codes, keys or card details, and it does not record your IP address.
 
 **Billing.**

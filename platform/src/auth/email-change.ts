@@ -93,26 +93,32 @@ export async function checkEmailChangeCode(db: D1Database, accountId: string, ch
 /**
  * Switches the account to its verified new address: the account row and its
  * email identity together, the other browsers' sessions and any sign-ins in
- * flight for either address ended. Answers false when the address was taken
- * meanwhile (another account signed up with it), and changes nothing then.
+ * flight for either address ended. Changes nothing, and says why, when the
+ * address was taken meanwhile (another account signed up with it) or the
+ * account's email isn't `oldEmail` any more (another change got there first).
  */
 export async function applyEmailChange(
   db: D1Database,
   input: { accountId: string; oldEmail: string; newEmail: string; keepSessionHash: string; now: number },
-): Promise<boolean> {
+): Promise<"changed" | "taken" | "stale"> {
+  // Every statement after the first runs only if the first switched the
+  // account (the old email was still current), so a stale or doubled confirm
+  // changes nothing at all.
+  const switched = "EXISTS (SELECT 1 FROM accounts WHERE id = ?1 AND email = ?2 AND updated_at = ?3)";
+  let results: D1Result[];
   try {
-    await db.batch([
-      db.prepare("UPDATE accounts SET email = ?, updated_at = ? WHERE id = ? AND email = ?").bind(input.newEmail, input.now, input.accountId, input.oldEmail),
-      db.prepare("UPDATE account_identities SET subject = ? WHERE account_id = ? AND kind = 'email'").bind(input.newEmail, input.accountId),
-      db.prepare("DELETE FROM email_changes WHERE account_id = ?").bind(input.accountId),
-      db.prepare("DELETE FROM email_logins WHERE email IN (?, ?)").bind(input.oldEmail, input.newEmail),
-      db.prepare("DELETE FROM platform_sessions WHERE account_id = ? AND token_hash <> ?").bind(input.accountId, input.keepSessionHash),
+    results = await db.batch([
+      db.prepare("UPDATE accounts SET email = ?2, updated_at = ?3 WHERE id = ?1 AND email = ?4").bind(input.accountId, input.newEmail, input.now, input.oldEmail),
+      db.prepare(`UPDATE account_identities SET subject = ?2 WHERE account_id = ?1 AND kind = 'email' AND ${switched}`).bind(input.accountId, input.newEmail, input.now),
+      db.prepare(`DELETE FROM email_changes WHERE account_id = ?1 AND ${switched}`).bind(input.accountId, input.newEmail, input.now),
+      db.prepare(`DELETE FROM email_logins WHERE email IN (?2, ?4) AND ${switched}`).bind(input.accountId, input.newEmail, input.now, input.oldEmail),
+      db.prepare(`DELETE FROM platform_sessions WHERE account_id = ?1 AND token_hash <> ?4 AND ${switched}`).bind(input.accountId, input.newEmail, input.now, input.keepSessionHash),
     ]);
   } catch (error) {
-    if (/UNIQUE constraint failed/i.test(String(error))) return false;
+    if (/UNIQUE constraint failed/i.test(String(error))) return "taken";
     throw error;
   }
-  return true;
+  return (results[0]?.meta.changes ?? 0) > 0 ? "changed" : "stale";
 }
 
 /** Spent and expired changes, for the cron's cleanup. */
