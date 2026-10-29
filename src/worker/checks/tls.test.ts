@@ -4,6 +4,7 @@ import {
   buildClientHello,
   certificateCovers,
   MAX_FLIGHT_BYTES,
+  MAX_FLIGHT_READS,
   parseCertificate,
   readCertificate,
   ServerFlightReader,
@@ -143,7 +144,7 @@ describe("certificateCovers", () => {
 describe("ServerFlightReader", () => {
   it("finds the leaf certificate, however the bytes are split", () => {
     const bytes = flight(CERT_A, CERT_B);
-    for (const size of [1, 2, 3, 5, 7, 64, 500, bytes.length]) {
+    for (const size of [3, 5, 7, 64, 500, bytes.length]) {
       const reader = new ServerFlightReader();
       let result = null;
       for (let i = 0; i < bytes.length && !result; i += size) result = reader.push(bytes.subarray(i, i + size));
@@ -183,17 +184,54 @@ describe("ServerFlightReader", () => {
     });
   });
 
-  it("gives up on an answer that never ends", () => {
+  it("gives up at once on a handshake message bigger than anything it would read", () => {
     const reader = new ServerFlightReader();
     expect(reader.push(Uint8Array.from(record(0x16, serverHello)))).toBeNull();
-    // A Certificate message that claims to be bigger than anything we read.
-    expect(reader.push(Uint8Array.from(record(0x16, [11, 0x10, 0, 0])))).toBeNull();
+    // A Certificate message that claims 16 MB.
+    expect(reader.push(Uint8Array.from(record(0x16, [11, 0xff, 0xff, 0xff])))).toEqual({
+      kind: "malformed",
+      reason: "too_large",
+    });
+  });
+
+  it("gives up once the answer passes MAX_FLIGHT_BYTES", () => {
+    const reader = new ServerFlightReader();
+    reader.push(Uint8Array.from(record(0x16, serverHello)));
+    // A Certificate message just under the limit, then filler that never completes it.
+    reader.push(Uint8Array.from(record(0x16, [11, ...u24(MAX_FLIGHT_BYTES - 1)])));
     let r = null;
     const filler = Uint8Array.from(record(0x16, new Array(16000).fill(0)));
     for (let i = 0; i < 20 && !r; i++) r = reader.push(filler);
     expect(r).toEqual({ kind: "malformed", reason: "too_large" });
-    expect(MAX_FLIGHT_BYTES).toBeLessThan(20 * filler.length);
   });
+
+  it("refuses an empty record", () => {
+    expect(new ServerFlightReader().push(Uint8Array.from(record(0x16, [])))).toEqual({
+      kind: "malformed",
+      reason: "bad_handshake",
+    });
+  });
+
+  it("reads past a warning alert (an unrecognized_name warning, say)", () => {
+    const bytes = Uint8Array.from([...record(0x15, [1, 112]), ...flight(CERT_A)]);
+    expect(new ServerFlightReader().push(bytes)).toMatchObject({ kind: "certificate" });
+  });
+
+  it("refuses an answer dribbled a byte per read, or a byte per record", () => {
+    const bytes = flight(CERT_A, CERT_B);
+    const reader = new ServerFlightReader();
+    let r = null;
+    let reads = 0;
+    for (let i = 0; i < bytes.length && !r; i++, reads++) r = reader.push(bytes.subarray(i, i + 1));
+    expect(r).toEqual({ kind: "malformed", reason: "too_fragmented" });
+    expect(reads).toBe(MAX_FLIGHT_READS + 1);
+
+    const tiny = new ServerFlightReader();
+    tiny.push(Uint8Array.from(record(0x16, serverHello)));
+    const oneByte = Uint8Array.from(Array.from({ length: 100 }, () => record(0x16, [0])).flat());
+    expect(tiny.push(oneByte)).toEqual({ kind: "malformed", reason: "too_fragmented" });
+  });
+
 
   it("needs more bytes while a record is incomplete", () => {
     const bytes = flight(CERT_A);
@@ -232,6 +270,56 @@ function fakeSocket(opts: {
   };
   return { connect, written, closed: () => closed };
 }
+
+// The worst a hostile server can make the reader do, in CPU time. A Free-plan
+// Worker run has 10 ms of CPU for everything, so each case must stay far below
+// that. Measured 2026-10-28 in Node: 0.02 to 0.27 ms per case; the bound
+// leaves room for a slow CI machine and is still far under the quadratic
+// copying this replaced (126 to 265 ms measured).
+describe("ServerFlightReader worst cases", () => {
+  const cpuMs = (fn: () => void) => {
+    const before = process.cpuUsage();
+    fn();
+    const used = process.cpuUsage(before);
+    return (used.user + used.system) / 1000;
+  };
+  const drain = (reader: ServerFlightReader, chunks: Uint8Array[]) => {
+    for (const c of chunks) if (reader.push(c)) return;
+  };
+  const cases: Record<string, () => Uint8Array[]> = {
+    "a byte per read": () => {
+      const filler = Uint8Array.from([...record(0x16, serverHello), ...record(0x16, [11, ...u24(100_000)])]);
+      return Array.from({ length: 2000 }, (_, i) => filler.subarray(i % filler.length, (i % filler.length) + 1));
+    },
+    "a byte per record": () => [
+      Uint8Array.from(record(0x16, serverHello)),
+      ...Array.from({ length: 2000 }, () => Uint8Array.from(record(0x16, [0]))),
+    ],
+    "full records up to the byte limit": () => [
+      Uint8Array.from(record(0x16, serverHello)),
+      Uint8Array.from(record(0x16, [11, ...u24(MAX_FLIGHT_BYTES - 1)])),
+      ...Array.from({ length: 20 }, () => Uint8Array.from(record(0x16, new Array(16_000).fill(0)))),
+    ],
+    "full records split into 300-byte reads": () => {
+      const all = Uint8Array.from([
+        ...record(0x16, serverHello),
+        ...record(0x16, [11, ...u24(MAX_FLIGHT_BYTES - 1)]),
+        ...Array.from({ length: 9 }, () => record(0x16, new Array(16_000).fill(0))).flat(),
+      ]);
+      return Array.from({ length: Math.ceil(all.length / 300) }, (_, i) => all.subarray(i * 300, i * 300 + 300));
+    },
+  };
+
+  for (const [name, make] of Object.entries(cases)) {
+    it(`stays cheap with ${name}`, () => {
+      const chunks = make();
+      // Warm up the JIT, then take the best of three.
+      drain(new ServerFlightReader(), chunks);
+      const ms = Math.min(...[0, 1, 2].map(() => cpuMs(() => drain(new ServerFlightReader(), chunks))));
+      expect(ms).toBeLessThan(5);
+    });
+  }
+});
 
 describe("readCertificate", () => {
   it("sends the hello and reads the certificate, then closes the socket", async () => {
@@ -278,6 +366,16 @@ describe("readCertificate", () => {
       kind: "malformed",
       message: expect.stringContaining("certificate couldn't be read"),
     });
+  });
+
+  it("rejects a server dribbling its answer a byte at a time quickly", async () => {
+    const bytes = flight(CERT_A, CERT_B);
+    const s = fakeSocket({ answer: Array.from({ length: bytes.length }, (_, i) => bytes.subarray(i, i + 1)) });
+    const startedAt = performance.now();
+    const r = await readCertificate("x.test", 443, 5000, s.connect);
+    expect(r).toMatchObject({ ok: false, kind: "malformed", message: expect.stringContaining("too many pieces") });
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+    expect(s.closed()).toBe(true);
   });
 
   it("times out on a server that never answers, and on a connection that never opens", async () => {

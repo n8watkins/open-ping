@@ -111,7 +111,7 @@ export type ServerFlight =
   /** The server refused the hello with a TLS alert (RFC 5246 section 7.2). */
   | { kind: "alert"; level: number; description: number }
   /** The answer was not a TLS handshake we can read. */
-  | { kind: "malformed"; reason: "not_tls" | "bad_handshake" | "no_certificate" | "too_large" };
+  | { kind: "malformed"; reason: "not_tls" | "bad_handshake" | "no_certificate" | "too_large" | "too_fragmented" };
 
 /** TLS alert descriptions, for messages (RFC 5246 section 7.2, RFC 8446 section 6). */
 export const ALERT_NAMES: Record<number, string> = {
@@ -141,21 +141,80 @@ export const ALERT_PROTOCOL_VERSION = 70;
 
 /** The most of the server's answer read before giving up (a long chain is about 10 KB). */
 export const MAX_FLIGHT_BYTES = 128 * 1024;
+/** The most TLS records read (a real first flight is a handful). */
+export const MAX_FLIGHT_RECORDS = 64;
+/** The most reads from the socket (a real first flight arrives in a few dozen at most). */
+export const MAX_FLIGHT_READS = 512;
 
 const RECORD_HANDSHAKE = 0x16;
 const RECORD_ALERT = 0x15;
+const ALERT_LEVEL_WARNING = 1;
 const HANDSHAKE_SERVER_HELLO = 2;
 const HANDSHAKE_CERTIFICATE = 11;
 const HANDSHAKE_SERVER_HELLO_DONE = 14;
 
 /**
+ * A byte queue that appends in place and consumes by moving an offset, so a
+ * server sending its answer a byte at a time costs linear, not quadratic, work.
+ * It never holds more than MAX_FLIGHT_BYTES (the reader stops before that).
+ */
+class ByteQueue {
+  private buf = new Uint8Array(4096);
+  private start = 0;
+  private end = 0;
+
+  get length(): number {
+    return this.end - this.start;
+  }
+
+  append(chunk: Uint8Array): void {
+    if (this.end + chunk.length > this.buf.length) {
+      const needed = this.length + chunk.length;
+      if (needed <= this.buf.length) {
+        this.buf.copyWithin(0, this.start, this.end);
+      } else {
+        const grown = new Uint8Array(Math.max(needed, this.buf.length * 2));
+        grown.set(this.buf.subarray(this.start, this.end));
+        this.buf = grown;
+      }
+      this.end -= this.start;
+      this.start = 0;
+    }
+    this.buf.set(chunk, this.end);
+    this.end += chunk.length;
+  }
+
+  byte(i: number): number {
+    return this.buf[this.start + i]!;
+  }
+
+  /** A view of `len` bytes from `i`; valid until the next append. */
+  view(i: number, len: number): Uint8Array {
+    return this.buf.subarray(this.start + i, this.start + i + len);
+  }
+
+  consume(n: number): void {
+    this.start += n;
+    if (this.start === this.end) this.start = this.end = 0;
+  }
+}
+
+/**
  * Reads the server's answer as it arrives, one chunk at a time. `push` returns
  * the result once there is one, and null while it needs more bytes.
+ *
+ * A hostile or broken server can't make it spend much: it gives up after
+ * MAX_FLIGHT_BYTES, MAX_FLIGHT_RECORDS records or MAX_FLIGHT_READS reads, at
+ * once when a record or handshake message declares more than that, and on an
+ * empty record. Each byte is copied a bounded number of times (tls.test.ts
+ * measures the worst cases).
  */
 export class ServerFlightReader {
-  private buf: Uint8Array = new Uint8Array(0);
+  private records = new ByteQueue();
+  private handshake = new ByteQueue();
   private total = 0;
-  private handshake: Uint8Array = new Uint8Array(0);
+  private reads = 0;
+  private recordCount = 0;
   private sawServerHello = false;
   private done: ServerFlight | null = null;
 
@@ -163,55 +222,65 @@ export class ServerFlightReader {
     if (this.done) return this.done;
     this.total += chunk.length;
     if (this.total > MAX_FLIGHT_BYTES) return (this.done = { kind: "malformed", reason: "too_large" });
-    this.buf = concat(this.buf, chunk);
+    if (++this.reads > MAX_FLIGHT_READS) return (this.done = { kind: "malformed", reason: "too_fragmented" });
+    this.records.append(chunk);
+    const q = this.records;
     for (;;) {
-      if (this.buf.length < 5) return null;
-      const type = this.buf[0]!;
-      const major = this.buf[1]!;
-      const length = (this.buf[3]! << 8) | this.buf[4]!;
+      if (q.length < 5) return null;
+      const type = q.byte(0);
+      const length = (q.byte(3) << 8) | q.byte(4);
       // A TLS record: a known content type, version 3.x, at most 2^14 + 2048 bytes.
-      if ((type < 0x14 || type > 0x18) || major !== 3 || length > 18432) {
+      if (type < 0x14 || type > 0x18 || q.byte(1) !== 3 || length > 18432) {
         return (this.done = { kind: "malformed", reason: "not_tls" });
       }
-      if (this.buf.length < 5 + length) return null;
-      const fragment = this.buf.subarray(5, 5 + length);
-      this.buf = this.buf.slice(5 + length);
+      if (length === 0) return (this.done = { kind: "malformed", reason: "bad_handshake" });
+      if (q.length < 5 + length) return null;
+      if (++this.recordCount > MAX_FLIGHT_RECORDS) {
+        return (this.done = { kind: "malformed", reason: "too_fragmented" });
+      }
+      const fragment = q.view(5, length);
       if (type === RECORD_ALERT) {
-        if (fragment.length < 2) return (this.done = { kind: "malformed", reason: "bad_handshake" });
-        return (this.done = { kind: "alert", level: fragment[0]!, description: fragment[1]! });
+        if (length !== 2) return (this.done = { kind: "malformed", reason: "bad_handshake" });
+        const level = fragment[0]!;
+        const description = fragment[1]!;
+        q.consume(5 + length);
+        // A warning (unrecognized_name, say) doesn't end the handshake: read on.
+        if (level === ALERT_LEVEL_WARNING) continue;
+        return (this.done = { kind: "alert", level, description });
       }
       if (type !== RECORD_HANDSHAKE) {
         // ChangeCipherSpec or application data before a certificate: not a
         // TLS 1.2 handshake we can read.
         return (this.done = { kind: "malformed", reason: "bad_handshake" });
       }
-      this.handshake = concat(this.handshake, fragment);
+      this.handshake.append(fragment);
+      q.consume(5 + length);
       const result = this.readHandshake();
       if (result) return (this.done = result);
     }
   }
 
-  /** Walks the handshake messages received so far. */
+  /** Walks, and consumes, the complete handshake messages received so far. */
   private readHandshake(): ServerFlight | null {
-    let off = 0;
     const hs = this.handshake;
-    while (hs.length - off >= 4) {
-      const type = hs[off]!;
-      const len = (hs[off + 1]! << 16) | (hs[off + 2]! << 8) | hs[off + 3]!;
-      if (hs.length - off - 4 < len) break;
-      const body = hs.subarray(off + 4, off + 4 + len);
-      off += 4 + len;
+    while (hs.length >= 4) {
+      const type = hs.byte(0);
+      const len = (hs.byte(1) << 16) | (hs.byte(2) << 8) | hs.byte(3);
+      // Waiting for a message bigger than we'd ever read is pointless.
+      if (len > MAX_FLIGHT_BYTES) return { kind: "malformed", reason: "too_large" };
+      if (hs.length - 4 < len) return null;
       if (type === HANDSHAKE_SERVER_HELLO) {
         this.sawServerHello = true;
-        continue;
+      } else if (!this.sawServerHello) {
+        return { kind: "malformed", reason: "bad_handshake" };
+      } else if (type === HANDSHAKE_CERTIFICATE) {
+        return parseCertificateMessage(hs.view(4, len));
+      } else if (type === HANDSHAKE_SERVER_HELLO_DONE) {
+        return { kind: "malformed", reason: "no_certificate" };
       }
-      if (!this.sawServerHello) return { kind: "malformed", reason: "bad_handshake" };
-      if (type === HANDSHAKE_CERTIFICATE) return parseCertificateMessage(body);
-      if (type === HANDSHAKE_SERVER_HELLO_DONE) return { kind: "malformed", reason: "no_certificate" };
-      // Anything else (a ServerKeyExchange ahead of the certificate would be
-      // out of order, but a status message is harmless): keep reading.
+      // Anything else (a status message, say): skip it and keep reading.
+      hs.consume(4 + len);
     }
-    this.handshake = hs.slice(off);
     return null;
   }
 }
@@ -222,24 +291,19 @@ function parseCertificateMessage(body: Uint8Array): ServerFlight {
   const listLen = (body[0]! << 16) | (body[1]! << 8) | body[2]!;
   if (listLen + 3 > body.length) return { kind: "malformed", reason: "bad_handshake" };
   let off = 3;
-  const certs: Uint8Array[] = [];
+  let leaf: Uint8Array | null = null;
+  let count = 0;
   while (off + 3 <= 3 + listLen) {
     const len = (body[off]! << 16) | (body[off + 1]! << 8) | body[off + 2]!;
     off += 3;
     if (off + len > 3 + listLen) return { kind: "malformed", reason: "bad_handshake" };
-    certs.push(body.slice(off, off + len));
+    // Only the leaf is kept (copied out of the reader's buffer).
+    if (!leaf) leaf = body.slice(off, off + len);
+    count++;
     off += len;
   }
-  if (!certs.length) return { kind: "malformed", reason: "no_certificate" };
-  return { kind: "certificate", der: certs[0]!, chainLength: certs.length };
-}
-
-function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
-  if (!a.length) return b.slice();
-  const out = new Uint8Array(a.length + b.length);
-  out.set(a);
-  out.set(b, a.length);
-  return out;
+  if (!leaf) return { kind: "malformed", reason: "no_certificate" };
+  return { kind: "certificate", der: leaf, chainLength: count };
 }
 
 // ---------------------------------------------------------------------------
@@ -567,6 +631,7 @@ export async function readCertificate(
             bad_handshake: "the server's TLS handshake couldn't be read",
             no_certificate: "the server sent no certificate",
             too_large: "the server's handshake was too large to read",
+            too_fragmented: "the server sent its handshake in too many pieces to read",
           }[r.reason];
           return { ok: false, kind: "malformed", message: why, durationMs: elapsed() };
         }
