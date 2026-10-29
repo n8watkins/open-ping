@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The notification icon: the OpenPing mark in white (Android tints it). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <path android:fillColor="#FFFFFF" android:pathData="M35,48 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="7" android:pathData="M21,48 a27,27 0 1,0 54,0 a27,27 0 1,0 -54,0" />
+    <path android:strokeColor="#FFFFFF" android:strokeAlpha="0.55" android:strokeWidth="7" android:pathData="M7,48 a41,41 0 1,0 82,0 a41,41 0 1,0 -82,0" />
+</vector>

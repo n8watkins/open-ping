@@ -20,6 +20,8 @@ import {
 } from "../../shared/channel-targets";
 import { sendWebPush, type VapidKeys } from "./push/webpush";
 import { getVapid } from "./push/vapid";
+import { sendFcm, serviceAccount, type FcmAlert } from "./push/fcm";
+import { configuredOrigin } from "../lib/app-origin";
 import {
   isNotificationPayload,
   toEmailHtml,
@@ -124,24 +126,27 @@ export function outboxTake(limit: number = BATCH): number {
 
 /**
  * What one pass reads once and reuses for every entry: each channel, the VAPID
- * keys and the `email_from` setting. Undefined means not read yet.
+ * keys, the `email_from` setting and this install's address (for the Android
+ * app's alerts). Undefined means not read yet.
  */
 export interface DeliveryCache {
   channels: Map<string, ChannelRecord | null>;
   vapid: VapidKeys | null | undefined;
   emailFrom: string | null | undefined;
+  origin: string | null | undefined;
 }
 
 export function newDeliveryCache(): DeliveryCache {
-  return { channels: new Map(), vapid: undefined, emailFrom: undefined };
+  return { channels: new Map(), vapid: undefined, emailFrom: undefined, origin: undefined };
 }
 
 /**
  * The most D1 queries delivering `entry` can make, given what the pass has
  * already read (lib/budget.ts uses it so a run never overruns its plan):
  *
- * - a Web Push device: the subscription, the VAPID keys (once per pass),
- *   marking the entry sent or failed, and the device's result;
+ * - a push device: the subscription, the VAPID keys (a browser, once per
+ *   pass) or this install's address (the Android app, once per pass), marking
+ *   the entry sent or failed, and the device's result;
  * - a channel: the channel (once per channel per pass), `email_from` (once per
  *   pass, email only), marking the entry, and the channel's result;
  * - a payload that can't be read: only marking it failed;
@@ -149,7 +154,10 @@ export function newDeliveryCache(): DeliveryCache {
  */
 export function deliveryD1Cost(entry: OutboxEntry, cache: DeliveryCache): number {
   if (entry.payloadError || !isNotificationPayload(entry.payload)) return 1;
-  if (entry.channelType === "push") return 3 + (cache.vapid === undefined ? 1 : 0) + 1;
+  // The device's kind is only known once it is read, so count either read.
+  if (entry.channelType === "push") {
+    return 3 + (cache.vapid === undefined ? 1 : 0) + (cache.origin === undefined ? 1 : 0) + 1;
+  }
   const channelRead = entry.channelId && !cache.channels.has(entry.channelId) ? 1 : 0;
   const fromRead = entry.channelType === "email" && cache.emailFrom === undefined ? 1 : 0;
   return 2 + channelRead + fromRead + 1;
@@ -198,6 +206,10 @@ export async function processOutbox(
   const emailFrom = async () => {
     if (cache.emailFrom === undefined) cache.emailFrom = await getSetting(env, "email_from");
     return cache.emailFrom;
+  };
+  const origin = async () => {
+    if (cache.origin === undefined) cache.origin = await configuredOrigin(env);
+    return cache.origin;
   };
   const vapid = async () => {
     if (cache.vapid === undefined) cache.vapid = await getVapid(env);
@@ -250,6 +262,7 @@ export async function processOutbox(
           entry.attempts,
           entry.payload,
           vapid,
+          origin,
         );
         if (r === "sent") sent++;
         else if (r === "failed") failed++;
@@ -318,6 +331,7 @@ async function deliverPush(
   attempts: number,
   payload: NotificationPayload,
   loadVapid: () => Promise<VapidKeys | null>,
+  loadOrigin: () => Promise<string | null>,
 ): Promise<PushOutcome> {
   let sub: Awaited<ReturnType<typeof getSubscription>>;
   try {
@@ -333,16 +347,27 @@ async function deliverPush(
     await markFailed(env, entryId, MAX_ATTEMPTS, "subscription_gone", MAX_ATTEMPTS);
     return "pruned";
   }
-  const vapid = await loadVapid();
-  if (!vapid) {
-    await markFailed(env, entryId, MAX_ATTEMPTS, "vapid_not_configured", MAX_ATTEMPTS);
-    return "failed";
+  let result: Awaited<ReturnType<typeof sendFcm>>;
+  if (sub.kind === "fcm") {
+    // The Android app (notifications/push/fcm.ts).
+    const sa = serviceAccount(env);
+    if (!sa) {
+      await markFailed(env, entryId, MAX_ATTEMPTS, "fcm_not_configured", MAX_ATTEMPTS);
+      return "failed";
+    }
+    result = await sendFcm(sa, sub.endpoint, fcmAlert(await loadOrigin(), payload));
+  } else {
+    const vapid = await loadVapid();
+    if (!vapid) {
+      await markFailed(env, entryId, MAX_ATTEMPTS, "vapid_not_configured", MAX_ATTEMPTS);
+      return "failed";
+    }
+    result = await sendWebPush({
+      subscription: { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
+      payload: JSON.stringify({ title: payload.title, body: payload.body, url: payload.url }),
+      vapid,
+    });
   }
-  const result = await sendWebPush({
-    subscription: { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
-    payload: JSON.stringify({ title: payload.title, body: payload.body, url: payload.url }),
-    vapid,
-  });
   if (result.ok) {
     await markSent(env, entryId);
     // Bookkeeping only - isolate so a failure here can't reach the caller's
@@ -362,7 +387,31 @@ async function deliverPush(
     await markSent(env, entryId);
     return "pruned";
   }
-  await markFailed(env, entryId, attempts + 1, result.error ?? "push_failed", MAX_ATTEMPTS);
+  await markFailed(env, entryId, attempts + 1, result.error ?? "push_failed", MAX_ATTEMPTS, result.retryAfterMs);
   await recordPushResult(env, sub.id, false);
   return "failed";
+}
+
+/**
+ * What the Android app shows for an alert: the same title and text as Web
+ * Push, where a tap goes on this install, and which install it is.
+ */
+export function fcmAlert(configured: string | null, payload: NotificationPayload): FcmAlert {
+  const origin = configured ?? (payload.url ? safeOrigin(payload.url) : null) ?? "";
+  const url = payload.url && origin && safeOrigin(payload.url) === origin ? payload.url : `${origin}/`;
+  return {
+    title: payload.title,
+    body: payload.body,
+    url,
+    origin,
+    tag: payload.incidentId ?? payload.monitorId,
+  };
+}
+
+function safeOrigin(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
 }

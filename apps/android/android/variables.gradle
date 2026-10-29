@@ -17,4 +17,5 @@ ext {
 // OpenPing's own (not Capacitor's) dependencies.
 ext {
     androidxBrowserVersion = '1.10.0'
+    firebaseBomVersion = '35.1.0'
 }

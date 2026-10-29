@@ -24,8 +24,12 @@ public final class RemoteBridge {
 
         void onSwitchRequested();
 
-        /** Ask for notification permission and a push token, answering through {@code reply}. */
-        void onPushRequested(String origin, Reply reply);
+        /**
+         * A push token for the page, through {@code reply}. With {@code ask},
+         * Android may ask the person for notification permission first;
+         * without it, only when notifications are already allowed.
+         */
+        void onPushRequested(String origin, Reply reply, boolean ask);
 
         String appVersion();
 
@@ -97,7 +101,10 @@ public final class RemoteBridge {
                 host.onSwitchRequested();
                 break;
             case "push.register":
-                host.onPushRequested(origin, reply);
+                host.onPushRequested(origin, reply, true);
+                break;
+            case "push.refresh":
+                host.onPushRequested(origin, reply, false);
                 break;
             default:
                 break;

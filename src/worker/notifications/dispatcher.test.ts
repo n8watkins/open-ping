@@ -34,10 +34,12 @@ function entry(channelType: string, extra: Partial<OutboxEntry> = {}): OutboxEnt
 }
 
 describe("deliveryD1Cost", () => {
-  it("charges a Web Push delivery its device, the VAPID keys once per pass, its marks and a failure mark", () => {
+  it("charges a push delivery its device, the VAPID keys or the address once per pass, its marks and a failure mark", () => {
     const cache = newDeliveryCache();
-    expect(deliveryD1Cost(entry("push"), cache)).toBe(5);
+    expect(deliveryD1Cost(entry("push"), cache)).toBe(6);
     cache.vapid = null;
+    expect(deliveryD1Cost(entry("push"), cache)).toBe(5);
+    cache.origin = "https://openping.test";
     expect(deliveryD1Cost(entry("push"), cache)).toBe(4);
   });
 

@@ -21,7 +21,7 @@ public final class ServerSignOut {
 
     /** Signed-in calls to make before the session ends: (connection maker, CSRF token). */
     public interface BeforeSignOut {
-        void run(Session session) throws IOException;
+        void run(Session session) throws IOException, JSONException;
     }
 
     /** A signed-in caller for one install. */
@@ -73,7 +73,7 @@ public final class ServerSignOut {
             if (before != null) {
                 try {
                     before.run(session);
-                } catch (IOException e) {
+                } catch (IOException | JSONException e) {
                     // Still sign out.
                 }
             }
