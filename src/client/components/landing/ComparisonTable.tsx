@@ -1,5 +1,5 @@
 import { Check, Cloud, Minus, Sparkles, X } from "lucide-react";
-import { HOSTED_PLAN_LIMITS, HOSTED_PRICE_YEARLY, HOSTED_TRIAL_DAYS } from "../../../shared/hosted-offer";
+import { HOSTED_MAX_MONITORS, HOSTED_PACKS, HOSTED_PLAN_LIMITS, HOSTED_PRICE_YEARLY, HOSTED_TRIAL_DAYS } from "../../../shared/hosted-offer";
 
 /**
  * Truthful feature comparison: self-hosted OpenPing vs a typical hosted uptime
@@ -32,7 +32,7 @@ const ROWS: Row[] = [
   {
     feature: "Number of monitors",
     op: { kind: "text", text: "No monitor cap" },
-    hosted: { kind: "text", text: `${HOSTED_PLAN_LIMITS.monitors}, one plan, no tiers` },
+    hosted: { kind: "text", text: `${HOSTED_PLAN_LIMITS.monitors}, up to ${HOSTED_MAX_MONITORS} with packs of ${HOSTED_PACKS.monitors.adds}` },
     saas: { kind: "text", text: "Tiered caps (50 / 100 / 200…)" },
   },
   {
