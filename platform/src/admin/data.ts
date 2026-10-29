@@ -178,7 +178,7 @@ export interface TenantDetail {
     pausedAt: number | null;
     leaseUntil: number | null;
   };
-  usage: { monitors: number; statusPages: number; channels: number; countedAt: number; reportedAt: number } | null;
+  usage: { monitors: number; fastMonitors: number | null; statusPages: number; channels: number; countedAt: number; reportedAt: number } | null;
 }
 
 export async function tenantDetail(db: D1Database, tenantId: string): Promise<TenantDetail | null> {
@@ -186,10 +186,10 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
   const row = await db
     .prepare(
       `SELECT t.id, t.account_id, t.slug, t.script_name, t.status, t.plan, t.provision_state, t.version, t.limit_overrides,
-              t.trial_ends_at, t.d1_id, t.created_at, t.updated_at, t.provisioned_at, t.suspended_at, t.owner_suspended_at,
+              t.monitor_packs, t.fast_packs, t.trial_ends_at, t.d1_id, t.created_at, t.updated_at, t.provisioned_at, t.suspended_at, t.owner_suspended_at,
               t.owner_suspended_reason, t.provision_attempts, t.provision_error, t.provision_next_at, t.provision_paused_at,
               t.provision_lease_until, a.email, a.disabled_at, a.deletion_requested_at,
-              u.monitors, u.status_pages, u.channels, u.counted_at, u.reported_at
+              u.monitors, u.fast_monitors, u.status_pages, u.channels, u.counted_at, u.reported_at
        FROM tenants t JOIN accounts a ON a.id = t.account_id LEFT JOIN tenant_usage u ON u.tenant_id = t.id
        WHERE t.id = ?`,
     )
@@ -204,6 +204,8 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
       provision_state: string;
       version: string | null;
       limit_overrides: string | null;
+      monitor_packs: number | null;
+      fast_packs: number | null;
       trial_ends_at: number | null;
       d1_id: string | null;
       created_at: number;
@@ -221,6 +223,7 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
       disabled_at: number | null;
       deletion_requested_at: number | null;
       monitors: number | null;
+      fast_monitors: number | null;
       status_pages: number | null;
       channels: number | null;
       counted_at: number | null;
@@ -253,6 +256,7 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
         ? null
         : {
             monitors: row.monitors,
+            fastMonitors: row.fast_monitors,
             statusPages: row.status_pages!,
             channels: row.channels!,
             // The tenant's own clock orders its reports; what is shown is never later than when it arrived.

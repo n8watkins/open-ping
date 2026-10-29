@@ -187,7 +187,7 @@ beforeEach(async () => {
 
 describe("the home page", () => {
   it("offers the trial when sign-ups are open, and the waitlist when they aren't", async () => {
-    expect(await (await new Browser().fetch("/")).text()).toContain("Start a 14-day free trial");
+    expect(await (await new Browser().fetch("/")).text()).toContain("Start a 30-day free trial");
     signUps = "closed";
     const closed = await (await new Browser().fetch("/")).text();
     expect(closed).toContain("isn't open for sign-ups yet");
@@ -241,7 +241,7 @@ describe("signing up with email, through to the customer's OpenPing", () => {
 
     const page = await (await browser.fetch("/account")).text();
     expect(page).toContain(`signup-co.${DOMAIN}`);
-    expect(page).toContain("Trial, 14 days left");
+    expect(page).toContain("Trial, 30 days left");
     expect(page).toContain('href="/open?tenant=signup-co"');
 
     // A second OpenPing isn't on offer.

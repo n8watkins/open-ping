@@ -5,9 +5,12 @@
 
 import {
   PLAN_IDS,
-  PLAN_LIMITS,
   TENANT_STATUSES,
+  packsForPlan,
+  planLimitsWithPacks,
+  withLimitGrant,
   type HostedUrls,
+  type PackQuantities,
   type PlanId,
   type PlanLimits,
   type TenantInfo,
@@ -37,6 +40,8 @@ export interface TenantRecord {
   provisionState: ProvisionState;
   version: string | null;
   limitOverrides: Partial<PlanLimits> | null;
+  /** The packs billing recorded (tenants.monitor_packs, .fast_packs), as they count on the plan. */
+  packs: PackQuantities;
   trialEndsAt: number | null;
 }
 
@@ -51,17 +56,23 @@ export interface TenantRow {
   provision_state: string;
   version: string | null;
   limit_overrides: string | null;
+  monitor_packs: number | null;
+  fast_packs: number | null;
   trial_ends_at: number | null;
 }
 
 export const TENANT_COLUMNS =
-  "id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at";
+  "id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, monitor_packs, fast_packs, trial_ends_at";
 
 function oneOf<T extends string>(values: readonly T[], value: string, fallback: T): T {
   return (values as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
-/** Only the known PlanLimits keys with the right types; anything else in the JSON is ignored. */
+/**
+ * A support grant from tenants.limit_overrides: only the known PlanLimits
+ * keys with the right types, anything else in the JSON ignored. Counts are
+ * what the grant adds (withLimitGrant), not whole limits (migration 0013).
+ */
 export function parseLimitOverrides(json: string | null): Partial<PlanLimits> | null {
   if (!json) return null;
   let raw: unknown;
@@ -75,6 +86,7 @@ export function parseLimitOverrides(json: string | null): Partial<PlanLimits> | 
   const out: Partial<PlanLimits> = {};
   const count = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
   if (count(r.monitors)) out.monitors = r.monitors as number;
+  if (count(r.fastMonitors)) out.fastMonitors = r.fastMonitors as number;
   if (count(r.statusPages)) out.statusPages = r.statusPages as number;
   if (count(r.emailsPerDay)) out.emailsPerDay = r.emailsPerDay as number;
   if (count(r.minIntervalMinutes) && (r.minIntervalMinutes as number) >= 1) {
@@ -89,6 +101,7 @@ export function parseLimitOverrides(json: string | null): Partial<PlanLimits> | 
 export function tenantFromRow(row: TenantRow): TenantRecord {
   // The CHECK constraint makes this exact; the fallback is the safe side.
   const billingStatus = oneOf(TENANT_STATUSES, row.status, "suspended");
+  const plan = oneOf(PLAN_IDS, row.plan, "trial");
   return {
     id: row.id,
     accountId: row.account_id,
@@ -97,10 +110,11 @@ export function tenantFromRow(row: TenantRow): TenantRecord {
     status: row.owner_suspended_at !== null ? "suspended" : billingStatus,
     billingStatus,
     ownerSuspendedAt: row.owner_suspended_at,
-    plan: oneOf(PLAN_IDS, row.plan, "trial"),
+    plan,
     provisionState: oneOf(PROVISION_STATES, row.provision_state, "requested"),
     version: row.version,
     limitOverrides: parseLimitOverrides(row.limit_overrides),
+    packs: packsForPlan(plan, { monitors: row.monitor_packs, fast_monitors: row.fast_packs }),
     trialEndsAt: row.trial_ends_at,
   };
 }
@@ -149,9 +163,14 @@ export async function findTenantBySlug(db: D1Database, slug: string): Promise<Te
   return row ? tenantFromRow(row) : null;
 }
 
-/** The plan's limits with any per-tenant overrides on top. */
-export function effectiveLimits(tenant: Pick<TenantRecord, "plan" | "limitOverrides">): PlanLimits {
-  return { ...PLAN_LIMITS[tenant.plan], ...(tenant.limitOverrides ?? {}) };
+/**
+ * The plan's limits with its packs added (planLimitsWithPacks, decision D13)
+ * and any support grant (tenants.limit_overrides) added on top
+ * (withLimitGrant): the final numbers `tenant.limits` carries, so the tenant
+ * never works one out itself, and a grant never takes away a paid pack.
+ */
+export function effectiveLimits(tenant: Pick<TenantRecord, "plan" | "limitOverrides"> & { packs?: PackQuantities }): PlanLimits {
+  return withLimitGrant(planLimitsWithPacks(tenant.plan, tenant.packs), tenant.limitOverrides);
 }
 
 /** Where the tenant's OpenPing links back to on the platform. */

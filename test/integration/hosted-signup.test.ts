@@ -50,6 +50,6 @@ describe("the Hosted launch switch", () => {
 
     const open = await (await fetchWith("/", { HOSTED_SIGNUP_URL: SIGNUP })).text();
     expect(open).toContain(`<title>${landingMeta(true).title}</title>`);
-    expect(open).toContain("14-day free trial");
+    expect(open).toContain("30-day free trial");
   });
 });

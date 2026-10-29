@@ -7,7 +7,9 @@ import { createApp } from "../src/app";
 import { createSession } from "../src/auth/sessions";
 import { billingSetup, type BillingSetup } from "../src/billing/config";
 import { parseSignatureHeader, signStripePayload, verifyStripeSignature } from "../src/billing/signature";
-import { ENDED_TRIALS_SQL, endTrials, planForPrices, stateForStatus } from "../src/billing/state";
+import { ENDED_TRIALS_SQL, endTrials, packsForItems, planForPrices, stateForStatus } from "../src/billing/state";
+import { PRICE_TEXT, yearlyTotal } from "../src/billing/pages";
+import { TRIAL_DAYS } from "../src/provisioning";
 import { HttpStripeApi, STRIPE_API_VERSION, StripeApiError, checkoutParams, stripeForm } from "../src/billing/stripe";
 import type { PlatformEnv } from "../src/env";
 import type { Mailer, OutgoingEmail } from "../src/mail";
@@ -20,7 +22,9 @@ import { FakeStripe, type FakeEvent } from "./fake-stripe";
 const DOMAIN = "openping.test";
 const APP = `https://app.${DOMAIN}`;
 const PRICE_HOSTED = "price_hostedYearly24";
-const PRICE_FAST = "price_fastAddon12";
+const PRICE_FAST = "price_fastAddon24";
+const PRICE_MONITOR_PACK = "price_monitorPack24";
+const PRICE_FAST_PACK = "price_fastPack36";
 const DAY = 86_400_000;
 
 const noopPlatform: PlatformCapability = {
@@ -48,7 +52,16 @@ function setup(): BillingSetup {
   return {
     ok: true,
     stripe,
-    config: { webhookSecret: stripe.webhookSecret, priceHosted: PRICE_HOSTED, priceFast: PRICE_FAST, automaticTax: true, portalConfiguration: null, live: false },
+    config: {
+      webhookSecret: stripe.webhookSecret,
+      priceHosted: PRICE_HOSTED,
+      priceFast: PRICE_FAST,
+      priceMonitorPack: PRICE_MONITOR_PACK,
+      priceFastPack: PRICE_FAST_PACK,
+      automaticTax: true,
+      portalConfiguration: null,
+      live: false,
+    },
   };
 }
 
@@ -249,7 +262,11 @@ describe("the Stripe client", () => {
     const { api, seen } = recording(() => Response.json({ id: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1" }));
     const input = {
       customer: "cus_1",
-      prices: [PRICE_HOSTED, PRICE_FAST],
+      items: [
+        { price: PRICE_HOSTED, quantity: 1 },
+        { price: PRICE_FAST, quantity: 1 },
+        { price: PRICE_MONITOR_PACK, quantity: 2 },
+      ],
       successUrl: `${APP}/billing?done=welcome`,
       cancelUrl: `${APP}/billing`,
       accountId: "acc_1",
@@ -273,6 +290,8 @@ describe("the Stripe client", () => {
       "line_items[0][price]": PRICE_HOSTED,
       "line_items[0][quantity]": "1",
       "line_items[1][price]": PRICE_FAST,
+      "line_items[2][price]": PRICE_MONITOR_PACK,
+      "line_items[2][quantity]": "2",
       "metadata[account_id]": "acc_1",
       "subscription_data[metadata][tenant_id]": "t1",
       "automatic_tax[enabled]": "true",
@@ -330,11 +349,25 @@ describe("the Stripe client", () => {
 });
 
 describe("billing's settings", () => {
-  const base = { STRIPE_SECRET_KEY: "sk_test_abc", STRIPE_WEBHOOK_SECRET: "whsec_x", STRIPE_PRICE_HOSTED: PRICE_HOSTED, STRIPE_PRICE_FAST: PRICE_FAST } as PlatformEnv;
+  const base = {
+    STRIPE_SECRET_KEY: "sk_test_abc",
+    STRIPE_WEBHOOK_SECRET: "whsec_x",
+    STRIPE_PRICE_HOSTED: PRICE_HOSTED,
+    STRIPE_PRICE_FAST: PRICE_FAST,
+    STRIPE_PRICE_MONITOR_PACK: PRICE_MONITOR_PACK,
+    STRIPE_PRICE_FAST_PACK: PRICE_FAST_PACK,
+  } as PlatformEnv;
 
-  it("are complete with test keys and both prices, Stripe Tax on by default", () => {
+  it("are complete with test keys and all four prices, Stripe Tax on by default", () => {
     const s = billingSetup(base);
-    expect(s.ok && s.config).toMatchObject({ automaticTax: true, live: false, priceHosted: PRICE_HOSTED, priceFast: PRICE_FAST });
+    expect(s.ok && s.config).toMatchObject({
+      automaticTax: true,
+      live: false,
+      priceHosted: PRICE_HOSTED,
+      priceFast: PRICE_FAST,
+      priceMonitorPack: PRICE_MONITOR_PACK,
+      priceFastPack: PRICE_FAST_PACK,
+    });
     const off = billingSetup({ ...base, STRIPE_TAX: "off" });
     expect(off.ok && off.config.automaticTax).toBe(false);
   });
@@ -346,8 +379,14 @@ describe("billing's settings", () => {
   });
 
   it("name everything missing", () => {
-    expect(billingSetup({} as PlatformEnv)).toEqual({ ok: false, missing: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_HOSTED", "STRIPE_PRICE_FAST"] });
+    expect(billingSetup({} as PlatformEnv)).toEqual({
+      ok: false,
+      missing: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_HOSTED", "STRIPE_PRICE_FAST", "STRIPE_PRICE_MONITOR_PACK", "STRIPE_PRICE_FAST_PACK"],
+    });
+    // One Price can't be two things.
     expect(billingSetup({ ...base, STRIPE_PRICE_FAST: PRICE_HOSTED })).toEqual({ ok: false, missing: ["STRIPE_PRICE_FAST"] });
+    expect(billingSetup({ ...base, STRIPE_PRICE_FAST_PACK: PRICE_MONITOR_PACK })).toEqual({ ok: false, missing: ["STRIPE_PRICE_FAST_PACK"] });
+    expect(billingSetup({ ...base, STRIPE_PRICE_MONITOR_PACK: "not-a-price" })).toEqual({ ok: false, missing: ["STRIPE_PRICE_MONITOR_PACK"] });
   });
 });
 
@@ -378,7 +417,7 @@ describe("a customer's billing", () => {
     const account = await (await c.browser("/account")).text();
     expect(account).toContain("Trial, 10 days left");
     expect(account).toContain("Subscribe for $24 a year");
-    expect(account).toContain("1\u2011minute checks: $36\u00a0a\u00a0year");
+    expect(account).toContain("1\u2011minute checks: $48\u00a0a\u00a0year");
 
     const res = await c.browser("/billing/checkout", { form: { plan: "hosted" } });
     expect(res.status).toBe(200);
@@ -386,7 +425,7 @@ describe("a customer's billing", () => {
     expect(page).toMatch(/<meta http-equiv="refresh" content="0;url=https:\/\/checkout\.stripe\.com\/c\/pay\/cs_test_fake[0-9a-f]{8}\d{4}">/);
     const [session] = [...stripe.sessions.values()];
     expect(session!.input).toMatchObject({
-      prices: [PRICE_HOSTED],
+      items: [{ price: PRICE_HOSTED, quantity: 1 }],
       automaticTax: true,
       accountId: c.accountId,
       metadata: { account_id: c.accountId, tenant_id: c.tenantId, plan: "hosted" },
@@ -411,7 +450,7 @@ describe("a customer's billing", () => {
 
     const billing = await (await c.browser("/billing")).text();
     expect(billing).toContain("Renews on Nov 2, 2027 for $24 a year.");
-    expect(billing).toContain("Add for $12 a year");
+    expect(billing).toContain("Add for $24 a year");
     expect(billing).toContain("Manage billing");
   });
 
@@ -419,22 +458,23 @@ describe("a customer's billing", () => {
     const c = await customer();
     const sub = await subscribe(c);
     expect((await c.browser("/billing/add-fast", { form: {} })).headers.get("location")).toBe("/billing?done=upgrading");
-    expect(stripe.addedItems).toEqual([{ subscription: sub.id, price: PRICE_FAST }]);
+    expect(stripe.addedItems).toEqual([{ subscription: sub.id, price: PRICE_FAST, quantity: 1 }]);
     expect(await tenantRow(c.tenantId)).toMatchObject({ plan: "hosted" });
     await deliverAll([stripe.update(sub.id, {})]);
     expect(await tenantRow(c.tenantId)).toMatchObject({ status: "active", plan: "hosted_fast" });
-    expect(await tenantSees(c.slug)).toMatchObject({ plan: "hosted_fast", limits: { minIntervalMinutes: 1 } });
+    expect(await tenantSees(c.slug)).toMatchObject({ plan: "hosted_fast", limits: { minIntervalMinutes: 1, fastMonitors: 5 } });
     // Asked again: nothing more to add.
     expect((await c.browser("/billing/add-fast", { form: {} })).headers.get("location")).toBe("/billing?done=already-fast");
-    expect(await (await c.browser("/billing/upgrade")).text()).toContain("You have the fastest checks Hosted offers.");
+    // The upgrade page now offers more fast monitors instead.
+    expect(await (await c.browser("/billing/upgrade?need=fast_monitors")).text()).toContain("Add 5 fast monitors: $36\u00a0a\u00a0year");
   });
 
   it("subscribes a trial straight to 1-minute checks from the upgrade page", async () => {
     const c = await customer();
     const upgrade = await (await c.browser("/billing/upgrade")).text();
     expect(upgrade).toContain("<h1>Choose your plan</h1>");
-    expect(upgrade.indexOf("1\u2011minute checks: $36")).toBeGreaterThan(0);
-    expect(upgrade.indexOf("1\u2011minute checks: $36")).toBeLessThan(upgrade.indexOf("Subscribe for $24 a year"));
+    expect(upgrade.indexOf("1\u2011minute checks: $48")).toBeGreaterThan(0);
+    expect(upgrade.indexOf("1\u2011minute checks: $48")).toBeLessThan(upgrade.indexOf("Subscribe for $24 a year"));
     await subscribe(c, "hosted_fast");
     expect(await tenantRow(c.tenantId)).toMatchObject({ status: "active", plan: "hosted_fast" });
   });
@@ -622,7 +662,7 @@ describe("the webhook", () => {
       (await stripe.createCheckoutSession(
         {
           customer: (await stripe.createCustomer({ email: "x@example.com", accountId: "acc_nobody" }, "k")).id,
-          prices: [PRICE_HOSTED],
+          items: [{ price: PRICE_HOSTED, quantity: 1 }],
           successUrl: "",
           cancelUrl: "",
           accountId: "acc_nobody",
@@ -637,7 +677,7 @@ describe("the webhook", () => {
 });
 
 describe("the trial", () => {
-  it("ends on day 15 for a trial with no subscription, through the partial index", async () => {
+  it("ends a trial with no subscription once its end has passed, through the partial index", async () => {
     const plan = await env.PLATFORM_DB.prepare(`EXPLAIN QUERY PLAN ${ENDED_TRIALS_SQL}`).bind(0, 100).all<{ detail: string }>();
     const details = plan.results.map((r) => r.detail).join(" | ");
     expect(details).toContain("USING INDEX idx_tenants_trial_end (trial_ends_at<?)");
@@ -737,7 +777,7 @@ describe("review fixes (wave 3 review of #64)", () => {
     // A second Checkout finished anyway (made before the expiry, say): Stripe has two active subscriptions.
     const customerId = [...stripe.customers.keys()][0]!;
     const extra = await stripe.createCheckoutSession(
-      { ...[...stripe.sessions.values()][0]!.input, customer: customerId, prices: [PRICE_HOSTED, PRICE_FAST] },
+      { ...[...stripe.sessions.values()][0]!.input, customer: customerId, items: [{ price: PRICE_HOSTED, quantity: 1 }, { price: PRICE_FAST, quantity: 1 }] },
       "second-tab",
     );
     const second = stripe.completeCheckout(extra.id);
@@ -771,7 +811,7 @@ describe("review fixes (wave 3 review of #64)", () => {
     const billing = await (await c.browser("/billing")).text();
     expect(billing).toContain("checks are waiting on a payment");
     expect(billing).toContain("Pay the invoice");
-    expect(billing).not.toContain("Add for $12 a year");
+    expect(billing).not.toContain("Add for $24 a year");
 
     await deliverAll(stripe.payPending(sub.id));
     expect(await tenantRow(c.tenantId)).toMatchObject({ plan: "hosted_fast" });
@@ -788,7 +828,7 @@ describe("review fixes (wave 3 review of #64)", () => {
     await deliverAll([stripe.expirePending(sub.id)]);
     const billing = await (await c.browser("/billing")).text();
     expect(billing).not.toContain("waiting on a payment");
-    expect(billing).toContain("Add for $12 a year");
+    expect(billing).toContain("Add for $24 a year");
     expect(await tenantRow(c.tenantId)).toMatchObject({ plan: "hosted" });
   });
 
@@ -857,5 +897,375 @@ describe("review fixes (wave 3 review of #64)", () => {
     expect(events.results.map((r) => r.id)).toEqual(["evt_new"]);
     const emails = await env.PLATFORM_DB.prepare("SELECT key FROM billing_emails WHERE key IN ('old', 'new')").all<{ key: string }>();
     expect(emails.results.map((r) => r.key)).toEqual(["new"]);
+  });
+});
+
+describe("launch pricing: packs and the fast checks add-on (D13)", () => {
+  async function packs(id: string) {
+    return env.PLATFORM_DB.prepare("SELECT plan, monitor_packs, fast_packs FROM tenants WHERE id = ?").bind(id).first();
+  }
+  const post = (c: Awaited<ReturnType<typeof customer>>, kind: string, quantity: number) =>
+    c.browser("/billing/packs", { form: { kind, quantity: String(quantity) } });
+  const done = (res: Response) => res.headers.get("location");
+  async function attention(accountId: string): Promise<string[]> {
+    const rows = await env.PLATFORM_DB.prepare("SELECT detail FROM audit_events WHERE account_id = ? AND action = 'billing.needs_attention' ORDER BY id")
+      .bind(accountId)
+      .all<{ detail: string }>();
+    return rows.results.map((r) => JSON.parse(r.detail).problems ?? JSON.parse(r.detail).reason);
+  }
+
+  it("prices the plan, the add-on and the packs as decided", () => {
+    expect(PRICE_TEXT).toEqual({ hosted: "$24 a year", fast: "$24 a year", both: "$48 a year", monitorPack: "$24 a year", fastPack: "$36 a year" });
+    expect(yearlyTotal("hosted", { monitors: 0, fast_monitors: 0 })).toBe(24);
+    expect(yearlyTotal("hosted_fast", { monitors: 4, fast_monitors: 3 })).toBe(24 + 24 + 4 * 24 + 3 * 36);
+    expect(TRIAL_DAYS).toBe(30);
+  });
+
+  it("reads packs from the items' quantities, capped, and fast packs only with the add-on", () => {
+    const config = { priceFast: PRICE_FAST, priceMonitorPack: PRICE_MONITOR_PACK, priceFastPack: PRICE_FAST_PACK };
+    const item = (price: string, quantity?: number) => ({ price: { id: price }, quantity });
+    expect(packsForItems([item(PRICE_HOSTED), item(PRICE_MONITOR_PACK, 2)], "hosted", config)).toEqual({
+      packs: { monitors: 2, fast_monitors: 0 },
+      billed: { fast: 0, monitor_pack: 2, fast_pack: 0 },
+      problems: [],
+    });
+    expect(packsForItems([item(PRICE_FAST), item(PRICE_MONITOR_PACK, 6), item(PRICE_FAST_PACK, 5)], "hosted_fast", config)).toEqual({
+      packs: { monitors: 4, fast_monitors: 3 },
+      // What Stripe bills stays as it is: the renewal total says so.
+      billed: { fast: 1, monitor_pack: 6, fast_pack: 5 },
+      problems: ["monitor_packs_over_cap:6", "fast_packs_over_cap:5"],
+    });
+    expect(packsForItems([item(PRICE_FAST_PACK, 1)], "hosted", config)).toMatchObject({ packs: { monitors: 0, fast_monitors: 0 }, problems: ["fast_packs_without_add_on:1"] });
+    // A quantity Stripe leaves out is 1.
+    expect(packsForItems([item(PRICE_MONITOR_PACK)], "hosted", config).packs.monitors).toBe(1);
+  });
+
+  it("checks out with packs, held to their caps and to the plan they are sold with", async () => {
+    const c = await customer();
+    const page = await (await c.browser("/billing")).text();
+    expect(page).toContain("More than 20 monitors?");
+    expect(page).toContain('<option value="4">100 more monitors, $96 a year</option>');
+    await c.browser("/billing/checkout", { form: { plan: "hosted", monitor_packs: "9", fast_packs: "2" } });
+    expect([...stripe.sessions.values()].at(-1)!.input.items).toEqual([
+      { price: PRICE_HOSTED, quantity: 1 },
+      { price: PRICE_MONITOR_PACK, quantity: 4 },
+    ]);
+    await c.browser("/billing/checkout", { form: { plan: "hosted_fast", monitor_packs: "1", fast_packs: "2" } });
+    const session = [...stripe.sessions.values()].at(-1)!;
+    expect(session.input.items).toEqual([
+      { price: PRICE_HOSTED, quantity: 1 },
+      { price: PRICE_FAST, quantity: 1 },
+      { price: PRICE_MONITOR_PACK, quantity: 1 },
+      { price: PRICE_FAST_PACK, quantity: 2 },
+    ]);
+    await deliverAll(stripe.completeCheckout(session.id).events);
+    expect(await packs(c.tenantId)).toEqual({ plan: "hosted_fast", monitor_packs: 1, fast_packs: 2 });
+    // The tenant's next call carries the final numbers: it never adds them up itself.
+    expect(await tenantSees(c.slug)).toMatchObject({ plan: "hosted_fast", limits: { monitors: 45, fastMonitors: 15, minIntervalMinutes: 1 } });
+    const billing = await (await c.browser("/billing")).text();
+    expect(billing).toContain("Renews on Nov 2, 2027 for $144 a year.");
+    expect(billing).toContain("Packs: 1 monitor pack, 2 fast monitor packs.");
+  });
+
+  it("adds and removes monitor packs: more is charged now, fewer credited to the renewal, nothing deleted", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    expect(await (await c.browser("/billing")).text()).toContain("Add 25 monitors: $24 a year");
+
+    // One pack: a new line, quantity 1, charged at once and only if paid.
+    expect(done(await post(c, "monitors", 1))).toBe("/billing?done=packs-added");
+    expect(stripe.addedItems).toEqual([{ subscription: sub.id, price: PRICE_MONITOR_PACK, quantity: 1 }]);
+    // The limits follow the webhook, never the post.
+    expect(await packs(c.tenantId)).toMatchObject({ monitor_packs: 0 });
+    await deliverAll([stripe.updated(sub.id)]);
+    expect(await packs(c.tenantId)).toMatchObject({ monitor_packs: 1 });
+    expect(await tenantSees(c.slug)).toMatchObject({ limits: { monitors: 45 } });
+
+    // A second: the same line, quantity 2, charged now.
+    expect(done(await post(c, "monitors", 2))).toBe("/billing?done=packs-added");
+    const line = sub.items.data.find((i) => i.price.id === PRICE_MONITOR_PACK)!;
+    expect(stripe.itemChanges.at(-1)).toEqual({ item: line.id, quantity: 2, proration: "always_invoice" });
+    await deliverAll([stripe.updated(sub.id)]);
+    expect(await tenantSees(c.slug)).toMatchObject({ limits: { monitors: 70 } });
+    // Asked again for the same total: nothing changes.
+    expect(done(await post(c, "monitors", 2))).toBe("/billing?done=packs-unchanged");
+
+    // Fewer: applies at once, the unused part credited to the next invoice.
+    expect(done(await post(c, "monitors", 1))).toBe("/billing?done=packs-removed");
+    expect(stripe.itemChanges.at(-1)).toEqual({ item: line.id, quantity: 1, proration: "create_prorations" });
+    expect(done(await post(c, "monitors", 0))).toBe("/billing?done=packs-removed");
+    expect(stripe.calls.at(-1)?.method).toBe("deleteSubscriptionItem");
+    expect(stripe.credits).toHaveLength(2);
+    await deliverAll([stripe.updated(sub.id)]);
+    expect(await packs(c.tenantId)).toMatchObject({ monitor_packs: 0 });
+    expect(await tenantSees(c.slug)).toMatchObject({ limits: { monitors: 20 } });
+    const audit = await env.PLATFORM_DB.prepare("SELECT detail FROM audit_events WHERE tenant_id = ? AND action = 'billing.changed' ORDER BY id")
+      .bind(c.tenantId)
+      .all<{ detail: string }>();
+    expect(audit.results.map((r) => JSON.parse(r.detail).to)).toEqual([
+      "active/hosted",
+      "active/hosted (+1 monitor packs)",
+      "active/hosted (+2 monitor packs)",
+      "active/hosted",
+    ]);
+  });
+
+  it("refuses what isn't sold: past a cap, fast packs without the add-on, nonsense", async () => {
+    const c = await customer();
+    await subscribe(c);
+    expect((await post(c, "monitors", 5)).headers.get("location")).toBe("/billing?done=packs-at-most");
+    expect(done(await post(c, "fast_monitors", 1))).toBe("/billing?done=needs-fast");
+    expect((await post(c, "storage", 1)).status).toBe(400);
+    expect((await c.browser("/billing/packs", { form: { kind: "monitors", quantity: "-1" } })).status).toBe(400);
+    expect(stripe.addedItems).toEqual([]);
+    // A trial has no subscription to add to.
+    const trial = await customer();
+    expect(done(await post(trial, "monitors", 1))).toBe("/billing?done=no-plan");
+  });
+
+  it("adds fast monitor packs to the add-on, and shows the most a plan can have", async () => {
+    const c = await customer();
+    const sub = await subscribe(c, "hosted_fast");
+    for (const n of [1, 2, 3]) {
+      expect(done(await post(c, "fast_monitors", n))).toBe("/billing?done=packs-added");
+      await deliverAll([stripe.updated(sub.id)]);
+    }
+    expect(await tenantSees(c.slug)).toMatchObject({ limits: { monitors: 20, fastMonitors: 20 } });
+    const upgrade = await (await c.browser("/billing/upgrade?need=fast_monitors")).text();
+    expect(upgrade).toContain("You have 3 fast monitor packs, so 20 fast monitors in all.");
+    expect(upgrade).toContain("That's the most a plan can have.");
+    expect(upgrade).not.toContain("Add 5 fast monitors");
+    expect(upgrade).toContain("Remove a fast monitor pack");
+  });
+
+  it("leads the upgrade page with what lifts the limit the tenant named", async () => {
+    const c = await customer();
+    await subscribe(c);
+    const lead = (page: string) => /<div class="offer lead-offer"><h3>([^<]+)<\/h3>/.exec(page)?.[1];
+    expect(lead(await (await c.browser("/billing/upgrade?need=monitors")).text())).toBe("More monitors");
+    expect(lead(await (await c.browser("/billing/upgrade?need=fast_monitors")).text())).toBe("1‑minute checks");
+    expect(lead(await (await c.browser("/billing/upgrade?need=interval")).text())).toBe("1‑minute checks");
+    expect(lead(await (await c.browser("/billing/upgrade?need=bogus")).text())).toBe("1‑minute checks");
+    // On a trial, more monitors means subscribing; faster checks lead with the add-on.
+    const trial = await customer();
+    const page = await (await trial.browser("/billing/upgrade?need=monitors")).text();
+    expect(page.indexOf("Subscribe for $24 a year")).toBeLessThan(page.indexOf("1‑minute checks: $48"));
+  });
+
+  it("waits on a declined card like the add-on does, and allows no second change meanwhile", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    stripe.declineNextUpdate = true;
+    const res = await post(c, "monitors", 1);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("before extra monitors can be added");
+    await deliverAll([stripe.updated(sub.id), stripe.pendingPaymentFailed(sub.id)]);
+    expect(await packs(c.tenantId)).toMatchObject({ monitor_packs: 0 });
+    const mail = outbox.sent.at(-1)!;
+    expect(mail.subject).toBe("Your extra monitors weren't added: the payment didn't go through");
+    const billing = await (await c.browser("/billing")).text();
+    expect(billing).toContain("Extra monitors are waiting on a payment");
+    expect(billing).not.toContain("Add 25 monitors");
+    // A second change waits for the first.
+    expect(done(await post(c, "monitors", 2))).toBe("/billing?done=change-pending");
+    expect(done(await c.browser("/billing/add-fast", { form: {} }))).toBe("/billing?done=change-pending");
+    // Paid: Stripe applies it, and the limits follow.
+    await deliverAll(stripe.payPending(sub.id));
+    expect(await packs(c.tenantId)).toMatchObject({ monitor_packs: 1 });
+    expect(await tenantSees(c.slug)).toMatchObject({ limits: { monitors: 45 } });
+    expect(await (await c.browser("/billing")).text()).not.toContain("waiting on a payment");
+  });
+
+  it("ends on what Stripe has now, whatever order the quantity changes' events arrive in", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    await post(c, "monitors", 1);
+    const first = stripe.updated(sub.id);
+    await post(c, "monitors", 3);
+    const second = stripe.updated(sub.id);
+    // The later change's event first, then the earlier one's stale copy.
+    await deliverAll([second, first]);
+    expect(await packs(c.tenantId)).toMatchObject({ monitor_packs: 3 });
+    // And a removal whose event comes before the add's.
+    await post(c, "monitors", 2);
+    const removal = stripe.updated(sub.id);
+    await deliverAll([removal, first]);
+    expect(await packs(c.tenantId)).toMatchObject({ monitor_packs: 2 });
+    expect(await tenantSees(c.slug)).toMatchObject({ limits: { monitors: 70 } });
+  });
+
+  it("takes turns with the webhook and other changes through the account's billing lock", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    // A delivery holds the account (it stalls fetching the subscription).
+    let release!: () => void;
+    let reached!: () => void;
+    const atFetch = new Promise<void>((r) => (reached = r));
+    stripe.onRetrieve = () => {
+      stripe.onRetrieve = null;
+      reached();
+      return new Promise<void>((r) => (release = r));
+    };
+    const delivery = deliver(stripe.updated(sub.id));
+    await atFetch;
+    // A pack change meanwhile is told to try again, and changes nothing at Stripe.
+    const busy = await post(c, "monitors", 1);
+    expect(busy.status).toBe(409);
+    expect(await busy.text()).toContain("Your billing is being updated right now.");
+    expect(stripe.addedItems).toEqual([]);
+    release();
+    expect((await delivery).status).toBe(200);
+    expect(done(await post(c, "monitors", 1))).toBe("/billing?done=packs-added");
+  });
+
+  it("holds a subscription changed in Stripe's dashboard to the caps, and tells the owner", async () => {
+    const c = await customer();
+    const sub = await subscribe(c, "hosted_fast");
+    await post(c, "monitors", 1);
+    await post(c, "fast_monitors", 1);
+    // Someone sets the quantities past the caps in the dashboard...
+    for (const item of stripe.subscriptions.get(sub.id)!.items.data) {
+      if (item.price.id === PRICE_MONITOR_PACK) item.quantity = 7;
+      if (item.price.id === PRICE_FAST_PACK) item.quantity = 4;
+    }
+    await deliverAll([stripe.updated(sub.id)]);
+    expect(await packs(c.tenantId)).toEqual({ plan: "hosted_fast", monitor_packs: 4, fast_packs: 3 });
+    expect(await tenantSees(c.slug)).toMatchObject({ limits: { monitors: 120, fastMonitors: 20 } });
+    // ...then takes the add-on off, leaving a fast pack: it counts for nothing, nothing is deleted.
+    const s = stripe.subscriptions.get(sub.id)!;
+    s.items.data = s.items.data.filter((i) => i.price.id !== PRICE_FAST);
+    await deliverAll([stripe.updated(sub.id)]);
+    expect(await packs(c.tenantId)).toEqual({ plan: "hosted", monitor_packs: 4, fast_packs: 0 });
+    expect(await tenantSees(c.slug)).toMatchObject({ plan: "hosted", limits: { monitors: 120, fastMonitors: 0, minIntervalMinutes: 12 } });
+    expect(await attention(c.accountId)).toEqual([
+      "monitor_packs_over_cap:7 fast_packs_over_cap:4",
+      "monitor_packs_over_cap:7 fast_packs_without_add_on:4",
+    ]);
+  });
+
+  it("shows the plan, its packs and what the tenant uses, over a limit after a downgrade too", async () => {
+    const c = await customer();
+    const sub = await subscribe(c, "hosted_fast");
+    await post(c, "monitors", 1);
+    await deliverAll([stripe.updated(sub.id)]);
+    await env.PLATFORM_DB.prepare(
+      "INSERT INTO tenant_usage (tenant_id, monitors, fast_monitors, status_pages, channels, counted_at, reported_at) VALUES (?, 31, 7, 1, 2, ?, ?)",
+    )
+      .bind(c.tenantId, clock.now, clock.now)
+      .run();
+    const billing = await (await c.browser("/billing")).text();
+    expect(billing).toContain("Hosted with 1‑minute checks: 45 monitors, 2 status pages, every alert channel; 5 of the monitors checked as often as every minute");
+    expect(billing).toMatch(/<strong>Monitors<\/strong><\/span><span class="value">31 of 45<\/span>/);
+    expect(billing).toMatch(/<strong>Fast monitors<\/strong>.*?<span class="value">7 of 5 <span class="over">over<\/span><\/span>/);
+    expect(billing).toContain("Nothing in your OpenPing is ever deleted");
+    // The account page shows the same.
+    expect(await (await c.browser("/account")).text()).toContain("31 of 45");
+  });
+
+  it("adds a support grant on top of the plan and its packs, so a grant never takes a paid pack away", async () => {
+    const c = await customer();
+    const sub = await subscribe(c, "hosted_fast");
+    await post(c, "monitors", 2);
+    await deliverAll([stripe.updated(sub.id)]);
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET limit_overrides = ? WHERE id = ?")
+      .bind(JSON.stringify({ monitors: 10, fastMonitors: 3, emailsPerDay: 100 }), c.tenantId)
+      .run();
+    clearTenantCache();
+    expect(await tenantSees(c.slug)).toMatchObject({ limits: { monitors: 80, fastMonitors: 8, emailsPerDay: 600, minIntervalMinutes: 1 } });
+    expect(await (await c.browser("/billing")).text()).toMatch(/<strong>Monitors<\/strong><\/span><span class="value">Up to 80<\/span>/);
+    // A grant of fast checks on the plain plan gives both the interval and the fast monitors.
+    const plain = await customer();
+    await subscribe(plain);
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET limit_overrides = ? WHERE id = ?")
+      .bind(JSON.stringify({ minIntervalMinutes: 1, fastMonitors: 2 }), plain.tenantId)
+      .run();
+    clearTenantCache();
+    expect(await tenantSees(plain.slug)).toMatchObject({ plan: "hosted", limits: { monitors: 20, minIntervalMinutes: 1, fastMonitors: 2 } });
+  });
+
+  it("turns overrides written before grants (whole numbers) into the grants that keep the same limits", async () => {
+    const legacy = async (plan: string, overrides: Record<string, unknown>) => {
+      const c = await customer();
+      await env.PLATFORM_DB.prepare("UPDATE tenants SET plan = ?, status = 'active', limit_overrides = ? WHERE id = ?")
+        .bind(plan, JSON.stringify(overrides), c.tenantId)
+        .run();
+      return c;
+    };
+    const a = await legacy("hosted", { monitors: 50, statusPages: 1, emailsPerDay: 2000 });
+    const b = await legacy("hosted", { minIntervalMinutes: 1 });
+    const t = await legacy("trial", { monitors: 3, channelKinds: "all" });
+    const f = await legacy("hosted_fast", { monitors: 30, minIntervalMinutes: 1 });
+    // The conversion migration 0013 runs once on existing rows.
+    const migration = env.TEST_MIGRATIONS.find((m) => m.name.startsWith("0013_"))!;
+    const updates = migration.queries.filter((q: string) => /UPDATE tenants/i.test(q));
+    expect(updates.length).toBeGreaterThan(0);
+    for (const q of updates) await env.PLATFORM_DB.prepare(q).run();
+    const grant = async (id: string) =>
+      JSON.parse((await env.PLATFORM_DB.prepare("SELECT limit_overrides FROM tenants WHERE id = ?").bind(id).first<{ limit_overrides: string }>())!.limit_overrides);
+    // Counts become what they add; a grant never takes away (statusPages 1 on a 2-page plan adds nothing).
+    expect(await grant(a.tenantId)).toEqual({ monitors: 30, statusPages: 0, emailsPerDay: 1500 });
+    // A shorter interval used to let every monitor be fast: it now says so with fastMonitors.
+    expect(await grant(b.tenantId)).toEqual({ minIntervalMinutes: 1, fastMonitors: 20 });
+    expect(await grant(t.tenantId)).toEqual({ monitors: 0, channelKinds: "all" });
+    expect(await grant(f.tenantId)).toEqual({ monitors: 10, minIntervalMinutes: 1, fastMonitors: 25 });
+    clearTenantCache();
+    expect(await tenantSees(a.slug)).toMatchObject({ limits: { monitors: 50, statusPages: 2, emailsPerDay: 2000 } });
+    expect(await tenantSees(b.slug)).toMatchObject({ limits: { monitors: 20, minIntervalMinutes: 1, fastMonitors: 20 } });
+    expect(await tenantSees(f.slug)).toMatchObject({ limits: { monitors: 30, fastMonitors: 30 } });
+  });
+
+  it("charges and shows what Stripe really bills, and always lets a pack be lowered", async () => {
+    const c = await customer();
+    const sub = await subscribe(c, "hosted_fast");
+    await post(c, "fast_monitors", 2);
+    await deliverAll([stripe.updated(sub.id)]);
+    // The add-on comes off in Stripe's dashboard, leaving 2 fast packs billed that now count for nothing.
+    const s = stripe.subscriptions.get(sub.id)!;
+    s.items.data = s.items.data.filter((i) => i.price.id !== PRICE_FAST);
+    await deliverAll([stripe.updated(sub.id)]);
+    expect(await packs(c.tenantId)).toEqual({ plan: "hosted", monitor_packs: 0, fast_packs: 0 });
+    const billing = await (await c.browser("/billing")).text();
+    // The renewal is what Stripe charges: the plan and both fast packs.
+    expect(billing).toContain("Renews on Nov 2, 2027 for $96 a year.");
+    expect(billing).toContain("2 fast monitor packs are billed but count only with 1\u2011minute checks");
+    expect(billing).toContain("Remove a fast monitor pack");
+    // Lowering is always allowed; raising them still needs the add-on.
+    expect(done(await post(c, "fast_monitors", 3))).toBe("/billing?done=needs-fast");
+    expect(done(await post(c, "fast_monitors", 1))).toBe("/billing?done=packs-removed");
+    expect(done(await post(c, "fast_monitors", 0))).toBe("/billing?done=packs-removed");
+    await deliverAll([stripe.updated(sub.id)]);
+    const after = await (await c.browser("/billing")).text();
+    expect(after).toContain("for $24 a year");
+    expect(after).not.toContain("are billed but count only");
+  });
+
+  it("shows a removed pack's credit next to the renewal, until the renewal uses it", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    await post(c, "monitors", 2);
+    await deliverAll([stripe.updated(sub.id)]);
+    // Half a year before the renewal, one of the two packs comes off.
+    for (const item of stripe.subscriptions.get(sub.id)!.items.data) item.current_period_end = Math.floor(clock.now / 1000) + Math.round(182.5 * 86_400);
+    expect(done(await post(c, "monitors", 1))).toBe("/billing?done=packs-removed");
+    await deliverAll([stripe.updated(sub.id)]);
+    const billing = await (await c.browser("/billing")).text();
+    expect(billing).toContain("Renews on May 4, 2027 for $48 a year, less a credit of about $12.00 for removed packs.");
+    // Cancelled before it renews: the page says plainly the credit isn't paid out.
+    await deliverAll([stripe.update(sub.id, { cancel_at_period_end: true })]);
+    const ending = await (await c.browser("/billing")).text();
+    expect(ending).toContain("Ends on May 4, 2027; it won&#39;t renew.");
+    expect(ending).toContain("The credit of about $12.00 for removed packs isn&#39;t paid out when a plan ends without renewing.");
+    // Renewed instead: the renewal invoice used the credit, and it's gone from the page.
+    await deliverAll([stripe.update(sub.id, { cancel_at_period_end: false })]);
+    await deliverAll(stripe.pay(sub.id));
+    expect(await (await c.browser("/billing")).text()).not.toContain("less a credit");
+  });
+
+  it("ends a trial after its 30 days, not before", async () => {
+    const day29 = await customer({ trialEndsAt: clock.now + DAY });
+    const ended = await customer({ trialEndsAt: clock.now - 1 });
+    const swept = (await endTrials(env.PLATFORM_DB, clock.now)).map((t) => t.tenantId);
+    expect(swept).toContain(ended.tenantId);
+    expect(swept).not.toContain(day29.tenantId);
   });
 });

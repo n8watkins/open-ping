@@ -146,7 +146,7 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
   const heartbeat = heartbeatStatement(db, "cron", now)
     .run()
     .catch((error) => log.error("cron.heartbeat_failed", { error }));
-  // Trials past their 14 days stop first (billing, B5), so the scheduler doesn't enqueue them.
+  // Trials past their 30 days (TRIAL_DAYS) stop first (billing, B5), so the scheduler doesn't enqueue them.
   await endTrials(db, now)
     .then((ended) => {
       if (ended.length) log.info("billing.trials_ended", { tenants: ended.map((t) => t.tenantId) });

@@ -35,6 +35,7 @@ const TENANT: TenantRecord = {
   provisionState: "ready",
   version: "0.8.3",
   limitOverrides: null,
+  packs: { monitors: 0, fast_monitors: 0 },
   trialEndsAt: null,
 };
 

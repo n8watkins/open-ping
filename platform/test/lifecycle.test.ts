@@ -11,7 +11,7 @@ import { ensureMasterKey, generateMasterKey } from "../src/keys";
 import { D1BillingView, type BillingView } from "../src/lifecycle/billing-view";
 import { EXPORT_MAX_ATTEMPTS, accountExports, advanceExport, exportInstructions, requestExport } from "../src/lifecycle/exports";
 import { DELETE_AFTER_MS, EXPORT_RETRY_AFTER_MS, NOTICE_CLAIM_STALE_MS, WARNING_BEFORE_MS, deletionTime, lifecycleTick, type LifecycleDeps } from "../src/lifecycle/jobs";
-import type { ProvisioningDeps } from "../src/provisioning";
+import { TRIAL_DAYS, type ProvisioningDeps } from "../src/provisioning";
 import { FakeCloudflareApi } from "./fake-cloudflare";
 import { FakeDispatcher } from "./fake-dispatcher";
 import { FakeMailer } from "./fake-mailer";
@@ -116,7 +116,7 @@ async function tenant(w: World, fields: { status?: string; trialEndsAt?: number 
       `t-${id}`,
       db.id,
       fields.status ?? "trial",
-      fields.trialEndsAt === undefined ? w.clock.now + 14 * DAY : fields.trialEndsAt,
+      fields.trialEndsAt === undefined ? w.clock.now + TRIAL_DAYS * DAY : fields.trialEndsAt,
       fields.suspendedAt ?? null,
       fields.ownerSuspended ? w.clock.now : null,
       fields.provisionedAt ?? w.clock.now - 30 * DAY,
@@ -182,6 +182,25 @@ describe("the account emails", () => {
     await tick(w);
     expect(kinds(w, t.email)).toHaveLength(2);
     expect(kinds(w, paying.email)).toEqual([]);
+  });
+
+  it("sends the trial emails on days 27 and 29 of a 30-day trial, and nothing between", async () => {
+    expect(TRIAL_DAYS).toBe(30);
+    const w = world();
+    const t = await tenant(w); // just signed up: a TRIAL_DAYS trial
+    const start = w.clock.now;
+    const sentBy = async (day: number) => {
+      w.clock.now = start + day * DAY;
+      await tick(w);
+      return kinds(w, t.email).filter((k) => k?.startsWith("trial_ending"));
+    };
+    expect(await sentBy(1)).toEqual([]);
+    expect(await sentBy(26)).toEqual([]);
+    expect(await sentBy(27.01)).toEqual(["trial_ending_3"]);
+    expect(w.mailer.to(t.email).at(-1)!.subject).toBe("Your OpenPing trial ends in 3 days");
+    expect(await sentBy(28.5)).toEqual(["trial_ending_3"]);
+    expect(await sentBy(29.01)).toEqual(["trial_ending_3", "trial_ending_1"]);
+    expect(w.mailer.to(t.email).at(-1)!.subject).toBe("Your OpenPing trial ends tomorrow");
   });
 
   it("sends only the 1-day email when the trial is already that close", async () => {
@@ -682,7 +701,7 @@ describe("deleting an account", () => {
         provisioning: () => ({ ok: false, missing: ["none"] }),
         billing: () =>
           options.stripe
-            ? { ok: true, stripe: options.stripe as never, config: { webhookSecret: "whsec_x", priceHosted: "price_h", priceFast: "price_f", automaticTax: false, portalConfiguration: null, live: false } }
+            ? { ok: true, stripe: options.stripe as never, config: { webhookSecret: "whsec_x", priceHosted: "price_h", priceFast: "price_f", priceMonitorPack: "price_m", priceFastPack: "price_p", automaticTax: false, portalConfiguration: null, live: false } }
             : { ok: false, missing: ["STRIPE_SECRET_KEY"] },
         now: () => w.clock.now,
       },

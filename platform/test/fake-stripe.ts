@@ -9,7 +9,7 @@
  */
 
 import { signStripePayload } from "../src/billing/signature";
-import type { CheckoutInput, StripeApi, StripeInvoice, StripeSubscription, SubscriptionStatus } from "../src/billing/stripe";
+import type { CheckoutInput, StripeApi, StripeInvoice, StripeSubscription, StripeSubscriptionItem, SubscriptionStatus } from "../src/billing/stripe";
 import { StripeApiError } from "../src/billing/stripe";
 
 export interface FakeEvent {
@@ -29,6 +29,8 @@ type Method =
   | "createPortalSession"
   | "retrieveSubscription"
   | "addSubscriptionItem"
+  | "updateSubscriptionItem"
+  | "deleteSubscriptionItem"
   | "expireCheckoutSession"
   | "cancelSubscription"
   | "listInvoicePayments"
@@ -185,14 +187,16 @@ export class FakeStripe implements StripeApi {
     return inv;
   }
 
-  private readonly pendingItems = new Map<string, { id: string; price: { id: string }; current_period_end: number }>();
+  /** The change each pending update makes once its invoice is paid, by subscription. */
+  private readonly pendingChanges = new Map<string, (sub: StripeSubscription) => void>();
 
   /** The customer pays the pending update's invoice: Stripe applies the change. */
   payPending(subId: string): FakeEvent[] {
     const sub = this.subscriptions.get(subId)!;
     const inv = this.invoices.get(sub.latest_invoice as string)!;
     Object.assign(inv, { status: "paid", payment_intent: this.id("pi") });
-    sub.items.data.push(this.pendingItems.get(subId)!);
+    this.pendingChanges.get(subId)!(sub);
+    this.pendingChanges.delete(subId);
     sub.pending_update = null;
     return [this.event("customer.subscription.pending_update_applied", structuredClone(sub) as unknown as Record<string, unknown>), this.event("invoice.paid", this.invoiceObject(inv, sub))];
   }
@@ -203,6 +207,7 @@ export class FakeStripe implements StripeApi {
     const inv = this.invoices.get(sub.latest_invoice as string)!;
     inv.status = "void";
     sub.pending_update = null;
+    this.pendingChanges.delete(subId);
     return this.event("customer.subscription.pending_update_expired", structuredClone(sub) as unknown as Record<string, unknown>);
   }
 
@@ -228,29 +233,96 @@ export class FakeStripe implements StripeApi {
   }
 
   /** Items added with addSubscriptionItem, by subscription; events the test delivers itself. */
-  readonly addedItems: { subscription: string; price: string }[] = [];
+  readonly addedItems: { subscription: string; price: string; quantity: number }[] = [];
+  /** Quantity changes and removals, with how each was prorated (Stripe's proration_behavior). */
+  readonly itemChanges: { item: string; quantity: number; proration: "always_invoice" | "create_prorations" }[] = [];
+  /** Credits for unused time, left for the next invoice (create_prorations). */
+  readonly credits: { subscription: string; item: string }[] = [];
 
-  async addSubscriptionItem(input: { subscription: string; price: string }, idempotencyKey: string) {
+  /**
+   * An increase, charged now with pending_if_incomplete: paid at once, or,
+   * after declineNextUpdate, waiting 23 hours on an open invoice.
+   */
+  private chargeNow(sub: StripeSubscription, pending: { id?: string; price: string; quantity: number }, apply: (sub: StripeSubscription) => void) {
+    if (this.declineNextUpdate) {
+      this.declineNextUpdate = false;
+      this.clock += 60;
+      this.newInvoice(sub, "open", "subscription_update");
+      sub.pending_update = { expires_at: this.clock + 23 * 3600, subscription_items: [pending] };
+      this.pendingChanges.set(sub.id, apply);
+      return;
+    }
+    apply(sub);
+    this.newInvoice(sub, "paid", "subscription_update");
+  }
+
+  private itemOwner(itemId: string): { sub: StripeSubscription; item: StripeSubscriptionItem } {
+    for (const sub of this.subscriptions.values()) {
+      const item = sub.items.data.find((i) => i.id === itemId);
+      if (item) return { sub, item };
+    }
+    throw new StripeApiError(404, "invalid_request_error", "resource_missing", `No such subscription item: '${itemId}'`);
+  }
+
+  private refusePending(sub: StripeSubscription) {
+    if (sub.pending_update) throw new StripeApiError(400, "invalid_request_error", null, "This subscription has a pending update");
+  }
+
+  async addSubscriptionItem(input: { subscription: string; price: string; quantity?: number }, idempotencyKey: string) {
     this.enter("addSubscriptionItem", idempotencyKey);
     return this.once(`item:${idempotencyKey}`, () => {
       const sub = this.subscriptions.get(input.subscription);
       if (!sub) throw new StripeApiError(404, "invalid_request_error", "resource_missing", "No such subscription");
-      this.addedItems.push(input);
-      const end = sub.items.data[0]!.current_period_end;
-      const item = { id: this.id("si"), price: { id: input.price }, current_period_end: end };
-      if (this.declineNextUpdate) {
-        // The proration invoice's payment fails: the change waits, for 23 hours, on an open invoice.
-        this.declineNextUpdate = false;
-        this.clock += 60;
-        this.newInvoice(sub, "open", "subscription_update");
-        sub.pending_update = { expires_at: this.clock + 23 * 3600, subscription_items: [{ price: input.price }] };
-        this.pendingItems.set(sub.id, item);
-        return { id: item.id };
+      this.refusePending(sub);
+      if (sub.items.data.some((i) => i.price.id === input.price)) {
+        throw new StripeApiError(400, "invalid_request_error", null, "Cannot add multiple subscription items with the same plan");
       }
-      sub.items.data.push(item);
-      this.newInvoice(sub, "paid", "subscription_update");
+      const quantity = input.quantity ?? 1;
+      this.addedItems.push({ subscription: input.subscription, price: input.price, quantity });
+      const end = sub.items.data[0]!.current_period_end;
+      const item = { id: this.id("si"), price: { id: input.price }, quantity, current_period_end: end };
+      this.clock += 1;
+      this.chargeNow(sub, { price: input.price, quantity }, (s) => s.items.data.push(item));
       return { id: item.id };
     });
+  }
+
+  async updateSubscriptionItem(input: { item: string; quantity: number; increase: boolean }, idempotencyKey: string) {
+    this.enter("updateSubscriptionItem", idempotencyKey);
+    return this.once(`update:${idempotencyKey}`, () => {
+      const { sub, item } = this.itemOwner(input.item);
+      this.refusePending(sub);
+      this.itemChanges.push({ item: item.id, quantity: input.quantity, proration: input.increase ? "always_invoice" : "create_prorations" });
+      this.clock += 1;
+      const set = (s: StripeSubscription) => {
+        const target = s.items.data.find((i) => i.id === item.id)!;
+        target.quantity = input.quantity;
+      };
+      if (input.increase) this.chargeNow(sub, { id: item.id, price: item.price.id, quantity: input.quantity }, set);
+      else {
+        set(sub);
+        this.credits.push({ subscription: sub.id, item: item.id });
+      }
+      return { id: item.id };
+    });
+  }
+
+  async deleteSubscriptionItem(itemId: string, idempotencyKey: string) {
+    this.enter("deleteSubscriptionItem", idempotencyKey);
+    return this.once(`delete:${idempotencyKey}`, () => {
+      const { sub, item } = this.itemOwner(itemId);
+      this.refusePending(sub);
+      this.itemChanges.push({ item: item.id, quantity: 0, proration: "create_prorations" });
+      this.clock += 1;
+      sub.items.data = sub.items.data.filter((i) => i.id !== itemId);
+      this.credits.push({ subscription: sub.id, item: item.id });
+      return { id: itemId, deleted: true };
+    });
+  }
+
+  /** The event Stripe sends for the subscription as it is now (after an item change). */
+  updated(subId: string): FakeEvent {
+    return this.event("customer.subscription.updated", structuredClone(this.subscriptions.get(subId)!) as unknown as Record<string, unknown>);
   }
 
   // --- What Stripe does on its own -------------------------------------------
@@ -273,7 +345,9 @@ export class FakeStripe implements StripeApi {
       canceled_at: null,
       ended_at: null,
       metadata: { ...session.input.metadata },
-      items: { data: session.input.prices.map((price) => ({ id: this.id("si"), price: { id: price }, current_period_end: this.clock + year })) },
+      items: {
+        data: session.input.items.map(({ price, quantity }) => ({ id: this.id("si"), price: { id: price }, quantity, current_period_end: this.clock + year })),
+      },
     };
     this.subscriptions.set(sub.id, sub);
     const first = this.newInvoice(sub, "paid", "subscription_create");

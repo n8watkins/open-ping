@@ -749,6 +749,8 @@ interface TenantRow {
   provision_state: string;
   version: string | null;
   limit_overrides: string | null;
+  monitor_packs: number | null;
+  fast_packs: number | null;
   trial_ends_at: number | null;
   d1_id: string | null;
   do_migration_tag: string | null;
@@ -759,7 +761,7 @@ async function loadTenant(db: D1Database, id: string): Promise<{ record: TenantR
   const row = await db
     .prepare(
       `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides,
-              trial_ends_at, d1_id, do_migration_tag, do_migration_pending FROM tenants WHERE id = ?`,
+              monitor_packs, fast_packs, trial_ends_at, d1_id, do_migration_tag, do_migration_pending FROM tenants WHERE id = ?`,
     )
     .bind(id)
     .first<TenantRow>();

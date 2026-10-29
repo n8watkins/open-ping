@@ -29,7 +29,7 @@ Tell us at once at support@n8builds.dev if you think someone else has signed in.
 ## 4. Plans, prices and the free trial
 
 The plans, what each includes, and their prices are as listed on the pricing page and on your account's billing page when you buy.
-Today there is one plan, OpenPing Hosted, billed yearly, and an optional fast checks add-on, also billed yearly, which checks some or all of your monitors more often.
+Today there is one plan, OpenPing Hosted, billed yearly, with an optional fast checks add-on, which checks some of your monitors more often, and optional packs of more monitors, each also billed yearly.
 The free trial lasts as long as the pricing page says, needs no card, and has smaller limits than the paid plan.
 When the trial ends without a paid plan, your checks stop, and section 8 explains what happens to your data.
 Prices are shown without sales tax or VAT; where the law requires it, tax is added at checkout and shown on your invoice.
@@ -43,7 +43,9 @@ We never see or store your full card number.
 Plans are billed once a year, in advance.
 Your plan renews automatically each year, at the price then listed, until you cancel.
 We email you a reminder before each yearly renewal, with the date and the amount.
-If you add the fast checks add-on part way through a year, you pay for the rest of that year at once, and the add-on starts once that payment goes through.
+If you add the fast checks add-on or a pack part way through a year, you pay for the rest of that year at once, and it starts once that payment goes through.
+If you remove a pack part way through a year, it stops at once, and the unused part of that year is taken off your next renewal instead of being refunded.
+That credit is used only by a renewal: if your plan ends without renewing, it is not paid out.
 
 ## 6. Cancelling
 
