@@ -303,6 +303,7 @@ export default function Monitors() {
                   <option value="scheduled_off">Scheduled off</option>
                   <option value="maintenance">Maintenance</option>
                   <option value="paused">Paused</option>
+                  <option value="cant_check">Can't check</option>
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-2.5 size-3.5 text-ink-faint" />
               </label>

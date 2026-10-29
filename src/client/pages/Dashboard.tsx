@@ -90,6 +90,10 @@ function verdict(counts: OverviewResponse["counts"] | undefined) {
     };
   if ((counts?.openIncidents ?? 0) > 0)
     return { tone: "degraded" as const, icon: CircleAlert, title: "Recovering from an incident" };
+  // Only certificates that can't be read from a Worker (and nothing else being
+  // checked): don't claim everything was found working.
+  if ((counts?.up ?? 0) === 0 && (counts?.cant_check ?? 0) > 0)
+    return { tone: "up" as const, icon: CheckCircle2, title: "Nothing wrong found" };
   return { tone: "up" as const, icon: CheckCircle2, title: "All systems operational" };
 }
 
@@ -274,6 +278,7 @@ function HeroStatus({
     { n: down, label: "down", dot: "bg-down", text: "text-down" },
     { n: counts?.scheduled_off ?? 0, label: "off-hours", dot: "bg-scheduled", text: "text-ink" },
     { n: counts?.paused ?? 0, label: "paused", dot: "bg-paused", text: "text-ink" },
+    { n: counts?.cant_check ?? 0, label: "can't check", dot: "bg-paused", text: "text-ink" },
     { n: counts?.maintenance ?? 0, label: "in maintenance", dot: "bg-maint", text: "text-maint" },
     {
       n: counts?.openIncidents ?? 0,

@@ -317,6 +317,7 @@ The date it read is cached on the monitor, so most checks are judged from that r
 
 - **Down** - the domain has already expired (`daysUntil <= 0`), or there is no usable expiry date at all: the lookup failed or returned no parseable expiration event, and there is no read from the last 7 days to fall back on.
 - **Degraded** - expiry is within `warnDays` (your early warning).
+  On a public status page that shows on the domain's own row only, not in the page banner ([STATUS_PAGES.md](./STATUS_PAGES.md#expiry-warnings)).
 - **Up** - expiry is further out than `warnDays`.
 
 Each result carries the `expiresAt` timestamp and `daysUntil` count for display, plus `checkedAt` (when the date was read from RDAP) and `source` (`rdap` when it was read on this check, `cache` when an earlier read was used).
@@ -414,6 +415,7 @@ Such a monitor shows **Can't check** with the reason in plain words on its page.
 It is neutral: never down, no incident, no alert, and no uptime or downtime counted.
 If the monitor had an open incident (an expired certificate, then the site moved behind Cloudflare), the incident is closed without a "recovered" alert.
 On the public status page it shows as unknown.
+Inside the warning window, the public status page shows the monitor as degraded on its own row but keeps the page banner as it would be without it, since the site still works ([STATUS_PAGES.md](./STATUS_PAGES.md#expiry-warnings)); domain monitors behave the same way.
 
 ### How often the certificate is read
 

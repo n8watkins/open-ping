@@ -13,6 +13,7 @@ export const BUCKET_FILL: Record<BucketState, string> = {
   scheduled_off: "bg-scheduled/30",
   maintenance: "bg-maint",
   paused: "bg-paused/50",
+  cant_check: "bg-paused/30",
   nodata: "bg-line",
 };
 
@@ -24,6 +25,7 @@ export const BUCKET_TEXT: Record<BucketState, string> = {
   scheduled_off: "text-scheduled",
   maintenance: "text-maint",
   paused: "text-paused",
+  cant_check: "text-paused",
   nodata: "text-ink-faint",
 };
 
@@ -35,5 +37,6 @@ export const BUCKET_LABEL: Record<BucketState, string> = {
   scheduled_off: "Off-hours",
   maintenance: "Maintenance",
   paused: "Paused",
+  cant_check: "Can't check",
   nodata: "No data",
 };

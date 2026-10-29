@@ -70,6 +70,7 @@ export type BucketState =
   | "scheduled_off"
   | "maintenance"
   | "paused"
+  | "cant_check"
   | "nodata";
 
 /** One bucket of a monitor's (or the whole install's) history. */

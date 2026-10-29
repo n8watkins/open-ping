@@ -269,6 +269,7 @@ function makeMonitor(
     name?: string;
     categoryId?: string | null;
     public?: Partial<PublicConfig>;
+    type?: MonitorRecord["type"];
   } = {},
 ): MonitorRecord {
   const pub: PublicConfig = {
@@ -281,7 +282,7 @@ function makeMonitor(
   };
   return {
     id,
-    type: "http",
+    type: opts.type ?? "http",
     name: opts.name ?? id,
     enabled: true,
     paused: false,
@@ -630,6 +631,50 @@ describe("GET /status off-hours (scheduled_off)", () => {
     expect(scout.since).toBeNull();
     // Some off, the rest up: off-hours never count as an outage.
     expect(body.overall).toBe("operational");
+  });
+
+  it("shows an expiry warning on its row without turning the page Degraded", async () => {
+    vi.mocked(listMonitors).mockResolvedValue([
+      makeMonitor("mon-site", { name: "Site" }),
+      makeMonitor("mon-cert", { name: "Certificate", type: "cert" }),
+      makeMonitor("mon-domain", { name: "Domain", type: "domain" }),
+    ]);
+    const env = makeDb({
+      states: [
+        { monitor_id: "mon-site", state: "up" },
+        { monitor_id: "mon-cert", state: "degraded" },
+        { monitor_id: "mon-domain", state: "degraded" },
+      ],
+    });
+    const body = (await (await publicStatus.request("/status", {}, env)).json()) as any;
+    const services = body.groups.flatMap((g: any) => g.services);
+    expect(services.map((s: any) => [s.name, s.state])).toEqual([
+      ["Certificate", "degraded"],
+      ["Domain", "degraded"],
+      ["Site", "operational"],
+    ]);
+    expect(body.overall).toBe("operational");
+  });
+
+  it("still lets an expired certificate, and a slow HTTP monitor, set the banner", async () => {
+    vi.mocked(listMonitors).mockResolvedValue([
+      makeMonitor("mon-site", { name: "Site" }),
+      makeMonitor("mon-cert", { name: "Certificate", type: "cert" }),
+    ]);
+    const slow = makeDb({
+      states: [
+        { monitor_id: "mon-site", state: "degraded" },
+        { monitor_id: "mon-cert", state: "up" },
+      ],
+    });
+    expect(((await (await publicStatus.request("/status", {}, slow)).json()) as any).overall).toBe("degraded");
+    const expired = makeDb({
+      states: [
+        { monitor_id: "mon-site", state: "up" },
+        { monitor_id: "mon-cert", state: "down" },
+      ],
+    });
+    expect(((await (await publicStatus.request("/status", {}, expired)).json()) as any).overall).toBe("partial_outage");
   });
 
   it("falls back to the last check time when state_since is missing", async () => {

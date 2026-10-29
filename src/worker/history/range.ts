@@ -80,6 +80,8 @@ export interface StateSeconds {
   off: number;
   maintenance: number;
   paused: number;
+  /** A certificate monitor that can't be read from a Worker (checks/cert.ts). */
+  cantCheck: number;
 }
 
 const emptySeconds = (): StateSeconds => ({
@@ -90,6 +92,7 @@ const emptySeconds = (): StateSeconds => ({
   off: 0,
   maintenance: 0,
   paused: 0,
+  cantCheck: 0,
 });
 
 const STATE_KEY: Record<string, keyof StateSeconds | undefined> = {
@@ -100,6 +103,7 @@ const STATE_KEY: Record<string, keyof StateSeconds | undefined> = {
   scheduled_off: "off",
   maintenance: "maintenance",
   paused: "paused",
+  cant_check: "cantCheck",
 };
 
 /**
@@ -155,6 +159,8 @@ export function classifyBucket(
   if (s.off > 0) return "scheduled_off";
   if (s.paused > 0) return "paused";
   if (s.up > 0) return "up";
+  // Counted in no rollup, so it has no checks: only the interval says so.
+  if (s.cantCheck > 0) return "cant_check";
   return "nodata";
 }
 
@@ -210,6 +216,7 @@ const SEVERITY: BucketState[] = [
   "up",
   "scheduled_off",
   "paused",
+  "cant_check",
   "nodata",
 ];
 

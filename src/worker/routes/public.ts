@@ -10,7 +10,7 @@ import {
   type IncludeMode,
   type StatusPageRecord,
 } from "../db/status-pages";
-import type { MonitorState } from "../../shared/states";
+import type { MonitorState, MonitorType } from "../../shared/states";
 import {
   updatesForIncidents,
   type IncidentUpdate,
@@ -201,6 +201,16 @@ function mapPublicState(state: MonitorState): PublicServiceState {
       // unknown / warming_up / paused - nothing meaningful to show publicly.
       return "unknown";
   }
+}
+
+/**
+ * How a service counts toward the page banner. An SSL certificate or domain
+ * inside its expiry warning window is `degraded` on its own row ("renew
+ * soon"), but the service itself works, so it doesn't turn the whole page
+ * "Degraded" for visitors. Expired is down and counts as usual. PURE.
+ */
+export function bannerState(type: MonitorType, state: PublicServiceState): PublicServiceState {
+  return state === "degraded" && (type === "cert" || type === "domain") ? "operational" : state;
 }
 
 /** Format an epoch-ms instant as a UTC YYYY-MM-DD string. */
@@ -619,7 +629,7 @@ publicStatus.get("/status", async (c) => {
       };
 
       const group = pub.group && pub.group.length > 0 ? pub.group : null;
-      return { service, group, sortOrder: pub.sortOrder ?? 0 };
+      return { service, group, sortOrder: pub.sortOrder ?? 0, banner: bannerState(m.type, state) };
     }),
   );
   if (updatedAt === 0) updatedAt = now;
@@ -657,7 +667,7 @@ publicStatus.get("/status", async (c) => {
   // --- Maintenance + overall banner (scoped to this page's monitors) ---
   const maintenance = await loadMaintenance(env, now, pageMonitorIdSet);
   const overall = computeOverall(
-    built.map((b) => b.service),
+    built.map((b) => ({ state: b.banner })),
     maintenance.active.length > 0,
   );
 
@@ -848,7 +858,7 @@ publicStatus.get("/badge.svg", async (c) => {
   );
 
   const services = pageMonitors.map((mon) => ({
-    state: mapPublicState(stateMap.get(mon.id) ?? "unknown"),
+    state: bannerState(mon.type, mapPublicState(stateMap.get(mon.id) ?? "unknown")),
   }));
   const maintenance = await loadMaintenance(env, now, pageMonitorIdSet);
   const overall = computeOverall(services, maintenance.active.length > 0);
