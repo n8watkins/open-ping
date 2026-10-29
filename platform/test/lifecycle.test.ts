@@ -669,3 +669,160 @@ async function signedInFor(w: World, accountId: string, method: "email" | "passk
     return res;
   };
 }
+
+describe("deleting an account", () => {
+  /** The account page's routes for `accountId`, signed in `signedInAgo` ms ago. */
+  async function browser(w: World, accountId: string, options: { signedInAgo?: number; stripe?: FakeStripeLike | null } = {}) {
+    const cookie = (await createSession(env.PLATFORM_DB, accountId, "email", w.clock.now - (options.signedInAgo ?? 0))).split(";")[0]!;
+    const a = createApp({
+      dispatcher: () => new FakeDispatcher(),
+      capability: () => noopPlatform,
+      accounts: {
+        mailer: () => w.mailer,
+        provisioning: () => ({ ok: false, missing: ["none"] }),
+        billing: () =>
+          options.stripe
+            ? { ok: true, stripe: options.stripe as never, config: { webhookSecret: "whsec_x", priceHosted: "price_h", priceFast: "price_f", automaticTax: false, portalConfiguration: null, live: false } }
+            : { ok: false, missing: ["STRIPE_SECRET_KEY"] },
+        now: () => w.clock.now,
+      },
+    });
+    return async (path: string, form?: Record<string, string>) => {
+      const ctx = createExecutionContext();
+      const headers = new Headers({ cookie, ...(form ? { origin: APP } : {}) });
+      const res = await a.fetch(
+        new Request(`${APP}${path}`, { method: form ? "POST" : "GET", headers, body: form ? new URLSearchParams(form) : undefined, redirect: "manual" }),
+        env as unknown as PlatformEnv,
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+      return res;
+    };
+  }
+  interface FakeStripeLike {
+    cancelled: string[];
+    fail: boolean;
+    cancelSubscription(id: string, key: string): Promise<unknown>;
+  }
+  const stripeStub = (): FakeStripeLike => ({
+    cancelled: [],
+    fail: false,
+    async cancelSubscription(id: string) {
+      if (this.fail) throw new Error("stripe down");
+      this.cancelled.push(id);
+      return { id, status: "canceled" };
+    },
+  });
+  const accountRow = (id: string) =>
+    env.PLATFORM_DB.prepare("SELECT email, disabled_at, deletion_requested_at, deleted_at, stripe_customer_id FROM accounts WHERE id = ?")
+      .bind(id)
+      .first<{ email: string; disabled_at: number | null; deletion_requested_at: number | null; deleted_at: number | null; stripe_customer_id: string | null }>();
+
+  it("from the account page: stops the OpenPing now, exports it, deletes it, then scrubs the account, keeping billing records", async () => {
+    const w = world();
+    const t = await tenant(w, { status: "active" });
+    const stripe = stripeStub();
+    await env.PLATFORM_DB.batch([
+      env.PLATFORM_DB.prepare("UPDATE accounts SET stripe_customer_id = 'cus_del' WHERE id = ?").bind(t.accountId),
+      env.PLATFORM_DB.prepare(
+        "INSERT INTO subscriptions (id, account_id, tenant_id, stripe_customer_id, stripe_subscription_id, status, plan, created_at, updated_at) VALUES ('sub_del', ?, ?, 'cus_del', 'sub_stripe_del', 'active', 'hosted', 0, 0)",
+      ).bind(t.accountId, t.id),
+      env.PLATFORM_DB.prepare("INSERT INTO account_identities (id, account_id, kind, subject, created_at) VALUES ('idn_del_gh', ?, 'github', '99001', 0)").bind(t.accountId),
+      env.PLATFORM_DB.prepare("INSERT INTO waitlist_entries (email, imported_at) VALUES (?, 0)").bind(t.email),
+      env.PLATFORM_DB.prepare("INSERT INTO rate_limits (key, window_start, count) VALUES (?, 0, 1), (?, 0, 1), ('signin-email:address:other@example.com:1', 0, 1)").bind(
+        `signin-email:address:${t.email}:1`,
+        `export:account:${t.accountId}:1`,
+      ),
+    ]);
+    const go = await browser(w, t.accountId, { stripe });
+    const page = await (await go("/account/delete")).text();
+    expect(page).toContain("Your OpenPing's checks stop at once");
+    expect(page).toContain("Your plan is cancelled");
+    expect(page).toContain('href="/account/export"');
+    // The typed email must match.
+    expect((await go("/account/delete", { confirm: "someone@else.example" })).status).toBe(400);
+    expect((await accountRow(t.accountId))!.deletion_requested_at).toBeNull();
+
+    const done = await go("/account/delete", { confirm: ` ${t.email.toUpperCase()} ` });
+    expect(done.status).toBe(200);
+    expect(await done.text()).toContain("Your account is being deleted");
+    expect(stripe.cancelled).toEqual(["sub_stripe_del"]);
+    const tenantRow = await env.PLATFORM_DB.prepare("SELECT owner_suspended_at, owner_suspended_reason FROM tenants WHERE id = ?").bind(t.id).first<{ owner_suspended_at: number; owner_suspended_reason: string }>();
+    expect(tenantRow).toEqual({ owner_suspended_at: w.clock.now, owner_suspended_reason: "Being deleted at the account's request" });
+    expect((await accountRow(t.accountId))!.disabled_at).toBe(w.clock.now);
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM platform_sessions WHERE account_id = ?").bind(t.accountId).first("n")).toBe(0);
+    expect(kinds(w, t.email)).toEqual(["account_deletion"]);
+
+    // The lifecycle: an export first, read back, then the teardown, then the account.
+    await tick(w);
+    expect(await exists(t.id)).toBe("ready");
+    await tick(w);
+    expect(await exists(t.id)).toBeNull();
+    const [exp] = await accountExports(env.PLATFORM_DB, t.accountId);
+    expect(exp).toMatchObject({ reason: "deletion", state: "done" });
+    await tick(w);
+    const scrubbed = (await accountRow(t.accountId))!;
+    expect(scrubbed.email).toBe(`deleted-${t.accountId}@deleted.invalid`);
+    expect(scrubbed.deleted_at).toBe(w.clock.now);
+    // Billing records stay; everything that says who it was goes.
+    expect(scrubbed.stripe_customer_id).toBe("cus_del");
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM subscriptions WHERE account_id = ?").bind(t.accountId).first("n")).toBe(1);
+    for (const [sql, bind] of [
+      ["SELECT COUNT(*) AS n FROM account_identities WHERE account_id = ?", t.accountId],
+      ["SELECT COUNT(*) AS n FROM waitlist_entries WHERE email = ?", t.email],
+      ["SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE '%' || ? || '%'", t.email],
+      ["SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE '%' || ? || '%'", t.accountId],
+    ] as const) {
+      expect(await env.PLATFORM_DB.prepare(sql).bind(bind).first("n"), sql).toBe(0);
+    }
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE '%other@example.com%'").first("n")).toBe(1);
+    expect(kinds(w, t.email)).toEqual(["account_deletion", "account_deleted"]);
+    const actions = await env.PLATFORM_DB.prepare("SELECT action FROM audit_events WHERE account_id = ? AND action LIKE 'account.%' ORDER BY id").bind(t.accountId).all<{ action: string }>();
+    expect(actions.results.map((r) => r.action)).toEqual(["account.deletion_requested", "account.deleted"]);
+    // Nothing more happens on later runs, and the address can sign up afresh.
+    await tick(w);
+    expect(kinds(w, t.email)).toHaveLength(2);
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM accounts WHERE email = ?").bind(t.email).first("n")).toBe(0);
+  });
+
+  it("never sends the lapsed-plan emails to an account being deleted", async () => {
+    const w = world();
+    const t = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - DAY, suspendedAt: w.clock.now - DAY });
+    const go = await browser(w, t.accountId);
+    await go("/account/delete", { confirm: t.email });
+    await tick(w);
+    expect(kinds(w, t.email)).toEqual(["account_deletion"]);
+  });
+
+  it("needs a fresh sign-in, and changes nothing when Stripe can't cancel the plan", async () => {
+    const w = world();
+    const t = await tenant(w, { status: "active" });
+    await env.PLATFORM_DB.prepare(
+      "INSERT INTO subscriptions (id, account_id, tenant_id, stripe_customer_id, stripe_subscription_id, status, plan, created_at, updated_at) VALUES ('sub_fail', ?, ?, 'cus_f', 'sub_stripe_fail', 'active', 'hosted', 0, 0)",
+    )
+      .bind(t.accountId, t.id)
+      .run();
+    const stale = await browser(w, t.accountId, { signedInAgo: 16 * 60_000 });
+    expect((await stale("/account/delete")).status).toBe(401);
+    expect((await stale("/account/delete", { confirm: t.email })).status).toBe(401);
+    const stripe = stripeStub();
+    stripe.fail = true;
+    const go = await browser(w, t.accountId, { stripe });
+    expect((await go("/account/delete", { confirm: t.email })).status).toBe(503);
+    // Without Stripe at all, a live plan can't be left running either.
+    expect((await (await browser(w, t.accountId))("/account/delete", { confirm: t.email })).status).toBe(503);
+    expect((await accountRow(t.accountId))!.deletion_requested_at).toBeNull();
+    expect(await env.PLATFORM_DB.prepare("SELECT owner_suspended_at FROM tenants WHERE id = ?").bind(t.id).first("owner_suspended_at")).toBeNull();
+  });
+
+  it("deletes an account with no OpenPing at once on the next run", async () => {
+    const w = world();
+    await env.PLATFORM_DB.prepare("INSERT INTO accounts (id, email, created_at, updated_at) VALUES ('acc_lonely', 'lonely@example.com', 0, 0)").run();
+    const go = await browser(w, "acc_lonely");
+    expect(await (await go("/account/delete")).text()).not.toContain("checks stop");
+    await go("/account/delete", { confirm: "lonely@example.com" });
+    await tick(w);
+    expect((await accountRow("acc_lonely"))!.deleted_at).not.toBeNull();
+    expect(kinds(w, "lonely@example.com")).toEqual(["account_deletion", "account_deleted"]);
+  });
+});

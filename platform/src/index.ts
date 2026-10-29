@@ -131,8 +131,8 @@ async function lifecycle(env: PlatformEnv, ctx: ExecutionContext): Promise<void>
     const report = await lifecycleTick(lifecycleDepsFromEnv(env, (tenant) => capabilityFor(ctx, tenant)));
     if (!report) return; // the run before this one still holds the lock
     const sent = Object.entries(report.sent).map(([k, n]) => `${k}:${n}`);
-    if (sent.length || report.deleted.length || report.exports.length) {
-      log.info("lifecycle.run", { sent, deleted: report.deleted, exports: report.exports.map((e) => `${e.exportId}:${e.kind}`) });
+    if (sent.length || report.deleted.length || report.accountsDeleted.length || report.exports.length) {
+      log.info("lifecycle.run", { sent, deleted: report.deleted, accountsDeleted: report.accountsDeleted, exports: report.exports.map((e) => `${e.exportId}:${e.kind}`) });
     }
   } catch (error) {
     log.error("lifecycle.run_failed", { error });

@@ -13,6 +13,9 @@
  * tenant's own account, so it shows up wherever that tenant's history does.
  */
 
+import { requestAccountDeletion } from "../account-deletion";
+import type { BillingSetup } from "../billing/config";
+import type { Mailer } from "../mail";
 import { Hono, type Context } from "hono";
 
 import { PLATFORM_HEALTH_PATH, type HealthResponse, type PlatformCapability } from "../../../src/shared/hosted-contract";
@@ -58,6 +61,9 @@ export interface AdminDeps {
   provisioning(env: PlatformEnv, ctx: ExecutionContext): ProvisioningSetup;
   /** The release runner (src/releases/); absent, the Releases tab says it is off. */
   releases?(env: PlatformEnv, ctx: ExecutionContext, capability: (tenant: TenantRecord) => PlatformCapability): ReleaseSetup;
+  /** For deleting an account on a support request (src/account-deletion.ts): its email, and Stripe to cancel its plan. */
+  mailer?(env: PlatformEnv): Mailer | null;
+  billing?(env: PlatformEnv): BillingSetup;
   now?: () => number;
 }
 
@@ -102,6 +108,11 @@ const FLASH: Record<string, { message: string; tone: "ok" | "error" }> = {
   "provisioning-resumed": { message: "Provisioning resumed. This page shows its progress when you reload it.", tone: "ok" },
   "not-paused": { message: "Its provisioning isn't paused, so nothing was changed.", tone: "error" },
   "provisioning-off": { message: "Provisioning is off until all its settings are set (the cron logs which), so nothing was changed.", tone: "error" },
+  "deletion-started": { message: "Deleting the account. Its OpenPing is paused now; the export, the teardown and the account itself follow on the next lifecycle runs.", tone: "ok" },
+  "deletion-already": { message: "This account was already being deleted.", tone: "error" },
+  "deletion-billing": { message: "Its plan couldn't be cancelled in Stripe, so nothing was deleted. Try again in a few minutes.", tone: "error" },
+  "email-mismatch": { message: "The email you typed doesn't match the account's, so nothing was deleted.", tone: "error" },
+  "being-deleted": { message: "Its account is being deleted, so it stays paused.", tone: "error" },
   "confirm-mismatch": { message: "The address you typed doesn't match, so nothing was removed.", tone: "error" },
   "reason-needed": { message: "Write a short reason (at least 3 characters) first.", tone: "error" },
   "not-ready": { message: "Support sign-in needs a ready OpenPing that isn't suspended.", tone: "error" },
@@ -249,9 +260,31 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
     }),
   );
 
+  // A support request to delete the customer's account: the same deletion as
+  // their own button (src/account-deletion.ts), with the reason recorded.
+  app.post(
+    "/tenants/:id/delete-account",
+    tenantAction(async (c, tenant, fields) => {
+      const reason = cleanReason(fields.reason);
+      if (reason.length < 3) return pageOf(tenant, "reason-needed");
+      const detail = await tenantDetail(c.env.PLATFORM_DB, tenant.id);
+      if (!detail || text(fields.confirm).trim().toLowerCase() !== detail.email) return pageOf(tenant, "email-mismatch");
+      const setup = deps.billing?.(c.env);
+      const result = await requestAccountDeletion(
+        { db: c.env.PLATFORM_DB, stripe: setup?.ok ? setup.stripe : null, mailer: deps.mailer?.(c.env) ?? null, now: c.get("now") },
+        { accountId: tenant.accountId, by: "owner", actorAccountId: c.get("owner").account.id, reason },
+      );
+      if (result.ok) return pageOf(tenant, "deletion-started");
+      return pageOf(tenant, result.reason === "already" ? "deletion-already" : "deletion-billing");
+    }),
+  );
+
   app.post(
     "/tenants/:id/resume",
     tenantAction(async (c, tenant) => {
+      // The pause of an account being deleted isn't the owner's to lift.
+      const deleting = await c.env.PLATFORM_DB.prepare("SELECT 1 AS x FROM accounts WHERE id = ? AND deletion_requested_at IS NOT NULL").bind(tenant.accountId).first();
+      if (deleting) return pageOf(tenant, "being-deleted");
       const status = await resumeTenant(c.env.PLATFORM_DB, tenant, c.get("now"));
       if (!status) return pageOf(tenant, "not-suspended");
       await ownerAudit(c, tenant, "tenant.resumed", { to: status });

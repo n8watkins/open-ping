@@ -1177,3 +1177,26 @@ describe("the Releases tab", () => {
     expect((await browser.fetch("/admin/releases/rel_000000000000000000000000")).status).toBe(404);
   });
 });
+
+describe("deleting an account for a support request", () => {
+  it("needs the reason and the account's email typed, then starts the same deletion and keeps the pause", async () => {
+    const { browser } = await owner();
+    const t = await addTenant();
+    const page = await (await browser.fetch(`/admin/tenants/${t.id}`)).text();
+    expect(page).toContain(`action="/admin/tenants/${t.id}/delete-account"`);
+    const go = (form: Record<string, string>) => browser.fetch(`/admin/tenants/${t.id}/delete-account`, { form });
+    expect((await go({ reason: "x", confirm: t.email })).headers.get("location")).toContain("done=reason-needed");
+    expect((await go({ reason: "Asked by email", confirm: "wrong@example.com" })).headers.get("location")).toContain("done=email-mismatch");
+    expect((await go({ reason: "Asked by email", confirm: t.email })).headers.get("location")).toContain("done=deletion-started");
+    const account = await env.PLATFORM_DB.prepare("SELECT deletion_requested_at, deletion_requested_by FROM accounts WHERE id = ?").bind(t.accountId).first<{ deletion_requested_at: number; deletion_requested_by: string }>();
+    expect(account!.deletion_requested_by).toBe("owner");
+    const audit = await env.PLATFORM_DB.prepare("SELECT actor, detail FROM audit_events WHERE account_id = ? AND action = 'account.deletion_requested'").bind(t.accountId).first<{ actor: string; detail: string }>();
+    expect(audit!.actor).toBe("owner");
+    expect(JSON.parse(audit!.detail)).toMatchObject({ reason: "Asked by email" });
+    expect(outbox.sent.at(-1)).toMatchObject({ to: t.email, category: "account_deletion" });
+    expect(await (await browser.fetch(`/admin/tenants/${t.id}`)).text()).toContain("Account being deleted");
+    // The pause it put on the OpenPing can't be lifted from here, and a second request says so.
+    expect((await browser.fetch(`/admin/tenants/${t.id}/resume`, { form: {} })).headers.get("location")).toContain("done=being-deleted");
+    expect((await go({ reason: "Asked by email", confirm: t.email })).headers.get("location")).toContain("done=deletion-already");
+  });
+});

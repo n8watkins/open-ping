@@ -448,7 +448,20 @@ function actions(input: TenantPageInput): Html {
 <button class="button danger" type="submit">Remove ${t.slug}</button></form></div>`);
   }
 
-  if (d.ownerSuspension) {
+  if (d.accountDeletionAt !== null) {
+    cards.push(html`<div class="action"><h3>Account being deleted</h3>
+<p>Asked ${secondsText(d.accountDeletionAt)}. Its OpenPing stays paused; the lifecycle jobs export it, delete it, then scrub the account.</p></div>`);
+  } else {
+    cards.push(html`<div class="action danger"><h3>Delete this account</h3>
+<p>For a support request from <strong>${d.email}</strong>: cancels its plan, pauses its OpenPing now, then exports and deletes it and scrubs the account, as the customer's own button does. They are emailed.</p>
+<form method="post" action="${base}/delete-account">
+${reasonField("delete-reason", "Reason", "Asked by email on ...", "Recorded in the audit log.")}
+<div class="field"><label for="confirm-email">Type <code>${d.email}</code> to confirm</label>
+<input id="confirm-email" name="confirm" type="email" required autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="email"></div>
+<button class="button danger" type="submit">Delete ${d.email}</button></form></div>`);
+  }
+
+  if (d.ownerSuspension && d.accountDeletionAt === null) {
     cards.push(html`<div class="action"><h3>Resume</h3>
 <p>Lifts your suspension. ${
       t.billingStatus === "suspended"
