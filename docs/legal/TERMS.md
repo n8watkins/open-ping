@@ -45,6 +45,7 @@ Your plan renews automatically each year, at the price then listed, until you ca
 We email you a reminder before each yearly renewal, with the date and the amount.
 If you add the fast checks add-on or a pack part way through a year, you pay for the rest of that year at once, and it starts once that payment goes through.
 If you remove a pack part way through a year, it stops at once, and the unused part of that year is taken off your next renewal instead of being refunded.
+That credit is used only by a renewal: if your plan ends without renewing, it is not paid out.
 
 ## 6. Cancelling
 
