@@ -23,7 +23,7 @@ import { recipientConfirmEmail } from "./emails";
 import type { PlatformEnv } from "./env";
 import { appOrigin, tenantOrigin } from "./hosts";
 import { PLATFORM_REPLY_TO, type Mailer } from "./mail";
-import { html, renderPage } from "./ui";
+import { escapeHtml, html, renderPage } from "./ui";
 import { log } from "./log";
 
 /** A confirmation link works this long. */
@@ -91,6 +91,43 @@ export async function requestConfirmation(
   return sent.ok;
 }
 
+/**
+ * The unsubscribe link of a confirmed address (migration 0014): its token,
+ * made the first time it is mailed and the same on every email after, or
+ * null when the address isn't confirmed for this tenant.
+ */
+export async function unsubscribeUrl(db: D1Database, hostedDomain: string, tenantId: string, address: string): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `UPDATE email_recipients SET unsubscribe_token = COALESCE(unsubscribe_token, ?)
+       WHERE tenant_id = ? AND address = ? AND state = 'confirmed' RETURNING unsubscribe_token`,
+    )
+    .bind(randomToken(32), tenantId, address)
+    .first<{ unsubscribe_token: string }>();
+  return row ? `${appOrigin(hostedDomain)}/email/unsubscribe?t=${encodeURIComponent(row.unsubscribe_token)}` : null;
+}
+
+/**
+ * One email to a confirmed address, with its way out: a line at the end of
+ * the text and the HTML, and the List-Unsubscribe headers of RFC 2369 and
+ * RFC 8058, so mail apps show their own one-click "Unsubscribe" (which posts
+ * `List-Unsubscribe=One-Click` to the link).
+ */
+export function withUnsubscribe<T extends { text: string; html: string }>(
+  message: T,
+  input: { url: string; tenantHost: string },
+): T & { headers: Record<string, string> } {
+  const line = `You get this because you said yes to email from ${input.tenantHost}. To stop it:`;
+  const footer = `<p style="margin:24px 0 0;font-size:12px;line-height:18px;color:#5f6f87">${escapeHtml(line)} <a href="${escapeHtml(input.url)}" style="color:#3b5bdb">unsubscribe</a>.</p>`;
+  const html = !message.html ? "" : /<\/body>/i.test(message.html) ? message.html.replace(/<\/body>/i, `${footer}</body>`) : `${message.html}${footer}`;
+  return {
+    ...message,
+    text: `${message.text}\n\n--\n${line} ${input.url}\n`,
+    html,
+    headers: { "List-Unsubscribe": `<${input.url}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+  };
+}
+
 /** The plain sentence a refused recipient gets, which the tenant's channel shows. */
 export function refusalMessage(state: RecipientState, address: string, asked: boolean): string {
   if (state === "declined") return `${address} asked not to get email from this OpenPing.`;
@@ -129,7 +166,7 @@ export function recipientRoutes(deps: { now?: () => number } = {}): Hono<{ Bindi
 <form method="post" action="/email/confirm"><input type="hidden" name="t" value="${token}">
 <div class="stack"><button class="button primary" type="submit" name="answer" value="yes">Yes, send them</button>
 <button class="button secondary" type="submit" name="answer" value="no">No, never email me from it</button></div></form>
-<p class="hint">You can stop them later by writing to support.</p>`,
+<p class="hint">Every email from it has a link to stop them.</p>`,
     });
     res.headers.set("cache-control", "no-store");
     res.headers.set("referrer-policy", "no-referrer");
@@ -162,5 +199,67 @@ export function recipientRoutes(deps: { now?: () => number } = {}): Hono<{ Bindi
     );
   });
 
+  app.get("/unsubscribe", async (c) => {
+    const token = c.req.query("t") ?? "";
+    const row = await byUnsubscribeToken(c.env.PLATFORM_DB, token);
+    if (!row) return unsubscribed();
+    const res = renderPage({
+      title: "Stop this OpenPing's email?",
+      main: html`<h1>Stop this OpenPing's email?</h1>
+<p class="lead"><strong>${row.address}</strong> gets the alerts and reports of the OpenPing at <strong>${tenantOrigin(row.slug, c.env.HOSTED_DOMAIN).replace(/^https?:\/\//, "")}</strong>.</p>
+<form method="post" action="/email/unsubscribe"><input type="hidden" name="t" value="${token}">
+<div class="stack"><button class="button primary" type="submit">Stop these emails</button></div></form>
+<p class="hint">It won't email this address again, and won't ask to. Its owner sees that you stopped them.</p>`,
+    });
+    res.headers.set("cache-control", "no-store");
+    res.headers.set("referrer-policy", "no-referrer");
+    return res;
+  });
+
+  // The page's button, or a mail app's one-click unsubscribe (RFC 8058): a
+  // post of `List-Unsubscribe=One-Click` to the header's link, sent by the
+  // mail provider with no Origin. The token is the only thing that counts;
+  // all it can do is stop this address's email from this one OpenPing.
+  app.post("/unsubscribe", async (c) => {
+    const body = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
+    const oneClick = body["List-Unsubscribe"] === "One-Click";
+    if (!oneClick) {
+      const from = c.req.header("origin");
+      const own = new URL(c.req.url).origin;
+      if (!(from && from !== "null" ? from === own : c.req.header("sec-fetch-site") === "same-origin")) {
+        return c.json({ error: "forbidden", message: "This request didn't come from OpenPing Hosted." }, 403);
+      }
+    }
+    const token = typeof body.t === "string" ? body.t : (c.req.query("t") ?? "");
+    const row = await byUnsubscribeToken(c.env.PLATFORM_DB, token);
+    if (row) {
+      await c.env.PLATFORM_DB.batch([
+        c.env.PLATFORM_DB.prepare(
+          "UPDATE email_recipients SET state = 'declined', unsubscribe_token = NULL, confirmed_at = ? WHERE tenant_id = ? AND address = ? AND unsubscribe_token = ?",
+        ).bind(now(), row.tenant_id, row.address, token),
+        c.env.PLATFORM_DB.prepare(
+          "INSERT INTO audit_events (at, account_id, tenant_id, actor, action, detail) VALUES (?, NULL, ?, 'system', 'email.recipient_unsubscribed', ?)",
+        ).bind(now(), row.tenant_id, JSON.stringify({ address: row.address, oneClick })),
+      ]);
+    }
+    if (oneClick) return c.body(null, 200);
+    return row ? messagePage({ title: "You won't hear from it", body: `This OpenPing will never email ${row.address} again.` }) : unsubscribed();
+  });
+
   return app;
 }
+
+async function byUnsubscribeToken(db: D1Database, token: string) {
+  if (!token || token.length > 128) return null;
+  return db
+    .prepare(
+      `SELECT r.tenant_id, r.address, t.slug FROM email_recipients r JOIN tenants t ON t.id = r.tenant_id
+       WHERE r.unsubscribe_token = ? AND r.state = 'confirmed'`,
+    )
+    .bind(token)
+    .first<{ tenant_id: string; address: string; slug: string }>();
+}
+
+/** A link already used (or from an OpenPing that is gone): nothing more to stop. */
+const unsubscribed = () =>
+  messagePage({ title: "Already stopped", body: "This address gets no more email from that OpenPing. Nothing else to do.", status: 200 });

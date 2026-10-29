@@ -29,6 +29,8 @@ export interface OutgoingEmail {
    * hours goes out once. For emails a job may try again (the account emails).
    */
   idempotencyKey?: string;
+  /** Extra email headers, such as List-Unsubscribe (Resend's `headers`). */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -97,6 +99,7 @@ export class ResendMailer implements Mailer {
           html: message.html,
           ...(message.replyTo ? { reply_to: message.replyTo } : {}),
           ...(tags.length ? { tags } : {}),
+          ...(message.headers ? { headers: message.headers } : {}),
         }),
         signal: AbortSignal.timeout(10_000),
       });

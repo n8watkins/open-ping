@@ -45,7 +45,7 @@ We keep your Stripe customer id, your subscription's id, plan, status, renewal d
 
 **Email.**
 We send email through Resend: sign-in codes, account emails (welcome, trial ending, payment failed, paused, deletion warning, a new passkey, your key being shown) and your OpenPing's alerts and reports.
-For your OpenPing's email, we keep the list of addresses it may send to and whether each one confirmed or declined, and a count of emails sent each day.
+For your OpenPing's email, we keep the list of addresses it may send to, whether each one confirmed or declined, and the token of each one's unsubscribe link, and a count of emails sent each day.
 We do not track whether you open emails or click links.
 
 **Your OpenPing's numbers.**
@@ -167,7 +167,8 @@ If you think a child has given us personal data, write to support@n8builds.dev a
 ## 12. People who are not our customers
 
 If a customer's OpenPing wants to email you, we first send you one email asking if you want it; we keep your address and your answer so we never ask again.
-If you get alerts you do not want, write to support@n8builds.dev and we will stop them.
+Every email it sends you after that has an unsubscribe link, and your mail app's own unsubscribe button works too; either stops that OpenPing's email to you for good, and we tell its owner you stopped it.
+You can also write to support@n8builds.dev and we will stop them.
 If you visit a customer's public status page, we do not set cookies, and only our server logs (section 2) record the visit.
 
 ## 13. The OpenPing website (openping.n8builds.dev)

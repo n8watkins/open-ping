@@ -10,7 +10,8 @@
  */
 
 import { tenantMailFrom, type Mailer, type MailEnv } from "./mail";
-import { recipientState, refusalMessage, requestConfirmation } from "./recipients";
+import { recipientState, refusalMessage, requestConfirmation, unsubscribeUrl, withUnsubscribe } from "./recipients";
+import { tenantOrigin } from "./hosts";
 import { effectiveLimits, tenantFromRow } from "./tenants";
 import {
   AUDIT_ACTION_PATTERN,
@@ -132,11 +133,14 @@ export class TenantCapability implements PlatformCapability {
 
     // Only the account's own email and addresses that said yes get mail.
     const allowed: string[] = [];
+    /** The allowed addresses other than the account's own: their email carries an unsubscribe link. */
+    const confirmed = new Set<string>();
     const refusals: string[] = [];
     for (const address of [...new Set(message.to.map((t) => t.trim().toLowerCase()))]) {
       const state = await recipientState(this.db, this.tenantId, row.account_email, address);
       if (state === "own" || state === "confirmed") {
         allowed.push(address);
+        if (state === "confirmed") confirmed.add(address);
         continue;
       }
       const asked =
@@ -183,12 +187,16 @@ export class TenantCapability implements PlatformCapability {
     let failure: SendEmailResult | null = null;
     let failed = 0;
     for (const to of recipients) {
+      let body = { text: message.text, html: message.html ?? "", headers: undefined as Record<string, string> | undefined };
+      const unsubscribe = confirmed.has(to) ? await unsubscribeUrl(this.db, this.mail.hostedDomain, this.tenantId, to) : null;
+      if (unsubscribe) body = withUnsubscribe(body, { url: unsubscribe, tenantHost: tenantOrigin(tenant.slug, this.mail.hostedDomain).replace(/^https?:\/\//, "") });
       const result = await this.mail.mailer.send({
         to,
         from: this.mail.from,
         subject: message.subject.trim(),
-        text: message.text,
-        html: message.html ?? "",
+        text: body.text,
+        html: body.html,
+        ...(body.headers ? { headers: body.headers } : {}),
         ...(replyTo ? { replyTo } : {}),
         category: message.category,
         tenantId: this.tenantId,
