@@ -160,8 +160,17 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
     .catch((error) => log.error("schedule.enqueue_failed", { error }));
   const hourly =
     new Date(controller.scheduledTime).getUTCMinutes() === 7
-      ? [schedulerDaysCleanup(db, now), schedulerMinutesCleanup(db, now), ...billingRecordsCleanup(db, now), ...auditCleanup(db, now)]
+      ? [schedulerDaysCleanup(db, now), schedulerMinutesCleanup(db, now), ...billingRecordsCleanup(db, now)]
       : [];
+  if (hourly.length) {
+    ctx.waitUntil(
+      auditCleanup(db, now)
+        .then((deleted) => {
+          if (deleted) log.info("audit.expired_deleted", { deleted });
+        })
+        .catch((error) => log.error("audit.cleanup_failed", { error })),
+    );
+  }
   if (new Date(controller.scheduledTime).getUTCMinutes() % LIFECYCLE_EVERY_MINUTES === 0) ctx.waitUntil(lifecycle(env, ctx));
   ctx.waitUntil(releases(env, ctx));
   await db
