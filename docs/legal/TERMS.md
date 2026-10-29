@@ -97,7 +97,7 @@ If someone tells us your monitors are hitting their systems without permission, 
 Your OpenPing sends email through us.
 It sends only to your account's own email address and to addresses that have confirmed they want it, by clicking a link we email them first.
 Anyone can decline that request, and once they decline we never ask them again.
-Someone who confirmed and no longer wants your email can ask you, or write to support@n8builds.dev, and we will stop it.
+Every email your OpenPing sends to a confirmed address carries a link to stop it, and one click on it stops that address's email from your OpenPing for good.
 Each plan has a daily limit on the number of emails, listed on the pricing page; past it, email stops until the next day (UTC) and your OpenPing tells you.
 Only add the addresses of people who expect alerts from you.
 

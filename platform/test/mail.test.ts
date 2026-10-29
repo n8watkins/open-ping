@@ -95,6 +95,9 @@ describe("the Resend mailer", () => {
         { name: "tenant", value: "abc" },
       ],
     });
+    await mailer.send({ to: "c@example.com", subject: "s", text: "t", html: "", headers: { "List-Unsubscribe": "<https://x.example/u>" } });
+    expect(calls[1]!.body.headers).toEqual({ "List-Unsubscribe": "<https://x.example/u>" });
+    calls.splice(1, 1);
     await mailer.send({ to: "b@example.com", subject: "s", text: "t", html: "", from: FROM });
     expect(calls[1]!.body.from).toBe(FROM);
     expect(calls[1]!.body.tags).toBeUndefined();
@@ -333,6 +336,76 @@ describe("who a tenant may email", () => {
     expect(mailer.sent[0]!.replyTo).toBeUndefined();
     await capability(mailer).sendEmail(alert({ replyTo: "owner@customer.example" }));
     expect(mailer.sent[1]!.replyTo).toBe("owner@customer.example");
+  });
+
+  it("gives a confirmed address a one-click way out, and the account's own address none", async () => {
+    const mailer = new FakeMailer();
+    const cap = capability(mailer);
+    expect((await cap.sendEmail(alert({ to: ["ops@customer.example", "owner@customer.example"] }))).ok).toBe(true);
+    const [ops, own] = [mailer.to("ops@customer.example")[0]!, mailer.to("owner@customer.example")[0]!];
+    expect(own.headers).toBeUndefined();
+    expect(own.text).toBe("api.customer.example is down.");
+    const url = /^<(https:\/\/app\.openping\.test\/email\/unsubscribe\?t=[A-Za-z0-9_-]+)>$/.exec(ops.headers!["List-Unsubscribe"]!)![1]!;
+    expect(ops.headers!["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+    expect(ops.text).toBe(`api.customer.example is down.\n\n--\nYou get this because you said yes to email from mailer.${DOMAIN}. To stop it: ${url}\n`);
+    expect(ops.html).toContain(`<a href="${url}" style="color:#3b5bdb">unsubscribe</a>`);
+    expect(ops.html.startsWith("<p>api.customer.example is down.</p>")).toBe(true);
+    // The same link on every email to it.
+    await cap.sendEmail(alert({ to: ["ops@customer.example"], subject: "UP: api.customer.example" }));
+    expect(mailer.to("ops@customer.example")[1]!.headers!["List-Unsubscribe"]).toBe(`<${url}>`);
+    // A full HTML document gets the line inside its body.
+    await cap.sendEmail(alert({ to: ["ops@customer.example"], subject: "Report", html: "<html><body><p>Hi</p></body></html>" }));
+    expect(mailer.to("ops@customer.example")[2]!.html).toMatch(/<p>Hi<\/p><p style="[^"]+">.*unsubscribe<\/a>\.<\/p><\/body><\/html>$/);
+  });
+
+  it("stops a confirmed address's email from the page's button, never from just opening the link", async () => {
+    const mailer = new FakeMailer();
+    const cap = capability(mailer);
+    await cap.sendEmail(alert());
+    const url = new URL(/^<(.+)>$/.exec(mailer.sent[0]!.headers!["List-Unsubscribe"]!)![1]!);
+    const token = url.searchParams.get("t")!;
+    const page = await visit(`/email/unsubscribe?t=${encodeURIComponent(token)}`);
+    expect(page.headers.get("cache-control")).toBe("no-store");
+    expect(await page.text()).toContain("ops@customer.example");
+    expect((await cap.sendEmail(alert())).ok).toBe(true);
+    // Another site's post changes nothing.
+    const ctx = createExecutionContext();
+    const forged = await app.fetch(
+      new Request(`https://app.${DOMAIN}/email/unsubscribe`, { method: "POST", body: new URLSearchParams({ t: token }), headers: { origin: "https://evil.example" } }),
+      env as unknown as PlatformEnv,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(forged.status).toBe(403);
+    expect(await (await visit("/email/unsubscribe", { t: token })).text()).toContain("This OpenPing will never email ops@customer.example again.");
+    // The tenant's channel shows why (#69), and no one asks the address again.
+    expect(await cap.sendEmail(alert())).toEqual({ ok: false, error: "email_rejected", message: "ops@customer.example asked not to get email from this OpenPing." });
+    expect(mailer.sent.filter((m) => m.category === "recipient_confirm")).toHaveLength(0);
+    expect(await (await visit(`/email/unsubscribe?t=${encodeURIComponent(token)}`)).text()).toContain("Already stopped");
+    const audit = await env.PLATFORM_DB.prepare("SELECT detail FROM audit_events WHERE tenant_id = ? AND action = 'email.recipient_unsubscribed'").bind(TENANT).all<{ detail: string }>();
+    expect(audit.results.map((r) => JSON.parse(r.detail))).toEqual([{ address: "ops@customer.example", oneClick: false }]);
+  });
+
+  it("takes a mail app's one-click unsubscribe (RFC 8058), which comes with no Origin", async () => {
+    const mailer = new FakeMailer();
+    const cap = capability(mailer);
+    await cap.sendEmail(alert({ to: ["a@x.example"] }));
+    const link = /^<(.+)>$/.exec(mailer.sent[0]!.headers!["List-Unsubscribe"]!)![1]!;
+    const post = async () => {
+      const ctx = createExecutionContext();
+      const res = await app.fetch(
+        new Request(link, { method: "POST", body: "List-Unsubscribe=One-Click", headers: { "content-type": "application/x-www-form-urlencoded" } }),
+        env as unknown as PlatformEnv,
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+      return res;
+    };
+    expect((await post()).status).toBe(200);
+    expect(await cap.sendEmail(alert({ to: ["a@x.example"] }))).toMatchObject({ ok: false, message: "a@x.example asked not to get email from this OpenPing." });
+    // A second click (mail apps retry) is still fine and changes nothing more.
+    expect((await post()).status).toBe(200);
+    expect(await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM audit_events WHERE action = 'email.recipient_unsubscribed' AND detail LIKE '%a@x.example%'").first("n")).toBe(1);
   });
 
   it("sends to the confirmed ones of several and says nothing went to none", async () => {

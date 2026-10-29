@@ -85,7 +85,7 @@ For push notifications, your browser's push service (from Google, Apple, Mozilla
 - **Your OpenPing's data after checks stop** (a cancelled plan, an unpaid renewal, or a trial that ended): kept 30 days so you can come back or export it, then deleted.
 - **The last export made before that deletion:** kept 30 more days, then deleted with its copy of your key.
   So 60 days after your checks stop, your OpenPing's data is gone from our systems.
-- **The list of addresses that confirmed email from your OpenPing:** until your OpenPing is deleted.
+- **The list of addresses that confirmed email from your OpenPing, each with its unsubscribe link's token:** until your OpenPing is deleted.
 - **Your account, sign-in methods, subscription record and account history:** while your account exists; deleting your OpenPing does not delete your account, so you can come back.
   Ask us and we will delete your account too (section 10).
 - **Payment records:** Stripe keeps invoices and payments, and we keep our billing records, for as long as tax and accounting law requires, which is [TO FILL: retention period required by the provider's tax law, for example 7 years].
@@ -166,7 +166,8 @@ If you think a child has given us personal data, write to support@n8builds.dev a
 ## 12. People who are not our customers
 
 If a customer's OpenPing wants to email you, we first send you one email asking if you want it; we keep your address and your answer so we never ask again.
-If you get alerts you do not want, write to support@n8builds.dev and we will stop them.
+Every email it sends you after that has an unsubscribe link, and your mail app's own unsubscribe button works too; either stops that OpenPing's email to you for good, and we tell its owner you stopped it.
+You can also write to support@n8builds.dev and we will stop them.
 If you visit a customer's public status page, we do not set cookies, and only our server logs (section 2) record the visit.
 
 ## 13. The OpenPing website (openping.n8builds.dev)
