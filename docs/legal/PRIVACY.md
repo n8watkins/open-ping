@@ -49,7 +49,7 @@ For your OpenPing's email, we keep the list of addresses it may send to, whether
 We do not track whether you open emails or click links.
 
 **Your OpenPing's numbers.**
-Your OpenPing tells us how many monitors, status pages and alert channels it has, and how each scheduled run went (how many checks, how many failed, how long it took).
+Your OpenPing tells us how many monitors (and how many of them are checked more often than every 12 minutes), status pages and alert channels it has, and how each scheduled run went (how many checks, how many failed, how long it took).
 We use these numbers to run the service, enforce plan limits and spot problems; they hold no monitoring details.
 
 **Support.**
