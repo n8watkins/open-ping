@@ -45,7 +45,7 @@ We keep your Stripe customer id, your subscription's id, plan, status, renewal d
 
 **Email.**
 We send email through Resend: sign-in codes, account emails (welcome, trial ending, payment failed, paused, deletion warning, a new passkey, your key being shown) and your OpenPing's alerts and reports.
-For your OpenPing's email, we keep the list of addresses it may send to and whether each one confirmed or declined, and a count of emails sent each day.
+For your OpenPing's email, we keep the list of addresses it may send to, whether each one confirmed or declined, and the token of each one's unsubscribe link, and a count of emails sent each day.
 We do not track whether you open emails or click links.
 
 **Your OpenPing's numbers.**
@@ -85,7 +85,7 @@ For push notifications, your browser's push service (from Google, Apple, Mozilla
 - **Your OpenPing's data after checks stop** (a cancelled plan, an unpaid renewal, or a trial that ended): kept 30 days so you can come back or export it, then deleted.
 - **The last export made before that deletion:** kept 30 more days, then deleted with its copy of your key.
   So 60 days after your checks stop, your OpenPing's data is gone from our systems.
-- **The list of addresses that confirmed email from your OpenPing, each with its unsubscribe link's token:** until your OpenPing is deleted.
+- **The list of addresses that confirmed email from your OpenPing:** until your OpenPing is deleted.
 - **Your account, sign-in methods, subscription record and account history:** while your account exists; deleting your OpenPing does not delete your account, so you can come back.
   Ask us and we will delete your account too (section 10).
 - **Payment records:** Stripe keeps invoices and payments, and we keep our billing records, for as long as tax and accounting law requires, which is [TO FILL: retention period required by the provider's tax law, for example 7 years].
