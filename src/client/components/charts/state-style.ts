@@ -13,7 +13,7 @@ export const BUCKET_FILL: Record<BucketState, string> = {
   scheduled_off: "bg-scheduled/30",
   maintenance: "bg-maint",
   paused: "bg-paused/50",
-  cant_check: "bg-paused/30",
+  cant_check: "bg-paused/80",
   nodata: "bg-line",
 };
 
