@@ -147,6 +147,8 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
 - [x] **A3 Platform scheduler entry and self-migration (M), done.** `/__platform/scheduled`, `/__platform/health`, bundled migrations with a lock and a schema version. Needs: C0.
 - [x] **A4 Plan limits (S), done.** 402 responses with an upgrade link on create routes, UI states, and the budget profile for hosted plans. Needs: C0.
 - [x] **A5 Mail through the platform (S), done.** A mail transport interface with today's Resend sender and a platform-capability sender. Needs: C0.
+- [x] **A6 Per-monitor check intervals (M), done in wave 3.** Each polled monitor has its own interval on Hosted (whole minutes, at least the plan's `minIntervalMinutes`), the scheduler runs what is due on each platform call and answers `nextDueAt` (contract PR #60), monitors line up on the clock's 12-minute marks, and the upkeep (rollups, cleanup, run record, usage report) happens once per 12 minutes however often a tenant is called. The editor offers the plan's intervals with an upgrade link; a plain install is unchanged. Needs: C0, A3.
+  Measured cost and the owner decision it needs: [Cost per customer, measured](./HOSTED_PLAN.md#cost-per-customer-measured) (1-minute checks for 20 monitors cost about $7.30 a month against $3).
 
 ### B. The platform Worker (`platform/`)
 
@@ -284,7 +286,7 @@ Running cost before revenue: about $30 to $45 a month (Workers Paid, Workers for
 | --- | --- | --- |
 | Few people sign up | The waitlist count and the trial-to-paid rate after launch | Keep Hosted running cheaply (fixed cost about $30 a month) or switch it off; self-hosting is unaffected. |
 | One cron can't reach every customer in time | Queue lag in platform metrics during the load test | Shard the queue, or move due tracking to a Durable Object per tenant group. |
-| Cost per customer above the 6-cent assumption | Measured in the load test and from the first month's invoice | Batch writes (C2), lengthen trial intervals, or adjust the price before launch. |
+| Cost per customer above the 6-cent assumption | Measured on 2026-10-29: about 80 cents a month for 20 monitors at 12 minutes and $7.30 at 1 minute ([Hosted plan](./HOSTED_PLAN.md#cost-per-customer-measured)); confirm with the first month's invoice | Decide the fast checks option (5-minute floor or 5 fast monitors), write fewer rows per check, or adjust the price before launch. |
 | Workers for Platforms API limits slow releases | Release runner timings in staging | Bigger batches with backoff; uploads are idempotent. |
 | A bad release breaks every customer | Canary health check | Automatic stop and one-command rollback (C1). |
 | Abuse (monitoring third parties, email spam) | Per-tenant send and request counters, complaints | Caps, the suspend button, the terms. |

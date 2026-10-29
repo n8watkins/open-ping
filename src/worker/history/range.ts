@@ -400,12 +400,17 @@ export async function loadRangeHistory(
   const spec = RANGE_SPEC[range];
   const { from, to, bucketMs, starts } = rangeBounds(range, now);
   const one = monitorId != null;
-  const useSamples = range === "24h";
-
   // Percentiles want the finest data still kept: raw samples for 24h, hourly
   // averages while hourly summaries cover the range (64 days by default), and
-  // the day buckets themselves beyond that.
-  const hourlyLatency = !useSamples && spec.period === "day" && spec.buckets * DAY_MS <= HOURLY_LATENCY_MAX_MS;
+  // the day buckets themselves beyond that. Every monitor's 24h view reads its
+  // samples only while no polled monitor is checked more often than every 12
+  // minutes (always so on an install of your own): a monitor checked every
+  // minute leaves 1,440 a day, so with one of those the view takes hourly
+  // averages instead, 24 rows a monitor. One monitor's view always has its
+  // checks (they are its chart's points).
+  const useSamples = range === "24h" && (one || !(await hasFastMonitors(env)));
+  const hourlyLatency =
+    !useSamples && (range === "24h" || (spec.period === "day" && spec.buckets * DAY_MS <= HOURLY_LATENCY_MAX_MS));
 
   const [idsRes, summaryRes, intervalRes, sampleRes, hourlyRes, incidentRes, countRow] = await Promise.all([
     (one
@@ -551,6 +556,14 @@ export async function loadRangeHistory(
     incidents,
     incidentCount: Number(countRow?.c ?? incidents.length),
   };
+}
+
+/** Is any polled monitor checked more often than every 12 minutes (OpenPing Hosted's fast checks)? */
+async function hasFastMonitors(env: Env): Promise<boolean> {
+  const row = await env.DB.prepare(
+    "SELECT EXISTS (SELECT 1 FROM monitors WHERE type <> 'heartbeat' AND interval_seconds < 720) AS fast",
+  ).first<{ fast: number }>();
+  return row?.fast === 1;
 }
 
 function toSpan(r: IntervalRow): IntervalSpan {

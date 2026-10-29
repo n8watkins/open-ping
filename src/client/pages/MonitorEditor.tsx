@@ -16,8 +16,9 @@ import { ArrowLeft, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { useFetch } from "../lib/useFetch";
-import { monitorLimitReached, planLimitFromError, usePlan } from "../lib/plan-limits";
+import { defaultIntervalMinutes, monitorLimitReached, planLimitFromError, usePlan } from "../lib/plan-limits";
 import { PlanLimitNotice } from "../components/PlanLimitNotice";
+import { CheckIntervalPicker } from "../components/CheckIntervalPicker";
 import type { PlanLimitBody } from "../../shared/hosted-contract";
 import { Card } from "../components/ui/Card";
 import { cn } from "../lib/cn";
@@ -132,6 +133,9 @@ interface FormState {
   customTimezone: string;
   customDays: CustomDayRow[];
   customExcludedDates: string;
+  // Check interval (OpenPing Hosted, polled types), in minutes; null until
+  // chosen on a new monitor, which then gets the plan's default.
+  checkIntervalMinutes: number | null;
   // Alerting
   confirmFailures: ConfirmFailures;
   // Status page
@@ -152,6 +156,7 @@ interface LoadedMonitor {
   public: unknown;
   categoryId?: string | null;
   confirmFailures?: ConfirmFailures;
+  intervalSeconds?: number;
 }
 
 const HTTP_METHODS: HttpMethod[] = [
@@ -252,6 +257,7 @@ function initialForm(type: MonitorType = "http"): FormState {
     customTimezone: tz,
     customDays: [],
     customExcludedDates: "",
+    checkIntervalMinutes: null,
     confirmFailures: "retry",
     categoryId: null,
     publicVisible: false,
@@ -275,6 +281,9 @@ function prefill(m: LoadedMonitor): FormState {
   base.enabled = m.enabled;
   base.categoryId = m.categoryId ?? null;
   base.confirmFailures = m.confirmFailures === "off" ? "off" : "retry";
+  if (m.type !== "heartbeat" && typeof m.intervalSeconds === "number") {
+    base.checkIntervalMinutes = Math.max(1, Math.round(m.intervalSeconds / 60));
+  }
   const pub =
     m.public && typeof m.public === "object"
       ? (m.public as Record<string, unknown>)
@@ -408,6 +417,9 @@ export default function MonitorEditor() {
   const { data: existing } = useFetch<{ monitors: unknown[] }>(plan && !isEdit ? "/api/monitors" : null);
   const atLimit = existing ? monitorLimitReached(plan, existing.monitors.length) : null;
   const [refused, setRefused] = useState<PlanLimitBody | null>(null);
+  // Hosted mode: how often a polled monitor is checked (a self-hosted install
+  // checks every one on each 12-minute run, so it sends none).
+  const checkIntervalMinutes = form.checkIntervalMinutes ?? (plan ? defaultIntervalMinutes(plan) : 12);
   // Focused on submit so screen-reader + keyboard users land on the error
   // summary (which also carries role="alert").
   const errorSummaryRef = useRef<HTMLDivElement>(null);
@@ -593,6 +605,7 @@ export default function MonitorEditor() {
       name: form.name.trim(),
       enabled: form.enabled,
       confirmFailures: form.confirmFailures,
+      ...(plan && form.type !== "heartbeat" ? { intervalSeconds: checkIntervalMinutes * 60 } : {}),
       schedule,
       categoryId: form.categoryId,
       public: publicConfig,
@@ -1407,6 +1420,17 @@ export default function MonitorEditor() {
                 </Field>
               </div>
             </details>
+          </FormCard>
+        )}
+
+        {/* Check interval (OpenPing Hosted, polled types) */}
+        {plan && form.type !== "heartbeat" && (
+          <FormCard title="Check interval" description="How often OpenPing checks this monitor.">
+            <CheckIntervalPicker
+              plan={plan}
+              value={checkIntervalMinutes}
+              onChange={(minutes) => set("checkIntervalMinutes", minutes)}
+            />
           </FormCard>
         )}
 

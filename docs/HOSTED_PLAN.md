@@ -20,6 +20,45 @@ The research behind the numbers: the short plan (https://claude.ai/artifact/BARz
 - Each customer costs about 6 cents a month at 12-minute checks (5 monitors), and about 5 cents at 1-minute checks once check writes are batched (stage 2).
 - Stripe's 30 cent fee is why billing is yearly: it takes about 5% of $24, but 14% of a $3 monthly charge.
 - Break-even is about 20 to 25 customers.
+- Measured on 2026-10-29, the per-customer cost is higher than the two lines above: about 80 cents a month for 20 monitors at 12-minute checks, and about $7.30 a month for 20 monitors at 1-minute checks, past the first 50 million rows Workers Paid includes.
+  1-minute checks for 20 monitors do not fit the $12 add-on; see [Cost per customer, measured](#cost-per-customer-measured).
+
+## Cost per customer, measured
+
+Measured on 2026-10-29 with the build of Hosted wave 3 (per-monitor intervals), in `test/integration/hosted-cadence.test.ts`: the real scheduler and D1 (workerd), the platform calling as its scheduler does, counting D1's own `rows_read` and `rows_written`.
+D1 bills rows, not queries: on Workers Paid the account's first 50 million rows written and 25 billion read each month are included, then $1.00 per million written and $0.001 per million read (checked on 2026-10-29 at developers.cloudflare.com/workers/platform/pricing).
+Local D1 may count index writes a little differently from production; the first month's invoice is the real number (risk table in the build plan).
+
+| 20 monitors | Calls a month | Rows written a month | Rows read a month | D1 past the allowance | Requests, queue and CPU | Total a month | Revenue a month |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Every 12 minutes (`hosted`) | 3,600 | 0.79 million | 2.6 million | $0.79 | under $0.01 | about $0.80 | $2.00 |
+| Every minute (`hosted_fast`) | 43,200 | 7.2 million | 13 million | $7.20 | about $0.10 | about $7.30 | $3.00 |
+
+- A call on 1-minute checks writes about 147 rows: about 7.3 per check (its state, sample, hour summary and status interval, with their indexes) plus the run's lease.
+  A check's sample is deleted a day later, one more row each.
+- A call on 12-minute checks writes about 199 rows, because each also does the upkeep: the history rollups, the cleanup and the run record (lib/cadence.ts does these once per 12 minutes however often the tenant is called).
+- Reads cost almost nothing now; before the rollups fix in the same wave, every run read about 160,000 rows and wrote 1,347 on a two-month-old install, about $4.85 a month per customer at 12-minute checks.
+- A 5-monitor trial at 12-minute checks is about 20 cents a month, estimated from the same numbers.
+- Viewing reads rows too.
+  With 1-minute checks a monitor keeps 1,440 samples a day, so the Overview and the all-monitors 24-hour history would have read about 86,000 and 57,600 rows per view for 20 monitors; they now read about 1,700 and 1,000 (the Overview reaches each monitor's last 28 checks through the index, and the all-monitors 24-hour view takes hourly averages for its percentiles while any monitor is checked more often than every 12 minutes).
+  One monitor's own 24-hour view still reads its 1,440 checks, which are its chart's points: about 1.4 million rows for 1,000 views, a tenth of a cent.
+- Requests, queue messages and CPU are per call: about 3 queue operations ($0.40 per million) and 2 Worker requests ($0.30 per million) a call, and a few milliseconds of CPU.
+- The included 50 million rows written cover about 60 customers at 12-minute checks, or about 6 at 1-minute checks, before any of this is billed.
+
+**1-minute checks for 20 monitors don't fit the $12 add-on.**
+They cost about $7.20 a month in rows against $1 a month of add-on revenue.
+The options, with what each costs for one customer:
+
+1. **Cap 1-minute checks at 5 monitors** (the other 15 at 12 minutes): about 2.5 million rows (the 5 fast monitors, the other 15, and a call every minute), so $2.50 a month against $3.00.
+   A plan limit (a new `fastMonitors` field in `PlanLimits`) and a contract change.
+2. **Make the add-on's fastest interval 5 minutes** for all 20: about 1.7 million rows, so $1.70 a month against $3.00.
+   Only the platform's `minIntervalMinutes` for `hosted_fast` changes; the editor already offers 5 minutes.
+3. **Price the add-on for 20 one-minute monitors**: about $90 a year.
+4. **Write fewer rows per check** (a sample only on a change, a failure or once per 12 minutes, and the status interval's counts taken from the summaries): about 3.5 rows a check, $3.50 a month for 20 one-minute monitors.
+   About 2 days of work; it makes options 1 and 2 comfortable but doesn't close the gap alone, and it coarsens the 24-hour chart for 1-minute monitors.
+5. **Launch as is and watch it**: the first 6 or so fast customers fit in the included rows, and the invoice shows the real cost before the allowance is used up.
+
+The recommendation is option 2 (5 minutes) or option 1 (5 fast monitors) at launch, with option 4 later if fast checks sell.
 
 ## The stages
 

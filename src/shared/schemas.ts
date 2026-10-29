@@ -255,10 +255,30 @@ const baseMonitorFields = {
   categoryId: z.string().max(64).nullable().optional(),
 };
 
+/**
+ * How often a polled monitor (http, dns, tcp, domain) is checked, in seconds:
+ * whole minutes from 1 to 24 hours. Only OpenPing Hosted honours it (each plan
+ * sets the shortest, shared/check-interval.ts); a plain install checks every
+ * polled monitor on each 12-minute cron run, whatever this says. Omitted on a
+ * create: 12 minutes (or the plan's shortest, if longer); on an edit: unchanged.
+ * A heartbeat's interval is `config.intervalSeconds`, how often its job pings.
+ */
+export const checkIntervalSecondsSchema = z
+  .number()
+  .int()
+  .min(60)
+  .max(86_400)
+  .refine((s) => s % 60 === 0, "must be a whole number of minutes");
+
+const polledMonitorFields = {
+  ...baseMonitorFields,
+  intervalSeconds: checkIntervalSecondsSchema.optional(),
+};
+
 export const createMonitorSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("http"),
-    ...baseMonitorFields,
+    ...polledMonitorFields,
     config: httpConfigSchema,
     assertions: z.array(assertionSchema).default([]),
   }),
@@ -269,17 +289,17 @@ export const createMonitorSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("dns"),
-    ...baseMonitorFields,
+    ...polledMonitorFields,
     config: dnsConfigSchema,
   }),
   z.object({
     type: z.literal("tcp"),
-    ...baseMonitorFields,
+    ...polledMonitorFields,
     config: tcpConfigSchema,
   }),
   z.object({
     type: z.literal("domain"),
-    ...baseMonitorFields,
+    ...polledMonitorFields,
     config: domainConfigSchema,
   }),
 ]);
@@ -297,12 +317,19 @@ export type NotifyPrefs = z.infer<typeof notifySchema>;
 export type PublicConfig = z.infer<typeof publicConfigSchema>;
 export type CreateMonitorInput = z.infer<typeof createMonitorSchema>;
 
-/** Polled monitors (http, dns, tcp, domain) are checked on every 12-minute run. */
+/**
+ * The self-hosted cron's cadence: a plain install checks every polled monitor
+ * (http, dns, tcp, domain) on each 12-minute run, and it is the default
+ * interval on OpenPing Hosted.
+ */
 export const POLLED_INTERVAL_SECONDS = 720;
 
-/** A monitor's interval: how often a polled one is checked, or how often a heartbeat's job pings. */
+/**
+ * A monitor's interval: how often a polled one is checked (its own on Hosted,
+ * the default when it has none), or how often a heartbeat's job pings.
+ */
 export function intervalSecondsOf(input: CreateMonitorInput): number {
-  return input.type === "heartbeat" ? input.config.intervalSeconds : POLLED_INTERVAL_SECONDS;
+  return input.type === "heartbeat" ? input.config.intervalSeconds : (input.intervalSeconds ?? POLLED_INTERVAL_SECONDS);
 }
 
 // --- Categories ---

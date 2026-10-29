@@ -13,7 +13,14 @@ import type { ChannelKind } from "../../shared/notifications";
 import type { AppEnv, Env } from "../types";
 import { hostedProps } from "./hosted";
 import { reportUsage } from "../db/usage";
-import { intervalSecondsOf, type CreateMonitorInput } from "../../shared/schemas";
+import {
+  checkIntervalSecondsSchema,
+  intervalSecondsOf,
+  POLLED_INTERVAL_SECONDS,
+  type CreateMonitorInput,
+} from "../../shared/schemas";
+import { defaultIntervalSeconds, planMinimumSeconds } from "../../shared/check-interval";
+import type { MonitorRecord } from "../db/monitors";
 
 /**
  * Plan limits, in hosted mode only (docs/hosted/CONTRACT.md, section 5).
@@ -86,6 +93,65 @@ export function channelKindLimit(plan: HostedPlan | undefined, kind: ChannelKind
 export function intervalLimit(plan: HostedPlan | undefined, monitor: CreateMonitorInput): PlanLimitRefusal | null {
   if (!plan || monitor.type === "heartbeat") return null;
   return refusal(plan, checkIntervalLimit(plan.limits, intervalSecondsOf(monitor) / 60));
+}
+
+/**
+ * The check interval a create or an edit of a polled monitor stores. On a plain
+ * install it is always the cron's 12 minutes, whatever was sent (a backup or a
+ * client from OpenPing Hosted may carry another). In hosted mode it is what was
+ * sent; on an edit that sent none, the stored one; on a create that sent none,
+ * 12 minutes or the plan's shortest if longer. `intervalLimit` then holds it to
+ * the plan. Heartbeats are returned as they are.
+ */
+export function withCheckInterval(
+  input: CreateMonitorInput,
+  plan: HostedPlan | undefined,
+  existing?: Pick<MonitorRecord, "type" | "intervalSeconds"> | null,
+): CreateMonitorInput {
+  if (input.type === "heartbeat") return input;
+  if (!plan) return { ...input, intervalSeconds: POLLED_INTERVAL_SECONDS };
+  const kept = existing && existing.type !== "heartbeat" ? existing.intervalSeconds : undefined;
+  return {
+    ...input,
+    intervalSeconds: input.intervalSeconds ?? kept ?? defaultIntervalSeconds(plan.limits.minIntervalMinutes),
+  };
+}
+
+/**
+ * A monitor body with `intervalSeconds` left out when there is no plan: a
+ * plain install never uses it, so like any other field it doesn't know, it is
+ * ignored rather than refused (an API client or a backup from OpenPing Hosted
+ * may send one). Anything that isn't an object is returned as it is.
+ */
+export function ignoreIntervalWithoutPlan(body: unknown, plan: HostedPlan | undefined): unknown {
+  if (plan || !body || typeof body !== "object" || Array.isArray(body) || !("intervalSeconds" in body)) return body;
+  const { intervalSeconds: _ignored, ...rest } = body as Record<string, unknown>;
+  return rest;
+}
+
+/**
+ * A backed-up monitor with an interval no install accepts left out, so it
+ * restores at the default instead of failing the import (backups are meant to
+ * restore, and a hand edit or a newer build may carry one).
+ */
+export function tolerantBackupInterval(monitor: unknown): unknown {
+  if (!monitor || typeof monitor !== "object" || Array.isArray(monitor) || !("intervalSeconds" in monitor)) return monitor;
+  const { intervalSeconds, ...rest } = monitor as Record<string, unknown>;
+  return checkIntervalSecondsSchema.safeParse(intervalSeconds).success ? monitor : rest;
+}
+
+/**
+ * A backup import's interval: as withCheckInterval, but one shorter than the
+ * plan allows is restored at the plan's shortest instead of refusing the whole
+ * restore (a backup of a 1-minute monitor restores on a 12-minute plan).
+ */
+export function importedCheckInterval(input: CreateMonitorInput, plan: HostedPlan | undefined): CreateMonitorInput {
+  const resolved = withCheckInterval(input, plan);
+  if (!plan || resolved.type === "heartbeat") return resolved;
+  return {
+    ...resolved,
+    intervalSeconds: Math.max(resolved.intervalSeconds ?? 0, planMinimumSeconds(plan.limits.minIntervalMinutes)),
+  };
 }
 
 /**

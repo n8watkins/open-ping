@@ -59,7 +59,7 @@ const FLAP_THRESHOLD = 3;
 // Each overdue heartbeat cycle credits one cron period (~12 min) of downtime, so
 // an ongoing heartbeat outage accrues in the uptime rollups instead of leaving
 // the monitor stuck at ~100% uptime.
-const HEARTBEAT_DOWN_SLICE_SECONDS = 12 * 60;
+export const HEARTBEAT_DOWN_SLICE_SECONDS = 12 * 60;
 
 /** The monitor_state columns the check path reads; the scheduler preloads them. */
 export const STATE_COLUMNS = `state, state_since, last_success_at, last_beat_at, last_error,
@@ -406,6 +406,8 @@ export interface PlannedWrite {
   group: WriteGroup;
   prevState: MonitorState;
   stateChanged: boolean;
+  /** The next_check_at the write sets (epoch ms). */
+  nextCheckAt?: number;
 }
 
 /** Plan an HTTP/DNS/TCP/domain check outcome: state, sample, incident, interval, rollup. */
@@ -415,6 +417,8 @@ export async function planCheckResult(
   outcome: CheckOutcome,
   cur: StateRow | null,
   ctx: WriteContext,
+  /** The next check's time when the scheduler sets it (lib/cadence.ts); otherwise one interval after this check. */
+  opts: { nextAt?: number } = {},
 ): Promise<PlannedWrite> {
   const now = outcome.at;
   const prevState: MonitorState = cur?.state ?? "unknown";
@@ -423,7 +427,7 @@ export async function planCheckResult(
   const consecutiveFailures = outcome.ok ? 0 : (cur?.consecutive_failures ?? 0) + 1;
   const consecutiveSuccesses = outcome.ok ? (cur?.consecutive_successes ?? 0) + 1 : 0;
   const lastSuccessAt = outcome.ok ? now : (cur?.last_success_at ?? null);
-  const next = nextCheckAt(monitor.schedule, new Date(now), monitor.intervalSeconds).getTime();
+  const next = opts.nextAt ?? nextCheckAt(monitor.schedule, new Date(now), monitor.intervalSeconds).getTime();
 
   // A failed warm-up cycle does NOT open an incident - it is the one grace cycle
   // a cold start gets. Preserve any existing incident pointer untouched.
@@ -535,7 +539,7 @@ export async function planCheckResult(
       ),
     ],
   });
-  return { group, prevState, stateChanged };
+  return { group, prevState, stateChanged, nextCheckAt: next };
 }
 
 /**
@@ -610,14 +614,18 @@ function snapshotGuard(cur: StateRow | null, alias = ""): { sql: string; binds: 
 
 /** Plan marking a monitor outside its schedule window. No sample/incident/rollup. */
 export function planScheduledOff(env: Env, monitor: MonitorRecord, now: number, cur: StateRow | null): WriteGroup {
+  return planPausedState(env, monitor, now, cur, "scheduled_off", scheduledOffUntil(monitor, now));
+}
+
+/** When a monitor outside its schedule window is next looked at: its next window's start. */
+export function scheduledOffUntil(monitor: MonitorRecord, now: number): number {
   const np = nextActivePeriod(monitor.schedule, new Date(now));
   // Clamp to `now`: never write a next_check_at in the past. nextActivePeriod
   // can return a window whose start already passed (e.g. an overnight window
   // still open at `now`); a past timestamp would make the due-query re-fire this
   // monitor every tick. The opening-day exclusion fix in isActiveAt keeps the
   // two functions consistent, but this guard is the hard backstop.
-  const nextAt = np ? Math.max(np.start.getTime(), now) : now + monitor.intervalSeconds * 1000;
-  return planPausedState(env, monitor, now, cur, "scheduled_off", nextAt);
+  return np ? Math.max(np.start.getTime(), now) : now + monitor.intervalSeconds * 1000;
 }
 
 /** Plan marking a monitor in a maintenance window. No check/incident; suppresses outages. */

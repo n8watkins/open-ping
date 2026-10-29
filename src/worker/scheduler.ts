@@ -5,7 +5,19 @@ import {
   type MonitorRecord,
   type MonitorRow,
 } from "./db/monitors";
-import { isActiveAt } from "./lib/schedule";
+import { isActiveAt, nextCheckAt } from "./lib/schedule";
+import {
+  alignNextCheck,
+  checkIntervalSeconds,
+  CRON_CADENCE,
+  dueSlackMs,
+  isUpkeepRun,
+  nextDueAt,
+  PLATFORM_RUN_RECORD_DAYS,
+  runBaseTime,
+  upkeepSlot,
+  type Cadence,
+} from "./lib/cadence";
 import { probeFetchLimit, runMonitorCheck } from "./checks/runner";
 import { parseDomainCache } from "./checks/domain";
 import {
@@ -23,6 +35,8 @@ import {
   planMaintenanceState,
   planScheduledOff,
   planWarmHeartbeat,
+  HEARTBEAT_DOWN_SLICE_SECONDS,
+  scheduledOffUntil,
   readWriteContext,
   STATE_COLUMNS,
   type StateRow as CheckStateRow,
@@ -36,9 +50,11 @@ import { sendWeeklySummary, WEEKLY_GATE_SETTINGS } from "./notifications/weekly"
 import { MONTHLY_GATE_SETTINGS, sendMonthlyReport } from "./notifications/monthly";
 import {
   acquireLeaseStatement,
-  lastCompactedRunAt,
   lastCompactedRunStatement,
+  lastRecordedRunStatement,
+  runStartedAt,
   leaseHolderStatement,
+  recordFailedRunStatement,
   recordRunStartStatement,
   recordRunFinishStatement,
   releaseLease,
@@ -71,10 +87,10 @@ const CONCURRENCY = 6;
 // monitors and defers the rest (oldest next_check_at first) to the next tick.
 // The plan's maxChecks also bounds a Paid run, so a backlog can't overrun the
 // 12-min cadence / 5-min lease.
-// Half the 12-min cadence: a monitor whose next check lands within this window
-// is run now rather than slipping to the following tick (which would otherwise
-// double its effective interval whenever a run takes a moment to reach it).
-const DUE_SLACK_MS = 6 * 60 * 1000;
+// A monitor whose next check lands within a short window after the run is run
+// now rather than slipping to the following tick (which would otherwise
+// double its effective interval whenever a run takes a moment to reach it):
+// half the gap between runs (6 minutes on the 12-minute cron), lib/cadence.ts.
 // Space a run's RDAP lookups (domain monitors) this far apart: rdap.org and the
 // registries rate limit bursts (lib/pace.ts). Most domain cycles are judged from
 // the cached read and make no lookup, so this rarely costs a run any time.
@@ -84,6 +100,7 @@ const RDAP_SPACING_MS = 2_000;
 interface SchedulerStateRow extends CheckStateRow {
   monitor_id: string;
   next_check_at: number | null;
+  last_checked_at: number | null;
 }
 
 /** Run async work over items with a bounded concurrency limit. */
@@ -108,7 +125,16 @@ async function mapLimit<T>(
  */
 export type RunResult =
   | { outcome: "lease_busy"; startedAt: number; d1Queries: number }
-  | { outcome: "ran" | "failed"; startedAt: number; stats: RunStats; deferred: number };
+  | {
+      outcome: "ran" | "failed";
+      startedAt: number;
+      stats: RunStats;
+      deferred: number;
+      /** When this install next has work (lib/cadence.ts nextDueAt); the platform calls then. */
+      nextDueAt: number;
+      /** Whether this run did the 12-minute upkeep and kept a run record (lib/cadence.ts isUpkeepRun). */
+      upkeep: boolean;
+    };
 
 /** Settings a run reads up front, in its first round trip. */
 const RUN_SETTINGS = [
@@ -116,7 +142,8 @@ const RUN_SETTINGS = [
 ] as const;
 
 /**
- * Every-12-minute check cycle (PRD §9). Acquires an execution lease, evaluates
+ * One check cycle (PRD §9): every 12 minutes on the cron, and whenever the
+ * platform calls on OpenPing Hosted (lib/cadence.ts). Acquires an execution lease, evaluates
  * each enabled monitor against its schedule, runs due polled checks
  * (http/dns/tcp/domain) concurrently (with warm-up + retries via the runner),
  * detects missed heartbeats, applies
@@ -139,8 +166,14 @@ const RUN_SETTINGS = [
 export async function runScheduled(
   controller: ScheduledController,
   baseEnv: Env,
-  /** Tests only: a different budget than the plan's, a shorter re-check pause or RDAP spacing, regional stand-ins. */
+  /**
+   * `cadence`: how this install is scheduled (lib/cadence.ts); the 12-minute
+   * cron unless the platform calls (routes/platform.ts). Tests only: a
+   * different budget than the plan's, a shorter re-check pause or RDAP
+   * spacing, regional stand-ins.
+   */
   opts: {
+    cadence?: Cadence;
     budget?: PlanBudget;
     confirmDelayMs?: number;
     rdapSpacingMs?: number;
@@ -154,21 +187,28 @@ export async function runScheduled(
   const lease = { name: LEASE_NAME, holder: newId("lease") };
   const run = { id: newId("run"), startedAt: Date.now() };
   const now = run.startedAt;
+  const cadence = opts.cadence ?? CRON_CADENCE;
+  // What due checks are measured from (the platform's tick, lib/cadence.ts).
+  const base = runBaseTime(now, controller.scheduledTime, cadence);
+  // On the platform, one run per 12-minute slot keeps a record and does the
+  // upkeep (lib/cadence.ts); the record's insert tests the same thing in SQL.
+  const slot = cadence.kind === "platform" ? upkeepSlot(now) : undefined;
 
   // Round trip 1: take the lease, open the run record (only if the lease was
   // won), and read what the run needs. A batch is one transaction, so the run
   // record can never exist without the lease. Losing the lease wastes only the
   // reads; nothing is written.
-  const [, holderRes, , monitorsRes, statesRes, maintenanceRes, settingsRes, unnotifiedRes, lastRunRes] =
+  const [, holderRes, , monitorsRes, statesRes, maintenanceRes, settingsRes, unnotifiedRes, recordedRes, compactedRes] =
     await env.DB.batch([
       acquireLeaseStatement(env, lease.name, lease.holder, now, LEASE_TTL_MS),
       leaseHolderStatement(env, lease.name),
-      recordRunStartStatement(env, run, controller.cron ?? null, lease),
+      recordRunStartStatement(env, run, controller.cron ?? null, lease, slot),
       listMonitorsStatement(env),
-      env.DB.prepare(`SELECT monitor_id, next_check_at, ${STATE_COLUMNS} FROM monitor_state`),
+      env.DB.prepare(`SELECT monitor_id, next_check_at, last_checked_at, ${STATE_COLUMNS} FROM monitor_state`),
       listMaintenanceStatement(env),
       settingsStatement(env, RUN_SETTINGS),
       unnotifiedIncidentsStatement(env, now),
+      lastRecordedRunStatement(env),
       lastCompactedRunStatement(env),
     ]);
   const holder = (holderRes?.results?.[0] as { holder?: string } | undefined)?.holder;
@@ -187,9 +227,18 @@ export async function runScheduled(
     /** Due monitors left for the next run (the budget, or a re-check it couldn't afford). */
     deferred: 0,
   };
+  const lastRecordedAt = runStartedAt(recordedRes);
+  const upkeep = isUpkeepRun(now, lastRecordedAt, cadence);
+  // Times this install next has work, one or more per monitor (nextDueAt).
+  const wakes: number[] = [];
   let stats: RunStats;
   try {
-    const monitors = await monitorsFromRows(env, (monitorsRes?.results ?? []) as MonitorRow[]);
+    // Each polled monitor at the interval this cadence checks it at
+    // (lib/cadence.ts): 12 minutes on the cron, its own on the platform.
+    const monitors = (await monitorsFromRows(env, (monitorsRes?.results ?? []) as MonitorRow[])).map((m) => {
+      const intervalSeconds = checkIntervalSeconds(m, cadence);
+      return intervalSeconds === m.intervalSeconds ? m : { ...m, intervalSeconds };
+    });
     const settings = await settingsFromRows(
       env,
       RUN_SETTINGS,
@@ -224,6 +273,8 @@ export async function runScheduled(
         continue;
       }
       if (globalMaintenance || maintenanceMonitorIds.has(m.id)) {
+        // Looked at again one interval on, to notice the window ending.
+        wakes.push(now + Math.min(m.intervalSeconds, HEARTBEAT_DOWN_SLICE_SECONDS) * 1000);
         // Already in maintenance: nothing to write until the window ends (its
         // past next_check_at then makes it due at once).
         if (states.get(m.id)?.state === "maintenance") {
@@ -242,9 +293,11 @@ export async function runScheduled(
         // every run several D1 queries each).
         const off = states.get(m.id);
         if (off?.state === "scheduled_off" && (off.next_check_at ?? 0) > now) {
+          wakes.push(off.next_check_at!);
           tally.skipped++;
           continue;
         }
+        wakes.push(scheduledOffUntil(m, now));
         writes.push({
           group: planScheduledOff(env, m, now, off ?? null),
           done: skippedOnceWritten(`scheduled-off ${m.id}`),
@@ -261,6 +314,7 @@ export async function runScheduled(
         // moment monitoring resumes. Grant one warm-up cycle that re-bases the
         // deadline on `now`; genuine misses are detected from the next tick on.
         if (!st || st.state === "scheduled_off" || st.state === "unknown") {
+          wakes.push(now + (m.intervalSeconds + (m.graceSeconds ?? 0)) * 1000);
           writes.push({
             group: planWarmHeartbeat(env, m, now, st ?? null),
             done: skippedOnceWritten(`heartbeat warm-up ${m.id}`),
@@ -271,15 +325,34 @@ export async function runScheduled(
         // failure). Keying off last_success_at would wrongly declare an
         // on-schedule but failing heartbeat "missed", clobbering its real error
         // and double-counting downtime.
-        const base = st.last_beat_at ?? m.createdAt;
-        const deadline = base + (m.intervalSeconds + (m.graceSeconds ?? 0)) * 1000;
+        const lastBeat = st.last_beat_at ?? m.createdAt;
+        const deadline = lastBeat + (m.intervalSeconds + (m.graceSeconds ?? 0)) * 1000;
         if (now > deadline) {
           // Overdue: (re)mark missed every cycle while it stays overdue so the
           // ongoing downtime accrues in the rollups. planHeartbeatMissed dedupes
           // the incident + the notification, so this does not spam alerts. It
           // re-reads the monitor's state first (below, with the other reads).
+          // Each mark credits one 12-minute slice of downtime, so on the
+          // platform, which may call every minute, one already marked missed
+          // is marked again only a slice later (the cron's runs are a slice
+          // apart already).
+          // Measured from the tick, with the same slack as a polled check, so a
+          // call delivered a few seconds late still marks it on time and the
+          // marks stay 12 minutes apart.
+          const slice = HEARTBEAT_DOWN_SLICE_SECONDS * 1000;
+          const slack = dueSlackMs(HEARTBEAT_DOWN_SLICE_SECONDS, cadence);
+          const markedAt = st.state === "down" && st.last_error === "heartbeat_missed" ? st.last_checked_at : null;
+          const nextMark = cadence.kind === "platform" && markedAt != null ? markedAt + slice : base;
+          if (nextMark - slack > base) {
+            wakes.push(nextMark - slack);
+            tally.skipped++;
+            continue;
+          }
+          wakes.push(base + slice - slack);
           missedHeartbeats.push(m);
         } else {
+          // A beat after `now` would move the deadline, but only later.
+          wakes.push(deadline + 1);
           tally.skipped++;
         }
         continue;
@@ -287,7 +360,9 @@ export async function runScheduled(
 
       // Polled monitor (http/dns/tcp/domain): due if next_check_at lands within
       // this cycle (+slack).
-      if ((st?.next_check_at ?? 0) > now + DUE_SLACK_MS) {
+      const slack = dueSlackMs(m.intervalSeconds, cadence);
+      if ((st?.next_check_at ?? 0) > base + slack) {
+        wakes.push(st!.next_check_at! - slack);
         tally.skipped++;
         continue;
       }
@@ -342,6 +417,7 @@ export async function runScheduled(
       );
       if (!ticket) {
         deferred++;
+        wakes.push(now);
         return;
       }
       let fetchesSpent: number | undefined;
@@ -366,6 +442,7 @@ export async function runScheduled(
         if (outcome.confirmation === "deferred") {
           tally.confirmationsDeferred++;
           deferred++;
+          wakes.push(now);
           return;
         }
         if (outcome.confirmation) tally.confirmations++;
@@ -374,6 +451,7 @@ export async function runScheduled(
         results.push({ m, outcome, st: st ?? null });
       } catch (e) {
         tally.failures++;
+        wakes.push(now);
         console.error(`[scheduler] check ${m.id} failed`, e);
       } finally {
         ticket.end(fetchesSpent);
@@ -413,21 +491,30 @@ export async function runScheduled(
 
     for (const { m, outcome, st } of results) {
       try {
-        const planned = await planCheckResult(env, m, outcome, st, ctx);
+        // On the platform, the next check is one interval after this tick, on
+        // the grid the tenant's monitors share (lib/cadence.ts); on the cron,
+        // one interval after the check, as it always was.
+        const nextAt =
+          cadence.kind === "platform" ? platformNextCheck(m, base) : undefined;
+        const planned = await planCheckResult(env, m, outcome, st, ctx, { nextAt });
+        const slack = dueSlackMs(m.intervalSeconds, cadence);
         writes.push({
           group: planned.group,
           done: (o) => {
             if (o === "none") {
               tally.failures++;
+              wakes.push(now);
               console.error(`[scheduler] check ${m.id} could not be written`);
               return;
             }
+            if (planned.nextCheckAt !== undefined) wakes.push(planned.nextCheckAt - slack);
             tally.checked++;
             if (!outcome.ok) tally.failures++;
           },
         });
       } catch (e) {
         tally.failures++;
+        wakes.push(now);
         console.error(`[scheduler] check ${m.id} failed`, e);
       }
     }
@@ -492,20 +579,26 @@ export async function runScheduled(
       parseJSONSetting<Partial<RetentionConfig>>(settings.get("retention")),
     );
     const claim = take > 0 ? [{ label: "outbox claim", stmt: claimDueStatement(env, Date.now(), take) }] : [];
-    // Only what changed since the last run whose rollups landed (history/rollups.ts).
-    const compaction = compactionStatements(env, now, retention, lastCompactedRunAt(lastRunRes));
+    // The upkeep, once per 12 minutes on the platform (lib/cadence.ts): only
+    // what changed since the last run whose rollups landed (history/rollups.ts).
+    const compaction = upkeep
+      ? compactionStatements(env, now, retention, runStartedAt(compactedRes), {
+          ...(cadence.kind === "platform" ? { runRecordsMs: PLATFORM_RUN_RECORD_DAYS * 86_400_000 } : {}),
+        })
+      : [];
     const plan = await runWritePlan(
       env,
       "scheduler",
       writes.map((w) => w.group),
-      [...claim, ...compaction, ...expiredAuthCleanupStatements(env)],
+      [...claim, ...compaction, ...(upkeep ? expiredAuthCleanupStatements(env) : [])],
       // Keep room for the run record and the deliveries just claimed.
       { canSpend: () => budget.canSpendD1(1 + take * NOTIFICATION_D1_COST) },
     );
     writes.forEach((w, i) => w.done(plan.groups[i]!));
     const tailResults = plan.tail;
     // Recorded on the run, so the next one starts from here only if all of it landed.
-    const compacted = tailResults.slice(claim.length, claim.length + compaction.length).every((r) => r != null);
+    const compacted =
+      compaction.length > 0 && tailResults.slice(claim.length, claim.length + compaction.length).every((r) => r != null);
 
     // Deliver what was claimed (independent; never fails the run).
     let notificationFailures = 0;
@@ -586,11 +679,14 @@ export async function runScheduled(
   // Round trip 3: record the finish and release the lease together. The count
   // includes this last batch, so it is the run's total.
   stats.d1Queries = usage.d1 + 1;
+  // A platform run that kept no record (lib/cadence.ts) still records a failure.
+  const finish = upkeep
+    ? [recordRunFinishStatement(env, run.id, run.startedAt, stats)]
+    : stats.ok
+      ? []
+      : [recordFailedRunStatement(env, run, controller.cron ?? null), recordRunFinishStatement(env, run.id, run.startedAt, stats)];
   try {
-    await env.DB.batch([
-      recordRunFinishStatement(env, run.id, run.startedAt, stats),
-      releaseLeaseStatement(env, lease.name, lease.holder),
-    ]);
+    await env.DB.batch([...finish, releaseLeaseStatement(env, lease.name, lease.holder)]);
   } catch (e) {
     console.error("[scheduler] could not record the run's finish", e);
     // Still release the lease, or the next tick stalls until its TTL expires.
@@ -601,5 +697,19 @@ export async function runScheduled(
   console.log(
     `[scheduler] cron=${controller.cron} checked=${stats.monitorsChecked} skipped=${stats.monitorsSkipped} failures=${stats.checkFailures} confirmations=${stats.confirmations ?? 0} cleared=${stats.confirmationsCleared ?? 0} deferred=${stats.confirmationsDeferred ?? 0} d1=${stats.d1Queries} ms=${Date.now() - run.startedAt}`,
   );
-  return { outcome: stats.ok ? "ran" : "failed", startedAt: run.startedAt, stats, deferred: tally.deferred };
+  return {
+    outcome: stats.ok ? "ran" : "failed",
+    startedAt: run.startedAt,
+    stats,
+    deferred: tally.deferred,
+    nextDueAt: nextDueAt(run.startedAt, wakes),
+    upkeep,
+  };
+}
+
+/** A polled monitor's next check on the platform: one interval after `base`, aligned (lib/cadence.ts). */
+function platformNextCheck(m: MonitorRecord, base: number): number {
+  const next = nextCheckAt(m.schedule, new Date(base), m.intervalSeconds).getTime();
+  // Outside its schedule window it waits for the window to open, as on the cron.
+  return next === base + m.intervalSeconds * 1000 ? alignNextCheck(base, m.intervalSeconds) : next;
 }

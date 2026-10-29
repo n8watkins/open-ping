@@ -257,12 +257,15 @@ The internal paths are `src/worker/routes/platform.ts`, and self-migration is `s
   It remembers a failed migration for 30 seconds, so the calls in that time answer the failure instead of trying again.
 - A public call's check (`schemaIsCurrent`) is the same one read of `d1_migrations`, and never writes.
 - Migrations are additive only ([RELEASING.md](../../RELEASING.md#database-migrations)); `scripts/check-migrations.test.mjs` fails `npm test` for a later migration that drops, renames, or adds a `NOT NULL` column without a default.
-- `POST /__platform/scheduled` passes `cron` and `scheduledTime` to the same `runScheduled` the cron handler calls, then reports usage through `props.platform.reportUsage`.
+- `POST /__platform/scheduled` passes `cron` and `scheduledTime` to the same `runScheduled` the cron handler calls.
+  `scheduledTime` is the tick the call was made for, so send the cron's scheduled time, not the time the queue delivered the message; a call up to a minute late still schedules its checks from that tick.
+- A tenant may be called every minute, so the work that doesn't need to be that frequent happens once per 12-minute slot of the clock, on the first call in it: the history rollups and cleanup, the usage report through `props.platform.reportUsage` (every create and delete also reports), and the `scheduler_runs` row.
+  Every failed run is recorded too, and on Hosted run records are kept 14 days.
   A malformed body answers 400 `invalid_request`.
   `d1Queries` counts the run's queries plus the migration check and the usage report.
 - `nextDueAt` is worked out from what the run already read and wrote, so it costs no query: the earliest next check of a polled monitor that is on, the deadline of a heartbeat that isn't already down, and the start of a monitor's next schedule window, capped at 12 minutes.
   A monitor that is due within 30 seconds of a call is checked on that call, which is what lets the platform call on minute ticks with no margin.
-- `lastRun` is the latest finished row of `scheduler_runs` (`at` is when it started); a `lease_busy` call writes no row.
+- `lastRun` is the latest finished row of `scheduler_runs` (`at` is when it started), so at most about 12 minutes old while runs succeed; a `lease_busy` call writes no row.
 
 ## 7. The sign-in hand-off
 

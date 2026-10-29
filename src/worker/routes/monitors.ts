@@ -27,7 +27,15 @@ import { downtimeBreakdown, loadRangeHistory } from "../history/range";
 import { parseTimeRange, type MonitorHistoryResponse } from "../../shared/time-range";
 import { computeListStats } from "../history/list-stats";
 import type { MonitorRecord } from "../db/monitors";
-import { hostedPlan, intervalLimit, monitorLimit, type HostedPlan, type PlanLimitRefusal } from "../lib/plan-limits";
+import {
+  hostedPlan,
+  intervalLimit,
+  monitorLimit,
+  ignoreIntervalWithoutPlan,
+  withCheckInterval,
+  type HostedPlan,
+  type PlanLimitRefusal,
+} from "../lib/plan-limits";
 
 /** Strip secret config fields and ingestion credentials from normal responses. */
 export function redactMonitor(m: MonitorRecord): MonitorRecord {
@@ -62,6 +70,7 @@ export const monitorPatchSchema = z
     name: z.unknown().optional(),
     enabled: z.unknown().optional(),
     confirmFailures: z.unknown().optional(),
+    intervalSeconds: z.unknown().optional(),
     schedule: z.unknown().optional(),
     config: z.record(z.string(), z.unknown()).optional(),
     assertions: z.unknown().optional(),
@@ -96,6 +105,10 @@ export function mergeMonitorPatch(
     name: pick(patch.name, existing.name),
     enabled: pick(patch.enabled, existing.enabled),
     confirmFailures: pick(patch.confirmFailures, existing.confirmFailures),
+    // Polled monitors only: a heartbeat's interval is in its config.
+    ...(existing.type !== "heartbeat"
+      ? { intervalSeconds: pick(patch.intervalSeconds, existing.intervalSeconds) }
+      : {}),
     schedule: pick(patch.schedule, existing.schedule),
     notify: pick(patch.notify, existing.notify),
     public: patch.public ? { ...existing.public, ...patch.public } : existing.public,
@@ -128,13 +141,14 @@ export async function createMonitorFromBody(
   body: unknown,
   plan?: HostedPlan,
 ): Promise<MonitorWriteResult> {
-  const parsed = createMonitorSchema.safeParse(body);
+  const parsed = createMonitorSchema.safeParse(ignoreIntervalWithoutPlan(body, plan));
   if (!parsed.success) {
     return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
   }
-  const refused = intervalLimit(plan, parsed.data) ?? (await monitorLimit(env, plan));
+  const input = withCheckInterval(parsed.data, plan);
+  const refused = intervalLimit(plan, input) ?? (await monitorLimit(env, plan));
   if (refused) return refused;
-  return { ok: true, monitor: await createMonitor(env, parsed.data) };
+  return { ok: true, monitor: await createMonitor(env, input) };
 }
 
 /**
@@ -181,7 +195,7 @@ export async function replaceMonitor(
   body: unknown,
   plan?: HostedPlan,
 ): Promise<MonitorWriteResult> {
-  const parsed = createMonitorSchema.safeParse(body);
+  const parsed = createMonitorSchema.safeParse(ignoreIntervalWithoutPlan(body, plan));
   if (!parsed.success) {
     return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
   }
@@ -190,9 +204,10 @@ export async function replaceMonitor(
   if (existing.type !== parsed.data.type) {
     return { ok: false, status: 400, error: "type_immutable" };
   }
-  const refused = intervalChangeLimit(plan, existing, parsed.data);
+  const input = withCheckInterval(parsed.data, plan, existing);
+  const refused = intervalChangeLimit(plan, existing, input);
   if (refused) return refused;
-  const monitor = await updateMonitor(env, id, parsed.data);
+  const monitor = await updateMonitor(env, id, input);
   if (!monitor) return { ok: false, status: 404, error: "not_found" };
   return { ok: true, monitor };
 }
@@ -204,7 +219,7 @@ export async function patchMonitor(
   body: unknown,
   plan?: HostedPlan,
 ): Promise<MonitorWriteResult> {
-  const patch = monitorPatchSchema.safeParse(body);
+  const patch = monitorPatchSchema.safeParse(ignoreIntervalWithoutPlan(body, plan));
   if (!patch.success) {
     return { ok: false, status: 400, error: "validation", issues: patch.error.issues };
   }
@@ -217,9 +232,10 @@ export async function patchMonitor(
   if (!parsed.success) {
     return { ok: false, status: 400, error: "validation", issues: parsed.error.issues };
   }
-  const refused = intervalChangeLimit(plan, existing, parsed.data);
+  const input = withCheckInterval(parsed.data, plan, existing);
+  const refused = intervalChangeLimit(plan, existing, input);
   if (refused) return refused;
-  const monitor = await updateMonitor(env, id, parsed.data);
+  const monitor = await updateMonitor(env, id, input);
   if (!monitor) return { ok: false, status: 404, error: "not_found" };
   return { ok: true, monitor };
 }

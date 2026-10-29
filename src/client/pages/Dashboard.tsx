@@ -13,6 +13,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useFetch } from "../lib/useFetch";
+import { usePlan } from "../lib/plan-limits";
 import { monitorTypeLabel, type MonitorSummary, type OverviewResponse } from "../lib/types";
 import { useTimeRange } from "../lib/time-range";
 import { StatusPill } from "../components/ui/StatusPill";
@@ -124,6 +125,9 @@ export default function Dashboard() {
   const { data, loading, error, reload } = useFetch<OverviewPayload>("/api/overview");
   const history = useFetch<OverviewHistoryResponse>(`/api/overview/history?range=${range}`);
   const refresh = () => Promise.all([reload(), history.reload()]);
+  // OpenPing Hosted checks each monitor on its own interval; an install of
+  // your own on each 12-minute run.
+  const hosted = usePlan() !== null;
 
   if (loading && !data) return <DashboardSkeleton />;
 
@@ -177,7 +181,11 @@ export default function Dashboard() {
           <EmptyState
             icon={<Activity className="size-6 text-accent" />}
             title="No monitors yet"
-            description="Add a website, API, port, DNS record, domain or cron heartbeat, and OpenPing checks it on the next run, every 12 minutes."
+            description={
+              hosted
+                ? "Add a website, API, port, DNS record, domain or cron heartbeat, and OpenPing checks it right away, then as often as you choose."
+                : "Add a website, API, port, DNS record, domain or cron heartbeat, and OpenPing checks it on the next run, every 12 minutes."
+            }
             action={
               <Link to="/monitors/new" className={accentButton}>
                 <Plus className="size-4" />
