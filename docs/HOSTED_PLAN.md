@@ -71,6 +71,32 @@ The options, with what each costs for one customer:
 - Option 4 (fewer rows per check) comes after launch, because it roughly halves every plan's cost, the base plan included.
 - Yearly billing only, as before, because of Stripe's 30 cent fee per charge.
 
+**Margins on the recommended prices (2026-10-29),** after Stripe's card fee (2.9% plus 30 cents a charge) and Stripe Tax (0.5%):
+
+| Plan | Price a year | Stripe a year | Cost a year, busiest / typical | Profit a year, busiest / typical | Margin, busiest / typical |
+| --- | --- | --- | --- | --- | --- |
+| OpenPing Hosted | $24 | $1.12 | $9.96 / $4.09 | $12.92 / $18.79 | 54% / 78% |
+| Hosted with fast checks | $48 | $1.93 | $33.60 / $16.80 | $12.47 / $29.27 | 26% / 61% |
+
+- Busiest means every monitor the plan allows is in use (20 at 12 minutes; or 5 at 1 minute and 15 at 12 minutes); typical means about 8 monitors, or 3 fast and 5 at 12 minutes.
+- Fixed cost is about $30 a month (Workers Paid and Workers for Platforms), so break-even is about 20 typical or 28 busiest base-plan customers.
+- While the account stays inside the 50 million rows written that Workers Paid includes (about 60 base-plan customers), the base plan's margin is about 94%: Stripe's fee is then the main cost.
+- Not included: email beyond Resend's free tier, the domain, and support time.
+
+**The trial (pending the owner's choice).**
+There is no free plan: self-hosting is the free offering.
+A trial costs what its monitors cost to run for its length, and no Stripe fee:
+
+| Trial | Cost per trial | Per paying customer at 5% / 10% / 20% conversion | As a share of the first year's $24 |
+| --- | --- | --- | --- |
+| 14 days, 5 monitors (as built) | about $0.10 | $2.00 / $1.00 / $0.50 | 8% / 4% / 2% |
+| 30 days, 5 monitors (recommended) | about $0.20 | $4.00 / $2.00 / $1.00 | 17% / 8% / 4% |
+| 30 days, the full plan (20 monitors) | about $0.83 | $16.60 / $8.30 / $4.15 | 69% / 35% / 17% |
+
+- The conversion rates are assumptions to show the range, not measurements.
+- A 30-day trial with 5 monitors costs at most about 17% of a converted customer's first year even at a poor 5% conversion, and inside the included rows it costs close to nothing.
+- The full plan as a trial is the one that can cost a large share of the first year, and it invites using the trial as a free plan.
+
 ## The stages
 
 Each stage ends at a gate.
