@@ -14,6 +14,8 @@ import { accountRoutes, type AccountDeps } from "./account-routes";
 import { billingSetup } from "./billing/config";
 import { handleStripeWebhook } from "./billing/webhook";
 import { recipientRoutes } from "./recipients";
+import { accountExportRoutes, type AccountExportDeps } from "./lifecycle/account-export";
+import { exportDepsFromEnv } from "./lifecycle/env";
 import { adminRoutes } from "./admin/routes";
 import { HOSTED_ERRORS, isInternalPath, type PlatformCapability } from "../../src/shared/hosted-contract";
 import { DISPATCH_LIMITS, buildTenantProps, newCallId, publicRequest, type TenantDispatcher } from "./dispatch";
@@ -38,6 +40,8 @@ export interface AppDeps {
   capability(env: PlatformEnv, ctx: ExecutionContext, tenant: TenantRecord): PlatformCapability;
   /** Sign-in and the account pages; by default mail from the env and provisioning off. */
   accounts?: AccountDeps;
+  /** A customer's exports (/account/export); by default from the env. */
+  exports?: AccountExportDeps;
   /** Tests only: a fixed call id. */
   newCallId?: () => string;
 }
@@ -87,6 +91,8 @@ function appHost(deps: AppDeps): Hono<Platform> {
   );
   // An address a tenant wants to email says yes or no (src/recipients.ts).
   app.route("/email", recipientRoutes({ now: accounts.now }));
+  // Before the account routes, which would answer /account/* themselves.
+  app.route("/account/export", accountExportRoutes(deps.exports ?? { exports: exportDepsFromEnv, mailer: accounts.mailer, now: accounts.now }));
   app.route("/", accountRoutes(accounts));
   app.notFound((c) => appNotFoundPage(appOrigin(c.env.HOSTED_DOMAIN)));
   return app;

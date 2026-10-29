@@ -15,6 +15,7 @@ import {
   type AssetUploadSession,
   type CloudflareApi,
   type D1DatabaseInfo,
+  type D1ExportStatus,
   type UploadedScript,
   type WorkerModule,
   type WorkerUploadMetadata,
@@ -27,7 +28,8 @@ export type FakeOperation =
   | "createAssetUploadSession"
   | "uploadAssets"
   | "putScript"
-  | "deleteScript";
+  | "deleteScript"
+  | "exportDatabase";
 
 export interface FakeScript {
   namespace: string;
@@ -63,6 +65,11 @@ export class FakeCloudflareApi implements CloudflareApi {
   readonly calls: { op: FakeOperation; args: unknown[] }[] = [];
   /** Hashes per upload bucket the fake hands out, to exercise more than one bucket. */
   bucketSize = 2;
+  /** Polls an export takes before it completes (0: done at once); the dump is at `fake-d1-export:<id>`. */
+  exportPolls = 1;
+  /** The next export ends in this error instead. */
+  exportError: string | null = null;
+  private readonly exports = new Map<string, { databaseId: string; polls: number; error: string | null }>();
   /** Called after a script upload or delete takes effect (to register a fake user Worker). */
   onScriptChange?: (scriptName: string, script: FakeScript | null) => void;
 
@@ -205,6 +212,23 @@ export class FakeCloudflareApi implements CloudflareApi {
       this.scripts.set(key, script);
       this.onScriptChange?.(scriptName, script);
       return { id: scriptName, etag: this.id("etag-"), hasAssets: assetPaths.length > 0 };
+    });
+  }
+
+  exportDatabase(databaseId: string, bookmark?: string): Promise<D1ExportStatus> {
+    return this.run("exportDatabase", [databaseId, bookmark ?? null], (): D1ExportStatus => {
+      if (!this.databases.has(databaseId)) throw new CloudflareApiError("fake.export", 404, [{ code: 7404, message: "database not found" }]);
+      if (!bookmark) {
+        const id = this.id("bm-");
+        this.exports.set(id, { databaseId, polls: 0, error: this.exportError });
+        this.exportError = null;
+        return { status: "active", bookmark: id };
+      }
+      const job = this.exports.get(bookmark);
+      if (!job || job.databaseId !== databaseId) throw new CloudflareApiError("fake.export", 400, [{ code: 7500, message: "unknown bookmark" }]);
+      if (job.error) return { status: "error", bookmark, error: job.error };
+      if (job.polls++ < this.exportPolls - 1) return { status: "active", bookmark };
+      return { status: "complete", bookmark, signedUrl: `https://fake-d1-export.invalid/${databaseId}/${bookmark}.sql`, filename: `${databaseId}.sql` };
     });
   }
 

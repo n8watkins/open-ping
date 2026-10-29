@@ -120,7 +120,25 @@ export interface UploadedScript {
   hasAssets: boolean;
 }
 
+/**
+ * One poll of a D1 export. `active` while it runs (poll again with the
+ * bookmark); `complete` with a signed URL to the SQL dump, valid one hour;
+ * `error` with D1's reason.
+ */
+export type D1ExportStatus =
+  | { status: "active"; bookmark: string }
+  | { status: "complete"; bookmark: string; signedUrl: string; filename: string }
+  | { status: "error"; bookmark: string | null; error: string };
+
 export interface CloudflareApi {
+  /**
+   * POST /accounts/{account_id}/d1/database/{database_id}/export with
+   * output_format "polling": starts an export (no bookmark) or polls one
+   * (the bookmark the start answered). An export nobody polls is cancelled.
+   * https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/export/
+   */
+  exportDatabase(databaseId: string, bookmark?: string): Promise<D1ExportStatus>;
+
   /**
    * POST /accounts/{account_id}/d1/database
    * https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/create/

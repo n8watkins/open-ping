@@ -15,6 +15,7 @@ import {
   type CloudflareApi,
   type CloudflareErrorDetail,
   type D1DatabaseInfo,
+  type D1ExportStatus,
   type UploadedScript,
   type WorkerModule,
   type WorkerUploadMetadata,
@@ -151,6 +152,23 @@ export class HttpCloudflareApi implements CloudflareApi {
       }
       throw error;
     }
+  }
+
+  async exportDatabase(databaseId: string, bookmark?: string): Promise<D1ExportStatus> {
+    const op = "d1.export";
+    const { status, body } = await this.call<{ at_bookmark?: string; status?: string; error?: string; result?: { filename?: string; signed_url?: string } }>(
+      op,
+      this.account(`/d1/database/${encodeURIComponent(databaseId)}/export`),
+      { method: "POST", json: { output_format: "polling", ...(bookmark ? { current_bookmark: bookmark } : {}) } },
+    );
+    const result = HttpCloudflareApi.result(op, status, body);
+    const at = typeof result.at_bookmark === "string" ? result.at_bookmark : (bookmark ?? null);
+    if (result.status === "error") return { status: "error", bookmark: at, error: String(result.error ?? "no reason").slice(0, 200) };
+    if (result.status === "complete" && typeof result.result?.signed_url === "string") {
+      return { status: "complete", bookmark: at ?? "", signedUrl: result.result.signed_url, filename: String(result.result.filename ?? "export.sql") };
+    }
+    if (!at) throw new CloudflareApiError(op, status);
+    return { status: "active", bookmark: at };
   }
 
   async createAssetUploadSession(namespace: string, scriptName: string, manifest: AssetManifest): Promise<AssetUploadSession> {

@@ -27,6 +27,8 @@ import { TenantCapability, emailUsageCleanup, tenantMailFromEnv } from "./capabi
 import { NamespaceDispatcher } from "./dispatch";
 import type { PlatformEnv } from "./env";
 import { mailerFromEnv } from "./mail";
+import { lifecycleDepsFromEnv } from "./lifecycle/env";
+import { LIFECYCLE_EVERY_MINUTES, lifecycleTick } from "./lifecycle/jobs";
 import { provisionDue } from "./provisioning";
 import { handleProvisionBatch, type ProvisionMessage } from "./provisioning-queue";
 import { provisioningSetup } from "./provisioning-env";
@@ -97,6 +99,20 @@ function schedulingDeps(env: PlatformEnv, ctx: ExecutionContext): SchedulingDeps
  * up any tenant a queue message missed. The scheduler goes first and runs
  * alongside the rest, since it is the one that is late when it waits.
  */
+/** The lifecycle jobs (src/lifecycle/jobs.ts), every few minutes, beside the rest of the cron. */
+async function lifecycle(env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
+  try {
+    const report = await lifecycleTick(lifecycleDepsFromEnv(env, (tenant) => capabilityFor(ctx, tenant)));
+    if (!report) return; // the run before this one still holds the lock
+    const sent = Object.entries(report.sent).map(([k, n]) => `${k}:${n}`);
+    if (sent.length || report.deleted.length || report.exports.length) {
+      console.log("[lifecycle]", { sent: sent.join(" "), deleted: report.deleted, exports: report.exports.map((e) => `${e.exportId}:${e.kind}`) });
+    }
+  } catch (error) {
+    console.error("[lifecycle] run failed", error);
+  }
+}
+
 async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
   const now = Date.now();
   const db = env.PLATFORM_DB;
@@ -112,6 +128,7 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
     })
     .catch((error) => console.error("[schedule] enqueue failed", error));
   const hourly = new Date(controller.scheduledTime).getUTCMinutes() === 7 ? [schedulerDaysCleanup(db, now), ...billingRecordsCleanup(db, now)] : [];
+  if (new Date(controller.scheduledTime).getUTCMinutes() % LIFECYCLE_EVERY_MINUTES === 0) ctx.waitUntil(lifecycle(env, ctx));
   await db
     .batch([sessionCleanup(db, now), emailSignInCleanup(db, now), ceremonyCleanup(db, now), rateLimitCleanup(db, now), emailUsageCleanup(db, now), ...hourly])
     .catch((error) => console.error("[cleanup] failed", error));

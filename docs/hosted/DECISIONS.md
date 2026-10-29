@@ -10,6 +10,7 @@ Each one is the owner's call.
 | D3 | Customer sign-in | Recommended, pending owner |
 | D4 | Who holds each customer's `MASTER_KEY` | Recommended, pending owner |
 | O4 | Support address | Decided 2026-10-28: support@n8builds.dev |
+| D12 | How long a deleted tenant's export is kept, and who may see its `MASTER_KEY` | Recommended, pending owner |
 
 ## D2: the Hosted address
 
@@ -81,3 +82,22 @@ Push devices aren't channels, so plan limits don't count them, and the owner cho
 When Stripe's last automatic retry of a renewal fails, Stripe cancels the subscription (Billing settings, "Manage failed payments": cancel the subscription), rather than marking it unpaid.
 The tenant is then suspended by billing, its checks stop, and the 30-day data retention and deletion of decision D8 apply.
 A customer who comes back subscribes again from their account page.
+
+## D12: a deleted tenant's export, and the customer's key
+
+**Status:** recommended, pending owner.
+
+**Recommendation:** before a tenant is deleted (decision D8), the platform exports its database to the private `openping-tenant-exports` bucket and keeps that export 30 more days, so the customer can still download it from their account page, and the owner can restore it.
+A customer's own export, from the account page, is kept 7 days.
+Each export keeps the escrowed copy of the `MASTER_KEY` its encrypted values are sealed with (still encrypted with `PLATFORM_KEY`, in `export_keys`), so a deletion export stays readable after the tenant and its escrowed key are gone; the key and the export's files are deleted together when the export expires.
+The customer may see an export's key on the account page, after a sign-in from the last 15 minutes (a passkey sign-in, when the account has a passkey); it is never emailed or put in a download, the account is emailed each time it is shown, and it is in the audit log.
+
+**Why:**
+
+- A deletion that loses data by mistake can't be undone; an export first, kept a while, can.
+- Moving to a self-hosted OpenPing needs the key: without it the encrypted credentials in the database can't be read (docs/BACKUP.md).
+- The key is the customer's own, for their own data; the steps tell them to rotate it once they have moved.
+
+**How the code keeps it open:** the keep times are `EXPORT_KEEP_MS` in `platform/src/lifecycle/exports.ts`, and the key page is one route in `platform/src/lifecycle/account-export.ts`.
+
+**Owner input needed:** the retention, for the privacy policy (D9): with this, a deleted customer's data is gone 60 days after their checks stopped.
