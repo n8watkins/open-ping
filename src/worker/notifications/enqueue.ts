@@ -139,8 +139,8 @@ export async function enqueueIncidentUpdateEvent(
 /**
  * One outbox entry per channel (and Web Push device) that wants `event` for
  * this monitor, keyed `${event}:${subjectId}:${channel}` so a retry is a no-op.
- * The payload is built only once a channel exists (it may read the app URL
- * setting). Returns how many entries were offered to the outbox.
+ * The payload is built only once a channel or push device exists (it may read
+ * the app URL setting). Returns how many entries were offered to the outbox.
  */
 async function fanOut(
   env: Env,
@@ -150,9 +150,10 @@ async function fanOut(
   buildPayload: (appUrl: string | undefined) => NotificationPayload,
 ): Promise<number> {
   const channels = await listChannels(env);
-  if (!channels.some((c) => c.enabled && c.type !== "push")) return 0;
-  const appUrl = env.APP_URL ?? (await getSetting(env, "app_url")) ?? undefined;
   const pushIds = (await isVapidConfigured(env)) ? await listActiveSubscriptionIds(env) : [];
+  // Push devices are a destination of their own: a phone may be the only one.
+  if (!channels.some((c) => c.enabled && c.type !== "push") && pushIds.length === 0) return 0;
+  const appUrl = env.APP_URL ?? (await getSetting(env, "app_url")) ?? undefined;
   const entries = deliveriesFor(monitor, event, subjectId, buildPayload, { channels, appUrl, pushIds });
   if (entries.length) await enqueue(env, entries);
   return entries.length;
@@ -172,7 +173,7 @@ export function deliveriesFor(
   ctx: NotifyContext,
 ): NewOutboxEntry[] {
   const channels = ctx.channels.filter((c) => c.enabled && c.type !== "push");
-  if (!channels.length) return [];
+  if (!channels.length && !ctx.pushIds.length) return [];
 
   const payload = buildPayload(ctx.appUrl);
 
