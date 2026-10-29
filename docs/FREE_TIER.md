@@ -151,6 +151,18 @@ Each alert delivered adds its own queries.
 The **DB calls** column (`d1Queries`) shows each run's count, so duration divided by DB calls is roughly that run's latency to D1.
 Builds before this change rolled history up with one query per monitor and day, about 160 round trips per run, which is why off-hours runs on those builds took 25 to 40 seconds while checking nothing.
 
+### Rows read and written per run
+
+D1 counts rows as well as queries: on Free, 5 million rows read and 100,000 rows written a day across the account, and on Paid every row past the monthly allowance is billed.
+Every run ends by rolling the hour summaries up into day and month summaries and pruning what is past its retention (`src/worker/history/rollups.ts`).
+Earlier builds recomputed every day and month bucket still open on every run, so the cost grew with the install's age: measured in `test/integration/history-compaction.test.ts`, a run on an install with 20 monitors and 63 days of history read about 160,000 rows and wrote 1,347, even when it checked nothing.
+At the 12-minute cadence that is about 19 million rows read and 160,000 written a day, past both Free limits.
+Now a run recomputes only the days and months that may have changed since the last run whose rollups all landed (the run record's `compacted` flag, migration 0022), writes only the buckets that really changed, and reaches every row through an index.
+A run can finish while its rollups failed, so a streak of failed passes, however long, is made up by the next pass that lands.
+The first run on this build has no such run to start from, so it recomputes everything once, which also repairs anything an older build left stale: on the same install that pass read about 66,000 rows and wrote 7.
+The same run reads about 2,600 rows and writes 7.
+A passing check writes about 7 rows of its own (its state, sample, hour summary and status interval, with their indexes), and its sample is deleted a day later.
+
 ### Telling OpenPing your plan
 
 Set `WORKERS_PLAN` in `wrangler.jsonc` (`"free"`, the default, or `"paid"`) and

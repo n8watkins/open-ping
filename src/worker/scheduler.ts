@@ -36,6 +36,8 @@ import { sendWeeklySummary, WEEKLY_GATE_SETTINGS } from "./notifications/weekly"
 import { MONTHLY_GATE_SETTINGS, sendMonthlyReport } from "./notifications/monthly";
 import {
   acquireLeaseStatement,
+  lastCompactedRunAt,
+  lastCompactedRunStatement,
   leaseHolderStatement,
   recordRunStartStatement,
   recordRunFinishStatement,
@@ -157,16 +159,18 @@ export async function runScheduled(
   // won), and read what the run needs. A batch is one transaction, so the run
   // record can never exist without the lease. Losing the lease wastes only the
   // reads; nothing is written.
-  const [, holderRes, , monitorsRes, statesRes, maintenanceRes, settingsRes, unnotifiedRes] = await env.DB.batch([
-    acquireLeaseStatement(env, lease.name, lease.holder, now, LEASE_TTL_MS),
-    leaseHolderStatement(env, lease.name),
-    recordRunStartStatement(env, run, controller.cron ?? null, lease),
-    listMonitorsStatement(env),
-    env.DB.prepare(`SELECT monitor_id, next_check_at, ${STATE_COLUMNS} FROM monitor_state`),
-    listMaintenanceStatement(env),
-    settingsStatement(env, RUN_SETTINGS),
-    unnotifiedIncidentsStatement(env, now),
-  ]);
+  const [, holderRes, , monitorsRes, statesRes, maintenanceRes, settingsRes, unnotifiedRes, lastRunRes] =
+    await env.DB.batch([
+      acquireLeaseStatement(env, lease.name, lease.holder, now, LEASE_TTL_MS),
+      leaseHolderStatement(env, lease.name),
+      recordRunStartStatement(env, run, controller.cron ?? null, lease),
+      listMonitorsStatement(env),
+      env.DB.prepare(`SELECT monitor_id, next_check_at, ${STATE_COLUMNS} FROM monitor_state`),
+      listMaintenanceStatement(env),
+      settingsStatement(env, RUN_SETTINGS),
+      unnotifiedIncidentsStatement(env, now),
+      lastCompactedRunStatement(env),
+    ]);
   const holder = (holderRes?.results?.[0] as { holder?: string } | undefined)?.holder;
   if (holder !== lease.holder) {
     console.log("[scheduler] another run holds the lease; skipping");
@@ -488,16 +492,20 @@ export async function runScheduled(
       parseJSONSetting<Partial<RetentionConfig>>(settings.get("retention")),
     );
     const claim = take > 0 ? [{ label: "outbox claim", stmt: claimDueStatement(env, Date.now(), take) }] : [];
+    // Only what changed since the last run whose rollups landed (history/rollups.ts).
+    const compaction = compactionStatements(env, now, retention, lastCompactedRunAt(lastRunRes));
     const plan = await runWritePlan(
       env,
       "scheduler",
       writes.map((w) => w.group),
-      [...claim, ...compactionStatements(env, now, retention), ...expiredAuthCleanupStatements(env)],
+      [...claim, ...compaction, ...expiredAuthCleanupStatements(env)],
       // Keep room for the run record and the deliveries just claimed.
       { canSpend: () => budget.canSpendD1(1 + take * NOTIFICATION_D1_COST) },
     );
     writes.forEach((w, i) => w.done(plan.groups[i]!));
     const tailResults = plan.tail;
+    // Recorded on the run, so the next one starts from here only if all of it landed.
+    const compacted = tailResults.slice(claim.length, claim.length + compaction.length).every((r) => r != null);
 
     // Deliver what was claimed (independent; never fails the run).
     let notificationFailures = 0;
@@ -558,6 +566,7 @@ export async function runScheduled(
       confirmations: tally.confirmations,
       confirmationsCleared: tally.confirmationsCleared,
       confirmationsDeferred: tally.confirmationsDeferred,
+      compacted,
     };
   } catch (err) {
     console.error("[scheduler] run failed", err);

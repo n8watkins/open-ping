@@ -60,6 +60,8 @@ export interface RunStats {
   confirmationsCleared?: number;
   /** Failed checks whose re-check waited for the next run for lack of budget. */
   confirmationsDeferred?: number;
+  /** Every history rollup and retention statement of the run landed. */
+  compacted?: boolean;
   error?: string;
 }
 
@@ -79,6 +81,25 @@ export function recordRunStartStatement(
   ).bind(run.id, cron, run.startedAt, lease.name, lease.holder);
 }
 
+/**
+ * When the most recent run whose history rollups all landed started (the
+ * rollups recompute only what changed since then, history/rollups.ts). A run
+ * can finish fine while its rollups failed, so this is the `compacted` flag,
+ * not the finish. Reads the started_at index from the newest end: a row or two
+ * however many runs are kept, unless rollups kept failing.
+ */
+export function lastCompactedRunStatement(env: Env): D1PreparedStatement {
+  return env.DB.prepare(
+    "SELECT started_at FROM scheduler_runs WHERE compacted = 1 ORDER BY started_at DESC LIMIT 1",
+  );
+}
+
+/** lastCompactedRunStatement's answer: epoch ms, or null when no run has one (a full pass). */
+export function lastCompactedRunAt(result: D1Result | undefined): number | null {
+  const at = (result?.results?.[0] as { started_at?: unknown } | undefined)?.started_at;
+  return typeof at === "number" && Number.isFinite(at) ? at : null;
+}
+
 /** The run's finish row: its outcome, counts and wall-clock duration. */
 export function recordRunFinishStatement(
   env: Env,
@@ -91,7 +112,8 @@ export function recordRunFinishStatement(
     `UPDATE scheduler_runs SET
        finished_at = ?, ok = ?, monitors_checked = ?, monitors_skipped = ?,
        check_failures = ?, notification_failures = ?, duration_ms = ?, d1_queries = ?,
-       confirmations = ?, confirmations_cleared = ?, confirmations_deferred = ?, error = ?
+       confirmations = ?, confirmations_cleared = ?, confirmations_deferred = ?, error = ?,
+       compacted = ?
      WHERE id = ?`,
   ).bind(
     finishedAt,
@@ -106,6 +128,7 @@ export function recordRunFinishStatement(
     stats.confirmationsCleared ?? 0,
     stats.confirmationsDeferred ?? 0,
     stats.error ?? null,
+    stats.compacted ? 1 : 0,
     id,
   );
 }
