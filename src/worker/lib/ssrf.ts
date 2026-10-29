@@ -77,6 +77,9 @@ export function isBlockedIPv6(host: string): boolean {
   if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1);
   const zone = h.indexOf("%");
   if (zone !== -1) h = h.slice(0, zone);
+  // Every IPv6 literal has a colon and no host name does; without this, names
+  // such as fedoraproject.org, feedly.com or ffmpeg.org matched the prefixes below.
+  if (!h.includes(":")) return false;
 
   if (h === "::1") return true; // loopback
   if (h === "::") return true; // unspecified
