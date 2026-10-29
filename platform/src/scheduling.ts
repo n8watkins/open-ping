@@ -17,45 +17,42 @@
  * One message per tenant, so a slow or broken tenant delays nobody else, and
  * a message whose consumer dies is delivered again.
  *
- When a tenant is due: the contract's `nextScheduledCall` (section 6, "When
- * to call next"), on minute ticks:
- *   - a new tenant at once, its next run spread over its interval by its id;
- *   - after a run that answered `ran` with `nextDueAt` (when the tenant next
- *     has work): the first tick at or after it, never later than
- *     SCHEDULED_MAX_GAP_MS (12 minutes) after this run, so alerts, reports
- *     and cleanup keep at least the self-hosted cadence;
- *   - after `ran` without `nextDueAt` (a bundle older than the field): the
- *     contract's 12 minutes, or the plan's `minIntervalMinutes` when sooner
- *     (1 minute with fast checks), keeping its phase;
- *   - after `lease_busy`: the next tick;
- *   - after `failed` or no answer: the next tick, then backing off (1, 2, 4,
- *     8 minutes...) while it keeps failing, never slower than its interval.
- * The claim records the interval's next tick; the consumer writes the due
- * time again only when the run moved it to another tick, so a tenant whose
- * work matches its plan costs no extra write.
+ * When a tenant is due: exactly the contract's `nextScheduledCall` (section 6,
+ * "When to call next"), on the first minute tick at or after the time it
+ * gives: a new tenant at once; after `ran`, the tenant's `nextDueAt`, never
+ * more than SCHEDULED_MAX_GAP_MS (12 minutes) after the run started, and 12
+ * minutes when a bundle sends none; after `lease_busy`, the next tick. The
+ * contract lets the platform back off a tenant that keeps failing: after
+ * `failed` or no answer, the next tick, then 2, 4, 8 minutes while it keeps
+ * failing, never more than 12. That backoff is the scheduler's retry: a
+ * call is never retried through the queue, so a tenant is never called twice
+ * for one run.
  *
  * Never two runs of one tenant at once:
  *   - the claim records a run id and a lease (the wait in the queue), and the
  *     cron claims only a tenant whose lease has run out;
  *   - the consumer starts only the claimed run, and only once per attempt
  *     (`schedule_running`), replacing the lease with the call's timeout plus
- *     a margin, which is shorter than the interval, so it never has to be
- *     released (one write saved per run);
+ *     a margin;
+ *   - the run's last write sets the next due time and clears the claim and
+ *     the lease together, so the next tick finds it free however late the
+ *     consumer started;
  *   - and the tenant keeps its own lease too (outcome `lease_busy`).
+ * The claim never moves the due time: a message that is lost, or a cron that
+ * dies between the claim and the send, leaves the tenant due, and the cron
+ * claims it again once the queue lease (3 minutes) runs out.
  *
- * Retries: a call that gets no answer (an error, a status other than 200, a
- * timeout) is retried through the queue with backoff, as long as the retry
- * can finish before the tenant's next run, which is the retry otherwise. A
- * run the tenant answers as `failed` is an answer, not retried: the next run
- * tries again (the contract, section 6).
+ * After the call, the run's bookkeeping (its numbers and the next due time)
+ * is retried in place when the platform database fails, and the message is
+ * acknowledged either way, so a database hiccup never calls the tenant again.
  *
  * Suspended (by billing or by the owner), not-ready and removed tenants are
  * never claimed: the due index leaves them out. One suspended between the
  * claim and the call is skipped by the start.
  *
- * Cost per run in the platform database: 2 rows written by the claim (the
- * row and its index entry), 1 by the start, 1 for the numbers (one row per
- * tenant, scheduler_stats). platform/README.md has the totals at scale.
+ * Cost per run in the platform database: 1 row written by the claim, 1 by the
+ * start, 2 by the finish (the row and its due-index entry), 1 for the numbers
+ * (one row per tenant, scheduler_stats). platform/README.md has the totals.
  */
 
 import {
@@ -115,9 +112,10 @@ export const CLAIM_BATCH = 100;
 /** Upper bound on one cron's claims (and its wall time below), so a backlog can't run the cron long. */
 export const MAX_CLAIMS_PER_TICK = 10_000;
 const CLAIM_TIME_BUDGET_MS = 25_000;
-/** Waits before each retry of a call that got no answer. */
-export const RETRY_DELAYS_SECONDS = [15, 60, 180] as const;
-export const MAX_ATTEMPTS = RETRY_DELAYS_SECONDS.length + 1;
+/** Deliveries are spread over this many seconds after the tick, by tenant, so 1-minute tenants don't all start at once. */
+export const DELIVERY_SPREAD_SECONDS = 10;
+/** Tries at the run's bookkeeping when the platform database fails, and the waits between them. */
+const BOOKKEEPING_WAITS_MS = [100, 500, 2_000] as const;
 
 /** How often the tenant runs: its fastest check, from its plan and overrides, 1 to 60 minutes. */
 export function intervalMs(tenant: Pick<TenantRecord, "plan" | "limitOverrides">): number {
@@ -150,73 +148,36 @@ export function currentTick(at: number): number {
   return Math.floor((at + DUE_SLACK_MS) / MINUTE_MS) * MINUTE_MS;
 }
 
-/**
- * A tenant checks what is due within 30 seconds of a call (the contract,
- * section 6), so a due time this little past a tick is called on that tick
- * rather than a minute later: a monitor checked a second after its tick
- * reports its next check a second past the tick, and would otherwise slip a
- * minute every run.
- */
-export const EARLY_CALL_MS = 15_000;
-
-/**
- * The tick a tenant due at `at` is called on: the first at or after it, or
- * one up to EARLY_CALL_MS before it. Due times are kept on ticks, so an
- * unchanged tick means nothing to write.
- */
+/** The first minute tick at or after `at`: where the contract has the platform call (section 6). */
 export function tickFor(at: number): number {
-  return Math.ceil((at - EARLY_CALL_MS) / MINUTE_MS) * MINUTE_MS;
+  return Math.ceil(at / MINUTE_MS) * MINUTE_MS;
 }
 
 /**
- * The next due time the claim records: the tenant's interval on from the
- * due time being claimed (`previous`), past this tick, so a late cron
- * doesn't bunch tenants together. A tenant's first claim (`previous` 0)
- * runs now and places the next run somewhere in the interval by its id.
- */
-export function nextDueAfterClaim(tenantId: string, previous: number, tick: number, interval: number): number {
-  if (previous <= 0) return tick + (1 + spreadIndex(tenantId, Math.round(interval / MINUTE_MS))) * MINUTE_MS;
-  const steps = Math.max(1, Math.ceil((tick - previous + 1) / interval));
-  return tickFor(previous + steps * interval);
-}
-
-/**
- * After a run: when the tenant is due next. The rule is the contract's own
- * `nextScheduledCall` (section 6, "When to call next"), shared with the
- * tenant; the platform adds only what the contract leaves to it:
- *   - calls land on minute ticks (tickFor), and never on this tick again;
- *   - a tenant that keeps failing, or gets no answer, backs off (1, 2, 4, 8
- *     minutes...), never slower than its interval;
- *   - a run without `nextDueAt` (a bundle older than the field) is called at
- *     the plan's interval when that is sooner than the contract's 12 minutes,
- *     so a 1-minute plan keeps its cadence on such a bundle.
- * `claimedNext` is what the claim recorded (the plan's interval); `summary`
- * is null when the call got no answer; `startedAt` is when the platform
- * called (the platform's clock, not the tenant's); `streak` counts the runs
- * in a row, this one included, that failed or got none.
+ * After a run: when the tenant is due next, by the contract's
+ * `nextScheduledCall` (see the top of this file), on the tick at or after
+ * it. `summary` is null when the call got no answer; `streak` counts the
+ * runs in a row, this one included, that failed or got none. The tenant's
+ * `startedAt` is its own clock, so it is held between this tick and now, and
+ * the result between the next tick and 12 minutes from now.
  */
 export function nextDueAfterRun(input: {
   tick: number;
-  startedAt: number;
   now: number;
-  claimedNext: number;
-  interval: number;
-  summary: Pick<ScheduledRunSummary, "outcome"> & { nextDueAt?: unknown } | null;
+  summary: Pick<ScheduledRunSummary, "outcome" | "startedAt" | "nextDueAt"> | null;
   streak: number;
 }): number {
-  const nextTick = input.tick + MINUTE_MS;
-  const { summary } = input;
-  if (!summary || summary.outcome === "failed") {
+  // The cron's scheduledTime is a minute tick already; held to one anyway.
+  const nextTick = currentTick(input.tick) + MINUTE_MS;
+  // The tenant's startedAt is its own clock: held between this tick and now before the contract's rule reads it.
+  const summary = input.summary && { ...input.summary, startedAt: Math.min(input.now, Math.max(currentTick(input.tick), input.summary.startedAt)) };
+  const at = nextScheduledCall(summary, input.now);
+  if (!input.summary || input.summary.outcome === "failed") {
+    // The contract's "next tick", then backing off while it keeps failing.
     const backoff = MINUTE_MS * 2 ** Math.min(10, Math.max(0, input.streak - 1));
-    return input.tick + Math.min(input.interval, backoff);
+    return Math.max(nextTick, currentTick(input.tick) + Math.min(MAX_GAP_MS, backoff));
   }
-  const nextDueAt = readNextDueAt(summary);
-  const at = nextScheduledCall(
-    { outcome: summary.outcome, startedAt: input.startedAt, ...(nextDueAt === null ? {} : { nextDueAt }) },
-    input.now,
-  );
-  if (summary.outcome === "ran" && nextDueAt === null) return Math.min(input.claimedNext, Math.max(nextTick, tickFor(at)));
-  return Math.max(nextTick, tickFor(at));
+  return Math.max(nextTick, tickFor(Math.min(at, input.now + MAX_GAP_MS)));
 }
 
 // ---------------------------------------------------------------------------
@@ -233,18 +194,18 @@ const SCHEDULABLE = "provision_state = 'ready' AND status <> 'suspended' AND own
  * INDEXED BY holds SQLite to that index whatever its statistics say later
  * (it fails the query outright rather than fall back to a scan).
  */
-export const DUE_SQL = `SELECT id, plan, limit_overrides, schedule_next_at FROM tenants INDEXED BY idx_tenants_schedule_due
+export const DUE_SQL = `SELECT id, schedule_next_at FROM tenants INDEXED BY idx_tenants_schedule_due
        WHERE ${SCHEDULABLE}
          AND schedule_next_at <= ?1
          AND (schedule_lease_until IS NULL OR schedule_lease_until <= ?2)
        ORDER BY schedule_next_at LIMIT ?3`;
 
-const CLAIM_SQL = `UPDATE tenants SET schedule_next_at = ?1, schedule_claim = ?2, schedule_running = NULL, schedule_lease_until = ?3
-       WHERE id = ?4 AND schedule_next_at = ?5 AND ${SCHEDULABLE}
-         AND (schedule_lease_until IS NULL OR schedule_lease_until <= ?6)`;
+/** The claim takes a lease and names the run; it leaves the due time alone (the run's finish moves it). */
+const CLAIM_SQL = `UPDATE tenants SET schedule_claim = ?1, schedule_running = NULL, schedule_lease_until = ?2
+       WHERE id = ?3 AND schedule_next_at = ?4 AND ${SCHEDULABLE}
+         AND (schedule_lease_until IS NULL OR schedule_lease_until <= ?5)`;
 
-const UNCLAIM_SQL = `UPDATE tenants SET schedule_next_at = ?1, schedule_claim = NULL, schedule_lease_until = NULL
-       WHERE id = ?2 AND schedule_claim = ?3`;
+const UNCLAIM_SQL = `UPDATE tenants SET schedule_claim = NULL, schedule_lease_until = NULL WHERE id = ?1 AND schedule_claim = ?2`;
 
 export interface EnqueueResult {
   /** Tenants claimed and sent to the queue. */
@@ -277,35 +238,27 @@ export async function enqueueDue(
   while (result.sent < MAX_CLAIMS_PER_TICK && now() - started < CLAIM_TIME_BUDGET_MS) {
     const at = now();
     const cutoff = at + DUE_SLACK_MS;
-    const thisTick = currentTick(at);
-    const due = await deps.db
-      .prepare(DUE_SQL)
-      .bind(cutoff, at, CLAIM_BATCH)
-      .all<{ id: string; plan: string; limit_overrides: string | null; schedule_next_at: number }>();
+    const due = await deps.db.prepare(DUE_SQL).bind(cutoff, at, CLAIM_BATCH).all<{ id: string; schedule_next_at: number }>();
     if (!due.results.length) break;
     result.rounds++;
-    const claims = due.results.map((row) => {
-      const record = tenantFromRow({ ...emptyRow, id: row.id, plan: row.plan, limit_overrides: row.limit_overrides });
-      const next = nextDueAfterClaim(row.id, row.schedule_next_at, thisTick, intervalMs(record));
-      return {
-        message: { tenantId: row.id, runId: runIdFor(tick, row.id), dueAt: row.schedule_next_at > 0 ? row.schedule_next_at : at, tick },
-        previous: row.schedule_next_at,
-        next,
-      };
-    });
+    const claims = due.results.map((row) => ({
+      message: { tenantId: row.id, runId: runIdFor(tick, row.id), dueAt: row.schedule_next_at > 0 ? row.schedule_next_at : at, tick },
+      previous: row.schedule_next_at,
+    }));
     const written = await deps.db.batch(
-      claims.map((c) =>
-        deps.db.prepare(CLAIM_SQL).bind(c.next, c.message.runId, at + QUEUE_LEASE_MS, c.message.tenantId, c.previous, at),
-      ),
+      claims.map((c) => deps.db.prepare(CLAIM_SQL).bind(c.message.runId, at + QUEUE_LEASE_MS, c.message.tenantId, c.previous, at)),
     );
     const claimed = claims.filter((_, i) => (written[i]?.meta.changes ?? 0) > 0);
     if (claimed.length) {
       try {
-        await queue.sendBatch(claimed.map((c) => ({ body: c.message })));
+        await queue.sendBatch(claimed.map((c) => ({ body: c.message, delaySeconds: deliveryDelaySeconds(c.message.tenantId) })));
         result.sent += claimed.length;
       } catch (error) {
         console.error("[schedule] the queue refused a batch; claims given back", { count: claimed.length, error: errorText(error) });
-        await deps.db.batch(claimed.map((c) => deps.db.prepare(UNCLAIM_SQL).bind(c.previous, c.message.tenantId, c.message.runId)));
+        // If this fails too, the queue lease runs out on its own and the next cron claims them again.
+        await deps.db
+          .batch(claimed.map((c) => deps.db.prepare(UNCLAIM_SQL).bind(c.message.tenantId, c.message.runId)))
+          .catch((e) => console.error("[schedule] claims not given back; they free themselves", { error: errorText(e) }));
         result.returned += claimed.length;
         break;
       }
@@ -315,19 +268,10 @@ export async function enqueueDue(
   return result;
 }
 
-const emptyRow: TenantRow = {
-  id: "",
-  account_id: "",
-  slug: "",
-  script_name: "",
-  status: "active",
-  owner_suspended_at: null,
-  plan: "trial",
-  provision_state: "ready",
-  version: null,
-  limit_overrides: null,
-  trial_ends_at: null,
-};
+/** A tenant's delivery delay after the tick: the same few seconds each time, different between tenants. */
+export function deliveryDelaySeconds(tenantId: string): number {
+  return spreadIndex(tenantId, DELIVERY_SPREAD_SECONDS + 1);
+}
 
 // ---------------------------------------------------------------------------
 // The consumer: run each tenant
@@ -337,21 +281,20 @@ const emptyRow: TenantRow = {
 export type RunOutcome = ScheduledOutcome | "error" | "timeout";
 
 export type ScheduleResult =
-  | { kind: "ran"; tenantId: string; outcome: RunOutcome; retried: boolean }
+  | { kind: "ran"; tenantId: string; outcome: RunOutcome }
   /** Not run: the message is stale (a newer claim), a duplicate, or the tenant can't run now. */
   | { kind: "skipped"; tenantId: string; reason: "invalid" | "missing" | "stale" | "not_runnable" | "duplicate" };
 
 interface ScheduleRow extends TenantRow {
-  schedule_next_at: number;
   schedule_claim: string | null;
 }
 
-async function loadForRun(db: D1Database, tenantId: string): Promise<{ record: TenantRecord; nextAt: number; claim: string | null } | null> {
+async function loadForRun(db: D1Database, tenantId: string): Promise<{ record: TenantRecord; claim: string | null } | null> {
   const row = await db
-    .prepare(`SELECT ${TENANT_COLUMNS}, schedule_next_at, schedule_claim FROM tenants WHERE id = ?`)
+    .prepare(`SELECT ${TENANT_COLUMNS}, schedule_claim FROM tenants WHERE id = ?`)
     .bind(tenantId)
     .first<ScheduleRow>();
-  return row ? { record: tenantFromRow(row), nextAt: row.schedule_next_at, claim: row.schedule_claim } : null;
+  return row ? { record: tenantFromRow(row), claim: row.schedule_claim } : null;
 }
 
 function isScheduleMessage(body: unknown): body is ScheduleMessage {
@@ -409,8 +352,8 @@ async function runOne(deps: SchedulingDeps, message: Message<unknown>): Promise<
 
   const interval = intervalMs(tenant);
   const timeout = (deps.callTimeoutMs ?? callTimeoutMs)(interval);
-  const attempt = Math.max(1, message.attempts);
-  const token = `${msg.runId}:${attempt}`;
+  // A redelivery after the platform's own database failed before the call is a new attempt; a duplicate isn't.
+  const token = `${msg.runId}:${Math.max(1, message.attempts)}`;
   const startedAt = now();
   const start = await deps.db
     .prepare(
@@ -427,51 +370,51 @@ async function runOne(deps: SchedulingDeps, message: Message<unknown>): Promise<
 
   const call = await callScheduled(deps, tenant, { runId: msg.runId, scheduledTime: msg.tick, cron: SCHEDULE_CRON }, timeout);
   const finishedAt = now();
-  const streak = await recordRun(deps.db, {
-    tenantId: tenant.id,
-    runId: msg.runId,
-    at: startedAt,
-    durationMs: Math.max(0, finishedAt - startedAt),
-    lagMs: Math.max(0, startedAt - msg.dueAt),
-    call,
-  });
-
   if (call.kind !== "answered") {
-    console.error("[schedule] no answer from tenant", { tenant: tenant.id, run: msg.runId, attempt, outcome: call.kind, error: call.error });
-    const delay = RETRY_DELAYS_SECONDS[attempt - 1];
-    // Retry only while it can finish, lease and all, before the tenant's next
-    // run, which is the retry otherwise; a longer lease would push that run back.
-    const retryLease = delay === undefined ? Infinity : finishedAt + delay * 1000 + timeout + RUN_LEASE_MARGIN_MS;
-    if (retryLease <= loaded.nextAt) {
-      const extended = await deps.db
-        .prepare("UPDATE tenants SET schedule_lease_until = ? WHERE id = ? AND schedule_claim = ? AND schedule_running = ?")
-        .bind(retryLease, tenant.id, msg.runId, token)
-        .run();
-      if ((extended.meta.changes ?? 0) > 0) {
-        message.retry({ delaySeconds: delay });
-        return { kind: "ran", tenantId: tenant.id, outcome: call.kind, retried: true };
-      }
-    }
+    console.error("[schedule] no answer from tenant", { tenant: tenant.id, run: msg.runId, outcome: call.kind, error: call.error });
   }
 
-  const next = nextDueAfterRun({
-    tick: msg.tick,
-    startedAt,
-    now: finishedAt,
-    claimedNext: loaded.nextAt,
-    interval,
-    summary: call.kind === "answered" ? call.summary : null,
-    streak,
-  });
-  // A write only when the run moved the tenant to another tick; the claim already set the usual one.
-  if (next !== loaded.nextAt) {
-    await deps.db
-      .prepare("UPDATE tenants SET schedule_next_at = ? WHERE id = ? AND schedule_claim = ? AND schedule_next_at = ?")
-      .bind(next, tenant.id, msg.runId, loaded.nextAt)
-      .run();
+  // The tenant has been called: from here on only the bookkeeping is retried,
+  // never the call, and the message is acknowledged whatever happens.
+  try {
+    await withRetries(async () => {
+      const streak = await recordRun(deps.db, {
+        tenantId: tenant.id,
+        runId: msg.runId,
+        at: startedAt,
+        durationMs: Math.max(0, finishedAt - startedAt),
+        lagMs: Math.max(0, startedAt - msg.dueAt),
+        call,
+      });
+      const next = nextDueAfterRun({ tick: msg.tick, now: finishedAt, summary: call.kind === "answered" ? call.summary : null, streak });
+      // One write: the next due time, and the claim and the lease cleared, so the next tick finds it free.
+      await deps.db
+        .prepare(
+          `UPDATE tenants SET schedule_next_at = ?1, schedule_claim = NULL, schedule_running = NULL, schedule_lease_until = NULL
+           WHERE id = ?2 AND schedule_claim = ?3 AND schedule_running = ?4`,
+        )
+        .bind(next, tenant.id, msg.runId, token)
+        .run();
+    });
+  } catch (error) {
+    // The lease runs out on its own and the tenant, still due, is claimed again then.
+    console.error("[schedule] run's bookkeeping failed; the tenant is claimed again when its lease ends", { tenant: tenant.id, run: msg.runId, error: errorText(error) });
   }
   message.ack();
-  return { kind: "ran", tenantId: tenant.id, outcome: call.kind === "answered" ? call.summary.outcome : call.kind, retried: false };
+  return { kind: "ran", tenantId: tenant.id, outcome: call.kind === "answered" ? call.summary.outcome : call.kind };
+}
+
+/** `fn`, tried again after each of BOOKKEEPING_WAITS_MS when it throws. */
+async function withRetries(fn: () => Promise<void>): Promise<void> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const wait = BOOKKEEPING_WAITS_MS[i];
+      if (wait === undefined) throw error;
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
 }
 
 type CallResult =
@@ -524,7 +467,7 @@ export function parseSummary(body: unknown, runId: string): ScheduledRunSummary 
     version: typeof b.version === "string" ? b.version.slice(0, 40) : "",
     schemaVersion: count(b.schemaVersion),
     migrationsApplied: count(b.migrationsApplied),
-    startedAt: count(b.startedAt),
+    startedAt: typeof b.startedAt === "number" && Number.isSafeInteger(b.startedAt) && b.startedAt > 0 ? b.startedAt : 0,
     durationMs: count(b.durationMs),
     checked: count(b.checked),
     failures: count(b.failures),
@@ -578,12 +521,15 @@ const RECORD_SQL = `INSERT INTO scheduler_stats (tenant_id, last_run_id, last_at
     day_d1_queries = CASE WHEN ${same} THEN scheduler_stats.day_d1_queries + excluded.day_d1_queries ELSE excluded.day_d1_queries END,
     day_ms = CASE WHEN ${same} THEN scheduler_stats.day_ms + excluded.day_ms ELSE excluded.day_ms END,
     day_max_ms = CASE WHEN ${same} THEN MAX(scheduler_stats.day_max_ms, excluded.day_max_ms) ELSE excluded.day_max_ms END
+  WHERE scheduler_stats.last_run_id <> excluded.last_run_id
   RETURNING streak`;
 
 /**
  * Records one call in scheduler_stats: one row per tenant, rewritten, plus a
  * row in scheduler_days the first time a run lands on a new UTC day. Both in
- * one batch, so one round trip. Answers the failures in a row, this run included.
+ * one batch, so one round trip. Recording the same run again changes
+ * nothing, so the bookkeeping can be retried. Answers the failures in a row,
+ * this run included.
  */
 async function recordRun(
   db: D1Database,
@@ -621,12 +567,19 @@ async function recordRun(
         s ? s.d1Queries : 0,
       ),
   ]);
-  return recorded?.results[0]?.streak ?? failed;
+  const streak = recorded?.results[0]?.streak;
+  if (streak !== undefined) return streak;
+  // Already recorded (a bookkeeping retry): the stored streak stands.
+  const row = await db.prepare("SELECT streak FROM scheduler_stats WHERE tenant_id = ?").bind(run.tenantId).first<{ streak: number }>();
+  return row?.streak ?? failed;
 }
+
+/** A range over idx_scheduler_days_day (migration 0005), so it reads only the days it deletes. */
+export const OLD_DAYS_SQL = "DELETE FROM scheduler_days INDEXED BY idx_scheduler_days_day WHERE day < ?";
 
 /** Once an hour from the cron: forget days older than RUN_DAYS_KEPT. */
 export function schedulerDaysCleanup(db: D1Database, now: number): D1PreparedStatement {
-  return db.prepare("DELETE FROM scheduler_days WHERE day < ?").bind(Math.floor(now / DAY_MS) - RUN_DAYS_KEPT);
+  return db.prepare(OLD_DAYS_SQL).bind(Math.floor(now / DAY_MS) - RUN_DAYS_KEPT);
 }
 
 function errorText(error: unknown): string {

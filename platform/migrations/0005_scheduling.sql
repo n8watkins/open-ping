@@ -4,8 +4,8 @@
 -- per tenant on the schedule queue; the consumer calls the tenant's
 -- POST /__platform/scheduled (src/scheduling.ts).
 
--- When the cron should next enqueue the tenant (epoch ms). 0 means "as soon
--- as it is ready": the first claim spreads tenants over their interval.
+-- When the cron should next enqueue the tenant (epoch ms, on a minute tick).
+-- 0 means "as soon as it is ready". Only a finished run moves it.
 ALTER TABLE tenants ADD COLUMN schedule_next_at INTEGER NOT NULL DEFAULT 0;
 -- The run the cron last claimed (its run id), so a stale or duplicate queue
 -- message can't start a run nobody asked for.
@@ -14,8 +14,8 @@ ALTER TABLE tenants ADD COLUMN schedule_claim TEXT;
 -- a second delivery of the same attempt finds it already taken.
 ALTER TABLE tenants ADD COLUMN schedule_running TEXT;
 -- Nothing else is claimed or started for the tenant before this time (epoch
--- ms): the wait in the queue, then the call's timeout and a margin. It runs
--- out on its own, so a consumer that dies frees the tenant within a minute or two.
+-- ms): the wait in the queue, then the call's timeout and a margin. The run's
+-- finish clears it; a consumer that dies frees the tenant when it runs out.
 ALTER TABLE tenants ADD COLUMN schedule_lease_until INTEGER;
 
 -- The cron reads only due tenants that may run: a partial index whose WHERE
@@ -70,3 +70,5 @@ CREATE TABLE scheduler_days (
   max_ms      INTEGER NOT NULL,
   PRIMARY KEY (tenant_id, day)
 ) WITHOUT ROWID;
+-- The hourly retention delete reads days by range, not the whole table.
+CREATE INDEX idx_scheduler_days_day ON scheduler_days(day);

@@ -13,11 +13,13 @@ import {
 import {
   DAY_MS,
   DUE_SQL,
-  MAX_GAP_MS,
+  OLD_DAYS_SQL,
+  schedulerDaysCleanup,
   QUEUE_LEASE_MS,
   enqueueDue,
   handleScheduleBatch,
-  nextDueAfterClaim,
+  deliveryDelaySeconds,
+  tickFor,
   nextDueAfterRun,
   parseSummary,
   readNextDueAt,
@@ -43,6 +45,8 @@ interface World {
   clock: { now: number };
   queue: Queue<ScheduleMessage>;
   sent: ScheduleMessage[];
+  /** The delivery delay each message was sent with. */
+  delays: number[];
   queueFails: { on: boolean };
 }
 
@@ -50,14 +54,16 @@ function world(): World {
   const dispatcher = new FakeDispatcher();
   const clock = { now: T0 };
   const sent: ScheduleMessage[] = [];
+  const delays: number[] = [];
   const queueFails = { on: false };
   const queue = {
     send: async () => {
       throw new Error("not used");
     },
-    sendBatch: async (messages: { body: ScheduleMessage }[]) => {
+    sendBatch: async (messages: { body: ScheduleMessage; delaySeconds?: number }[]) => {
       if (queueFails.on) throw new Error("queue unavailable");
       sent.push(...messages.map((m) => m.body));
+      delays.push(...messages.map((m) => m.delaySeconds ?? 0));
     },
   } as unknown as Queue<ScheduleMessage>;
   const deps: SchedulingDeps = {
@@ -68,7 +74,7 @@ function world(): World {
     now: () => clock.now,
     callTimeoutMs: () => 200,
   };
-  return { deps, dispatcher, clock, queue, sent, queueFails };
+  return { deps, dispatcher, clock, queue, sent, delays, queueFails };
 }
 
 let seq = 0;
@@ -203,45 +209,40 @@ describe("the due query", () => {
 });
 
 describe("when a tenant is due", () => {
-  it("keeps a tenant's phase, and skips whole intervals a late cron missed", () => {
-    expect(nextDueAfterClaim("a", T0, T0, 12 * MINUTE)).toBe(T0 + 12 * MINUTE);
-    expect(nextDueAfterClaim("a", T0, T0 + 30 * MINUTE, 12 * MINUTE)).toBe(T0 + 36 * MINUTE);
-    expect(nextDueAfterClaim("a", T0, T0, MINUTE)).toBe(T0 + MINUTE);
-    // A due time off the minute lands on the tick that would claim it.
-    expect(nextDueAfterClaim("a", T0 + 20_000, T0 + MINUTE, 12 * MINUTE)).toBe(T0 + 13 * MINUTE);
+  it("puts due times on the first tick at or after them", () => {
+    expect(tickFor(T0)).toBe(T0);
+    expect(tickFor(T0 + 1)).toBe(T0 + MINUTE);
+    expect(tickFor(T0 + 59_999)).toBe(T0 + MINUTE);
   });
 
-  it("spreads first runs over the interval by tenant id, on ticks", () => {
-    const offsets = new Set<number>();
-    for (let i = 0; i < 200; i++) offsets.add(spreadIndex(`tenant${i}`, 12));
-    expect(offsets.size).toBe(12);
-    const next = nextDueAfterClaim("abc", 0, T0, 12 * MINUTE);
-    expect(next).toBeGreaterThan(T0);
-    expect(next).toBeLessThanOrEqual(T0 + 12 * MINUTE);
-    expect(next % MINUTE).toBe(0);
+  it("spreads deliveries by tenant id, the same each time", () => {
+    const delays = new Set<number>();
+    for (let i = 0; i < 200; i++) delays.add(deliveryDelaySeconds(`tenant${i}`));
+    expect(delays.size).toBe(11);
+    expect(deliveryDelaySeconds("abc")).toBe(deliveryDelaySeconds("abc"));
+    expect(spreadIndex("abc", 12)).toBeLessThan(12);
   });
 
-  it("follows the contract's rule for the next call (nextScheduledCall), on ticks", () => {
-    const base = { tick: T0, startedAt: T0 + 1_500, now: T0 + 2_000, claimedNext: T0 + 12 * MINUTE, interval: 12 * MINUTE, streak: 0 };
-    const ran = (nextDueAt?: number) => ({ ...base, summary: { outcome: "ran" as const, ...(nextDueAt === undefined ? {} : { nextDueAt }) } });
-    // No nextDueAt (an older bundle): the plan's interval, as claimed.
-    expect(nextDueAfterRun(ran())).toBe(T0 + 12 * MINUTE);
-    // nextDueAt: its tick, sooner or later than the plan's interval...
+  it("is the contract's nextScheduledCall, on ticks, with the backoff the contract allows", () => {
+    const base = { tick: T0, now: T0 + 2_000, streak: 0 };
+    const ran = (nextDueAt?: number) => ({ ...base, summary: { outcome: "ran" as const, startedAt: T0 + 1_500, ...(nextDueAt === undefined ? {} : { nextDueAt }) } });
+    // No nextDueAt (an older bundle): 12 minutes after the run started, on the tick at or after.
+    expect(nextDueAfterRun(ran())).toBe(T0 + 13 * MINUTE);
+    // nextDueAt: the tick at or after it...
     expect(nextDueAfterRun(ran(T0 + 3 * MINUTE))).toBe(T0 + 3 * MINUTE);
-    // A due time just past a tick (the tenant checked a moment after its tick) stays on it; later waits for the next.
-    expect(nextDueAfterRun(ran(T0 + 3 * MINUTE + 1_200))).toBe(T0 + 3 * MINUTE);
-    expect(nextDueAfterRun(ran(T0 + 3 * MINUTE + 20_000))).toBe(T0 + 4 * MINUTE);
+    expect(nextDueAfterRun(ran(T0 + 3 * MINUTE + 1_200))).toBe(T0 + 4 * MINUTE);
     // ...never this tick again, never past the gap.
     expect(nextDueAfterRun(ran(T0 - 30_000))).toBe(T0 + MINUTE);
-    expect(nextDueAfterRun(ran(T0 + 3 * 3_600_000))).toBe(T0 + MAX_GAP_MS);
-    // Busy: the next tick. Failed or no answer: the next tick, then backing off to the interval.
-    expect(nextDueAfterRun({ ...base, summary: { outcome: "lease_busy" } })).toBe(T0 + MINUTE);
-    expect(nextDueAfterRun({ ...base, summary: { outcome: "failed" }, streak: 1 })).toBe(T0 + MINUTE);
+    expect(nextDueAfterRun(ran(T0 + 3 * 3_600_000))).toBe(T0 + 13 * MINUTE);
+    // A tenant clock far ahead or behind can't push its next run past 12 minutes from now, or pull it to every tick.
+    expect(nextDueAfterRun({ ...base, summary: { outcome: "ran", startedAt: T0 + 86_400_000 } })).toBe(T0 + 13 * MINUTE);
+    expect(nextDueAfterRun({ ...base, summary: { outcome: "ran", startedAt: 5 } })).toBe(T0 + 12 * MINUTE);
+    // Busy: the next tick. Failed or no answer: the next tick, then 2, 4, 8, at most 12 minutes.
+    expect(nextDueAfterRun({ ...base, summary: { outcome: "lease_busy", startedAt: T0 } })).toBe(T0 + MINUTE);
+    expect(nextDueAfterRun({ ...base, summary: { outcome: "failed", startedAt: T0 }, streak: 1 })).toBe(T0 + MINUTE);
+    expect(nextDueAfterRun({ ...base, summary: null, streak: 2 })).toBe(T0 + 2 * MINUTE);
     expect(nextDueAfterRun({ ...base, summary: null, streak: 3 })).toBe(T0 + 4 * MINUTE);
     expect(nextDueAfterRun({ ...base, summary: null, streak: 9 })).toBe(T0 + 12 * MINUTE);
-    expect(nextDueAfterRun({ ...base, interval: MINUTE, summary: null, streak: 9 })).toBe(T0 + MINUTE);
-    // An older bundle (no nextDueAt) on a 1-minute plan keeps its plan's cadence, sooner than the contract's 12 minutes.
-    expect(nextDueAfterRun({ ...ran(), interval: MINUTE, claimedNext: T0 + MINUTE })).toBe(T0 + MINUTE);
   });
 
   it("reads nextDueAt only when the tenant sends a time", () => {
@@ -273,37 +274,34 @@ describe("the cron", () => {
     expect(m).toEqual({ tenantId: due, runId: `s-${T0}-${due}`, dueAt: T0 - MINUTE, tick: T0 });
 
     const row = await scheduleRow(due);
-    expect(row.schedule_next_at).toBe(T0 - MINUTE + 12 * MINUTE);
+    // The claim takes a lease and leaves the due time to the run.
+    expect(row.schedule_next_at).toBe(T0 - MINUTE);
     expect(row.schedule_claim).toBe(m.runId);
     expect(row.schedule_lease_until).toBe(T0 + QUEUE_LEASE_MS);
     expect((await scheduleRow(later)).schedule_claim).toBeNull();
 
-    // The next minute: nothing new is due.
+    // The next minute: claimed ones are leased, so nothing is sent twice.
     w.clock.now += MINUTE;
     expect((await tick(w)).messages).toEqual([]);
   });
 
-  it("runs a 1-minute tenant every minute and a 12-minute one every 12", async () => {
+  it("runs a tenant with 1-minute work every minute and one without every 12", async () => {
     const w = world();
+    w.deps.callTimeoutMs = undefined;
     const fast = await tenant({ plan: "hosted_fast", nextAt: T0 });
     const slow = await tenant({ plan: "hosted", nextAt: T0 });
+    w.dispatcher.register(`t-${fast}`, openPing((run) => ({ nextDueAt: run.scheduledTime + MINUTE })));
+    w.dispatcher.register(`t-${slow}`, openPing((run) => ({ startedAt: run.scheduledTime })));
     const counts = new Map<string, number>();
     for (let minute = 0; minute < 24; minute++) {
+      w.clock.now = T0 + minute * MINUTE;
       const { messages } = await tick(w);
       for (const m of messages) counts.set(m.tenantId, (counts.get(m.tenantId) ?? 0) + 1);
-      // The queue leases expire on their own: the consumer would have run them.
-      await env.PLATFORM_DB.prepare("UPDATE tenants SET schedule_lease_until = NULL").run();
-      w.clock.now += MINUTE;
+      w.clock.now += 3_000;
+      await handleScheduleBatch(w.deps, batchOf(messages).batch);
     }
     expect(counts.get(fast)).toBe(24);
     expect(counts.get(slow)).toBe(2);
-  });
-
-  it("follows limit overrides as well as the plan", async () => {
-    const w = world();
-    const id = await tenant({ plan: "hosted", nextAt: T0, overrides: JSON.stringify({ minIntervalMinutes: 5 }) });
-    await tick(w);
-    expect((await scheduleRow(id)).schedule_next_at).toBe(T0 + 5 * MINUTE);
   });
 
   it("never claims a tenant twice when two crons overlap", async () => {
@@ -353,11 +351,11 @@ describe("the consumer", () => {
   it("calls the tenant's scheduled path with fresh props and call id, and records the run", async () => {
     const w = world();
     const id = await tenant({ plan: "hosted_fast", nextAt: T0 - 2_000 });
-    w.dispatcher.register(`t-${id}`, openPing());
+    w.dispatcher.register(`t-${id}`, openPing((run) => ({ nextDueAt: run.scheduledTime + MINUTE })));
     const { messages } = await tick(w);
     w.clock.now += 1_500;
     const first = batchOf(messages);
-    expect(await handleScheduleBatch(w.deps, first.batch)).toEqual([{ kind: "ran", tenantId: id, outcome: "ran", retried: false }]);
+    expect(await handleScheduleBatch(w.deps, first.batch)).toEqual([{ kind: "ran", tenantId: id, outcome: "ran" }]);
     expect(first.acks).toEqual([id]);
 
     const call = w.dispatcher.calls.at(-1)!;
@@ -401,8 +399,9 @@ describe("the consumer", () => {
     w.dispatcher.register(`t-${id}`, openPing());
     const { messages } = await tick(w);
     await handleScheduleBatch(w.deps, batchOf(messages).batch);
+    // The finished run cleared its claim, so a late copy of its message is stale.
     const again = batchOf(messages);
-    expect(await handleScheduleBatch(w.deps, again.batch)).toEqual([{ kind: "skipped", tenantId: id, reason: "duplicate" }]);
+    expect(await handleScheduleBatch(w.deps, again.batch)).toEqual([{ kind: "skipped", tenantId: id, reason: "stale" }]);
     expect(again.acks).toEqual([id]);
     expect(w.dispatcher.calls).toHaveLength(1);
   });
@@ -450,48 +449,33 @@ describe("the consumer", () => {
     expect(w.dispatcher.calls).toHaveLength(0);
   });
 
-  it("retries a call that got no answer, with backoff, while the retry fits before the next run", async () => {
+  it("never retries a call through the queue: no answer is recorded and the tenant backs off", async () => {
     const w = world();
     const id = await tenant({ plan: "hosted", nextAt: T0 });
     w.dispatcher.register(`t-${id}`, openPing(() => new Response("boom", { status: 500 })));
-    const { messages } = await tick(w);
-    const first = batchOf(messages, 1);
-    expect(await handleScheduleBatch(w.deps, first.batch)).toEqual([{ kind: "ran", tenantId: id, outcome: "error", retried: true }]);
-    expect(first.retries).toEqual([{ tenantId: id, delaySeconds: 15 }]);
-    expect((await scheduleRow(id)).schedule_lease_until).toBe(T0 + 15_000 + 200 + 10_000);
-    expect(await stats(id)).toMatchObject({ last_outcome: "error", last_error: "HTTP 500", streak: 1, day_errors: 1 });
-
-    // The queue delivers it again (attempt 2); the same run, a new attempt.
-    w.clock.now += 15_000;
-    const second = batchOf(messages, 2);
-    await handleScheduleBatch(w.deps, second.batch);
-    expect(second.retries).toEqual([{ tenantId: id, delaySeconds: 60 }]);
-    expect(w.dispatcher.calls).toHaveLength(2);
-    expect(await stats(id)).toMatchObject({ streak: 2, day_runs: 2, day_errors: 2 });
-
-    // Past the attempts: given up, the next run is the retry.
-    const last = batchOf(messages, 4);
-    await handleScheduleBatch(w.deps, last.batch);
-    expect(last.retries).toEqual([]);
-    expect(last.acks).toEqual([id]);
-
+    const due: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      w.clock.now = Math.max(T0, (await scheduleRow(id)).schedule_next_at);
+      const run = batchOf((await tick(w)).messages);
+      expect(await handleScheduleBatch(w.deps, run.batch)).toEqual([{ kind: "ran", tenantId: id, outcome: "error" }]);
+      expect(run.retries).toEqual([]);
+      due.push(((await scheduleRow(id)).schedule_next_at - w.clock.now) / MINUTE);
+    }
+    expect(due).toEqual([1, 2, 4, 8]);
+    expect(await stats(id)).toMatchObject({ last_outcome: "error", last_error: "HTTP 500", streak: 4, day_errors: 4 });
+    expect(w.dispatcher.calls).toHaveLength(4);
     // A clean run resets the streak.
     w.dispatcher.register(`t-${id}`, openPing());
-    w.clock.now = T0 + 12 * MINUTE;
-    await env.PLATFORM_DB.prepare("UPDATE tenants SET schedule_lease_until = NULL WHERE id = ?").bind(id).run();
+    w.clock.now = (await scheduleRow(id)).schedule_next_at;
     await handleScheduleBatch(w.deps, batchOf((await tick(w)).messages).batch);
     expect(await stats(id)).toMatchObject({ last_outcome: "ran", streak: 0, last_error: null });
   });
 
-  it("doesn't retry a 1-minute tenant: its next run comes sooner", async () => {
+  it("records a ready tenant whose script is missing as no answer", async () => {
     const w = world();
     const id = await tenant({ plan: "hosted_fast", nextAt: T0 });
-    w.deps.callTimeoutMs = () => 40_000;
-    const { messages } = await tick(w);
-    // No user Worker at all: a ready tenant whose script is missing.
-    const run = batchOf(messages);
-    expect(await handleScheduleBatch(w.deps, run.batch)).toEqual([{ kind: "ran", tenantId: id, outcome: "error", retried: false }]);
-    expect(run.retries).toEqual([]);
+    const run = batchOf((await tick(w)).messages);
+    expect(await handleScheduleBatch(w.deps, run.batch)).toEqual([{ kind: "ran", tenantId: id, outcome: "error" }]);
     expect(await stats(id)).toMatchObject({ last_error: `user Worker t-${id} is not in the namespace` });
   });
 
@@ -501,7 +485,7 @@ describe("the consumer", () => {
     w.dispatcher.register(`t-${id}`, openPing(() => new Promise<never>(() => {})));
     const { messages } = await tick(w);
     const run = batchOf(messages);
-    expect(await handleScheduleBatch(w.deps, run.batch)).toEqual([{ kind: "ran", tenantId: id, outcome: "timeout", retried: true }]);
+    expect(await handleScheduleBatch(w.deps, run.batch)).toEqual([{ kind: "ran", tenantId: id, outcome: "timeout" }]);
     expect(await stats(id)).toMatchObject({ last_outcome: "timeout", last_error: "no answer in 0 s" });
     // The call carried an abort signal that the timeout fired.
     expect(w.dispatcher.calls[0]!.request.signal.aborted).toBe(true);
@@ -512,7 +496,7 @@ describe("the consumer", () => {
     const id = await tenant({ nextAt: T0 });
     w.dispatcher.register(`t-${id}`, openPing(() => ({ outcome: "failed", error: "migration 0023 failed", checked: 0, failures: 0 })));
     const run = batchOf((await tick(w)).messages);
-    expect(await handleScheduleBatch(w.deps, run.batch)).toEqual([{ kind: "ran", tenantId: id, outcome: "failed", retried: false }]);
+    expect(await handleScheduleBatch(w.deps, run.batch)).toEqual([{ kind: "ran", tenantId: id, outcome: "failed" }]);
     expect(run.retries).toEqual([]);
     expect(await stats(id)).toMatchObject({ last_outcome: "failed", last_error: "migration 0023 failed", streak: 1 });
   });
@@ -577,3 +561,107 @@ describe("the consumer", () => {
     expect(acks).toEqual(["nope"]);
   });
 });
+
+describe("review fixes (wave 3 review of #62)", () => {
+  it("keeps a 1-minute tenant every minute when the consumer starts late, with the real timeout", async () => {
+    const w = world();
+    w.deps.callTimeoutMs = undefined;
+    const id = await tenant({ plan: "hosted_fast", nextAt: T0 });
+    w.dispatcher.register(`t-${id}`, openPing((run) => ({ nextDueAt: run.scheduledTime + MINUTE })));
+    let runs = 0;
+    for (let m = 0; m < 6; m++) {
+      w.clock.now = T0 + m * MINUTE;
+      const { messages } = await tick(w);
+      // The consumer picks the message up 15 seconds after the tick, past any queue lease margin.
+      w.clock.now += 15_000;
+      for (const r of await handleScheduleBatch(w.deps, batchOf(messages).batch)) if (r.kind === "ran") runs++;
+    }
+    expect(runs).toBe(6);
+  });
+
+  it("calls a busy tenant again on the next tick, not two minutes on", async () => {
+    const w = world();
+    w.deps.callTimeoutMs = undefined;
+    const id = await tenant({ plan: "hosted_fast", nextAt: T0 });
+    w.dispatcher.register(`t-${id}`, openPing(() => ({ outcome: "lease_busy" })));
+    await tick(w);
+    w.clock.now = T0 + 12_000;
+    await handleScheduleBatch(w.deps, batchOf(w.sent).batch);
+    w.clock.now = T0 + MINUTE;
+    expect((await tick(w)).messages.map((m) => m.tenantId)).toEqual([id]);
+  });
+
+  it("keeps the 12-minute gap when a claimed message never arrives, or the unclaim fails", async () => {
+    const w = world();
+    const id = await tenant({ plan: "hosted", nextAt: T0 });
+    await tick(w); // claimed and sent, but the message is lost
+    for (let m = 1; m <= 12; m++) {
+      w.clock.now = T0 + m * MINUTE;
+      if ((await tick(w)).messages.some((x) => x.tenantId === id)) break;
+    }
+    expect(w.clock.now - T0).toBeLessThanOrEqual(QUEUE_LEASE_MS);
+    // The claim never moved its due time: only a run that answered does.
+    expect((await scheduleRow(id)).schedule_next_at).toBe(T0);
+  });
+
+  it("calls the tenant once when the platform database fails after the call", async () => {
+    const w = world();
+    const id = await tenant({ nextAt: T0 });
+    w.dispatcher.register(`t-${id}`, openPing());
+    const { messages } = await tick(w);
+    let failures = 2;
+    const real = env.PLATFORM_DB;
+    w.deps.db = new Proxy(real, {
+      get(target, prop) {
+        if (prop === "batch") {
+          return async (statements: D1PreparedStatement[]) => {
+            if (failures-- > 0) throw new Error("D1_ERROR: Network connection lost.");
+            return target.batch(statements);
+          };
+        }
+        const value = Reflect.get(target, prop);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const run = batchOf(messages);
+    await handleScheduleBatch(w.deps, run.batch);
+    expect(w.dispatcher.calls).toHaveLength(1);
+    expect(run.retries).toEqual([]);
+    expect(run.acks).toEqual([id]);
+    expect(await stats(id)).toMatchObject({ last_outcome: "ran", day_runs: 1 });
+  });
+
+  it("deletes old days by a range over their index, and keeps the recent ones", async () => {
+    const plan = await env.PLATFORM_DB.prepare(`EXPLAIN QUERY PLAN ${OLD_DAYS_SQL}`).bind(1).all<{ detail: string }>();
+    expect(plan.results.map((r) => r.detail).join(" | ")).toContain("USING INDEX idx_scheduler_days_day (day<?)");
+    const id = await tenant();
+    const today = Math.floor(T0 / DAY_MS);
+    for (const day of [today - 120, today - 91, today - 90, today - 1]) {
+      await env.PLATFORM_DB.prepare("INSERT INTO scheduler_days (tenant_id, day, runs, errors, checked, failures, d1_queries, total_ms, max_ms) VALUES (?, ?, 1, 0, 0, 0, 0, 0, 0)")
+        .bind(id, day)
+        .run();
+    }
+    await schedulerDaysCleanup(env.PLATFORM_DB, T0).run();
+    const left = await env.PLATFORM_DB.prepare("SELECT day FROM scheduler_days ORDER BY day").all<{ day: number }>();
+    expect(left.results.map((r) => today - r.day)).toEqual([90, 1]);
+  });
+
+  it("spreads deliveries a little within the minute, by tenant", async () => {
+    const w = world();
+    for (let i = 0; i < 40; i++) await tenant({ plan: "hosted_fast", nextAt: T0 });
+    await tick(w);
+    expect(new Set(w.delays).size).toBeGreaterThan(3);
+    expect(Math.max(...w.delays)).toBeLessThanOrEqual(10);
+  });
+
+  it("follows nextScheduledCall from the contract for a run without nextDueAt, whatever the plan", async () => {
+    const w = world();
+    const id = await tenant({ plan: "hosted_fast", nextAt: T0 });
+    w.dispatcher.register(`t-${id}`, openPing((run) => ({ startedAt: run.scheduledTime + 2_000 })));
+    w.clock.now = T0 + 2_000;
+    await handleScheduleBatch(w.deps, batchOf((await tick(w)).messages).batch);
+    // 12 minutes after the run started, on the first tick at or after it.
+    expect((await scheduleRow(id)).schedule_next_at).toBe(T0 + 13 * MINUTE);
+  });
+});
+

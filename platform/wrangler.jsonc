@@ -101,9 +101,9 @@
       // The scheduler (src/scheduling.ts): a batch of due tenants, called all
       // at once, each with its own timeout (40 s at 1-minute checks, 90 s
       // otherwise), so a batch takes at most about 90 s of wall time and
-      // very little CPU. The code retries a run itself, with backoff, only
-      // while the retry can finish before the tenant's next run; max_retries
-      // is the backstop for a consumer that dies.
+      // very little CPU. A tenant call is never retried through the queue
+      // (the scheduler backs off instead); max_retries covers the platform's
+      // own database failing before the call, and a consumer that dies.
       {
         "queue": "openping-schedule",
         "max_batch_size": 25,

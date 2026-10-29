@@ -55,13 +55,13 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   - the waitlist: an upload (or paste) of the canonical install's CSV export (Settings > Reports > Download CSV), or the JSON of `/api/waitlist`, into `waitlist_entries`, idempotent, up to 5,000 addresses and 1 MB (enforced while reading) at a time; the platform never calls the install;
   - every change is a POST from this origin, limited to 120 an hour (support sign-ins 20), and audited with actor `owner` or `support`.
 - Runs every customer's scheduler (B4, `src/scheduling.ts`), since a user Worker in a dispatch namespace has no Cron Trigger:
-  - every minute the cron claims the tenants that are due and puts one message per tenant on `SCHEDULE_QUEUE` (`openping-schedule`), in rounds of 100 (one D1 batch and one `sendBatch` each);
-  - the due query is a range scan of a partial index (`idx_tenants_schedule_due`, migration 0005) whose WHERE leaves out tenants that aren't ready, are suspended by billing or by the owner, or are being removed, so the cron reads only the tenants due this minute (`test/scheduling.test.ts` checks the query plan and the rows read);
-  - when a tenant is due follows the contract's "When to call next" (section 6), on minute ticks: a new tenant at once (its next run spread over its interval by its id); after a run that answered `ran` with `nextDueAt`, the tick at or just before it (the tenant checks what is due within 30 seconds of a call), never more than 12 minutes on; after `ran` without `nextDueAt` (a bundle older than the field), the contract's 12 minutes, or the `minIntervalMinutes` of its effective limits when that is sooner (1 minute with fast checks, or a per-tenant override), keeping its phase; the rule is the shared `nextScheduledCall`, with ticks and backoff added by the platform; after `lease_busy`, the next tick; after `failed` or no answer, the next tick, then 2, 4, 8 minutes while it keeps failing, never slower than its interval;
-  - the claim records the interval's next tick, and the consumer writes the due time again only when the run moved it to another tick, so a tenant whose work matches its plan costs no extra write;
+  - every minute the cron claims the tenants that are due and puts one message per tenant on `SCHEDULE_QUEUE` (`openping-schedule`), in rounds of 100 (one D1 batch and one `sendBatch` each), each delivered 0 to 10 seconds after the tick by tenant id so 1-minute tenants don't all start at once;
+  - the due query is a range scan of a partial index (`idx_tenants_schedule_due`, migration 0005, held with `INDEXED BY`) whose WHERE leaves out tenants that aren't ready, are suspended by billing or by the owner, or are being removed, so the cron reads only the tenants due this minute (`test/scheduling.test.ts` checks the query plan and the rows read);
+  - when a tenant is due is the contract's shared `nextScheduledCall` (section 6, "When to call next"), on the first minute tick at or after the time it gives: a new tenant at once; after `ran`, the tenant's `nextDueAt`, or 12 minutes after the run started when a bundle sends none; after `lease_busy`, the next tick; the platform adds only the backoff the contract allows: after `failed` or no answer, the next tick, then 2, 4, 8, at most 12 minutes while it keeps failing;
+  - the claim takes a lease and names the run but leaves the due time alone; the run's last write sets the next due time and clears the claim and the lease together, so the next tick finds the tenant free however late the consumer started, and a lost message or a cron that dies after claiming leaves the tenant due, claimed again when the 3-minute queue lease runs out;
   - the consumer calls each tenant's `POST /__platform/scheduled` through the dispatch namespace with fresh props and a new call id (`callTenant`), under a timeout (40 seconds at 1-minute checks, 90 seconds otherwise) that aborts the call;
-  - never two runs of one tenant at once: the claim records a run id and a lease, the consumer starts only the claimed run and only once per attempt (a conditional write), and the run's lease (timeout plus 10 seconds) is shorter than the interval, so it is never released by hand; the tenant also keeps its own lease (`lease_busy`);
-  - a call that gets no answer (an error, a status other than 200, a timeout, a missing script) is retried through the queue after 15, 60 and 180 seconds, only while the retry can finish before the tenant's next run, which is the retry otherwise; a run the tenant answers as `failed` is not retried;
+  - never two runs of one tenant at once: the claim records a run id and a lease, the consumer starts only the claimed run and only once per attempt (a conditional write), and the tenant also keeps its own lease (`lease_busy`);
+  - a call is never retried through the queue: the backoff above is the retry, so a tenant is never called twice for one run; after the call, the run's bookkeeping is retried in place (3 times) when the platform database fails, and the message is acknowledged either way;
   - each run's numbers go to `scheduler_stats` (one row per tenant: the last run's outcome, platform-measured duration, queue lag, the tenant's own duration, checks, failed checks, deferred monitors, D1 queries, version, error, failures in a row, and today's totals) and, once a day per tenant, to `scheduler_days` (kept 90 days); the admin console's tenant page shows them under "Scheduler".
 - Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit` and `reportUsage` are real, the latter keeping each tenant's latest counts in `tenant_usage` for the console; `sendEmail` is a stub until A5).
 
@@ -129,25 +129,25 @@ What one run costs the platform:
 | Item | Per run |
 | --- | --- |
 | Queue operations | 3 (one message) |
-| D1 rows written in `PLATFORM_DB` | 4: the claim (the row and its due-index entry), the start, the numbers; 2 more when the run moves the next one to another tick than the plan's interval |
+| D1 rows written in `PLATFORM_DB` | 5: the claim, the start, the finish (the row and its due-index entry), the numbers |
 | Workers for Platforms requests | 1 (the call to the tenant), counted at full price to be safe |
 | CPU | about 20 ms in the tenant (an assumption until the load test measures it) and about 2 ms in the platform |
 | Platform Worker requests | 1/25 (consumer batches of 25) plus the cron's 43,200 a month |
 
-A month is 43,200 minutes: a 1-minute tenant runs 43,200 times, a 12-minute tenant 3,600 times.
+A month is 43,200 minutes: a tenant with 1-minute work runs 43,200 times, one with 12-minute work 3,600 times.
 CPU is 22 ms a run against the two plans' 90 million included CPU ms; the platform's own requests (the cron and the consumer batches) stay inside Workers Paid's 10 million in every row.
 
 | Tenants | Runs a month | Queues | D1 writes | WfP requests | CPU | Total a month |
 | --- | --- | --- | --- | --- | --- | --- |
-| 200, all 12-minute | 0.72 million | $0.46 | $0 (2.9 million, included) | $0 | $0 | about $0.50 |
-| 200, all 1-minute | 8.64 million | $9.97 | $0 (34.6 million, included) | $0 | $2.00 | about $12 |
-| 2,000, all 12-minute | 7.2 million | $8.24 | $0 (28.8 million, included) | $0 | $1.37 | about $10 |
-| 2,000, a quarter 1-minute | 27 million | $32.00 | $58.00 | $2.10 | $10.08 | about $102 |
-| 2,000, all 1-minute | 86.4 million | $103.28 | $295.60 | $19.92 | $36.22 | about $455 |
+| 200, all 12-minute | 0.72 million | $0.46 | $0 (3.6 million, included) | $0 | $0 | about $0.50 |
+| 200, all 1-minute | 8.64 million | $9.97 | $0 (43.2 million, included) | $0 | $2.00 | about $12 |
+| 2,000, all 12-minute | 7.2 million | $8.24 | $0 (36 million, included) | $0 | $1.37 | about $10 |
+| 2,000, a quarter 1-minute | 27 million | $32.00 | $85.00 | $2.10 | $10.08 | about $129 |
+| 2,000, all 1-minute | 86.4 million | $103.28 | $382.00 | $19.92 | $36.22 | about $541 |
 
 These are on top of the $30 a month of fixed plan fees, and leave out each tenant's own D1 work in its own database, which the [Hosted plan's cost model](../docs/HOSTED_PLAN.md) covers.
-At the margin a 12-minute tenant costs the scheduler about 2 cents a month, and a 1-minute tenant about 26 cents (D1 writes 17, queue 5, requests and CPU 4), against the $1 a month the add-on brings in.
-The levers, if 1-minute checks sell well: drop the start write and rely on the tenant's own lease (a quarter of the D1 writes), or carry several tenants per message (queue operations fall with the number per message), both measured in the wave 4 load test first.
+At the margin a tenant with 12-minute work costs the scheduler about 2.5 cents a month, and one with 1-minute work about 30 cents (D1 writes 22, queue 5, requests and CPU 3), against the $1 a month the add-on brings in; a 1-minute plan whose monitors are slower costs what its work needs, since `nextDueAt` sets the cadence.
+The levers, if 1-minute checks sell well: drop the start write and rely on the tenant's own lease (a fifth of the D1 writes), or carry several tenants per message (queue operations fall with the number per message), both measured in the wave 4 load test first.
 
 ## Owner setup (not done yet)
 
