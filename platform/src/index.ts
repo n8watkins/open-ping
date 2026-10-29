@@ -18,6 +18,7 @@ import type {
 } from "../../src/shared/hosted-contract";
 import { createApp } from "./app";
 import { endTrials } from "./billing/state";
+import { auditCleanup } from "./audit-retention";
 import { billingRecordsCleanup } from "./billing/webhook";
 import { ceremonyCleanup } from "./auth/ceremonies";
 import { emailSignInCleanup } from "./auth/email-sign-in";
@@ -159,7 +160,7 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
     .catch((error) => log.error("schedule.enqueue_failed", { error }));
   const hourly =
     new Date(controller.scheduledTime).getUTCMinutes() === 7
-      ? [schedulerDaysCleanup(db, now), schedulerMinutesCleanup(db, now), ...billingRecordsCleanup(db, now)]
+      ? [schedulerDaysCleanup(db, now), schedulerMinutesCleanup(db, now), ...billingRecordsCleanup(db, now), ...auditCleanup(db, now)]
       : [];
   if (new Date(controller.scheduledTime).getUTCMinutes() % LIFECYCLE_EVERY_MINUTES === 0) ctx.waitUntil(lifecycle(env, ctx));
   ctx.waitUntil(releases(env, ctx));

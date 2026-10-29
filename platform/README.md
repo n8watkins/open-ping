@@ -52,7 +52,7 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   - for a paused provisioning: resume it, or remove the tenant after typing its address; both run from the queue, or after the answer when there is none;
   - sign in as support: the contract's hand-off with role `support`, signed as the owner, with a reason the customer sees on their account page ("Support access"), recorded as `support.handoff_issued` before the token leaves;
   - a post whose next stop is a customer's origin (support sign-in, and an email sign-in that continues to `/open`) answers a page that goes on by GET (a meta refresh and a link), since the CSP's `form-action 'self'` blocks a post's redirect chain to another origin;
-  - the audit log, newest first, filtered by tenant, actor and action prefix;
+  - the audit log, newest first, filtered by tenant, actor and action prefix; it is kept two years, except an existing account's security record (its creation, support sign-ins, key reveals and sign-in method changes), kept while the account is (`src/audit-retention.ts`, an hourly bounded delete over the partial indexes of migration 0012);
   - the waitlist: an upload (or paste) of the canonical install's CSV export (Settings > Reports > Download CSV), or the JSON of `/api/waitlist`, into `waitlist_entries`, idempotent, up to 5,000 addresses and 1 MB (enforced while reading) at a time; the platform never calls the install;
   - every change is a POST from this origin, limited to 120 an hour (support sign-ins 20), and audited with actor `owner` or `support`.
 - Runs every customer's scheduler (B4, `src/scheduling.ts`), since a user Worker in a dispatch namespace has no Cron Trigger:
