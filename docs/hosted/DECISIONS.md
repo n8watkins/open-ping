@@ -10,7 +10,7 @@ Each one is the owner's call.
 | D3 | Customer sign-in | Recommended, pending owner |
 | D4 | Who holds each customer's `MASTER_KEY` | Recommended, pending owner |
 | O4 | Support address | Decided 2026-10-28: support@n8builds.dev |
-| D12 | How long a deleted tenant's export is kept, and who may see its `MASTER_KEY` | Recommended, pending owner |
+| D12 | How long a deleted tenant's export is kept, and who may see its `MASTER_KEY` | Decided 2026-10-29 |
 
 ## D2: the Hosted address
 
@@ -85,7 +85,7 @@ A customer who comes back subscribes again from their account page.
 
 ## D12: a deleted tenant's export, and the customer's key
 
-**Status:** recommended, pending owner.
+**Status:** decided 2026-10-29: the owner accepted both the 30 extra days (data fully gone 60 days after checks stop, stated in the privacy policy) and customers seeing their own key as described.
 
 **Recommendation:** before a tenant is deleted (decision D8), the platform exports its database to the private `openping-tenant-exports` bucket and keeps that export 30 more days, so the customer can still download it from their account page, and the owner can restore it.
 A customer's own export, from the account page, is kept 7 days.
