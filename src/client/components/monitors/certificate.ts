@@ -36,6 +36,8 @@ export function certLookupFailure(code: string): string {
       return "the server closed the connection";
     case "cert_unreadable":
       return "unreadable answer";
+    case "cert_handshake_failed":
+      return "the server refused the handshake";
     default:
       return "read error";
   }

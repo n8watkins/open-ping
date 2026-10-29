@@ -317,8 +317,16 @@ describe("runCertCheck", () => {
     expect(await runCertCheck(c, { now: NOW })).toMatchObject({ ok: false, error: "cert_connect_failed" });
   });
 
-  it("says can't check for a TLS 1.3-only server and one that refuses the hello", async () => {
-    fakeReader(fail("alert", "alert 70", 70), fail("alert", "alert 40", 40));
+  it("fails a read refused with handshake_failure or unrecognized_name: the server is misconfigured", async () => {
+    fakeReader(fail("alert", "alert 40", 40), fail("alert", "alert 112", 112));
+    expect(await runCertCheck(c, { now: NOW })).toMatchObject({ ok: false, error: "cert_handshake_failed", fetches: 1 });
+    const r = await runCertCheck(c, { now: NOW });
+    expect(r).toMatchObject({ ok: false, error: "cert_handshake_failed" });
+    expect(r.cantCheck).toBeUndefined();
+  });
+
+  it("says can't check for a TLS 1.3-only server and one that refuses the hello otherwise", async () => {
+    fakeReader(fail("alert", "alert 70", 70), fail("alert", "alert 80", 80));
     expect(await runCertCheck(c, { now: NOW })).toMatchObject({ ok: true, cantCheck: true, meta: { cantCheck: { reason: "tls13_only" } } });
     expect(await runCertCheck(c, { now: NOW })).toMatchObject({ ok: true, cantCheck: true, meta: { cantCheck: { reason: "refused" } } });
   });

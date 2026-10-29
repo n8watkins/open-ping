@@ -404,7 +404,11 @@ Two kinds of host can't be read from a Cloudflare Worker, and the monitor says s
   Cloudflare issues and renews those edge certificates itself.
   OpenPing knows by the runtime's "cannot connect to the specified address" error, and, for any other connection failure, by checking whether the host resolves into Cloudflare's published IPv4 ranges.
 - **TLS 1.3 only.** In TLS 1.3 the certificate is encrypted, so a server that refuses TLS 1.2 (protocol_version alert) can't be read.
-  A server that turns the hello down with any other TLS alert is treated the same way.
+  A server that turns the hello down with another fatal alert OpenPing can't blame on the server (internal_error, decode_error, and so on) is treated the same way.
+
+Two fatal alerts are a failed read instead, which alerts once confirmed (or falls back to a recent read): handshake_failure and unrecognized_name.
+To a broad TLS 1.2 hello that names the host, they mean the server is misconfigured for that name (no certificate for it, or no usable cipher); the spike's 160 hosts never answered that way.
+Warning-level alerts (an unrecognized_name warning, say) don't end the handshake: OpenPing reads on.
 
 Such a monitor shows **Can't check** with the reason in plain words on its page.
 It is neutral: never down, no incident, no alert, and no uptime or downtime counted.

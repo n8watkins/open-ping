@@ -76,6 +76,7 @@ const CAUSE_LABELS: Record<string, string> = {
   cert_timeout: "Certificate read timed out",
   cert_closed: "Connection closed",
   cert_unreadable: "Certificate unreadable",
+  cert_handshake_failed: "TLS handshake refused",
   rdap_error: "Lookup failed",
   rdap_no_expiry: "No expiry date",
   rdap_rate_limited: "Lookup rate limited",

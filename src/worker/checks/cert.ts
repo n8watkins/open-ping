@@ -426,6 +426,9 @@ export const tlsReader = {
   read: (host: string, port: number, timeoutMs: number): Promise<TlsReadResult> => readCertificate(host, port, timeoutMs),
 };
 
+/** Fatal TLS alerts that mean a misconfigured server, not one we can't read: handshake_failure, unrecognized_name. */
+const FAILED_READ_ALERTS = new Set([40, 112]);
+
 /** The longest the Cloudflare second opinion (one DNS lookup) may take. */
 const RESOLVE_TIMEOUT_MS = 5_000;
 
@@ -438,6 +441,20 @@ async function readServer(config: CertConfig, host: string): Promise<ReadOutcome
   const r = await tlsReader.read(host, config.port, config.timeoutMs);
   if (r.ok) return { ok: true, read: { kind: "cert", cert: r.cert, chainLength: r.chainLength }, durationMs: r.durationMs, fetches: 1 };
   if (r.kind === "alert") {
+    // handshake_failure and unrecognized_name to a broad TLS 1.2 hello that
+    // names the host mean the server is misconfigured for that name (no
+    // certificate for it, no usable cipher): a failed read, which alerts once
+    // confirmed. The spike saw no hello refused this way; a TLS 1.3-only
+    // server answers protocol_version instead.
+    if (r.alert !== undefined && FAILED_READ_ALERTS.has(r.alert)) {
+      return {
+        ok: false,
+        error: "cert_handshake_failed",
+        errorMessage: `${host}:${config.port}: ${r.message}`,
+        durationMs: r.durationMs,
+        fetches: 1,
+      };
+    }
     const reason: CantCheckReason = r.alert === ALERT_PROTOCOL_VERSION ? "tls13_only" : "refused";
     return { ok: true, read: { kind: "cant_check", reason, detail: r.message }, durationMs: r.durationMs, fetches: 1 };
   }
