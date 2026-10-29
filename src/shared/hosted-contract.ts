@@ -310,6 +310,41 @@ export interface ScheduledRunSummary {
   d1Queries: number;
   /** A short, non-secret reason when outcome is "failed". */
   error?: string;
+  /**
+   * When this tenant next has work (epoch ms), set when outcome is "ran": the
+   * earliest moment a call finds a monitor due, a heartbeat deadline passed or
+   * a schedule window starting. Never later than the run's start plus
+   * SCHEDULED_MAX_GAP_MS, and possibly already past (a backlog the budget
+   * deferred). The platform calls on its first tick at or after it
+   * (nextScheduledCall). Absent from older bundles.
+   */
+  nextDueAt?: number;
+}
+
+/**
+ * The longest a tenant goes without a scheduler run: the self-hosted cron's 12
+ * minutes. A tenant never reports a nextDueAt later than this after its run
+ * started, so alerts, reports and cleanup keep at least today's cadence.
+ */
+export const SCHEDULED_MAX_GAP_MS = 12 * 60 * 1000;
+
+/**
+ * When the platform should next call a tenant's scheduler, given the summary of
+ * its last call (null when the call got no answer) and the time now (epoch ms).
+ * A result at or before `now` means the next tick.
+ *
+ * - "ran" with nextDueAt: that time, clamped to SCHEDULED_MAX_GAP_MS after the run started.
+ * - "ran" without nextDueAt (an older bundle): SCHEDULED_MAX_GAP_MS after the run started.
+ * - "failed", "lease_busy" or no answer: the next tick (the platform may back off a tenant that keeps failing).
+ */
+export function nextScheduledCall(
+  summary: Pick<ScheduledRunSummary, "outcome" | "startedAt" | "nextDueAt"> | null,
+  now: number,
+): number {
+  if (!summary || summary.outcome !== "ran") return now;
+  const latest = summary.startedAt + SCHEDULED_MAX_GAP_MS;
+  const due = summary.nextDueAt;
+  return typeof due === "number" && Number.isFinite(due) ? Math.min(due, latest) : latest;
 }
 
 /**

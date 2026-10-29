@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   HANDOFF_CLOCK_SKEW_SECONDS,
   HANDOFF_TTL_SECONDS,
+  SCHEDULED_MAX_GAP_MS,
   PLAN_LIMITS,
   base64urlDecode,
   base64urlEncode,
@@ -19,6 +20,7 @@ import {
   isPlatformCall,
   isTenantProps,
   isTenantId,
+  nextScheduledCall,
   parseHandoffToken,
   planLimitBody,
   signHandoffToken,
@@ -142,6 +144,34 @@ describe("internal paths", () => {
     expect(isPlatformCall({ invocation: "platform", callId }, "something-else-entirely")).toBe(false);
     expect(isPlatformCall({ invocation: "platform", callId: "short" }, "short")).toBe(false);
     expect(isPlatformCall(undefined, callId)).toBe(false);
+  });
+});
+
+describe("next scheduled call", () => {
+  const ran = { outcome: "ran" as const, startedAt: NOW };
+
+  it("calls at the tenant's nextDueAt", () => {
+    expect(nextScheduledCall({ ...ran, nextDueAt: NOW + 60_000 }, NOW + 1_000)).toBe(NOW + 60_000);
+  });
+
+  it("calls on the next tick when nextDueAt already passed", () => {
+    expect(nextScheduledCall({ ...ran, nextDueAt: NOW - 5_000 }, NOW + 1_000)).toBeLessThanOrEqual(NOW + 1_000);
+  });
+
+  it("never waits longer than the maximum gap", () => {
+    expect(nextScheduledCall({ ...ran, nextDueAt: NOW + 3_600_000 }, NOW)).toBe(NOW + SCHEDULED_MAX_GAP_MS);
+    expect(SCHEDULED_MAX_GAP_MS).toBe(12 * 60 * 1000);
+  });
+
+  it("keeps the 12-minute cadence for a bundle that reports no nextDueAt", () => {
+    expect(nextScheduledCall(ran, NOW)).toBe(NOW + SCHEDULED_MAX_GAP_MS);
+  });
+
+  it("calls again on the next tick after a failure, a busy lease or no answer", () => {
+    const now = NOW + 2_000;
+    expect(nextScheduledCall({ outcome: "failed", startedAt: NOW, nextDueAt: NOW + 600_000 }, now)).toBe(now);
+    expect(nextScheduledCall({ outcome: "lease_busy", startedAt: NOW }, now)).toBe(now);
+    expect(nextScheduledCall(null, now)).toBe(now);
   });
 });
 

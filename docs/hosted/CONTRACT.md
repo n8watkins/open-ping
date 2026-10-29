@@ -158,8 +158,10 @@ The checks are `src/worker/lib/plan-limits.ts`; on a plain install there is no p
 - `POST /api/monitors` (the dashboard and the CLI), MCP `create_monitor` and a backup import (`POST /api/data/import`) all go through the same monitor check; an import counts the monitors it would create and refuses before creating any.
 - The monitor count includes paused monitors, and the status page count includes the default page.
 - A body is validated first, so an invalid one is still a 400 at the limit.
-- Polled monitors are checked every 12 minutes, so `checkIntervalLimit` sees 12 for them; a heartbeat's interval is how often its job pings, not a check, so it never counts.
+- In hosted mode each polled monitor has its own check interval, in whole minutes, and `checkIntervalLimit` sees that; a heartbeat's interval is how often its job pings, not a check, so it never counts.
   An edit is held to the interval only when it changes it, so a monitor kept from a bigger plan can still be renamed.
+- The scheduler never checks a monitor more often than the plan's current `minIntervalMinutes`: after a downgrade, a 1-minute monitor is checked at the plan's fastest and keeps its setting, so it is fast again after an upgrade with no edit.
+- On a plain install there is no plan, and every polled monitor is checked on each 12-minute cron run, as before.
 - Push devices are not channels (they are `push_subscriptions`), so `channelKinds` doesn't apply to them.
 - The check and the insert are separate queries, so two creates at the same instant could both pass at the last free place; the next create is refused.
 - MCP answers a refusal as a tool error with the message and the upgrade link, and `structuredContent.planLimit` holding the body; the CLI prints both.
@@ -196,8 +198,25 @@ It always answers HTTP 200 with `ScheduledRunSummary`, whatever happened:
 | `checked`, `failures`, `deferred` | monitors checked, checks that failed, due monitors left for the next run |
 | `d1Queries` | D1 queries the run made |
 | `error` | a short non-secret reason, only when `outcome` is `failed` |
+| `nextDueAt` | when this tenant next has work (epoch ms), only when `outcome` is `ran`; see below |
 
 Any other status (or a thrown RPC error, or a timeout) means the platform could not get an answer, and the queue retries the message.
+
+#### When to call next
+
+The platform's scheduler ticks every minute, and calls a tenant only when it is due, so a tenant whose monitors are all checked every 12 minutes costs one call per 12 minutes, and one with a 1-minute monitor one call per minute.
+`nextDueAt` is the earliest moment a call finds work: a polled monitor due, a heartbeat deadline passing, or a schedule window opening.
+The tenant already allows for calls arriving on minute ticks, so the platform calls on its first tick at or after `nextDueAt` and needs no margin of its own.
+`nextScheduledCall(summary, now)` in the shared module is the rule, and both sides use it:
+
+- `ran` with `nextDueAt`: call at `nextDueAt`, but never later than `SCHEDULED_MAX_GAP_MS` (12 minutes) after the run started, so notifications, reports and cleanup keep today's cadence.
+  A `nextDueAt` already past (a backlog the run's budget deferred) means the next tick.
+- `ran` without `nextDueAt` (a bundle older than this field): 12 minutes after the run started.
+- `failed`, `lease_busy`, or no answer: the next tick; the platform may back off a tenant that keeps failing.
+
+A new tenant, or one the platform has no summary for, is due at once.
+A change in the dashboard (a new monitor, a shorter interval) takes effect from the tenant's next call, so within 12 minutes at most; a new monitor is checked once as it is created anyway.
+`nextDueAt` is optional and additive, so `HOSTED_CONTRACT_VERSION` stays 1.
 
 ### `GET /__platform/health`
 
@@ -236,6 +255,8 @@ The internal paths are `src/worker/routes/platform.ts`, and self-migration is `s
 - `POST /__platform/scheduled` passes `cron` and `scheduledTime` to the same `runScheduled` the cron handler calls, then reports usage through `props.platform.reportUsage`.
   A malformed body answers 400 `invalid_request`.
   `d1Queries` counts the run's queries plus the migration check and the usage report.
+- `nextDueAt` is worked out from what the run already read and wrote, so it costs no query: the earliest next check of a polled monitor that is on, the deadline of a heartbeat that isn't already down, and the start of a monitor's next schedule window, capped at 12 minutes.
+  A monitor that is due within 30 seconds of a call is checked on that call, which is what lets the platform call on minute ticks with no margin.
 - `lastRun` is the latest finished row of `scheduler_runs` (`at` is when it started); a `lease_busy` call writes no row.
 
 ## 7. The sign-in hand-off
