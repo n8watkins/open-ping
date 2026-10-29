@@ -8,6 +8,7 @@ import {
   TENANT_STATUSES,
   packsForPlan,
   planLimitsWithPacks,
+  withLimitGrant,
   type HostedUrls,
   type PackQuantities,
   type PlanId,
@@ -67,7 +68,11 @@ function oneOf<T extends string>(values: readonly T[], value: string, fallback: 
   return (values as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
-/** Only the known PlanLimits keys with the right types; anything else in the JSON is ignored. */
+/**
+ * A support grant from tenants.limit_overrides: only the known PlanLimits
+ * keys with the right types, anything else in the JSON ignored. Counts are
+ * what the grant adds (withLimitGrant), not whole limits (migration 0013).
+ */
 export function parseLimitOverrides(json: string | null): Partial<PlanLimits> | null {
   if (!json) return null;
   let raw: unknown;
@@ -160,11 +165,12 @@ export async function findTenantBySlug(db: D1Database, slug: string): Promise<Te
 
 /**
  * The plan's limits with its packs added (planLimitsWithPacks, decision D13)
- * and any per-tenant overrides (a support grant) on top: the final numbers
- * `tenant.limits` carries, so the tenant never works one out itself.
+ * and any support grant (tenants.limit_overrides) added on top
+ * (withLimitGrant): the final numbers `tenant.limits` carries, so the tenant
+ * never works one out itself, and a grant never takes away a paid pack.
  */
 export function effectiveLimits(tenant: Pick<TenantRecord, "plan" | "limitOverrides"> & { packs?: PackQuantities }): PlanLimits {
-  return { ...planLimitsWithPacks(tenant.plan, tenant.packs), ...(tenant.limitOverrides ?? {}) };
+  return withLimitGrant(planLimitsWithPacks(tenant.plan, tenant.packs), tenant.limitOverrides);
 }
 
 /** Where the tenant's OpenPing links back to on the platform. */

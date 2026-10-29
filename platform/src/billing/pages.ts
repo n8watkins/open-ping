@@ -41,6 +41,26 @@ export const PRICE_TEXT = {
   fastPack: year(HOSTED_FAST_PACK_YEARLY),
 } as const;
 
+/** What a subscription bills, by kind: Stripe's own quantities, which may be past a cap or not count. */
+export interface BilledItems {
+  fast: number;
+  monitor_pack: number;
+  fast_pack: number;
+}
+
+/** What Stripe charges a year for these items, in dollars (the plan itself always once). */
+export function billedTotal(billed: BilledItems): number {
+  return (
+    HOSTED_PRICE_YEARLY +
+    billed.fast * HOSTED_FAST_CHECKS_YEARLY +
+    billed.monitor_pack * HOSTED_MONITOR_PACK_YEARLY +
+    billed.fast_pack * HOSTED_FAST_PACK_YEARLY
+  );
+}
+
+/** "$12.00" from cents. */
+const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
 /** What a plan with these packs costs a year, in dollars. */
 export function yearlyTotal(plan: PlanId, packs: PackQuantities): number {
   if (plan === "trial") return 0;
@@ -75,6 +95,14 @@ export interface BillingView {
   packs: PackQuantities;
   /** What the tenant's OpenPing is told it may have: the plan, its packs and any support grant. */
   limits: PlanLimits;
+  /**
+   * What the deciding subscription bills, by Stripe's quantities (null for a
+   * subscription saved before they were kept): the renewal total, and packs
+   * that are billed but don't count (fast packs without the add-on).
+   */
+  billed: BilledItems | null;
+  /** About how much removed packs left as a credit on the next renewal, in cents. */
+  creditCents: number;
   /** What the tenant last reported having, or null before its first report. */
   usage: { monitors: number; fastMonitors: number | null; statusPages: number } | null;
   /** The subscription that decides, if any. */
@@ -187,11 +215,14 @@ function usageList(view: BillingView): Html {
  */
 function packOffer(kind: PackKind, view: BillingView, lead: boolean): Html {
   const pack = PACKS[kind];
-  const have = view.packs[kind];
   const fast = kind === "fast_monitors";
+  // Removing goes from what Stripe bills (it may be past a cap, or not count at all); adding only while sold.
+  const billed = view.billed ? view.billed[fast ? "fast_pack" : "monitor_pack"] : view.packs[kind];
+  const have = Math.max(billed, view.packs[kind]);
+  const sold = pack.plans.includes(view.plan);
   const price = fast ? PRICE_TEXT.fastPack : PRICE_TEXT.monitorPack;
   const unit = fast ? "fast monitors" : "monitors";
-  const title = fast ? "More fast monitors" : "More monitors";
+  const title = !sold ? "Fast monitor packs" : fast ? "More fast monitors" : "More monitors";
   const total = fast ? view.limits.fastMonitors : view.limits.monitors;
   const what = fast ? "fast monitor pack" : "monitor pack";
   const has =
@@ -199,16 +230,16 @@ function packOffer(kind: PackKind, view: BillingView, lead: boolean): Html {
       ? `You have ${count(have, what, `${what}s`)}, so ${total} ${fast ? "fast monitors" : "monitors"} in all.`
       : `Your plan has ${total} ${fast ? "fast monitors" : "monitors"}.`;
   const buttons: Html[] = [];
-  if (have < pack.max) {
+  if (sold && have < pack.max) {
     buttons.push(form("/billing/packs", `Add ${pack.adds} ${unit}: ${nb(price)}`, lead ? "primary" : "secondary", { kind, quantity: String(have + 1) }));
   }
   if (have > 0) buttons.push(form("/billing/packs", `Remove a ${what}`, "secondary", { kind, quantity: String(have - 1) }));
   const atMost =
-    have >= pack.max
+    sold && have >= pack.max
       ? html`<p>That's the most a plan can have. Write to <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a> for more.</p>`
       : "";
   return html`<div class="offer${lead ? " lead-offer" : ""}"><h3>${title}</h3>
-<p>${has}${have < pack.max ? ` Add ${pack.adds} more for ${price} each, up to ${pack.max} packs.` : ""}</p>
+<p>${sold ? has : `${count(have, what, `${what}s`)} billed.`}${sold && have < pack.max ? ` Add ${pack.adds} more for ${price} each, up to ${pack.max} packs.` : ""}</p>
 ${atMost}
 ${buttons.length ? html`<div class="stack">${buttons}</div>` : ""}</div>`;
 }
@@ -297,14 +328,26 @@ ${h("Billing")}
       ),
     );
   }
-  const total = year(yearlyTotal(view.plan, view.packs));
+  // What Stripe will charge, from its own quantities.
+  const total = year(view.billed ? billedTotal(view.billed) : yearlyTotal(view.plan, view.packs));
+  const credit = view.creditCents > 0 ? dollars(view.creditCents) : null;
   const renewal = sub?.cancelAtPeriodEnd
-    ? renews
-      ? `Ends on ${renews}; it won't renew.`
-      : "It won't renew."
+    ? `${renews ? `Ends on ${renews}; it won't renew.` : "It won't renew."}${
+        credit ? ` The credit of about ${credit} for removed packs isn't paid out when a plan ends without renewing.` : ""
+      }`
     : renews
-      ? `Renews on ${renews} for ${total}.`
+      ? `Renews on ${renews} for ${total}${credit ? `, less a credit of about ${credit} for removed packs` : ""}.`
       : "";
+  // Billed but not counted (the add-on taken off in Stripe with fast packs left): say so, and offer to remove them.
+  const idleFastPacks = view.billed && !fast ? view.billed.fast_pack : 0;
+  if (idleFastPacks > 0) {
+    lines.push(
+      notice(
+        `${count(idleFastPacks, "fast monitor pack is", "fast monitor packs are")} billed but count only with ${ONE_MINUTE} checks. Remove ${idleFastPacks === 1 ? "it" : "them"} below, or add ${ONE_MINUTE} checks.`,
+        "error",
+      ),
+    );
+  }
   if (sub?.pending) {
     const what = pendingText(sub.pending.items.length ? sub.pending.items : [{ kind: "fast", quantity: 1 }]);
     lines.push(
@@ -320,13 +363,13 @@ ${h("Billing")}
     const all: { key: Exclude<Lead, null>; html: Html }[] = [];
     if (!fast) all.push({ key: "fast", html: fastOffer(lead === "fast") });
     all.push({ key: "monitor_pack", html: packOffer("monitors", view, lead === "monitor_pack") });
-    if (fast) all.push({ key: "fast_pack", html: packOffer("fast_monitors", view, lead === "fast_pack") });
+    if (fast || idleFastPacks > 0) all.push({ key: "fast_pack", html: packOffer("fast_monitors", view, lead === "fast_pack") });
     all.sort((a, b) => Number(b.key === lead) - Number(a.key === lead));
     offers.push(...all.map((o) => o.html));
   }
   const changes =
     offers.length > 0
-      ? html`<p class="hint">Adding something charges the rest of this year now, and it starts once that payment goes through. Removing a pack takes it off at once; the unused part of the year comes off your next renewal. Nothing in your OpenPing is ever deleted: over a smaller limit, you can't add more until you remove some, and extra fast monitors are checked every 12 minutes.</p>`
+      ? html`<p class="hint">Adding something charges the rest of this year now, and it starts once that payment goes through. Removing a pack takes it off at once; the unused part of the year comes off your next renewal, and isn't paid out if the plan ends without renewing. Nothing in your OpenPing is ever deleted: over a smaller limit, you can't add more until you remove some, and extra fast monitors are checked every 12 minutes.</p>`
       : "";
   return html`${pastDue ? badge("Payment due", "--degraded") : badge("Active", "--up")}
 ${h(focus === "upgrade" && !pastDue ? "Upgrade" : "Billing")}

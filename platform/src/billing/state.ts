@@ -86,6 +86,8 @@ function quantityOf(items: readonly Pick<StripeSubscriptionItem, "price" | "quan
 export interface SubscriptionPacks {
   /** As they count on `plan`: each within its cap, and fast packs only with the add-on. */
   packs: PackQuantities;
+  /** What Stripe bills, by its own quantities (the renewal total, and packs to offer to remove). */
+  billed: { fast: number; monitor_pack: number; fast_pack: number };
   /** What didn't fit, for the owner to look at: over a cap, or fast packs without the add-on. */
   problems: string[];
 }
@@ -99,7 +101,7 @@ export interface SubscriptionPacks {
 export function packsForItems(
   items: readonly Pick<StripeSubscriptionItem, "price" | "quantity">[],
   plan: PaidPlan,
-  config: Pick<BillingConfig, "priceMonitorPack" | "priceFastPack">,
+  config: Pick<BillingConfig, "priceFast" | "priceMonitorPack" | "priceFastPack">,
 ): SubscriptionPacks {
   const asked = { monitors: quantityOf(items, config.priceMonitorPack), fast_monitors: quantityOf(items, config.priceFastPack) };
   const packs = packsForPlan(plan, asked);
@@ -107,7 +109,8 @@ export function packsForItems(
   if (asked.monitors > PACKS.monitors.max) problems.push(`monitor_packs_over_cap:${asked.monitors}`);
   if (asked.fast_monitors > 0 && !PACKS.fast_monitors.plans.includes(plan)) problems.push(`fast_packs_without_add_on:${asked.fast_monitors}`);
   else if (asked.fast_monitors > PACKS.fast_monitors.max) problems.push(`fast_packs_over_cap:${asked.fast_monitors}`);
-  return { packs, problems };
+  const billed = { fast: quantityOf(items, config.priceFast), monitor_pack: asked.monitors, fast_pack: asked.fast_monitors };
+  return { packs, billed, problems };
 }
 
 /** What a pending update would add, by kind, for the billing page. */
@@ -162,6 +165,7 @@ export async function saveSubscription(
     tenantId: string | null;
     plan: PaidPlan;
     packs: PackQuantities;
+    billed: SubscriptionPacks["billed"];
     config: Pick<BillingConfig, "priceFast" | "priceMonitorPack" | "priceFastPack">;
     now: number;
   },
@@ -172,13 +176,15 @@ export async function saveSubscription(
   const written = await db
     .prepare(
       `INSERT INTO subscriptions (id, account_id, tenant_id, stripe_customer_id, stripe_subscription_id, status, plan, current_period_end,
-         cancel_at_period_end, price_ids, ended_at, pending_until, pending_invoice_url, monitor_packs, fast_packs, pending_items, created_at, updated_at)
-       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?15, ?16, ?17, ?14, ?14 WHERE ${HOLDS}
+         cancel_at_period_end, price_ids, ended_at, pending_until, pending_invoice_url, monitor_packs, fast_packs, pending_items, billed_items,
+         created_at, updated_at)
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?15, ?16, ?17, ?18, ?14, ?14 WHERE ${HOLDS}
        ON CONFLICT(stripe_subscription_id) DO UPDATE SET account_id = excluded.account_id,
          tenant_id = COALESCE(excluded.tenant_id, subscriptions.tenant_id), stripe_customer_id = excluded.stripe_customer_id,
          status = excluded.status, plan = excluded.plan, current_period_end = excluded.current_period_end,
          cancel_at_period_end = excluded.cancel_at_period_end, price_ids = excluded.price_ids, ended_at = excluded.ended_at,
          monitor_packs = excluded.monitor_packs, fast_packs = excluded.fast_packs, pending_items = excluded.pending_items,
+         billed_items = excluded.billed_items,
          pending_until = excluded.pending_until,
          pending_invoice_url = CASE WHEN excluded.pending_until IS NULL THEN NULL ELSE COALESCE(excluded.pending_invoice_url, subscriptions.pending_invoice_url) END,
          updated_at = excluded.updated_at`,
@@ -201,6 +207,7 @@ export async function saveSubscription(
       input.packs.monitors,
       input.packs.fast_monitors,
       waiting && waiting.length ? JSON.stringify(waiting) : null,
+      JSON.stringify(input.billed),
       ...holdsBinds(lock),
     )
     .run();

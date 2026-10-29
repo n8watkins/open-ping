@@ -231,8 +231,8 @@ describe("<slug>.<domain>", () => {
     await request(`https://trialco.${DOMAIN}/`);
     const props = dispatcher.calls[0]!.props;
     expect(props.tenant.trialEndsAt).toBeTypeOf("number");
-    // The valid override applies; the invalid channel list and the unknown key are ignored.
-    expect(props.tenant.limits).toEqual({ ...PLAN_LIMITS.trial, monitors: 8 });
+    // The valid grant is added to the plan; the invalid channel list and the unknown key are ignored.
+    expect(props.tenant.limits).toEqual({ ...PLAN_LIMITS.trial, monitors: 13 });
   });
 
   it("passes the user Worker's answer through untouched", async () => {

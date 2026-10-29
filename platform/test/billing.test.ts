@@ -677,7 +677,7 @@ describe("the webhook", () => {
 });
 
 describe("the trial", () => {
-  it("ends on day 15 for a trial with no subscription, through the partial index", async () => {
+  it("ends a trial with no subscription once its end has passed, through the partial index", async () => {
     const plan = await env.PLATFORM_DB.prepare(`EXPLAIN QUERY PLAN ${ENDED_TRIALS_SQL}`).bind(0, 100).all<{ detail: string }>();
     const details = plan.results.map((r) => r.detail).join(" | ");
     expect(details).toContain("USING INDEX idx_tenants_trial_end (trial_ends_at<?)");
@@ -922,14 +922,20 @@ describe("launch pricing: packs and the fast checks add-on (D13)", () => {
   });
 
   it("reads packs from the items' quantities, capped, and fast packs only with the add-on", () => {
-    const config = { priceMonitorPack: PRICE_MONITOR_PACK, priceFastPack: PRICE_FAST_PACK };
+    const config = { priceFast: PRICE_FAST, priceMonitorPack: PRICE_MONITOR_PACK, priceFastPack: PRICE_FAST_PACK };
     const item = (price: string, quantity?: number) => ({ price: { id: price }, quantity });
-    expect(packsForItems([item(PRICE_HOSTED), item(PRICE_MONITOR_PACK, 2)], "hosted", config)).toEqual({ packs: { monitors: 2, fast_monitors: 0 }, problems: [] });
-    expect(packsForItems([item(PRICE_MONITOR_PACK, 6), item(PRICE_FAST_PACK, 5)], "hosted_fast", config)).toEqual({
+    expect(packsForItems([item(PRICE_HOSTED), item(PRICE_MONITOR_PACK, 2)], "hosted", config)).toEqual({
+      packs: { monitors: 2, fast_monitors: 0 },
+      billed: { fast: 0, monitor_pack: 2, fast_pack: 0 },
+      problems: [],
+    });
+    expect(packsForItems([item(PRICE_FAST), item(PRICE_MONITOR_PACK, 6), item(PRICE_FAST_PACK, 5)], "hosted_fast", config)).toEqual({
       packs: { monitors: 4, fast_monitors: 3 },
+      // What Stripe bills stays as it is: the renewal total says so.
+      billed: { fast: 1, monitor_pack: 6, fast_pack: 5 },
       problems: ["monitor_packs_over_cap:6", "fast_packs_over_cap:5"],
     });
-    expect(packsForItems([item(PRICE_FAST_PACK, 1)], "hosted", config)).toEqual({ packs: { monitors: 0, fast_monitors: 0 }, problems: ["fast_packs_without_add_on:1"] });
+    expect(packsForItems([item(PRICE_FAST_PACK, 1)], "hosted", config)).toMatchObject({ packs: { monitors: 0, fast_monitors: 0 }, problems: ["fast_packs_without_add_on:1"] });
     // A quantity Stripe leaves out is 1.
     expect(packsForItems([item(PRICE_MONITOR_PACK)], "hosted", config).packs.monitors).toBe(1);
   });
@@ -1154,6 +1160,105 @@ describe("launch pricing: packs and the fast checks add-on (D13)", () => {
     expect(billing).toContain("Nothing in your OpenPing is ever deleted");
     // The account page shows the same.
     expect(await (await c.browser("/account")).text()).toContain("31 of 45");
+  });
+
+  it("adds a support grant on top of the plan and its packs, so a grant never takes a paid pack away", async () => {
+    const c = await customer();
+    const sub = await subscribe(c, "hosted_fast");
+    await post(c, "monitors", 2);
+    await deliverAll([stripe.updated(sub.id)]);
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET limit_overrides = ? WHERE id = ?")
+      .bind(JSON.stringify({ monitors: 10, fastMonitors: 3, emailsPerDay: 100 }), c.tenantId)
+      .run();
+    clearTenantCache();
+    expect(await tenantSees(c.slug)).toMatchObject({ limits: { monitors: 80, fastMonitors: 8, emailsPerDay: 600, minIntervalMinutes: 1 } });
+    expect(await (await c.browser("/billing")).text()).toMatch(/<strong>Monitors<\/strong><\/span><span class="value">Up to 80<\/span>/);
+    // A grant of fast checks on the plain plan gives both the interval and the fast monitors.
+    const plain = await customer();
+    await subscribe(plain);
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET limit_overrides = ? WHERE id = ?")
+      .bind(JSON.stringify({ minIntervalMinutes: 1, fastMonitors: 2 }), plain.tenantId)
+      .run();
+    clearTenantCache();
+    expect(await tenantSees(plain.slug)).toMatchObject({ plan: "hosted", limits: { monitors: 20, minIntervalMinutes: 1, fastMonitors: 2 } });
+  });
+
+  it("turns overrides written before grants (whole numbers) into the grants that keep the same limits", async () => {
+    const legacy = async (plan: string, overrides: Record<string, unknown>) => {
+      const c = await customer();
+      await env.PLATFORM_DB.prepare("UPDATE tenants SET plan = ?, status = 'active', limit_overrides = ? WHERE id = ?")
+        .bind(plan, JSON.stringify(overrides), c.tenantId)
+        .run();
+      return c;
+    };
+    const a = await legacy("hosted", { monitors: 50, statusPages: 1, emailsPerDay: 2000 });
+    const b = await legacy("hosted", { minIntervalMinutes: 1 });
+    const t = await legacy("trial", { monitors: 3, channelKinds: "all" });
+    const f = await legacy("hosted_fast", { monitors: 30, minIntervalMinutes: 1 });
+    // The conversion migration 0013 runs once on existing rows.
+    const migration = env.TEST_MIGRATIONS.find((m) => m.name.startsWith("0013_"))!;
+    const updates = migration.queries.filter((q: string) => /UPDATE tenants/i.test(q));
+    expect(updates.length).toBeGreaterThan(0);
+    for (const q of updates) await env.PLATFORM_DB.prepare(q).run();
+    const grant = async (id: string) =>
+      JSON.parse((await env.PLATFORM_DB.prepare("SELECT limit_overrides FROM tenants WHERE id = ?").bind(id).first<{ limit_overrides: string }>())!.limit_overrides);
+    // Counts become what they add; a grant never takes away (statusPages 1 on a 2-page plan adds nothing).
+    expect(await grant(a.tenantId)).toEqual({ monitors: 30, statusPages: 0, emailsPerDay: 1500 });
+    // A shorter interval used to let every monitor be fast: it now says so with fastMonitors.
+    expect(await grant(b.tenantId)).toEqual({ minIntervalMinutes: 1, fastMonitors: 20 });
+    expect(await grant(t.tenantId)).toEqual({ monitors: 0, channelKinds: "all" });
+    expect(await grant(f.tenantId)).toEqual({ monitors: 10, minIntervalMinutes: 1, fastMonitors: 25 });
+    clearTenantCache();
+    expect(await tenantSees(a.slug)).toMatchObject({ limits: { monitors: 50, statusPages: 2, emailsPerDay: 2000 } });
+    expect(await tenantSees(b.slug)).toMatchObject({ limits: { monitors: 20, minIntervalMinutes: 1, fastMonitors: 20 } });
+    expect(await tenantSees(f.slug)).toMatchObject({ limits: { monitors: 30, fastMonitors: 30 } });
+  });
+
+  it("charges and shows what Stripe really bills, and always lets a pack be lowered", async () => {
+    const c = await customer();
+    const sub = await subscribe(c, "hosted_fast");
+    await post(c, "fast_monitors", 2);
+    await deliverAll([stripe.updated(sub.id)]);
+    // The add-on comes off in Stripe's dashboard, leaving 2 fast packs billed that now count for nothing.
+    const s = stripe.subscriptions.get(sub.id)!;
+    s.items.data = s.items.data.filter((i) => i.price.id !== PRICE_FAST);
+    await deliverAll([stripe.updated(sub.id)]);
+    expect(await packs(c.tenantId)).toEqual({ plan: "hosted", monitor_packs: 0, fast_packs: 0 });
+    const billing = await (await c.browser("/billing")).text();
+    // The renewal is what Stripe charges: the plan and both fast packs.
+    expect(billing).toContain("Renews on Nov 2, 2027 for $96 a year.");
+    expect(billing).toContain("2 fast monitor packs are billed but count only with 1\u2011minute checks");
+    expect(billing).toContain("Remove a fast monitor pack");
+    // Lowering is always allowed; raising them still needs the add-on.
+    expect(done(await post(c, "fast_monitors", 3))).toBe("/billing?done=needs-fast");
+    expect(done(await post(c, "fast_monitors", 1))).toBe("/billing?done=packs-removed");
+    expect(done(await post(c, "fast_monitors", 0))).toBe("/billing?done=packs-removed");
+    await deliverAll([stripe.updated(sub.id)]);
+    const after = await (await c.browser("/billing")).text();
+    expect(after).toContain("for $24 a year");
+    expect(after).not.toContain("are billed but count only");
+  });
+
+  it("shows a removed pack's credit next to the renewal, until the renewal uses it", async () => {
+    const c = await customer();
+    const sub = await subscribe(c);
+    await post(c, "monitors", 2);
+    await deliverAll([stripe.updated(sub.id)]);
+    // Half a year before the renewal, one of the two packs comes off.
+    for (const item of stripe.subscriptions.get(sub.id)!.items.data) item.current_period_end = Math.floor(clock.now / 1000) + Math.round(182.5 * 86_400);
+    expect(done(await post(c, "monitors", 1))).toBe("/billing?done=packs-removed");
+    await deliverAll([stripe.updated(sub.id)]);
+    const billing = await (await c.browser("/billing")).text();
+    expect(billing).toContain("Renews on May 4, 2027 for $48 a year, less a credit of about $12.00 for removed packs.");
+    // Cancelled before it renews: the page says plainly the credit isn't paid out.
+    await deliverAll([stripe.update(sub.id, { cancel_at_period_end: true })]);
+    const ending = await (await c.browser("/billing")).text();
+    expect(ending).toContain("Ends on May 4, 2027; it won&#39;t renew.");
+    expect(ending).toContain("The credit of about $12.00 for removed packs isn&#39;t paid out when a plan ends without renewing.");
+    // Renewed instead: the renewal invoice used the credit, and it's gone from the page.
+    await deliverAll([stripe.update(sub.id, { cancel_at_period_end: false })]);
+    await deliverAll(stripe.pay(sub.id));
+    expect(await (await c.browser("/billing")).text()).not.toContain("less a credit");
   });
 
   it("ends a trial after its 30 days, not before", async () => {

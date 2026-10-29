@@ -184,17 +184,27 @@ describe("a tenant's email through the platform", () => {
     expect(mailer.sent).toHaveLength(0);
   });
 
+  /** Spends all but `left` of the hosted plan's emails for the UTC day of `at` (a support grant only ever adds). */
+  async function spendAllBut(left: number, at = clock) {
+    await env.PLATFORM_DB.prepare("INSERT INTO tenant_email_usage (tenant_id, day, category, sent) VALUES (?, ?, 'report', ?)")
+      .bind(TENANT, utcDay(at), PLAN_LIMITS.hosted.emailsPerDay - left)
+      .run();
+  }
+
   it("stops at the plan's emails a day, and starts again at the next UTC midnight", async () => {
-    await tenant({ overrides: JSON.stringify({ emailsPerDay: 3 }) });
+    await tenant();
+    await spendAllBut(3);
+    const cap0 = PLAN_LIMITS.hosted.emailsPerDay;
     const mailer = new FakeMailer();
     const cap = capability(mailer);
     for (let i = 0; i < 3; i++) expect((await cap.sendEmail(alert({ category: i ? "report" : "alert" }))).ok).toBe(true);
     const over = await cap.sendEmail(alert());
-    expect(over).toEqual({ ok: false, error: "email_quota_exceeded", message: "Your plan sends up to 3 emails a day; the rest go out tomorrow (UTC)." });
-    expect(await emailsToday(env.PLATFORM_DB, TENANT, clock)).toEqual({ sent: 3, failed: 0, refused: 1 });
+    expect(over).toEqual({ ok: false, error: "email_quota_exceeded", message: `Your plan sends up to ${cap0} emails a day; the rest go out tomorrow (UTC).` });
+    expect(await emailsToday(env.PLATFORM_DB, TENANT, clock)).toEqual({ sent: cap0, failed: 0, refused: 1 });
     // Two recipients don't fit in one place either.
     clock += 60_000; // 00:00 UTC
     expect(utcDay(clock)).toBe("2026-11-03");
+    await spendAllBut(3);
     expect((await cap.sendEmail(alert({ to: ["a@x.example", "b@x.example"] }))).ok).toBe(true);
     expect(await cap.sendEmail(alert({ to: ["c@x.example", "d@x.example"] }))).toMatchObject({ error: "email_quota_exceeded" });
     expect(mailer.sent).toHaveLength(5);
@@ -210,8 +220,18 @@ describe("a tenant's email through the platform", () => {
     expect(await cap.sendEmail(alert())).toMatchObject({ error: "email_quota_exceeded" });
   });
 
+  it("adds a support grant to the plan's emails a day", async () => {
+    await tenant({ overrides: JSON.stringify({ emailsPerDay: 2 }) });
+    await spendAllBut(0);
+    const cap = capability();
+    expect((await cap.sendEmail(alert())).ok).toBe(true);
+    expect((await cap.sendEmail(alert())).ok).toBe(true);
+    expect(await cap.sendEmail(alert())).toMatchObject({ error: "email_quota_exceeded" });
+  });
+
   it("never lets two sends at once pass the last place", async () => {
-    await tenant({ overrides: JSON.stringify({ emailsPerDay: 3 }) });
+    await tenant();
+    await spendAllBut(3);
     const cap = capability();
     const results = await Promise.all(Array.from({ length: 8 }, () => cap.sendEmail(alert())));
     expect(results.filter((r) => r.ok)).toHaveLength(3);
@@ -219,7 +239,8 @@ describe("a tenant's email through the platform", () => {
   });
 
   it("gives back the place of an email the provider didn't take, and says why", async () => {
-    await tenant({ overrides: JSON.stringify({ emailsPerDay: 1 }) });
+    await tenant();
+    await spendAllBut(1);
     const mailer = new FakeMailer();
     const cap = capability(mailer);
     mailer.failNext = ["unavailable", "rejected", "quota"];
@@ -227,7 +248,7 @@ describe("a tenant's email through the platform", () => {
     expect(await cap.sendEmail(alert())).toMatchObject({ ok: false, error: "email_rejected" });
     // Resend's own day is spent: the tenant waits for the next UTC day, like for its own cap.
     expect(await cap.sendEmail(alert())).toMatchObject({ ok: false, error: "email_quota_exceeded" });
-    expect(await emailsToday(env.PLATFORM_DB, TENANT, clock)).toEqual({ sent: 0, failed: 3, refused: 0 });
+    expect(await emailsToday(env.PLATFORM_DB, TENANT, clock)).toEqual({ sent: PLAN_LIMITS.hosted.emailsPerDay - 1, failed: 3, refused: 0 });
     expect((await cap.sendEmail(alert())).ok).toBe(true);
   });
 

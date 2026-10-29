@@ -25,9 +25,9 @@ import type { Session } from "../auth/sessions";
 import type { PlatformEnv } from "../env";
 import { requestAppOrigin } from "../hosts";
 import type { BillingSetup } from "./config";
-import { billingPage, type BillingView } from "./pages";
+import { billingPage, type BilledItems, type BillingView } from "./pages";
 import { BILLING_REASONS, type BillingReason, type PendingItem } from "./state";
-import { BillingBusyError, withBillingLock } from "./lock";
+import { BillingBusyError, HOLDS, holdsBinds, withBillingLock, type BillingLock } from "./lock";
 import { StripeApiError, type StripeSubscription } from "./stripe";
 import {
   LIMIT_KINDS,
@@ -43,6 +43,7 @@ import {
   type TenantStatus,
 } from "../../../src/shared/hosted-contract";
 import { effectiveLimits, parseLimitOverrides } from "../tenants";
+import { HOSTED_FAST_PACK_YEARLY, HOSTED_MONITOR_PACK_YEARLY } from "../../../src/shared/hosted-offer";
 import { log } from "../log";
 
 type Env = { Bindings: PlatformEnv; Variables: { session: Session | null; now: number } };
@@ -76,6 +77,17 @@ function pendingItemsFrom(json: string | null): PendingItem[] {
   }
 }
 
+function billedFrom(json: string | null): BilledItems | null {
+  if (!json) return null;
+  try {
+    const raw = JSON.parse(json) as Record<string, unknown>;
+    const n = (v: unknown) => (typeof v === "number" && Number.isSafeInteger(v) && v > 0 ? v : 0);
+    return { fast: n(raw.fast), monitor_pack: n(raw.monitor_pack), fast_pack: n(raw.fast_pack) };
+  } catch {
+    return null;
+  }
+}
+
 /** Everything the billing section shows for an account: three reads, one round trip. */
 export async function billingView(db: D1Database, accountId: string, available: boolean, now: number): Promise<BillingView> {
   const [tenantRows, subRows, accountRows] = await db.batch<Record<string, unknown>>([
@@ -90,7 +102,7 @@ export async function billingView(db: D1Database, accountId: string, available: 
     db
       .prepare(
         `SELECT status, current_period_end, cancel_at_period_end, ended_at, payment_failed_at, next_payment_attempt, pending_until, pending_invoice_url,
-           pending_items FROM subscriptions
+           pending_items, billed_items, credit_cents FROM subscriptions
          WHERE account_id = ? ORDER BY CASE status WHEN 'active' THEN 6 WHEN 'trialing' THEN 6 WHEN 'past_due' THEN 5 WHEN 'unpaid' THEN 4
            WHEN 'paused' THEN 3 WHEN 'canceled' THEN 2 ELSE 0 END DESC, updated_at DESC LIMIT 1`,
       )
@@ -122,6 +134,8 @@ export async function billingView(db: D1Database, accountId: string, available: 
         pending_until: number | null;
         pending_invoice_url: string | null;
         pending_items: string | null;
+        billed_items: string | null;
+        credit_cents: number;
       }
     | undefined;
   const a = accountRows!.results[0] as { stripe_customer_id: string | null } | undefined;
@@ -135,6 +149,8 @@ export async function billingView(db: D1Database, accountId: string, available: 
     packs,
     // What the tenant's OpenPing is told, the same function as its props.
     limits: effectiveLimits({ plan, packs, limitOverrides: parseLimitOverrides(t?.limit_overrides ?? null) }),
+    billed: billedFrom(s?.billed_items ?? null),
+    creditCents: s && Number.isSafeInteger(s.credit_cents) && s.credit_cents > 0 ? s.credit_cents : 0,
     usage:
       t && t.used_monitors !== null
         ? { monitors: t.used_monitors, fastMonitors: t.used_fast, statusPages: t.used_pages ?? 0 }
@@ -333,18 +349,18 @@ export function registerBillingRoutes(app: Hono<Env>, deps: BillingDeps): void {
   async function changeSubscription(
     c: Ctx,
     setup: Extract<BillingSetup, { ok: true }>,
-    change: (sub: { id: string; plan: string; stripe: StripeSubscription }) => Promise<Response>,
+    change: (sub: { id: string; plan: string; stripe: StripeSubscription }, lock: BillingLock) => Promise<Response>,
   ): Promise<Response> {
     const session = c.get("session")!;
     const db = c.env.PLATFORM_DB;
     try {
-      return await withBillingLock(db, session.account.id, c.get("now"), async () => {
+      return await withBillingLock(db, session.account.id, c.get("now"), async (lock) => {
         const row = await decidingSubscription(db, session.account.id);
         if (!row || (row.status !== "active" && row.status !== "trialing")) return back(c, "no-plan");
         // Stripe's subscription as it is now, not our copy: a change in flight shows here first.
         const current = await setup.stripe.retrieveSubscription(row.stripe_subscription_id, { expandInvoice: true });
         if (current.pending_update) return back(c, "change-pending");
-        return change({ id: row.stripe_subscription_id, plan: row.plan, stripe: current });
+        return change({ id: row.stripe_subscription_id, plan: row.plan, stripe: current }, lock);
       });
     } catch (error) {
       if (error instanceof BillingBusyError) return back(c, "busy", 409);
@@ -393,11 +409,12 @@ export function registerBillingRoutes(app: Hono<Env>, deps: BillingDeps): void {
     if (kind === "none" || !Number.isSafeInteger(target) || target < 0) return back(c, "bad-pack", 400);
     if (target > PACKS[kind].max) return back(c, "packs-at-most");
     const price = kind === "monitors" ? setup.config.priceMonitorPack : setup.config.priceFastPack;
-    return changeSubscription(c, setup, async (sub) => {
-      if (!PACKS[kind].plans.includes(sub.plan as PlanId)) return back(c, "needs-fast");
+    return changeSubscription(c, setup, async (sub, lock) => {
       const items = sub.stripe.items.data.filter((i) => i.price.id === price);
       const now = items.reduce((n, i) => n + (i.quantity ?? 1), 0);
       if (target === now) return back(c, "packs-unchanged");
+      // Lowering is always allowed (a pack left billed after the add-on came off can be removed); more only where it's sold.
+      if (target > now && !PACKS[kind].plans.includes(sub.plan as PlanId)) return back(c, "needs-fast");
       // One line per price; anything else (two lines of one price, made in Stripe's dashboard) is the owner's to sort out.
       const [item, ...extra] = items;
       if (extra.length) {
@@ -410,6 +427,16 @@ export function registerBillingRoutes(app: Hono<Env>, deps: BillingDeps): void {
       if (!item) await setup.stripe.addSubscriptionItem({ subscription: sub.id, price, quantity: target }, key);
       else if (target === 0) await setup.stripe.deleteSubscriptionItem(item.id, key);
       else await setup.stripe.updateSubscriptionItem({ item: item.id, quantity: target, increase }, key);
+      if (!increase && item) {
+        // About what Stripe credits to the renewal for the rest of the year (it keeps the exact amount).
+        const yearMs = 365 * 86_400_000;
+        const left = Math.min(1, Math.max(0, (item.current_period_end * 1000 - c.get("now")) / yearMs));
+        const unitCents = (kind === "monitors" ? HOSTED_MONITOR_PACK_YEARLY : HOSTED_FAST_PACK_YEARLY) * 100;
+        const cents = Math.round(unitCents * (now - target) * left);
+        await c.env.PLATFORM_DB.prepare(`UPDATE subscriptions SET credit_cents = credit_cents + ?1 WHERE stripe_subscription_id = ?2 AND ${HOLDS}`)
+          .bind(cents, sub.id, ...holdsBinds(lock))
+          .run();
+      }
       if (increase) {
         const invoice = waitingInvoice(await setup.stripe.retrieveSubscription(sub.id, { expandInvoice: true }));
         if (invoice) return finishPayment(invoice, kind === "monitors" ? "extra monitors" : "extra fast monitors");

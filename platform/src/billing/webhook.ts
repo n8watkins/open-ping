@@ -299,11 +299,11 @@ async function applySubscription(deps: WebhookDeps, lock: BillingLock, fetched: 
   // Packs from the items' quantities. Over a cap, or fast packs without the
   // add-on (a change made in Stripe's dashboard), count as the cap or none,
   // and the owner is told so they can put the subscription right.
-  const { packs, problems } = packsForItems(sub.items.data, plan, config);
+  const { packs, billed, problems } = packsForItems(sub.items.data, plan, config);
   if (problems.length) {
     await needsAttention(db, lock.accountId, { reason: "packs", problems: problems.join(" "), subscription: sub.id, event: event.type }, deps.now);
   }
-  await saveSubscription(db, lock, { sub, tenantId: tenant?.id ?? null, plan, packs, config, now: deps.now });
+  await saveSubscription(db, lock, { sub, tenantId: tenant?.id ?? null, plan, packs, billed, config, now: deps.now });
   const change = await applyAccountBilling(db, lock, deps.now);
   if (change) log.info("billing.tenant_changed", { tenant: change.tenantId, from: change.from, to: change.to });
   return change;
@@ -371,10 +371,12 @@ async function recordInvoice(deps: WebhookDeps, lock: BillingLock, sub: StripeSu
       .prepare(
         `UPDATE subscriptions SET last_paid_at = MAX(COALESCE(last_paid_at, 0), ?1),
            payment_failed_at = CASE WHEN payment_failed_at <= ?1 THEN NULL ELSE payment_failed_at END,
-           next_payment_attempt = CASE WHEN payment_failed_at <= ?1 THEN NULL ELSE next_payment_attempt END
+           next_payment_attempt = CASE WHEN payment_failed_at <= ?1 THEN NULL ELSE next_payment_attempt END,
+           credit_cents = CASE WHEN ?3 = 'subscription_cycle' THEN 0 ELSE credit_cents END
          WHERE stripe_subscription_id = ?2 AND ${HOLDS}`,
       )
-      .bind(at, sub.id, ...holdsBinds(lock))
+      // A renewal invoice used any credit removed packs left (create_prorations), so it is no longer waiting.
+      .bind(at, sub.id, str(o.billing_reason), ...holdsBinds(lock))
       .run();
     return;
   }
