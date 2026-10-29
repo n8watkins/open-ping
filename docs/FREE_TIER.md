@@ -24,6 +24,12 @@ OpenPing's footprint has three parts:
    `fetch`. A domain-expiry monitor asks RDAP only every 6 hours (hourly
    near expiry) and judges the checks in between from the date it last read,
    with no fetch at all ([MONITOR_TYPES.md](./MONITOR_TYPES.md#how-often-rdap-is-asked)).
+   An **SSL certificate** monitor works the same way: it opens one `connect()`
+   socket (plus one DNS-over-HTTPS lookup when the connection fails without
+   saying why) about once a day, hourly inside its warning window, and judges
+   the checks in between from the certificate it last read, with no socket,
+   no fetch and no extra D1 query
+   ([MONITOR_TYPES.md](./MONITOR_TYPES.md#how-often-the-certificate-is-read)).
    Each still counts as roughly one check, and each run checks only as
    many monitors as fit its plan's per-run budget (about 24 on Free, up to 200 on
    Paid; see below), most overdue first, with the rest deferred to the next tick.
@@ -73,6 +79,7 @@ A run that goes past the per-invocation limits fails with "Too many API requests
 It counts its D1 queries as it goes.
 It counts every fetch a check makes: Cloudflare counts each redirect hop as its own subrequest, so an HTTP check that follows redirects holds room for up to six while it runs and is then charged what it really made.
 A check that would confirm a failure holds the same again for its re-check, and gives it back if it passes.
+An SSL certificate check that reads the server holds two (the socket and a possible DNS lookup) and is charged one in the common case; one judged from its cached read holds none.
 It keeps room for the work every run ends with (rollups, cleanup, the run record) and for a few alert deliveries.
 Any monitor that doesn't fit stays due for the next tick, most overdue first.
 Nothing is dropped; it just waits 12 minutes.

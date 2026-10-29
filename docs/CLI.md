@@ -100,6 +100,7 @@ op monitors create --type heartbeat --name "Nightly backup" --interval 86400 --g
 op monitors create --type tcp --name "Postgres" --host db.example.com --port 5432
 op monitors create --type dns --name "Apex A record" --hostname example.com --record A
 op monitors create --type domain --name "Domain expiry" --domain example.com --warn-days 21
+op monitors create --type cert --name "Shop certificate" --host shop.example.com --warn-days 30,14,7
 ```
 
 `--days` takes weekday numbers from 0 (Sunday) to 6 (Saturday); `--tz` defaults to your computer's timezone.

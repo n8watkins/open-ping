@@ -126,10 +126,10 @@ The body is the notification payload as JSON, posted with `Content-Type: applica
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `event` | string | `down`, `recovered`, `heartbeat_missed`, `flapping`, `degraded`, `maintenance_start`, `maintenance_end`, `incident_update`, `weekly` or `test` |
+| `event` | string | `down`, `recovered`, `heartbeat_missed`, `flapping`, `degraded`, `cert_expiring`, `maintenance_start`, `maintenance_end`, `incident_update`, `weekly` or `test` |
 | `monitorId` | string | The monitor's id (`test` for a test alert) |
 | `monitorName` | string | The monitor's name |
-| `state` | string | `down` or `up`; for `incident_update`, `down` while the incident is open and `up` once it is resolved |
+| `state` | string | `down` or `up`; for `incident_update`, `down` while the incident is open and `up` once it is resolved; `up` for `cert_expiring` (the site still works) |
 | `title` | string | The alert's title, starting with an emoji |
 | `body` | string | The alert's message; for `incident_update`, the update's message as written |
 | `url` | string, optional | The monitor, or for `incident_update` the incident, in OpenPing |
