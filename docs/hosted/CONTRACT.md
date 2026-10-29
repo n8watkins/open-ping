@@ -112,6 +112,7 @@ Every email OpenPing sends goes through one transport (`src/worker/notifications
 - In hosted mode the hosted gate puts a transport over `props.platform.sendEmail` on that call's env, and nothing else is used, even when a `RESEND_API_KEY` is set.
   It sends `to` as one address, no From (the platform's), and `text` always.
 - `email_quota_exceeded` puts the delivery off until the next UTC midnight without spending one of its attempts, so an alert over the cap goes out the next day instead of being given up on; `email_rejected` and `email_unavailable` retry like any failed delivery, and a thrown RPC counts as `email_unavailable`.
+- An `email_rejected` answer's `message` (for example an address that hasn't yet confirmed it wants this OpenPing's email) is kept with the error, `email_rejected: <message>`, so the channel shows the customer why.
 - The reports go to the admin email, which in hosted mode is the customer's account email: every customer hand-off (section 7) stores the token's `email` as `admin_email`, before the session, and a failed write is logged and doesn't stop the sign-in.
 - Settings doesn't offer a From address for an email channel, and says the reports go to the account email instead of asking for `RESEND_API_KEY`.
 

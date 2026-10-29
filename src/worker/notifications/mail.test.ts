@@ -49,11 +49,16 @@ describe("platformTransport", () => {
     });
   });
 
-  it("passes a rejection on, and treats an RPC that throws as unavailable", async () => {
-    expect(await platformTransport(platform({ ok: false, error: "email_rejected", message: "bad" })).send(message)).toEqual({
+  it("passes a rejection on with the platform's reason, which the channel shows", async () => {
+    const reason = "ops@example.com hasn't confirmed it wants email from this OpenPing yet; we've sent it a link to confirm.";
+    expect(await platformTransport(platform({ ok: false, error: "email_rejected", message: reason })).send(message)).toEqual({
       ok: false,
-      error: "email_rejected",
+      error: `email_rejected: ${reason}`,
     });
+    expect(await platformTransport(platform({ ok: false, error: "email_rejected", message: "" })).send(message)).toEqual({ ok: false, error: "email_rejected" });
+  });
+
+  it("treats an RPC that throws as unavailable", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await platformTransport(platform(new Error("rpc failed"))).send(message)).toEqual({
       ok: false,
