@@ -44,13 +44,16 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
     private Intent waitingIntent;
     /** The page waiting for an answer to "turn on notifications", while Android asks. */
     private RemoteBridge.Reply waitingPushReply;
+    private String waitingPushOrigin;
 
     private final ActivityResultLauncher<String> notificationPermission = registerForActivityResult(
         new ActivityResultContracts.RequestPermission(),
         granted -> {
             RemoteBridge.Reply reply = waitingPushReply;
+            String origin = waitingPushOrigin;
             waitingPushReply = null;
-            if (reply != null) sendToken(reply);
+            waitingPushOrigin = null;
+            if (reply != null) sendToken(origin, reply);
         }
     );
 
@@ -127,14 +130,15 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
     /** A tapped notification, the sign-in coming back from the browser, the "Switch OpenPing" shortcut. */
     private void handleIntent(Intent intent) {
         if (intent == null) return;
-        String alertUrl = intent.getStringExtra(AlertMessagingService.EXTRA_URL);
-        String alertOrigin = intent.getStringExtra(AlertMessagingService.EXTRA_ORIGIN);
-        if (alertUrl != null && alertOrigin != null) {
-            // Handled once, not again after a rotation.
-            intent.removeExtra(AlertMessagingService.EXTRA_URL);
-            intent.removeExtra(AlertMessagingService.EXTRA_ORIGIN);
-            if (store.get(alertOrigin) != null && Origins.isOn(alertUrl, alertOrigin)) {
-                openInstall(alertOrigin, alertUrl.substring(alertOrigin.length()));
+        String alertNonce = intent.getStringExtra(AlertMessagingService.EXTRA_ALERT);
+        if (alertNonce != null) {
+            // Handled once, not again after a rotation. The page comes from
+            // the notification this app posted (by its one-time nonce), never
+            // from the intent, which any app could send to this activity.
+            intent.removeExtra(AlertMessagingService.EXTRA_ALERT);
+            AlertMessagingService.Tap tap = AlertMessagingService.takeTap(this, alertNonce);
+            if (tap != null && store.get(tap.origin) != null && Origins.isOn(tap.url, tap.origin)) {
+                openInstall(tap.origin, tap.url.substring(tap.origin.length()));
             }
             return;
         }
@@ -288,24 +292,26 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
             // One question at a time; a second tap answers the first.
             if (waitingPushReply != null) pushError(waitingPushReply, "failed");
             waitingPushReply = reply;
+            waitingPushOrigin = origin;
             notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS);
             return;
         }
-        sendToken(reply);
+        sendToken(origin, reply);
     }
 
-    private void sendToken(RemoteBridge.Reply reply) {
+    private void sendToken(String origin, RemoteBridge.Reply reply) {
         Push.token(this, new Push.TokenCallback() {
             @Override
             public void onToken(String token) {
+                String previous = Push.rememberToken(MainActivity.this, origin, token);
                 try {
-                    reply.send(
-                        new JSONObject()
-                            .put("type", "push.token")
-                            .put("token", token)
-                            .put("projectId", BuildConfig.FIREBASE_PROJECT_ID)
-                            .put("device", Push.deviceName())
-                    );
+                    JSONObject answer = new JSONObject()
+                        .put("type", "push.token")
+                        .put("token", token)
+                        .put("projectId", BuildConfig.FIREBASE_PROJECT_ID)
+                        .put("device", Push.deviceName());
+                    if (previous != null) answer.put("previousToken", previous);
+                    reply.send(answer);
                 } catch (JSONException ignored) {
                     // Plain values.
                 }
@@ -340,9 +346,12 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
         return store;
     }
 
-    /** What to do on an install, signed in, before the app signs out of it (none yet: push adds one). */
+    /** Before the app signs out of an install: forget this phone's notifications there. */
     ServerSignOut.BeforeSignOut beforeSignOut(String origin) {
-        return null;
+        String token = Push.tokenFor(this, origin);
+        Push.forgetToken(this, origin);
+        if (token == null) return null;
+        return session -> session.call("DELETE", "/api/push/fcm", new JSONObject().put("token", token));
     }
 
     private static String encode(String value) {

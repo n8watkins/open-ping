@@ -105,6 +105,29 @@ public final class Push {
         context.getSystemService(NotificationManager.class).createNotificationChannel(channel);
     }
 
+    private static final String TOKENS = "openping_push_tokens";
+
+    /**
+     * Note the token handed to {@code origin}'s page, and return the one it
+     * had before (null when it is the same or there was none), so a refresh
+     * can move the install's row to the new token.
+     */
+    public static String rememberToken(Context context, String origin, String token) {
+        android.content.SharedPreferences prefs = context.getSharedPreferences(TOKENS, Context.MODE_PRIVATE);
+        String previous = prefs.getString(origin, null);
+        prefs.edit().putString(origin, token).apply();
+        return previous != null && !previous.equals(token) ? previous : null;
+    }
+
+    /** The token last handed to {@code origin}'s page, or null. */
+    public static String tokenFor(Context context, String origin) {
+        return context.getSharedPreferences(TOKENS, Context.MODE_PRIVATE).getString(origin, null);
+    }
+
+    public static void forgetToken(Context context, String origin) {
+        context.getSharedPreferences(TOKENS, Context.MODE_PRIVATE).edit().remove(origin).apply();
+    }
+
     /** The phone's name for the device list: "Google Pixel 8". */
     public static String deviceName() {
         String maker = Build.MANUFACTURER == null ? "" : Build.MANUFACTURER;
