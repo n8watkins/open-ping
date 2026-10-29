@@ -232,15 +232,22 @@ export async function buildOverview(env: Env, now: number = Date.now()) {
       .bind(since, now)
       .all<SummaryCountRow>(),
     env.DB.prepare(
-      `SELECT monitor_id, at, ok, state
-       FROM (
-         SELECT monitor_id, at, ok, state,
-                ROW_NUMBER() OVER (PARTITION BY monitor_id ORDER BY at DESC) AS row_num
-         FROM samples
-         WHERE at >= ? AND at <= ?
+      // Each monitor's last 28 checks of the day, reached through the
+      // (monitor_id, at) index: the 28th newest is found first (materialized,
+      // and CROSS JOIN keeps it the outer loop), so a monitor checked every
+      // minute reads under 100 rows instead of its 1,440.
+      `WITH cut AS MATERIALIZED (
+         SELECT m.id AS monitor_id,
+                COALESCE(
+                  (SELECT at FROM samples WHERE monitor_id = m.id AND at >= ?1 AND at <= ?2
+                    ORDER BY at DESC LIMIT 1 OFFSET 27),
+                  ?1) AS from_at
+           FROM monitors m
        )
-       WHERE row_num <= 28
-       ORDER BY monitor_id, at`,
+       SELECT s.monitor_id, s.at, s.ok, s.state
+       FROM cut
+       CROSS JOIN samples s ON s.monitor_id = cut.monitor_id AND s.at >= cut.from_at AND s.at <= ?2
+       ORDER BY s.monitor_id, s.at`,
     )
       .bind(since, now)
       .all<RecentCheckRow>(),

@@ -7,6 +7,8 @@ import { createMonitor } from "../../src/worker/db/monitors";
 import { PLAN_BUDGETS } from "../../src/worker/lib/budget";
 import { CRON_CADENCE, platformCadence, type Cadence } from "../../src/worker/lib/cadence";
 import { runScheduled, type RunResult } from "../../src/worker/scheduler";
+import { loadRangeHistory } from "../../src/worker/history/range";
+import { buildOverview } from "../../src/worker/routes/overview";
 import { createMonitorSchema } from "../../src/shared/schemas";
 import { nextScheduledCall, SCHEDULED_MAX_GAP_MS } from "../../src/shared/hosted-contract";
 
@@ -313,6 +315,41 @@ describe("what a tenant costs in D1 rows (docs/HOSTED_PLAN.md)", () => {
     expect(standard.written / standard.calls).toBeLessThan(220);
     expect(standard.read / standard.calls).toBeLessThan(900);
   }, 120_000);
+});
+
+describe("the all-monitors views with a sample a minute", () => {
+  it("read a bounded number of rows, not every sample of the last 24 hours", async () => {
+    vi.useRealTimers();
+    const now = Date.now();
+    for (let i = 0; i < 20; i++) await addMonitor(`Busy ${i}`, { intervalSeconds: 60 });
+    // A day of 1-minute samples and hourly summaries for each, as 1-minute checks leave.
+    await env.DB.batch([
+      env.DB.prepare(
+        `WITH RECURSIVE n(k) AS (SELECT 1 UNION ALL SELECT k + 1 FROM n WHERE k < 1440)
+         INSERT INTO samples (id, monitor_id, at, ok, state, duration_ms)
+         SELECT m.id || ':' || k, m.id, ?1 - k * 60000, 1, 'up', 100 + k % 50 FROM monitors m, n`,
+      ).bind(now),
+      env.DB.prepare(
+        `WITH RECURSIVE n(k) AS (SELECT 1 UNION ALL SELECT k + 1 FROM n WHERE k < 24)
+         INSERT INTO summaries (id, monitor_id, period, bucket_start, checks, ok_checks, sum_latency_ms,
+                                min_latency_ms, max_latency_ms, monitored_seconds)
+         SELECT m.id || ':hour:' || ((?1 / 3600000 - k) * 3600000), m.id, 'hour', (?1 / 3600000 - k) * 3600000,
+                60, 60, 7200, 100, 149, 3600
+           FROM monitors m, n`,
+      ).bind(now),
+    ]);
+    const rows = { read: 0, written: 0 };
+    const measured = { ...env, DB: rowsD1(env.DB, rows) };
+    const history = await loadRangeHistory(measured, "24h", now);
+    const historyRead = rows.read;
+    await buildOverview(measured, now);
+    const overviewRead = rows.read - historyRead;
+    // Every sample would be 20 x 1,440 = 28,800 rows per view (measured before:
+    // about 57,600 for the 24h history and 86,000 for the overview).
+    expect(historyRead).toBeLessThan(2_000);
+    expect(overviewRead).toBeLessThan(4_000);
+    expect(history.overall.latency).toBeTruthy();
+  });
 });
 
 describe("a plain install's cron", () => {

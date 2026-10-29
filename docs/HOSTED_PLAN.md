@@ -39,6 +39,9 @@ Local D1 may count index writes a little differently from production; the first 
 - A call on 12-minute checks writes about 199 rows, because each also does the upkeep: the history rollups, the cleanup and the run record (lib/cadence.ts does these once per 12 minutes however often the tenant is called).
 - Reads cost almost nothing now; before the rollups fix in the same wave, every run read about 160,000 rows and wrote 1,347 on a two-month-old install, about $4.85 a month per customer at 12-minute checks.
 - A 5-monitor trial at 12-minute checks is about 20 cents a month, estimated from the same numbers.
+- Viewing reads rows too.
+  With 1-minute checks a monitor keeps 1,440 samples a day, so the Overview and the all-monitors 24-hour history would have read about 86,000 and 57,600 rows per view for 20 monitors; they now read about 1,700 and 1,000 (the Overview reaches each monitor's last 28 checks through the index, and the all-monitors 24-hour view takes hourly averages for its percentiles while any monitor is checked more often than every 12 minutes).
+  One monitor's own 24-hour view still reads its 1,440 checks, which are its chart's points: about 1.4 million rows for 1,000 views, a tenth of a cent.
 - Requests, queue messages and CPU are per call: about 3 queue operations ($0.40 per million) and 2 Worker requests ($0.30 per million) a call, and a few milliseconds of CPU.
 - The included 50 million rows written cover about 60 customers at 12-minute checks, or about 6 at 1-minute checks, before any of this is billed.
 
