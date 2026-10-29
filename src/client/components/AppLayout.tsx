@@ -25,6 +25,8 @@ import type { OverviewResponse } from "../lib/types";
 import { shellTransitionKey } from "../lib/section-routes";
 import { clearSavedData, offlineBanner, offlineSummary, precacheApp, useSavedAt } from "../lib/offline";
 import { InstallNavButton, IosInstallSheet, hasNavEntry } from "./InstallApp";
+import { hasAppBridge } from "../lib/native-app";
+import { refreshAppPush } from "../lib/app-push";
 import { useInstallState } from "../lib/install";
 import { PAGE_REFRESHED_EVENT } from "../lib/pull-to-refresh";
 
@@ -104,6 +106,12 @@ export function AppLayout() {
   useEffect(() => {
     if (signedIn) precacheApp();
   }, [signedIn]);
+
+  // In the Android app: send this phone's notification token again if it
+  // changed since it was registered here (lib/app-push.ts). Once per load.
+  useEffect(() => {
+    if (signedIn && csrf && hasAppBridge()) void refreshAppPush(csrf);
+  }, [signedIn, csrf]);
 
   async function logout() {
     try {

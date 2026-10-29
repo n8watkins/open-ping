@@ -34,6 +34,8 @@ import {
   subscribeToPush,
 } from "../lib/push";
 import { NotificationHelp } from "../components/NotificationHelp";
+import { hasAppBridge } from "../lib/native-app";
+import { enableAppPush } from "../lib/app-push";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
 import { PageTitle } from "../components/ui/PageTitle";
@@ -73,6 +75,8 @@ interface Channel {
 
 interface PushDevice {
   id: string;
+  /** "fcm" for the OpenPing Android app (absent on an older Worker). */
+  kind?: "webpush" | "fcm";
   label: string | null;
   userAgent: string | null;
   platform: string | null;
@@ -133,6 +137,7 @@ function metaFor(type: string) {
 
 function deviceName(d: PushDevice): string {
   if (d.label) return d.label;
+  if (d.kind === "fcm") return "OpenPing app";
   if (d.platform) return d.platform;
   return "Unknown device";
 }
@@ -890,6 +895,10 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
   const publicKey = vapidData?.publicKey ?? null;
   const devices = devData?.devices ?? [];
   const supported = isPushSupported();
+  // Inside the Android app the web view has no Web Push; the app's own
+  // notifications (FCM) take its place, when this install can send them.
+  const inApp = hasAppBridge();
+  const { data: fcm } = useFetch<{ available: boolean; projectId: string | null }>(inApp ? "/api/push/fcm" : null);
 
   const [vapidBusy, setVapidBusy] = useState(false);
   const [enableBusy, setEnableBusy] = useState(false);
@@ -951,6 +960,23 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
     }
   }
 
+  async function enableInApp() {
+    setEnableBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await enableAppPush(csrf);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setNotice("This phone now gets OpenPing alerts as notifications from the app.");
+      await reloadDevices();
+    } finally {
+      setEnableBusy(false);
+    }
+  }
+
   async function testDevice(id: string) {
     setTestResults((m) => ({ ...m, [id]: { state: "loading" } }));
     try {
@@ -1004,7 +1030,18 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
       <CardHeader>
         <CardTitle>Push devices</CardTitle>
         <div className="flex items-center gap-2">
-          {publicKey == null && !vapidLoading && (
+          {inApp && (
+            <button
+              type="button"
+              onClick={() => void enableInApp()}
+              disabled={enableBusy || !fcm?.available}
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover disabled:opacity-60"
+            >
+              {enableBusy ? <Loader2 className="size-4 animate-spin" /> : <Smartphone className="size-4" />}
+              Turn on for this phone
+            </button>
+          )}
+          {!inApp && publicKey == null && !vapidLoading && (
             <button
               type="button"
               onClick={() => void generateVapid()}
@@ -1019,7 +1056,7 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
               Enable push / generate keys
             </button>
           )}
-          {publicKey != null && (
+          {!inApp && publicKey != null && (
             <button
               type="button"
               onClick={() => void enableThisDevice()}
@@ -1054,7 +1091,15 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
           {notice}
         </p>
       )}
-      <NotificationHelp />
+      {inApp ? (
+        <p className="mb-4 text-sm leading-relaxed text-ink-muted">
+          {fcm && !fcm.available
+            ? "This OpenPing can't send notifications to the Android app yet: its owner adds a Firebase service account (FCM_SERVICE_ACCOUNT, see docs/ANDROID.md). Alerts by email, chat and webhook work as usual."
+            : "The OpenPing app shows this OpenPing's alerts as Android notifications. Tap one to open what it's about. You can turn them off here or in Android's settings."}
+        </p>
+      ) : (
+        <NotificationHelp />
+      )}
 
       {devLoading && !devData ? (
         <ListSkeleton />

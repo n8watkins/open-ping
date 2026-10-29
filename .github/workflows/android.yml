@@ -67,6 +67,14 @@ jobs:
 
       - name: Unit tests, lint, debug APK and release bundle
         working-directory: apps/android/android
+        env:
+          # The Firebase app's identifiers, as repository variables (Settings >
+          # Secrets and variables > Actions > Variables). Unset, the builds
+          # work with push notifications off (docs/ANDROID.md).
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          FIREBASE_APP_ID: ${{ vars.FIREBASE_APP_ID }}
+          FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY }}
+          FIREBASE_SENDER_ID: ${{ vars.FIREBASE_SENDER_ID }}
         run: ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug bundleRelease
 
       - uses: actions/upload-artifact@v7

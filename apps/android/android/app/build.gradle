@@ -12,6 +12,16 @@ def (major, minor, patch) = appVersion.tokenize('.').collect { it.replaceAll(/\D
 // environment, so a build without them makes an unsigned release bundle.
 def uploadKeystore = System.getenv('OPENPING_UPLOAD_KEYSTORE')
 
+// Firebase, for push notifications (Push.java): the four values from the
+// Firebase console's Android app, from the environment or -P gradle
+// properties. They identify the project and aren't secrets, but stay out of
+// the repository with the rest of the owner's setup; without them the app
+// builds and runs with notifications off.
+def firebase = { String name ->
+    def value = System.getenv(name) ?: (project.findProperty(name) ?: '')
+    return '"' + value.toString().replace('\\', '').replace('"', '') + '"'
+}
+
 android {
     namespace = "dev.n8builds.openping"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -21,6 +31,10 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode major * 10000 + minor * 100 + patch
         versionName appVersion
+        buildConfigField "String", "FIREBASE_PROJECT_ID", firebase('FIREBASE_PROJECT_ID')
+        buildConfigField "String", "FIREBASE_APP_ID", firebase('FIREBASE_APP_ID')
+        buildConfigField "String", "FIREBASE_API_KEY", firebase('FIREBASE_API_KEY')
+        buildConfigField "String", "FIREBASE_SENDER_ID", firebase('FIREBASE_SENDER_ID')
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -72,6 +86,9 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation "androidx.webkit:webkit:$androidxWebkitVersion"
     implementation "androidx.browser:browser:$androidxBrowserVersion"
+    implementation "androidx.core:core:$androidxCoreVersion"
+    implementation platform("com.google.firebase:firebase-bom:$firebaseBomVersion")
+    implementation "com.google.firebase:firebase-messaging"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     implementation project(':capacitor-cordova-android-plugins')

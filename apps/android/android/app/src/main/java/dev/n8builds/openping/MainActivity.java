@@ -9,6 +9,8 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.Toast;
 import androidx.activity.OnBackPressedCallback;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.splashscreen.SplashScreen;
 import androidx.webkit.WebSettingsCompat;
 import androidx.webkit.WebViewFeature;
@@ -40,6 +42,17 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
     private boolean pickerFromInstall;
     /** An intent that arrived before the web view was ready. */
     private Intent waitingIntent;
+    /** The page waiting for an answer to "turn on notifications", while Android asks. */
+    private RemoteBridge.Reply waitingPushReply;
+
+    private final ActivityResultLauncher<String> notificationPermission = registerForActivityResult(
+        new ActivityResultContracts.RequestPermission(),
+        granted -> {
+            RemoteBridge.Reply reply = waitingPushReply;
+            waitingPushReply = null;
+            if (reply != null) sendToken(reply);
+        }
+    );
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -111,9 +124,21 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
         CookieManager.getInstance().flush();
     }
 
-    /** The sign-in coming back from the browser, the "Switch OpenPing" shortcut. */
+    /** A tapped notification, the sign-in coming back from the browser, the "Switch OpenPing" shortcut. */
     private void handleIntent(Intent intent) {
-        Uri data = intent == null ? null : intent.getData();
+        if (intent == null) return;
+        String alertUrl = intent.getStringExtra(AlertMessagingService.EXTRA_URL);
+        String alertOrigin = intent.getStringExtra(AlertMessagingService.EXTRA_ORIGIN);
+        if (alertUrl != null && alertOrigin != null) {
+            // Handled once, not again after a rotation.
+            intent.removeExtra(AlertMessagingService.EXTRA_URL);
+            intent.removeExtra(AlertMessagingService.EXTRA_ORIGIN);
+            if (store.get(alertOrigin) != null && Origins.isOn(alertUrl, alertOrigin)) {
+                openInstall(alertOrigin, alertUrl.substring(alertOrigin.length()));
+            }
+            return;
+        }
+        Uri data = intent.getData();
         if (data == null) return;
         if (AppSignIn.isCallback(data)) {
             AppSignIn.Grant grant = signIn.finish(data);
@@ -250,9 +275,52 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
     }
 
     @Override
-    public void onPushRequested(String origin, RemoteBridge.Reply reply) {
+    public void onPushRequested(String origin, RemoteBridge.Reply reply, boolean ask) {
+        if (!Push.configured()) {
+            pushError(reply, "unavailable");
+            return;
+        }
+        if (Push.needsPermissionPrompt(this)) {
+            if (!ask) {
+                pushError(reply, "denied");
+                return;
+            }
+            // One question at a time; a second tap answers the first.
+            if (waitingPushReply != null) pushError(waitingPushReply, "failed");
+            waitingPushReply = reply;
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS);
+            return;
+        }
+        sendToken(reply);
+    }
+
+    private void sendToken(RemoteBridge.Reply reply) {
+        Push.token(this, new Push.TokenCallback() {
+            @Override
+            public void onToken(String token) {
+                try {
+                    reply.send(
+                        new JSONObject()
+                            .put("type", "push.token")
+                            .put("token", token)
+                            .put("projectId", BuildConfig.FIREBASE_PROJECT_ID)
+                            .put("device", Push.deviceName())
+                    );
+                } catch (JSONException ignored) {
+                    // Plain values.
+                }
+            }
+
+            @Override
+            public void onError(String reason) {
+                pushError(reply, reason);
+            }
+        });
+    }
+
+    private static void pushError(RemoteBridge.Reply reply, String reason) {
         try {
-            reply.send(new JSONObject().put("type", "push.error").put("reason", "unavailable"));
+            reply.send(new JSONObject().put("type", "push.error").put("reason", reason));
         } catch (JSONException ignored) {
             // Plain values.
         }
@@ -265,7 +333,7 @@ public class MainActivity extends BridgeActivity implements ShellWebViewClient.H
 
     @Override
     public boolean pushAvailable() {
-        return false;
+        return Push.configured();
     }
 
     InstallStore store() {
