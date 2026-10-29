@@ -1,5 +1,6 @@
 package dev.n8builds.openping;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
@@ -65,6 +66,7 @@ public final class AppSignIn {
     }
 
     /** Open the install's sign-in in a Custom Tab. False when no browser could open it. */
+    @SuppressLint("ApplySharedPref") // commit(): see below
     public boolean start(Activity activity, String origin) {
         String verifier = Pkce.randomToken();
         String state = Pkce.randomToken();
@@ -108,8 +110,9 @@ public final class AppSignIn {
     /**
      * The grant in a callback, or null when it doesn't match the sign-in this
      * app started (another app's, an old one, or a forged link). Either way the
-     * pending sign-in is used up.
+     * pending sign-in is used up, at once and on disk, so it can't be used twice.
      */
+    @SuppressLint("ApplySharedPref")
     public Grant finish(Uri data) {
         if (!isCallback(data)) return null;
         String saved = prefs.getString(KEY, null);

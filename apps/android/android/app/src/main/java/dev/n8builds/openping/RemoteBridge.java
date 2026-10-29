@@ -78,7 +78,10 @@ public final class RemoteBridge {
         } catch (JSONException e) {
             return;
         }
-        Reply reply = (answer) -> proxy.postMessage(answer.toString());
+        Reply reply = (answer) -> {
+            // Always true here: this listener exists only where it is (attach()).
+            if (supported()) proxy.postMessage(answer.toString());
+        };
         switch (type) {
             case "hello":
                 try {

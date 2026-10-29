@@ -2,8 +2,6 @@
 <resources>
     <string name="app_name">OpenPing</string>
     <string name="title_activity_main">OpenPing</string>
-    <string name="package_name">dev.n8builds.openping</string>
-    <string name="custom_url_scheme">dev.n8builds.openping</string>
     <string name="shortcut_switch_short">Switch</string>
     <string name="shortcut_switch_long">Switch OpenPing</string>
     <string name="signin_mismatch">That sign-in didn\'t start in this app, or took too long. Tap Sign in again.</string>
