@@ -1113,7 +1113,11 @@ const CHECKS: { icon: LucideIcon; title: string; body: string }[] = [
   { icon: HeartPulse, title: "Heartbeat and cron", body: "Give a job a URL to ping. A missed ping opens an incident." },
   { icon: Network, title: "DNS records", body: "A, AAAA, CNAME, MX or TXT, and what they should resolve to." },
   { icon: Plug, title: "TCP ports", body: "Databases, brokers and anything else that isn't HTTP." },
-  { icon: Hourglass, title: "Domain expiry", body: "A heads-up before a registration lapses, read from RDAP." },
+  {
+    icon: Hourglass,
+    title: "Domain and SSL expiry",
+    body: "A heads-up weeks before a domain registration or an SSL certificate lapses.",
+  },
   { icon: PauseCircle, title: "Suspended apps", body: "A host that suspended an app shows as Suspended, apart from a crash." },
 ];
 

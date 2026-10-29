@@ -3,8 +3,8 @@ import { HOSTED_PLAN_LIMITS, HOSTED_PRICE_YEARLY, HOSTED_TRIAL_DAYS } from "../.
 
 /**
  * Truthful feature comparison: self-hosted OpenPing vs a typical hosted uptime
- * SaaS. Every OpenPing claim maps to a real, shipped feature. No ICMP/UDP/DNS/
- * SSL-expiry/multi-region claims (we don't have those yet).
+ * SaaS. Every OpenPing claim maps to a real, shipped feature. No ICMP/UDP or
+ * user-selectable multi-region claims (we don't have those).
  *
  * Once Hosted opens (`open`), a column for OpenPing Hosted joins them, so a
  * visitor sees both OpenPings against the usual SaaS in one table.
