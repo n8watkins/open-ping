@@ -71,6 +71,41 @@ Details are in [platform/README.md](../platform/README.md) and [HOSTED_BUILD_PLA
 - [ ] Create a GitHub OAuth app for Hosted sign-in, with callback `https://app.<domain>/auth/github/callback`.
 - [ ] Before launch: finish the Stripe account (wave 3 billing).
 
+### 7. Before launch: review the Terms of Service and the Privacy Policy
+
+The drafts are [docs/legal/TERMS.md](./legal/TERMS.md) and [docs/legal/PRIVACY.md](./legal/PRIVACY.md) (PR #74), served by the platform at `/terms` and `/privacy`.
+They are drafts, not legal advice; have a lawyer review them if revenue justifies it (decision D9).
+Every placeholder is marked `[TO FILL: ...]` in the Markdown and shows highlighted on the page.
+
+Fill in:
+
+- [ ] The provider's legal name: your own name or a company's (Terms intro and section 1, Privacy intro and section 15).
+- [ ] A postal address for the provider (the same places).
+- [ ] The minimum age to hold an account; 18 is proposed (Terms section 3, Privacy section 11).
+- [ ] The governing law and the courts for disputes (Terms section 21).
+- [ ] How long tax law makes you keep billing records, for example 7 years (Privacy section 4).
+- [ ] How long support email is kept, for example 2 years after the last message (Privacy section 4).
+- [ ] The mailbox provider that receives support@n8builds.dev, which is a sub-processor (Privacy section 5).
+- [ ] Whether Hosted is offered to people in the EU and the UK, and if so whether an EU or UK representative is needed (Privacy section 7).
+- [ ] Whether Cloudflare Web Analytics is on for openping.n8builds.dev: keep that line in Privacy section 13, or delete it.
+
+Decide:
+
+- [ ] **Refund policy.** Proposed: a full refund of any payment, first year or renewal, if asked within 30 days; after that no refund, but the service runs to the end of the paid year; a pro-rata refund if we end a plan with the customer not at fault (Terms section 7).
+  EU and UK consumers may also have a 14-day right to withdraw from an online purchase; the terms keep any such right.
+- [ ] **Renewal reminder.** Terms section 5 promises an email before each yearly renewal, and nothing sends one yet.
+  In the Stripe dashboard, turn on the emails about upcoming renewals (Billing settings, subscriptions and emails), or ask the agent to build one.
+  Some US states, California among them, require a notice before a yearly automatic renewal.
+- [ ] **Notice periods** the drafts promise: 30 days before a renewal at a new price, 30 days before a change to the terms that matters (with a refund of the unused year to a customer who cancels because of it), and 60 days if Hosted is ever shut down.
+- [ ] **Liability cap:** what the customer paid in the 12 months before the claim (Terms section 18).
+- [ ] **How acceptance is shown.** Today a line under the sign-up buttons says "By continuing, you agree to the Terms of Service and the Privacy Policy", and the account records the version and the time.
+  A checkbox to tick is stronger evidence of agreement, at the cost of one more tap; say if you want one.
+- [ ] **When support may sign in to a customer's OpenPing:** the drafts say only to help with something the customer asked about, or, when there is no other way, to stop abuse or fix a fault (Terms section 12).
+- [ ] **Data processing agreements (DPAs)** with Cloudflare, Stripe and Resend: Privacy section 8 relies on them for data leaving the EU and the UK.
+  Cloudflare's and Stripe's are part of their standard terms; check that each is accepted in its dashboard, and accept Resend's.
+
+Then tell the agent, which will fill the text, change the "Last updated" date (new accounts then accept the new version), and tick this item.
+
 ## Not needed
 
 - **Discord alerts.** Email alerts work, so Discord is not set up and not required.
