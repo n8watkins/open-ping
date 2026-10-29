@@ -3,7 +3,7 @@
 This is the platform Worker for OpenPing Hosted: the code that owns customers rather than monitoring.
 It is planned in [the build plan](../docs/HOSTED_BUILD_PLAN.md), and it talks to each customer's OpenPing only through [the contract](../docs/hosted/CONTRACT.md).
 
-**Status: skeleton (B1), provisioning (B3), accounts (B2), the admin console (B6), scheduling (B4) and billing (B5), not deployed anywhere.**
+**Status: skeleton (B1), provisioning (B3), accounts (B2), the admin console (B6), scheduling (B4), billing (B5) and the release runner (C1), not deployed anywhere.**
 Nothing here has been created in a Cloudflare account yet; see [Owner setup](#owner-setup-not-done-yet).
 
 ## What it does today
@@ -74,6 +74,14 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   - dunning: a failed payment emails the customer at once with Stripe's next try and a link to `/billing` (once per invoice and attempt, `billing_emails`, however often the event is delivered), and the account page shows it until it is paid; failures and payments are ordered by when they happened, so a late `payment_failed` after a later `invoice.paid` shows and sends nothing; Stripe retries on its own schedule, and after the last retry it cancels the subscription (decision D11, a Stripe setting in owner setup below), which suspends the tenant as `canceled`; the account page then offers to subscribe again;
   - billing writes only `tenants.status`, `.plan`, `.billing_reason` and `.suspended_at`, never the owner's `owner_suspended_*`, so a payment can't lift the owner's suspension; a change reaches the tenant's props on its next call (at once in the isolate that took the webhook, within 30 seconds elsewhere, and on the scheduler's next run);
   - every Stripe request pins API version `2026-09-30.endive`, and the shapes it reads are checked against Stripe's current reference (links in `src/billing/stripe.ts`).
+- Ships each OpenPing release to every tenant (C1, `src/releases/`), from the bundle `npm run tenant-release` uploads to R2 ([RELEASING.md](../RELEASING.md#openping-hosted)):
+  - requests come from the admin console or the command line as rows of `release_requests`, handled once each, in order, by the every-minute cron (or at once from the console);
+  - before anything is touched it checks the bundle loads, its D1 migrations extend the ones tenants ran without changing any and the new ones are additive (the rule of `scripts/check-migrations.mjs`), and its Durable Object migrations extend the live ones; a failed check is a `refused` release, and a dry run records the plan and stops;
+  - the canary (`RELEASE_CANARY`, the request's, or the oldest tenant) is uploaded with its escrowed `MASTER_KEY`, its database, the hosted vars and its Durable Object migrations from the tag it is at; its health must answer ok on the new version and one `POST /__platform/scheduled` must come back `ran`, and only then does `releases/current` point at the new version;
+  - then batches of 50, chosen as each starts from the tenants not on the version yet (so one that finished provisioning on the old bundle meanwhile is included), each tenant health-checked up to 5 times 15 seconds apart; any failure stops the rollout for the owner to resume, skip the failures, cancel or roll back;
+  - a rollback points `releases/current` back at once and re-uploads the older bundle to every tenant on another version, without a canary and past failures; one across a Durable Object migration is refused;
+  - every step is in `releases` and `release_tenants` before the next starts, under a lease, so a tick that dies is picked up by the next; a tick works for up to 5 minutes beside the rest of the cron;
+  - the console's Releases tab shows the current version, the versions in the bucket, the release in progress with its canary, batch, progress and failures, requests still waiting, and the history, and each release's page lists its tenants, failures first.
 - Runs the lifecycle jobs (B7, `src/lifecycle/`) every 5 minutes from the cron, reading billing's state only through `BillingView` (`billing-view.ts`):
   - one run at a time (`lifecycle_locks`), and each list it reads leaves out the tenants it has already dealt with for that cycle, so tenants stuck at the front never starve the ones behind;
   - the account emails of `src/emails.ts`, each once (claimed as sending in `lifecycle_notices`, marked sent only once Resend took it, the claim dropped if the send fails and taken over after 10 minutes if its run died, with Resend's idempotency key): welcome when ready, the trial ending in 3 days and in 1, and suspended once per suspension, saying whether the trial ended or the payment lapsed (billing's `billing_reason`); a failed payment is billing's own email;
@@ -108,7 +116,7 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 | `src/accounts.ts`, `src/handoff.ts` | Accounts and identities, minting hand-off tokens |
 | `src/mail.ts`, `src/emails.ts` | The Resend mailer and its settings; the platform's emails |
 | `src/lifecycle/` | The lifecycle jobs: `jobs.ts` (emails, deletion), `exports.ts` (D1 exports to R2 and the steps), `account-export.ts` (`/account/export`), `billing-view.ts` (what it reads of billing), `env.ts` |
-| `src/admin/` | The admin console: `owner.ts` (who may use it), `data.ts` (queries, suspend and resume), `waitlist.ts` (the import), `pages.ts`, `routes.ts` |
+| `src/admin/` | The admin console: `owner.ts` (who may use it), `data.ts` (queries, suspend and resume), `waitlist.ts` (the import), `releases.ts` (the Releases tab), `pages.ts`, `routes.ts` |
 | `src/provisioning.ts` | The provisioning state machine: `requestTenant`, `runProvisioning`, `removeTenant`, and `provisionDue` (the retry sweep) |
 | `src/billing/` | Billing: `stripe.ts` (the Stripe client, pinned version), `signature.ts` (webhook signatures), `webhook.ts`, `state.ts` (the state machine and the trial sweep), `routes.ts`, `pages.ts`, `config.ts` |
 | `src/scheduling.ts` | The scheduler: `enqueueDue` (the cron's claims), `handleScheduleBatch` (the queue consumer), due times, run metrics and the console's `scheduleView` |
@@ -117,7 +125,9 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 | `src/cloudflare/http.ts` | `HttpCloudflareApi`, the real client over HTTPS |
 | `src/cloudflare/upload.ts` | Uploading a user Worker: the assets manifest and buckets, then the script with its metadata |
 | `src/keys.ts` | Tenant `MASTER_KEY` generation and escrow under `PLATFORM_KEY` |
-| `src/bundle.ts` | The tenant bundle (one OpenPing release) and where provisioning reads it from (R2, written by the release runner) |
+| `src/bundle.ts` | The tenant bundle (one OpenPing release), its R2 layout, and `R2BundleSource`: versions, `releases/current`, each version's migrations |
+| `src/releases/` | The release runner: `runner.ts` (requests, canary, batches, rollback), `checks.ts` (the additive check), `env.ts` |
+| `../scripts/tenant-release.mjs` | The command line: build and upload the bundle, ask for a rollout, a rollback or a change, show the status |
 | `test/` | workerd tests; `FakeDispatcher` (the dispatch namespace), `FakeCloudflareApi` (the Cloudflare API), `FakeMailer` (the outbox), `FakeR2Bucket` (the buckets) and `fakeOpenPing` (a tenant answering the internal paths) |
 
 The contract types come from [`../src/shared/hosted-contract.ts`](../src/shared/hosted-contract.ts), shared with OpenPing.
@@ -187,7 +197,8 @@ They are needed before staging in wave 3 ([build plan, section 12](../docs/HOSTE
 4. **The platform database:** `wrangler d1 create openping-platform`, then put its id in a gitignored local config (as `deploy.local.json` does for OpenPing), and apply `migrations/` with `wrangler d1 migrations apply PLATFORM_DB --remote`.
 5. **The queues:** `wrangler queues create openping-provision` (provisioning) and `wrangler queues create openping-schedule` (the scheduler, B4); this Worker consumes both (`queues.consumers` in `wrangler.jsonc`).
    For staging, `openping-provision-staging` and `openping-schedule-staging`: the consumer routes by the queue name's prefix.
-6. **The bundle bucket:** `wrangler r2 bucket create openping-tenant-bundles`; the release runner (C1) writes each release there in the layout `src/bundle.ts` describes.
+6. **The bundle bucket:** `wrangler r2 bucket create openping-tenant-bundles` (and `openping-tenant-bundles-staging`); `npm run tenant-release -- build` then `upload` puts each release there in the layout `src/bundle.ts` describes, and the first `start` makes it current, before the first sign-up ([RELEASING.md](../RELEASING.md#openping-hosted)).
+   Set `RELEASE_CANARY` in `wrangler.jsonc` to the owner's own test tenant once it exists, so every rollout tries it first.
 7. **The exports bucket:** `wrangler r2 bucket create openping-tenant-exports` (and `-staging`), private (no public access, no custom domain); the API token also needs D1 export, which **Account, D1, Edit** covers (confirm in staging: Cloudflare's docs don't name the permission).
    As a backstop for the platform's own expiry, add a lifecycle rule: `wrangler r2 bucket lifecycle add openping-tenant-exports exports-backstop exports/ --expire-days 40`, longer than the longest keep time (30 days) plus a deletion's delays.
 8. **Mail and GitHub for sign-in:** verify `HOSTED_DOMAIN` (or a subdomain of it, such as `mail.<domain>`) as a sending domain in Resend, with its SPF, DKIM and DMARC records in Cloudflare DNS; set `MAIL_FROM` (for example `OpenPing Hosted <signin@<domain>>`) and `TENANT_MAIL_FROM` (for example `OpenPing <alerts@<domain>>`), both on that domain; make the Resend API key with **Sending access** to that domain only; create a GitHub OAuth app with the callback `https://app.<domain>/auth/github/callback` and set `GITHUB_CLIENT_ID`; set `SIGN_UPS` to `open` at launch.
