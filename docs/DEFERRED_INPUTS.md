@@ -55,21 +55,46 @@ Why: everything the button runs was checked locally on 2026-10-28 (a clean clone
 The test creates a separate Worker and D1 database in your account, so it can't touch openping.n8builds.dev, and both can be deleted afterwards.
 Cloudflare's docs (Deploy buttons page, updated 2026-10-12) say the button provisions D1 and runs the `deploy` script; they don't say how it treats a config without a `database_id`, which is the main thing this click confirms.
 
-### 6. Later: what OpenPing Hosted needs before wave 3 testing
+### 6. Later: what OpenPing Hosted needs before it can run for real
 
-None of these is needed yet; wave 2 runs entirely on fakes.
-The agent will walk you through each one when wave 3 starts, and will never ask you to paste a secret into chat.
-Details are in [platform/README.md](../platform/README.md) and [HOSTED_BUILD_PLAN.md](./HOSTED_BUILD_PLAN.md#12-owner-actions-and-costs).
+The code for Hosted is built and tested against stand-ins; nothing below is needed until you decide to start staging.
+The full commands are in [platform/README.md, "Owner setup"](../platform/README.md#owner-setup-not-done-yet); this is the short version, in order.
+"You" means only you can do it (an account, a payment, a decision); "together" means the agent runs the commands with you and you keep the secrets: it never asks you to paste a secret into chat.
 
-- [ ] Buy the Hosted domain (about $10 to $15 a year).
-- [ ] Turn on Workers Paid ($5 a month) and Workers for Platforms in Cloudflare.
-- [ ] Create a Cloudflare API token for your one account with only "Workers Scripts: Edit" and "D1: Edit".
-- [ ] Generate `PLATFORM_KEY` (`openssl rand -base64 32`), set it as a platform secret, and save it in your password manager: without it no customer backup can be restored.
-- [ ] Generate the sign-in hand-off key pair (the agent gives you the command): the private half becomes a platform secret, the public half a plain setting.
-- [ ] Create an R2 bucket named `openping-tenant-bundles` for release copies.
-- [ ] Verify the Hosted domain in Resend for sign-in and alert emails.
-- [ ] Create a GitHub OAuth app for Hosted sign-in, with callback `https://app.<domain>/auth/github/callback`.
-- [ ] Before launch: finish the Stripe account (wave 3 billing).
+**Accounts and money (you):**
+
+- [ ] Turn on Workers Paid ($5 a month) and Workers for Platforms ($25 a month) in Cloudflare.
+  The free plan can't run Hosted: it has no Workers for Platforms, allows only 10 D1 databases (one per customer), and shares its daily request and database limits with your own install.
+- [ ] Choose the Hosted address: buy a domain (about $10 to $15 a year, recommended, decision D2), or start on `openping.n8builds.dev` subdomains (see "Starting cheaper" below).
+- [ ] Finish the Stripe account and switch on test mode.
+- [ ] In Resend, verify the Hosted domain (or `mail.<domain>`) for sending.
+- [ ] Create a GitHub OAuth app with the callback `https://app.<domain>/auth/github/callback`.
+- [ ] Create a Cloudflare API token for this one account with only "Workers Scripts: Edit" and "D1: Edit".
+
+**Cloudflare resources (together):** the dispatch namespace, the platform database and its migrations, the two queues (`openping-provision`, `openping-schedule`), the two R2 buckets (`openping-tenant-bundles` and the private `openping-tenant-exports`, with a 40-day expiry rule on `exports/`), and the routes for `app.<domain>` and `*.<domain>`.
+
+**Keys and secrets (together, each copy saved in your password manager):**
+
+- [ ] `PLATFORM_KEY` (`openssl rand -base64 32`): without it no customer backup can be restored.
+- [ ] The sign-in hand-off key pair: the private half a secret, the public half a setting.
+- [ ] `CF_API_TOKEN`, `RESEND_API_KEY` (sending access only), `GITHUB_CLIENT_SECRET`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.
+
+**Stripe products (you, in the Stripe dashboard, test mode first):** yearly USD prices for the plan ($24), 1-minute checks ($24), a monitor pack ($24 per pack) and a fast monitor pack ($36 per pack); Stripe Tax; the Customer Portal limited to card, invoices and cancel; failed payments set to "cancel the subscription" (decision D11); the webhook with the events listed in platform/README.md step 11.
+
+**Your admin console (you):** sign up on your own Hosted, add a passkey, then the agent sets `PLATFORM_OWNERS` to your account and pins that passkey in `PLATFORM_OWNER_PASSKEYS`.
+
+**Watching Hosted (together):** the five monitors and the `hosted` status page on openping.n8builds.dev, three free UptimeRobot monitors as an outside check, and a WAF rate limit on `/__health` ([OBSERVABILITY.md](./hosted/OBSERVABILITY.md)).
+
+**Then the agent runs:** the first tenant release, a staging soak with 5 test customers for 7 days, a load test, a restore drill and a security review, and only then `SIGN_UPS=open` and the landing page's `HOSTED_SIGNUP_URL`.
+
+**Starting cheaper (not built, your call):**
+
+- A subdomain instead of a new domain: customers at `<name>.openping.n8builds.dev` and the platform at `app.openping.n8builds.dev`.
+  Cloudflare's free certificate covers only one level of subdomain, but a Workers Custom Domain gets its own certificate at no cost, up to 100 per zone, so the platform would add one per customer (a small change to provisioning).
+  Past about 100 customers it needs a $10 a month certificate add-on or the move to a real domain, which changes every customer's address.
+- Workers Paid only ($5 a month) instead of adding Workers for Platforms ($25): each customer as an ordinary Worker (up to 500 on Workers Paid).
+  This needs a different, signed way for the platform to call each customer (about 1 to 2 days of work and a security review), and moving to Workers for Platforms later.
+  It lowers break-even from about 15 to 20 customers to about 3.
 
 ### 7. Before launch: review the Terms of Service and the Privacy Policy
 
