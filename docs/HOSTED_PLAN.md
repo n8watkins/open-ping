@@ -9,7 +9,7 @@ The research behind the numbers: the short plan (https://claude.ai/artifact/BARz
 
 - **In your own Cloudflare account:** free and MIT licensed, every feature, set up with the guide at `/install` (and `docs/INSTALL.md`).
 - **OpenPing Hosted: $24 a year.** 20 monitors checked every 12 minutes, 2 status pages, every alert channel, and a failure confirmed from a second region before it alerts.
-- **Fast checks add-on: $12 a year more** for 1-minute checks.
+- **Fast checks add-on:** planned at $12 a year for 1-minute checks; the measured cost doesn't fit, and the recommendation is $24 a year for 1-minute checks on up to 5 monitors (see [Cost per customer, measured](#cost-per-customer-measured)).
 - **Trial:** 14 days, no card, if it stays cheap to support (5 monitors, 12-minute checks, 1 status page, email alerts).
 - **Not offered:** checks faster than a minute, a global probe network, or SMS and voice (revisit only if customers ask).
 
@@ -58,7 +58,18 @@ The options, with what each costs for one customer:
    About 2 days of work; it makes options 1 and 2 comfortable but doesn't close the gap alone, and it coarsens the 24-hour chart for 1-minute monitors.
 5. **Launch as is and watch it**: the first 6 or so fast customers fit in the included rows, and the invoice shows the real cost before the allowance is used up.
 
-The recommendation is option 2 (5 minutes) or option 1 (5 fast monitors) at launch, with option 4 later if fast checks sell.
+**Recommended pricing (2026-10-29, pending the owner's yes):**
+
+| Plan | Price | What it includes | Cost to us a month (worst case) |
+| --- | --- | --- | --- |
+| Self-hosted | free | everything, in the customer's own Cloudflare account | none |
+| Trial | free for 14 days, no card | 5 monitors at 12-minute checks, 1 status page, email alerts | about $0.20 |
+| OpenPing Hosted | $24 a year | 20 monitors at 12-minute checks, 2 status pages, every alert channel, second-region confirmation | about $0.83 against $2.00 |
+| Fast checks add-on | $24 a year more ($48 in total) | 1-minute checks on up to 5 of the 20 monitors; the rest stay at 12 minutes | about $2.50 against $4.00 |
+
+- This is option 1 priced at $24 a year instead of $12: at $12 it clears only about 50 cents a month, too little to absorb card fees (about 8 to 15 cents a month) and busier customers.
+- Option 4 (fewer rows per check) comes after launch, because it roughly halves every plan's cost, the base plan included.
+- Yearly billing only, as before, because of Stripe's 30 cent fee per charge.
 
 ## The stages
 
