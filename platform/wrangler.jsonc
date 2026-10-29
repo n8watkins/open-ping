@@ -98,6 +98,13 @@
     {
       "binding": "BUNDLES",
       "bucket_name": "openping-tenant-bundles"
+    },
+    // Exports of tenants' databases (src/lifecycle/exports.ts): made before a
+    // deletion and when a customer moves to their own Cloudflare, deleted 30
+    // and 7 days later. Private: files download only through the platform.
+    {
+      "binding": "EXPORTS",
+      "bucket_name": "openping-tenant-exports"
     }
   ],
   // The per-minute scheduler puts each due customer on openping-schedule (B4).

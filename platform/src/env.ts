@@ -16,6 +16,8 @@ export interface PlatformEnv {
   PROVISION_QUEUE?: Queue<import("./provisioning-queue").ProvisionMessage>;
   /** Tenant bundles written by the release runner (C1; layout in src/bundle.ts). */
   BUNDLES?: R2Bucket;
+  /** Exports of tenants' databases (B7, src/lifecycle/exports.ts): before a deletion, and for a customer moving out. */
+  EXPORTS?: R2Bucket;
   /** Secret: the 32 hex character Cloudflare account id. A secret only so it stays out of this public repo's config. */
   CF_ACCOUNT_ID?: string;
   /** Secret: an API token with Workers Scripts Write and D1 Write on that account (owner action O5). */
