@@ -14,7 +14,13 @@
  *   - subscriptions:     https://docs.stripe.com/api/subscriptions/object
  *     (since the 2025 "basil" release the billing period is on each item,
  *     `items.data[].current_period_end`, not on the subscription)
- *   - subscription items: https://docs.stripe.com/api/subscription_items/create
+ *   - subscription items: https://docs.stripe.com/api/subscription_items/create,
+ *     .../subscription_items/update and .../subscription_items/delete
+ *     (`quantity`, `proration_behavior`, and `payment_behavior` on a create
+ *     or an update; a delete takes `proration_behavior` too)
+ *   - prorations:        https://docs.stripe.com/billing/subscriptions/prorations
+ *     (`always_invoice` charges the change at once; `create_prorations`
+ *     leaves a credit for the unused time on the next invoice)
  *   - invoices:          https://docs.stripe.com/api/invoices/object
  *     (the subscription is `parent.subscription_details.subscription`)
  *   - idempotent requests: https://docs.stripe.com/api/idempotent_requests
@@ -48,11 +54,20 @@ export interface StripeSubscription {
   canceled_at: number | null;
   ended_at: number | null;
   metadata: Record<string, string>;
-  items: { data: { id: string; price: { id: string }; current_period_end: number }[] };
+  items: { data: StripeSubscriptionItem[] };
   /** Set while a change waits for its invoice to be paid (payment_behavior=pending_if_incomplete). */
-  pending_update?: { expires_at: number; subscription_items?: { id?: string; price: string }[] } | null;
+  pending_update?: { expires_at: number; subscription_items?: { id?: string; price: string | { id: string }; quantity?: number }[] } | null;
   /** An id, or the invoice itself when expanded (retrieveSubscription with expandInvoice). */
   latest_invoice?: string | StripeInvoice | null;
+}
+
+/** One line of a subscription: a Price and how many of it. */
+export interface StripeSubscriptionItem {
+  id: string;
+  price: { id: string };
+  /** How many: 1 for the plan and the add-on, 1 to 4 or 1 to 3 for a pack. Stripe always sends it; absent means 1. */
+  quantity?: number;
+  current_period_end: number;
 }
 
 /** The parts of an Invoice billing reads. */
@@ -65,8 +80,8 @@ export interface StripeInvoice {
 
 export interface CheckoutInput {
   customer: string;
-  /** Price ids, one of each: the yearly plan, and the add-on when asked for. */
-  prices: string[];
+  /** The lines: the yearly plan, the add-on when asked for, and any packs, each with its quantity. */
+  items: { price: string; quantity: number }[];
   successUrl: string;
   cancelUrl: string;
   /** Our account id: Checkout's client_reference_id. */
@@ -96,8 +111,20 @@ export interface StripeApi {
   listInvoicePayments(invoice: string): Promise<{ data: { payment: { type: string; payment_intent?: string } }[] }>;
   /** POST /v1/refunds for the whole of a PaymentIntent. */
   createRefund(input: { paymentIntent: string; reason: "duplicate" }, idempotencyKey: string): Promise<{ id: string }>;
-  /** POST /v1/subscription_items: adds the 1-minute add-on to a paid subscription, invoiced now. */
-  addSubscriptionItem(input: { subscription: string; price: string }, idempotencyKey: string): Promise<{ id: string }>;
+  /**
+   * POST /v1/subscription_items: adds the fast checks add-on or a pack to a
+   * paid subscription, the rest of the year invoiced now and applied only
+   * once that is paid (a pending update otherwise).
+   */
+  addSubscriptionItem(input: { subscription: string; price: string; quantity?: number }, idempotencyKey: string): Promise<{ id: string }>;
+  /**
+   * POST /v1/subscription_items/:id: a pack's new quantity. More is invoiced
+   * now and applied only once paid, as an add; fewer applies at once and
+   * leaves the unused time as a credit on the next invoice (the renewal).
+   */
+  updateSubscriptionItem(input: { item: string; quantity: number; increase: boolean }, idempotencyKey: string): Promise<{ id: string }>;
+  /** DELETE /v1/subscription_items/:id: a pack taken off, at once, the unused time credited to the next invoice. */
+  deleteSubscriptionItem(item: string, idempotencyKey: string): Promise<{ id: string; deleted: boolean }>;
 }
 
 export class StripeApiError extends Error {
@@ -138,7 +165,7 @@ export function checkoutParams(input: CheckoutInput): Record<string, FormValue> 
     mode: "subscription",
     customer: input.customer,
     client_reference_id: input.accountId,
-    line_items: input.prices.map((price) => ({ price, quantity: 1 })),
+    line_items: input.items.map(({ price, quantity }) => ({ price, quantity })),
     success_url: input.successUrl,
     cancel_url: input.cancelUrl,
     metadata: input.metadata,
@@ -153,6 +180,21 @@ export function checkoutParams(input: CheckoutInput): Record<string, FormValue> 
     allow_promotion_codes: true,
   };
 }
+
+/**
+ * More of something, part way through the year: the rest of the year is
+ * invoiced and charged at once, and the change waits as a pending update
+ * until that payment goes through (so a declined card adds nothing).
+ */
+export const CHARGE_NOW = { proration_behavior: "always_invoice", payment_behavior: "pending_if_incomplete" } as const;
+
+/**
+ * Less of something: it applies at once, and the unused part of the year
+ * becomes a credit on the next invoice (the renewal) rather than a refund to
+ * the card, which would cost a card fee each time and could be gamed by
+ * adding and removing a pack.
+ */
+export const CREDIT_LATER = { proration_behavior: "create_prorations" } as const;
 
 export class HttpStripeApi implements StripeApi {
   private readonly fetcher: typeof fetch;
@@ -231,19 +273,33 @@ export class HttpStripeApi implements StripeApi {
     return this.request("POST", "/v1/refunds", { payment_intent: input.paymentIntent, reason: input.reason }, idempotencyKey);
   }
 
-  addSubscriptionItem(input: { subscription: string; price: string }, idempotencyKey: string): Promise<{ id: string }> {
+  addSubscriptionItem(input: { subscription: string; price: string; quantity?: number }, idempotencyKey: string): Promise<{ id: string }> {
     return this.request(
       "POST",
       "/v1/subscription_items",
       {
         subscription: input.subscription,
         price: input.price,
-        quantity: 1,
-        // Charge the rest of this year's add-on now, and change nothing unless that payment succeeds.
-        proration_behavior: "always_invoice",
-        payment_behavior: "pending_if_incomplete",
+        quantity: input.quantity ?? 1,
+        // Charge the rest of this year's add-on or pack now, and change nothing unless that payment succeeds.
+        ...CHARGE_NOW,
       },
       idempotencyKey,
     );
+  }
+
+  updateSubscriptionItem(input: { item: string; quantity: number; increase: boolean }, idempotencyKey: string): Promise<{ id: string }> {
+    return this.request(
+      "POST",
+      `/v1/subscription_items/${encodeURIComponent(input.item)}`,
+      { quantity: input.quantity, ...(input.increase ? CHARGE_NOW : CREDIT_LATER) },
+      idempotencyKey,
+    );
+  }
+
+  deleteSubscriptionItem(item: string, idempotencyKey: string): Promise<{ id: string; deleted: boolean }> {
+    // Stripe's libraries send a DELETE's parameters in the query string.
+    const query = stripeForm(CREDIT_LATER).toString();
+    return this.request("DELETE", `/v1/subscription_items/${encodeURIComponent(item)}?${query}`, undefined, idempotencyKey);
   }
 }

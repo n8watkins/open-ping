@@ -51,7 +51,7 @@ describe("withLandingHead", () => {
   it("writes the launch title and description once Hosted is open", () => {
     const html = withLandingHead(shell, "https://openping.example", true);
     expect(html).toContain("<title>OpenPing: uptime monitoring that knows your hours</title>");
-    expect(html).toContain("with a 14-day free trial and no card.");
+    expect(html).toContain("with a 30-day free trial and no card.");
     expect(html).not.toContain("waitlist");
   });
 

@@ -11,14 +11,24 @@
  * Pure: shared by the Worker and the client.
  */
 
-import { PLAN_LIMITS } from "./hosted-contract";
+import { PACKS, PLAN_LIMITS } from "./hosted-contract";
 
-/** The plan's prices in US dollars a year (docs/HOSTED_PLAN.md, decision D5). */
+/**
+ * The launch prices in US dollars a year (decision D13 in
+ * docs/hosted/DECISIONS.md), for the landing page and the platform's billing
+ * pages alike. What Stripe charges is its Prices (platform/README.md, Stripe
+ * setup); these say what those are.
+ */
 export const HOSTED_PRICE_YEARLY = 24;
-export const HOSTED_FAST_CHECKS_YEARLY = 12;
+/** The fast checks add-on: 1-minute checks on up to HOSTED_FAST_LIMITS.fastMonitors monitors. */
+export const HOSTED_FAST_CHECKS_YEARLY = 24;
+/** A pack of HOSTED_PACKS.monitors.adds more monitors, at most HOSTED_PACKS.monitors.max. */
+export const HOSTED_MONITOR_PACK_YEARLY = 24;
+/** A pack of HOSTED_PACKS.fast_monitors.adds more fast monitors (with the add-on), at most HOSTED_PACKS.fast_monitors.max. */
+export const HOSTED_FAST_PACK_YEARLY = 36;
 
-/** Length of the free trial, in days; the platform's TRIAL_DAYS (platform/src/provisioning.ts). */
-export const HOSTED_TRIAL_DAYS = 14;
+/** Length of the free trial, in days; the platform's TRIAL_DAYS (platform/src/provisioning.ts) is this. */
+export const HOSTED_TRIAL_DAYS = 30;
 
 /** Where Hosted customers write for help (owner decision O4). */
 export const HOSTED_SUPPORT_EMAIL = "support@n8builds.dev";
@@ -26,6 +36,12 @@ export const HOSTED_SUPPORT_EMAIL = "support@n8builds.dev";
 /** What the trial and the paid plan include, as the platform enforces them. */
 export const HOSTED_TRIAL_LIMITS = PLAN_LIMITS.trial;
 export const HOSTED_PLAN_LIMITS = PLAN_LIMITS.hosted;
+export const HOSTED_FAST_LIMITS = PLAN_LIMITS.hosted_fast;
+export const HOSTED_PACKS = PACKS;
+
+/** The most monitors and fast monitors an account can have with every pack; larger accounts ask support. */
+export const HOSTED_MAX_MONITORS = PLAN_LIMITS.hosted.monitors + PACKS.monitors.adds * PACKS.monitors.max;
+export const HOSTED_MAX_FAST_MONITORS = PLAN_LIMITS.hosted_fast.fastMonitors + PACKS.fast_monitors.adds * PACKS.fast_monitors.max;
 
 /** Hosts a plain-http sign-up URL may point at: a local platform in development only. */
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);

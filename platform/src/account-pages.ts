@@ -12,6 +12,7 @@ import type { ProvisionState } from "./tenants";
 import { GITHUB_ICON, Html, PASSKEY_ICON, SUPPORT_EMAIL, html, notice, renderPage } from "./ui";
 import { BILLING_STYLE, billingSection, type BillingView } from "./billing/pages";
 import type { PlanId, TenantStatus } from "../../src/shared/hosted-contract";
+import { HOSTED_PLAN_LIMITS, HOSTED_PRICE_YEARLY, HOSTED_TRIAL_DAYS, HOSTED_TRIAL_LIMITS } from "../../src/shared/hosted-offer";
 
 export interface SignInPageInput {
   mode: "sign-in" | "sign-up";
@@ -30,12 +31,12 @@ export function homePage(input: { signUpsOpen: boolean }): Response {
   return renderPage({
     title: "Uptime monitoring, run for you",
     main: html`<h1>Uptime monitoring and a status page, run for you</h1>
-<p class="lead">20 monitors, 2 status pages and every alert channel for $24 a year. The same OpenPing as a self-hosted install, at your own address, with nothing to set up.${
-  input.signUpsOpen ? " The 14-day trial needs no card." : ""
+<p class="lead">${String(HOSTED_PLAN_LIMITS.monitors)} monitors, ${String(HOSTED_PLAN_LIMITS.statusPages)} status pages and every alert channel for $${String(HOSTED_PRICE_YEARLY)} a year. The same OpenPing as a self-hosted install, at your own address, with nothing to set up.${
+  input.signUpsOpen ? ` The ${HOSTED_TRIAL_DAYS}-day trial needs no card.` : ""
 }</p>
 ${
   input.signUpsOpen
-    ? html`<div class="stack"><a class="button primary" href="/sign-up">Start a 14-day free trial</a><a class="button secondary" href="/sign-in">Sign in</a></div>`
+    ? html`<div class="stack"><a class="button primary" href="/sign-up">Start a ${String(HOSTED_TRIAL_DAYS)}-day free trial</a><a class="button secondary" href="/sign-in">Sign in</a></div>`
     : html`<p>OpenPing Hosted isn't open for sign-ups yet. <a href="https://openping.n8builds.dev/#pricing">Join the waitlist</a> to hear when it opens.</p>
 <div class="stack"><a class="button secondary" href="/sign-in">Sign in</a></div>`
 }`,
@@ -81,7 +82,7 @@ ${
     : html`<h1>${title}</h1>
 ${
   signUp
-    ? html`<p class="lead">14 days free with 5 monitors and no card. Your OpenPing is ready about a minute after you sign up.</p>`
+    ? html`<p class="lead">${String(HOSTED_TRIAL_DAYS)} days free with ${String(HOSTED_TRIAL_LIMITS.monitors)} monitors and no card. Your OpenPing is ready about a minute after you sign up.</p>`
     : html`<p class="lead">Use the email, GitHub account or passkey you signed up with.</p>`
 }
 ${input.error ? html`<p class="notice error" id="form-error" role="alert">${input.error}</p>` : ""}

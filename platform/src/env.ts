@@ -74,8 +74,12 @@ export interface PlatformEnv {
   STRIPE_WEBHOOK_SECRET?: string;
   /** Var: the yearly plan's Price id ($24 a year). */
   STRIPE_PRICE_HOSTED?: string;
-  /** Var: the 1-minute checks add-on's Price id ($12 a year). */
+  /** Var: the fast checks add-on's Price id ($24 a year: 1-minute checks on 5 monitors). */
   STRIPE_PRICE_FAST?: string;
+  /** Var: the Price id of a pack of 25 more monitors ($24 a year each, quantity 1 to 4). */
+  STRIPE_PRICE_MONITOR_PACK?: string;
+  /** Var: the Price id of a pack of 5 more fast monitors ($36 a year each, quantity 1 to 3, with the add-on). */
+  STRIPE_PRICE_FAST_PACK?: string;
   /** Var: "off" turns Stripe Tax off in Checkout; anything else (the default) leaves it on. */
   STRIPE_TAX?: string;
   /** Var: a Customer Portal configuration id (bpc_...); empty uses the account's default. */

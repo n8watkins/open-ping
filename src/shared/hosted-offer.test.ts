@@ -48,7 +48,7 @@ describe("landingMeta", () => {
     const meta = landingMeta(true);
     expect(meta.title).toBe("OpenPing: uptime monitoring that knows your hours");
     expect(meta.description).toContain("$24 a year");
-    expect(meta.description).toContain("14-day free trial and no card");
+    expect(meta.description).toContain("30-day free trial and no card");
     expect(meta.description).not.toMatch(/waitlist/);
   });
 });

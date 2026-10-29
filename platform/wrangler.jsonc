@@ -85,10 +85,14 @@
     // secrets are set. "test" refuses live keys and live events; "live" is
     // the owner's switch at launch (owner action O8).
     "STRIPE_MODE": "test",
-    // The yearly plan's Price ($24 a year) and the 1-minute checks add-on's
-    // Price ($12 a year), both recurring yearly (price_...).
+    // The four Prices billing sells, each recurring yearly (price_...,
+    // decision D13): the plan ($24 a year), the fast checks add-on ($24 a
+    // year: 1-minute checks on 5 monitors), a pack of 25 more monitors ($24 a
+    // year each) and a pack of 5 more fast monitors ($36 a year each).
     "STRIPE_PRICE_HOSTED": "",
     "STRIPE_PRICE_FAST": "",
+    "STRIPE_PRICE_MONITOR_PACK": "",
+    "STRIPE_PRICE_FAST_PACK": "",
     // Stripe Tax in Checkout; "off" turns it off.
     "STRIPE_TAX": "on",
     // A Customer Portal configuration (bpc_...); empty uses the account's default.

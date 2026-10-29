@@ -75,8 +75,8 @@ describe("the landing page once Hosted opens (switch set)", () => {
   it("leads with the free trial and the launch headline", () => {
     expect(copy).toContain("Uptime monitoring that knows your hours");
     expect(copy).toContain("Start a free trial");
-    expect(copy).toContain("14-day free trial");
-    expect(copy).toContain("5 monitors for 14 days. No card needed.");
+    expect(copy).toContain("30-day free trial");
+    expect(copy).toContain("5 monitors for 30 days. No card needed.");
     expect(copy.indexOf("Let me run it")).toBeLessThan(copy.indexOf("Run it yourself"));
   });
 
@@ -94,10 +94,10 @@ describe("the landing page once Hosted opens (switch set)", () => {
 
   it("prices the plan and the trial as decided (D5)", () => {
     expect(copy).toContain("$24 a year");
-    expect(copy).toContain("Optional 1-minute checks for $12 a year more");
+    expect(copy).toContain("Optional 1-minute checks for $24 a year more");
     expect(copy).toContain("20 monitors, checked every 12 minutes");
     expect(copy).toContain("2 status pages and every alert channel");
-    expect(copy).toContain("Free for 14 days with 5 monitors, 1 status page and email alerts. No card needed");
+    expect(copy).toContain("Free for 30 days with 5 monitors, 1 status page and email alerts. No card needed");
     expect(copy).toContain("support@n8builds.dev");
     expect(copy).toContain("app.openping.example");
   });

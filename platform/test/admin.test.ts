@@ -477,7 +477,7 @@ describe("a tenant's page", () => {
     dispatcher.register(tenant.scriptName, (request) =>
       new URL(request.url).pathname === PLATFORM_HEALTH_PATH ? Response.json(healthy) : new Response("hello"),
     );
-    await new TenantCapability(env.PLATFORM_DB, tenant.id, tenant.accountId, () => clock).reportUsage({ monitors: 7, statusPages: 1, channels: 3, at: clock });
+    await new TenantCapability(env.PLATFORM_DB, tenant.id, tenant.accountId, () => clock).reportUsage({ monitors: 7, fastMonitors: 3, statusPages: 1, channels: 3, at: clock });
     await env.PLATFORM_DB.prepare("INSERT INTO audit_events (at, account_id, tenant_id, actor, action, detail) VALUES (?, ?, ?, 'system', 'tenant.provisioned', ?)")
       .bind(clock, tenant.accountId, tenant.id, JSON.stringify({ version: "0.11.0", seconds: 41 }))
       .run();
@@ -498,6 +498,8 @@ describe("a tenant's page", () => {
       "7 of 20",
       "1 of 2",
       "<dt>Emails today (UTC)</dt><dd>14 of 500, 1 failed, 3 over the cap</dd>",
+      "<dt>Fast monitors</dt><dd>3 of 5</dd>",
+      "<dt>Packs</dt><dd>None</dd>",
       "tenant.provisioned",
       "version: 0.11.0 · seconds: 41",
       `href="https://detailco.${DOMAIN}"`,

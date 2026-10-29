@@ -60,6 +60,8 @@ const CONFIGURED: Partial<PlatformEnv> = {
   STRIPE_WEBHOOK_SECRET: "whsec_123",
   STRIPE_PRICE_HOSTED: "price_hosted1",
   STRIPE_PRICE_FAST: "price_fast12",
+  STRIPE_PRICE_MONITOR_PACK: "price_mpack1",
+  STRIPE_PRICE_FAST_PACK: "price_fpack1",
   DISPATCH_NAMESPACE: "openping-tenants",
   BUNDLES: {} as R2Bucket,
   CF_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",

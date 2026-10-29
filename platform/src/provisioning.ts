@@ -38,6 +38,7 @@
  * renewed before each step and checked by every write the run makes.
  */
 
+import { HOSTED_TRIAL_DAYS } from "../../src/shared/hosted-offer";
 import {
   PLATFORM_HEALTH_PATH,
   PLATFORM_SCHEDULED_PATH,
@@ -68,8 +69,8 @@ export const PROVISION_MAX_ATTEMPTS = 6;
 export const PROVISION_BACKOFF_MS = [10_000, 30_000, 120_000, 600_000, 1_800_000] as const;
 /** How long a run holds a tenant without renewing (it renews before each step); a dead run frees it after this. */
 export const PROVISION_LEASE_MS = 2 * 60_000;
-/** A new tenant's trial (decision D5). */
-export const TRIAL_DAYS = 14;
+/** A new tenant's trial, in days (decision D13): the landing page's HOSTED_TRIAL_DAYS, so they can't disagree. */
+export const TRIAL_DAYS = HOSTED_TRIAL_DAYS;
 
 /** What provisioning needs from the platform's env, checked once (provisioningConfig in ./index.ts). */
 export interface ProvisioningConfig {
@@ -130,7 +131,7 @@ export type RequestTenantResult =
   | { ok: false; slug: string; reason: Exclude<SlugAvailability, { ok: true }>["reason"] };
 
 /**
- * Records a new tenant in state `requested`, on a 14-day trial. The caller
+ * Records a new tenant in state `requested`, on a TRIAL_DAYS (30-day) trial. The caller
  * then queues its provisioning (enqueueProvisioning), so sign-up answers at
  * once; if that message never arrives, the sweep picks the tenant up.
  */
@@ -174,6 +175,8 @@ interface ProvisionRow {
   provision_state: string;
   version: string | null;
   limit_overrides: string | null;
+  monitor_packs: number | null;
+  fast_packs: number | null;
   trial_ends_at: number | null;
   d1_id: string | null;
   provision_attempts: number;
@@ -195,8 +198,8 @@ interface ProvisionTenant {
 async function loadTenant(db: D1Database, tenantId: string): Promise<ProvisionTenant | null> {
   const row = await db
     .prepare(
-      `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at,
-              d1_id, provision_attempts, provision_next_at, provision_paused_at, provisioned_at, created_at
+      `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, monitor_packs, fast_packs,
+              trial_ends_at, d1_id, provision_attempts, provision_next_at, provision_paused_at, provisioned_at, created_at
        FROM tenants WHERE id = ?`,
     )
     .bind(tenantId)

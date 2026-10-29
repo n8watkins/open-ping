@@ -161,7 +161,7 @@ describe("requestTenant", () => {
       status: "trial",
       plan: "trial",
       provision_state: "requested",
-      trial_ends_at: w.clock.now + 14 * 86_400_000,
+      trial_ends_at: w.clock.now + 30 * 86_400_000,
     });
   });
 

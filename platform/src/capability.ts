@@ -122,7 +122,7 @@ export class TenantCapability implements PlatformCapability {
     const row = await this.db
       .prepare(
         `SELECT t.id, t.account_id, t.slug, t.script_name, t.status, t.owner_suspended_at, t.plan, t.provision_state, t.version,
-                t.limit_overrides, t.trial_ends_at, a.email AS account_email
+                t.limit_overrides, t.monitor_packs, t.fast_packs, t.trial_ends_at, a.email AS account_email
          FROM tenants t JOIN accounts a ON a.id = t.account_id WHERE t.id = ?`,
       )
       .bind(this.tenantId)
@@ -242,12 +242,14 @@ export class TenantCapability implements PlatformCapability {
     const countedAt = counts.at;
     await this.db
       .prepare(
-        `INSERT INTO tenant_usage (tenant_id, monitors, status_pages, channels, counted_at, reported_at) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(tenant_id) DO UPDATE SET monitors = excluded.monitors, status_pages = excluded.status_pages,
-           channels = excluded.channels, counted_at = excluded.counted_at, reported_at = excluded.reported_at
+        `INSERT INTO tenant_usage (tenant_id, monitors, fast_monitors, status_pages, channels, counted_at, reported_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(tenant_id) DO UPDATE SET monitors = excluded.monitors, fast_monitors = excluded.fast_monitors,
+           status_pages = excluded.status_pages, channels = excluded.channels, counted_at = excluded.counted_at,
+           reported_at = excluded.reported_at
          WHERE excluded.counted_at >= tenant_usage.counted_at`,
       )
-      .bind(this.tenantId, counts.monitors, counts.statusPages, counts.channels, countedAt, now)
+      // fastMonitors is absent from bundles older than the count: null, "not reported".
+      .bind(this.tenantId, counts.monitors, counts.fastMonitors ?? null, counts.statusPages, counts.channels, countedAt, now)
       .run();
   }
 
@@ -273,6 +275,8 @@ export function usageCountsProblem(counts: UsageCounts): string | null {
     const value = counts[key];
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > USAGE_COUNT_MAX) return key;
   }
+  const fast = counts.fastMonitors;
+  if (fast !== undefined && (typeof fast !== "number" || !Number.isSafeInteger(fast) || fast < 0 || fast > USAGE_COUNT_MAX)) return "fastMonitors";
   if (typeof counts.at !== "number" || !Number.isSafeInteger(counts.at) || counts.at < 0) return "at";
   return null;
 }

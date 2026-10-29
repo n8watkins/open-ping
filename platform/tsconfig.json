@@ -18,5 +18,5 @@
     "noUnusedParameters": true,
     "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"]
   },
-  "include": ["src", "test", "../src/shared/hosted-contract.ts", "../src/shared/notifications.ts"]
+  "include": ["src", "test", "../src/shared/hosted-contract.ts", "../src/shared/hosted-offer.ts", "../src/shared/notifications.ts"]
 }

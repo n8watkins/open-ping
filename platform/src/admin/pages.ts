@@ -14,6 +14,7 @@ import type { Passkey } from "../auth/passkeys";
 import { PASSKEY_SCRIPT_PATH } from "../client-script";
 import type { ProvisionState } from "../tenants";
 import { Html, PASSKEY_ICON, html, notice, renderPage } from "../ui";
+import { packsText } from "../billing/pages";
 import {
   AUDIT_ACTOR_FILTERS,
   REASON_MAX_LENGTH,
@@ -362,6 +363,8 @@ function usageFacts(d: TenantDetail, emails: TenantPageInput["emails"]): Html {
   const of = (n: number | undefined, limit: number) => (n === undefined ? `Limit ${limit}` : `${n} of ${limit}`);
   return html`<dl class="facts">
 ${fact("Monitors", of(u?.monitors, d.limits.monitors))}
+${d.limits.fastMonitors > 0 ? fact("Fast monitors", of(u?.fastMonitors ?? undefined, d.limits.fastMonitors)) : ""}
+${fact("Packs", packsText(d.record.packs))}
 ${fact("Status pages", of(u?.statusPages, d.limits.statusPages))}
 ${fact("Alert channels", u ? String(u.channels) : "Not reported")}
 ${fact("Fastest check", d.limits.minIntervalMinutes === 1 ? "1 minute" : `${d.limits.minIntervalMinutes} minutes`)}

@@ -17,7 +17,8 @@
  *      event's copy, decides (Stripe's own advice, "Event ordering" in
  *      https://docs.stripe.com/webhooks); it is fetched again after saving
  *      until two reads agree, and every write checks the lock is still held;
- *   6. ./state.ts brings the tenant to it; a second paid subscription for an
+ *   6. ./state.ts brings the tenant to it (the plan, and the packs from the
+ *      items' quantities, held to their caps); a second paid subscription for an
  *      account is cancelled and refunded; a failed payment emails the
  *      customer once per invoice and attempt (dunning), unless a later
  *      payment already went through.
@@ -39,7 +40,17 @@ import type { Mailer } from "../mail";
 import type { BillingSetup } from "./config";
 import { verifyStripeSignature } from "./signature";
 import { BillingBusyError, HOLDS, holdsBinds, withBillingLock, type BillingLock } from "./lock";
-import { applyAccountBilling, planForPrices, savedPlan, saveSubscription, type BillingChange } from "./state";
+import {
+  PENDING_TEXT,
+  applyAccountBilling,
+  packsForItems,
+  pendingItemsOf,
+  pendingText,
+  planForPrices,
+  savedPlan,
+  saveSubscription,
+  type BillingChange,
+} from "./state";
 import type { StripeApi, StripeSubscription } from "./stripe";
 import { log } from "../log";
 
@@ -206,7 +217,12 @@ async function needsAttention(db: D1Database, accountId: string | null, detail: 
 const ACTIVE_STATUSES = ["active", "trialing", "past_due"];
 
 function stateKey(sub: StripeSubscription): string {
-  return JSON.stringify([sub.status, sub.cancel_at_period_end, sub.items.data.map((i) => i.price.id).sort(), sub.pending_update?.expires_at ?? null]);
+  return JSON.stringify([
+    sub.status,
+    sub.cancel_at_period_end,
+    sub.items.data.map((i) => `${i.price.id}x${i.quantity ?? 1}`).sort(),
+    sub.pending_update?.expires_at ?? null,
+  ]);
 }
 
 async function processEvent(event: StripeEvent, deps: WebhookDeps): Promise<void> {
@@ -280,7 +296,14 @@ async function applySubscription(deps: WebhookDeps, lock: BillingLock, fetched: 
     .prepare("SELECT id FROM tenants WHERE account_id = ? AND provision_state <> 'deleting' ORDER BY created_at LIMIT 1")
     .bind(lock.accountId)
     .first<{ id: string }>();
-  await saveSubscription(db, lock, { sub, tenantId: tenant?.id ?? null, plan, now: deps.now });
+  // Packs from the items' quantities. Over a cap, or fast packs without the
+  // add-on (a change made in Stripe's dashboard), count as the cap or none,
+  // and the owner is told so they can put the subscription right.
+  const { packs, problems } = packsForItems(sub.items.data, plan, config);
+  if (problems.length) {
+    await needsAttention(db, lock.accountId, { reason: "packs", problems: problems.join(" "), subscription: sub.id, event: event.type }, deps.now);
+  }
+  await saveSubscription(db, lock, { sub, tenantId: tenant?.id ?? null, plan, packs, config, now: deps.now });
   const change = await applyAccountBilling(db, lock, deps.now);
   if (change) log.info("billing.tenant_changed", { tenant: change.tenantId, from: change.from, to: change.to });
   return change;
@@ -371,11 +394,13 @@ async function recordInvoice(deps: WebhookDeps, lock: BillingLock, sub: StripeSu
   const payUrl = str(o.hosted_invoice_url) ?? `${deps.appOrigin}/billing`;
   const when = next ? new Date(next).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" }) : null;
   const paused = change?.to.status === "suspended";
+  // What the waiting change would add: "1-minute checks", "extra monitors", "extra fast monitors".
+  const what = deps.setup.ok ? pendingText(pendingItemsOf(sub, deps.setup.config) ?? []) : PENDING_TEXT.fast;
   await sendOnce(deps, `payment_failed:${invoiceId}:${attempt}`, lock.accountId, () => ({
-    subject: forUpdate ? "Your 1-minute checks weren't added: the payment didn't go through" : "Your OpenPing Hosted payment didn't go through",
+    subject: forUpdate ? `Your ${what} weren't added: the payment didn't go through` : "Your OpenPing Hosted payment didn't go through",
     lines: forUpdate
       ? [
-          "We couldn't take the payment for 1-minute checks, so they weren't added. Your plan and your checks are unchanged.",
+          `We couldn't take the payment for ${what}, so they weren't added. Your plan and your checks are unchanged.`,
           `To add them, pay the invoice within a day: ${payUrl}`,
           `Or try again later from ${deps.appOrigin}/billing.`,
         ]

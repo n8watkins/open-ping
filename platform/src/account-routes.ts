@@ -160,6 +160,8 @@ interface TenantRow {
   provision_state: string;
   version: string | null;
   limit_overrides: string | null;
+  monitor_packs: number | null;
+  fast_packs: number | null;
   trial_ends_at: number | null;
   provision_attempts: number;
   provision_paused_at: number | null;
@@ -172,8 +174,8 @@ async function accountTenant(
 ): Promise<(TenantRecord & { attempts: number; paused: boolean; billingReason: string | null }) | null> {
   const row = await db
     .prepare(
-      `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at, provision_attempts,
-              provision_paused_at, billing_reason
+      `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, monitor_packs, fast_packs,
+              trial_ends_at, provision_attempts, provision_paused_at, billing_reason
        FROM tenants WHERE account_id = ? AND provision_state <> 'deleting' ORDER BY created_at LIMIT 1`,
     )
     .bind(accountId)
