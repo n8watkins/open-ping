@@ -692,7 +692,11 @@ describe("the pages", () => {
     expect(await signUp.text()).not.toContain("<script");
   });
 
-  it("show billing as coming soon, where the tenant links", async () => {
-    for (const path of ["/billing", "/billing/upgrade"]) expect(await (await new Browser().fetch(path)).text()).toContain("Paid plans open soon");
+  it("send a signed-out visitor to sign in first, then back to billing", async () => {
+    for (const path of ["/billing", "/billing/upgrade"]) {
+      const res = await new Browser().fetch(path);
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(`/sign-in?next=${encodeURIComponent(path)}`);
+    }
   });
 });

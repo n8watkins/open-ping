@@ -158,7 +158,8 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
   Runs are driven by a Queue with the cron as a net; a permanent failure, or too many in a row, pauses the tenant for the owner instead of rolling it back, and `removeTenant` is the clean teardown.
 - [x] **B4 Scheduling (M), done.** Cron every minute, due calculation from each tenant's interval, Queue producer and consumer, per-tenant timeouts, run metrics in the platform database. Needs: B1, A3.
   The due query is an index range scan over the due tenants only, one message per tenant, retries only while they fit before the next run, and the costs at 200 and 2,000 tenants are in [platform/README.md](../platform/README.md#scheduling-costs-at-scale).
-- **B5 Billing (L).** Stripe Checkout (yearly plan and the add-on), the Customer Portal, the signed webhook, subscription state, dunning (past due, suspended), trial end, Stripe Tax, plan changes reaching the tenant props. Needs: B1.
+- [x] **B5 Billing (L), done.** Stripe Checkout (yearly plan and the add-on), the Customer Portal, the signed webhook, subscription state, dunning (past due, suspended), trial end, Stripe Tax, plan changes reaching the tenant props. Needs: B1.
+  Test mode only until `STRIPE_MODE` is `live`, tested against an in-memory Stripe; the owner's Stripe setup (products, prices, Tax, the portal, retries, the webhook) is step 10 of [platform/README.md](../platform/README.md#owner-setup-not-done-yet).
 - [x] **B6 Owner's admin console (M), done.** Tenant list and search, status, plan, version, last run, usage, suspend and resume, impersonate-for-support with an audit trail, waitlist import. Needs: B1.
   The owner is named in `PLATFORM_OWNERS` and needs a passkey sign-in (10 minutes old at most for a change); anyone else gets a 404.
   The waitlist comes in as the canonical install's CSV export, uploaded by the owner, with no call between the two.

@@ -52,4 +52,20 @@ export interface PlatformEnv {
    * The console's "Confirm it's you" page lists the owner's passkey ids to copy.
    */
   PLATFORM_OWNER_PASSKEYS?: string;
+
+  // --- Billing (B5, src/billing/) ---
+  /** Secret: the Stripe secret (or restricted) key; sk_test_ unless STRIPE_MODE is "live". */
+  STRIPE_SECRET_KEY?: string;
+  /** Secret: the webhook endpoint's signing secret (whsec_...). */
+  STRIPE_WEBHOOK_SECRET?: string;
+  /** Var: the yearly plan's Price id ($24 a year). */
+  STRIPE_PRICE_HOSTED?: string;
+  /** Var: the 1-minute checks add-on's Price id ($12 a year). */
+  STRIPE_PRICE_FAST?: string;
+  /** Var: "off" turns Stripe Tax off in Checkout; anything else (the default) leaves it on. */
+  STRIPE_TAX?: string;
+  /** Var: a Customer Portal configuration id (bpc_...); empty uses the account's default. */
+  STRIPE_PORTAL_CONFIGURATION?: string;
+  /** Var: "live" allows live keys and live events; anything else (the default) is test mode only. */
+  STRIPE_MODE?: string;
 }

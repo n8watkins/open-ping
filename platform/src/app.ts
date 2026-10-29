@@ -11,6 +11,8 @@
 import { Hono } from "hono";
 
 import { accountRoutes, type AccountDeps } from "./account-routes";
+import { billingSetup } from "./billing/config";
+import { handleStripeWebhook } from "./billing/webhook";
 import { adminRoutes } from "./admin/routes";
 import { HOSTED_ERRORS, isInternalPath, type PlatformCapability } from "../../src/shared/hosted-contract";
 import { DISPATCH_LIMITS, buildTenantProps, newCallId, publicRequest, type TenantDispatcher } from "./dispatch";
@@ -48,7 +50,7 @@ type Platform = { Bindings: PlatformEnv };
 
 const NO_STORE = { "cache-control": "no-store" };
 
-/** The platform's own pages on app.<domain>: sign-up, sign-in, the account and the owner's console (billing arrives with B5). */
+/** The platform's own pages on app.<domain>: sign-up, sign-in, the account, billing and the owner's console. */
 function appHost(deps: AppDeps): Hono<Platform> {
   const app = new Hono<Platform>();
 
@@ -64,6 +66,19 @@ function appHost(deps: AppDeps): Hono<Platform> {
   });
 
   const accounts = deps.accounts ?? DEFAULT_ACCOUNT_DEPS;
+
+  // Stripe's signed events (B5). Before the account routes: it is called by
+  // Stripe, not a browser, so it has no session and no Origin, and its
+  // signature is the check (src/billing/webhook.ts).
+  app.post("/stripe/webhook", (c) =>
+    handleStripeWebhook(c.req.raw, {
+      db: c.env.PLATFORM_DB,
+      setup: (accounts.billing ?? ((env: PlatformEnv) => billingSetup(env)))(c.env),
+      mailer: accounts.mailer(c.env),
+      appOrigin: appOrigin(c.env.HOSTED_DOMAIN),
+      now: (accounts.now ?? Date.now)(),
+    }),
+  );
   // Before the account routes: /admin answers its own 404 to everyone but the owner.
   app.route(
     "/admin",

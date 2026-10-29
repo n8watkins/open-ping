@@ -55,12 +55,16 @@ import type { ProvisioningSetup } from "./provisioning-env";
 import { enqueueProvisioning } from "./provisioning-queue";
 import { SLUG_MESSAGES, checkSlugAvailability } from "./slugs";
 import { tenantFromRow, type TenantRecord } from "./tenants";
+import { billingSetup, type BillingSetup } from "./billing/config";
+import { billingView, registerBillingRoutes } from "./billing/routes";
 
 export interface AccountDeps {
   /** The platform's mailer, or null while mail isn't configured. */
   mailer(env: PlatformEnv): Mailer | null;
   /** Provisioning, for the tenant a new account creates. */
   provisioning(env: PlatformEnv, ctx: ExecutionContext): ProvisioningSetup;
+  /** Billing (B5): Stripe and its settings, or what is missing; by default from the env. */
+  billing?: (env: PlatformEnv) => BillingSetup;
   /** For GitHub's OAuth calls; the global fetch in production. */
   fetch?: typeof fetch;
   now?: () => number;
@@ -72,7 +76,7 @@ type Ctx = Context<Env>;
 const NO_STORE = { "cache-control": "no-store" } as const;
 
 /** Where a sign-in may send the browser afterwards: only these local paths. */
-const NEXT_PATTERN = /^\/(?:account|start|open\?tenant=[a-z][a-z0-9-]{1,29})$/;
+const NEXT_PATTERN = /^\/(?:account|start|billing|billing\/upgrade|open\?tenant=[a-z][a-z0-9-]{1,29})$/;
 
 export function safeNext(value: unknown): string | null {
   return typeof value === "string" && (NEXT_PATTERN.test(value) || ADMIN_NEXT_PATTERN.test(value)) ? value : null;
@@ -143,22 +147,30 @@ interface TenantRow {
   trial_ends_at: number | null;
   provision_attempts: number;
   provision_paused_at: number | null;
+  billing_reason: string | null;
 }
 
-async function accountTenant(db: D1Database, accountId: string): Promise<(TenantRecord & { attempts: number; paused: boolean }) | null> {
+async function accountTenant(
+  db: D1Database,
+  accountId: string,
+): Promise<(TenantRecord & { attempts: number; paused: boolean; billingReason: string | null }) | null> {
   const row = await db
     .prepare(
-      `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at, provision_attempts, provision_paused_at
+      `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at, provision_attempts,
+              provision_paused_at, billing_reason
        FROM tenants WHERE account_id = ? AND provision_state <> 'deleting' ORDER BY created_at LIMIT 1`,
     )
     .bind(accountId)
     .first<TenantRow>();
-  return row ? { ...tenantFromRow(row), attempts: row.provision_attempts, paused: row.provision_paused_at !== null } : null;
+  return row
+    ? { ...tenantFromRow(row), attempts: row.provision_attempts, paused: row.provision_paused_at !== null, billingReason: row.billing_reason }
+    : null;
 }
 
 export function accountRoutes(deps: AccountDeps): Hono<Env> {
   const app = new Hono<Env>();
   const now = deps.now ?? Date.now;
+  const billing = deps.billing ?? ((env: PlatformEnv) => billingSetup(env));
 
   app.use("*", async (c, next) => {
     c.set("now", now());
@@ -618,6 +630,8 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
           slow: tenant.attempts > 0,
           paused: tenant.paused,
           trialEndsAt: tenant.trialEndsAt,
+          ownerSuspended: tenant.ownerSuspendedAt !== null,
+          billingSuspended: tenant.billingStatus === "suspended",
         }
       : null;
     return accountPage({
@@ -629,6 +643,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       flash: FLASH[c.req.query("done") ?? ""] ?? null,
       supportSignIns: tenant ? await supportSignIns(db, tenant.id) : [],
       isOwner: isOwner(session.account, c.env),
+      billing: await billingView(db, session.account.id, billing(c.env).ok, c.get("now")),
       now: c.get("now"),
     });
   });
@@ -727,16 +742,8 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     return withCookies(messagePage({ title: "You're signed out", body: "Sign in again whenever you need your OpenPing.", action: { href: "/sign-in", label: "Sign in" } }), [cookie]);
   });
 
-  // Billing (B5) isn't built yet; the tenant already links here.
-  for (const path of ["/billing", "/billing/upgrade"]) {
-    app.get(path, (c) =>
-      messagePage({
-        title: "Paid plans open soon",
-        body: "Hosted will be $24 a year, and $12 a year more for 1-minute checks. Your trial keeps running until you can upgrade.",
-        action: { href: c.get("session") ? "/account" : "/sign-in", label: c.get("session") ? "Back to your account" : "Sign in" },
-      }),
-    );
-  }
+  // Billing (B5): /billing, /billing/upgrade, Checkout, the Customer Portal and the add-on.
+  registerBillingRoutes(app, { billing });
 
   return app;
 }

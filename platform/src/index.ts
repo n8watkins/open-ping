@@ -17,6 +17,8 @@ import type {
   UsageCounts,
 } from "../../src/shared/hosted-contract";
 import { createApp } from "./app";
+import { endTrials } from "./billing/state";
+import { billingRecordsCleanup } from "./billing/webhook";
 import { ceremonyCleanup } from "./auth/ceremonies";
 import { emailSignInCleanup } from "./auth/email-sign-in";
 import { rateLimitCleanup } from "./auth/rate-limit";
@@ -86,20 +88,27 @@ function schedulingDeps(env: PlatformEnv, ctx: ExecutionContext): SchedulingDeps
 }
 
 /**
- * Every minute: enqueue the customers whose scheduler is due (src/scheduling.ts),
- * clear expired sign-in state, and the safety net for provisioning, picking
+ * Every minute: end the trials that are over (src/billing/state.ts), enqueue
+ * the customers whose scheduler is due (src/scheduling.ts), clear expired
+ * sign-in state, and the safety net for provisioning, picking
  * up any tenant a queue message missed. The scheduler goes first and runs
  * alongside the rest, since it is the one that is late when it waits.
  */
 async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
   const now = Date.now();
   const db = env.PLATFORM_DB;
+  // Trials past their 14 days stop first (billing, B5), so the scheduler doesn't enqueue them.
+  await endTrials(db, now)
+    .then((ended) => {
+      if (ended.length) console.log("[billing] trials ended", ended.map((t) => t.tenantId).join(" "));
+    })
+    .catch((error) => console.error("[billing] trial sweep failed", error));
   const schedule = enqueueDue({ db }, env.SCHEDULE_QUEUE, controller.scheduledTime)
     .then((r) => {
       if (r.sent || r.returned) console.log("[schedule] enqueued", r);
     })
     .catch((error) => console.error("[schedule] enqueue failed", error));
-  const hourly = new Date(controller.scheduledTime).getUTCMinutes() === 7 ? [schedulerDaysCleanup(db, now)] : [];
+  const hourly = new Date(controller.scheduledTime).getUTCMinutes() === 7 ? [schedulerDaysCleanup(db, now), ...billingRecordsCleanup(db, now)] : [];
   await db
     .batch([sessionCleanup(db, now), emailSignInCleanup(db, now), ceremonyCleanup(db, now), rateLimitCleanup(db, now), ...hourly])
     .catch((error) => console.error("[cleanup] failed", error));
