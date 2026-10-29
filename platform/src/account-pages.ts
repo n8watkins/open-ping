@@ -292,6 +292,7 @@ ${
       )}</ul></section>`
     : ""
 }
+${input.tenant?.provisionState === "ready" ? html`<section><h2>Your data</h2><p>Download everything in your OpenPing, with the steps to run it on your own Cloudflare account.</p><div class="stack"><a class="button secondary" href="/account/export">Take your OpenPing with you</a></div></section>` : ""}
 <section id="billing">${billingSection(input.billing, input.now)}</section>
 ${input.isOwner ? html`<section><h2>Owner</h2><div class="stack"><a class="button secondary" href="/admin">Open the admin console</a></div></section>` : ""}
 <section><form method="post" action="/sign-out"><button class="button secondary" type="submit">Sign out</button></form></section>`,

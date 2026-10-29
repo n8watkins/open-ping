@@ -41,6 +41,10 @@ export const LIMITS = {
   adminAction: { scope: "admin:account", limit: 120, windowMs: HOUR },
   /** Support sign-ins into customers' OpenPings, on top of adminAction. */
   adminSupport: { scope: "admin-support:account", limit: 20, windowMs: HOUR },
+  /** A customer's exports of their OpenPing (B7): each one is a D1 export, which pauses its database briefly. */
+  exportPerAccount: { scope: "export:account", limit: 3, windowMs: DAY },
+  /** Showing a customer their MASTER_KEY. */
+  keyRevealPerAccount: { scope: "key-reveal:account", limit: 5, windowMs: DAY },
 } as const satisfies Record<string, RateLimitRule>;
 
 /** Records one hit against `rule` for `subject` and answers whether it is allowed. */

@@ -212,7 +212,7 @@ export function suspendedEmail(input: { tenantUrl: string; reason: SuspendedReas
       kind: "note",
       text: `If it stays paused, your monitors and history are deleted on ${emailDate(input.deleteAt)}. Before that you can download everything from your account page and run it yourself.`,
     });
-    blocks.push({ kind: "link", label: "Open your account", href: input.accountUrl });
+    blocks.push({ kind: "link", label: "Download everything", href: input.accountUrl });
   }
   return email({ subject: input.reason === "trial_ended" ? "Your OpenPing trial has ended" : "Your OpenPing is paused", preheader: why, heading: "Checks have stopped", blocks });
 }
@@ -248,6 +248,21 @@ export function recipientConfirmEmail(input: { tenantUrl: string; confirmUrl: st
       { kind: "p", text: `Someone using OpenPing Hosted at ${address} added this address for its uptime alerts and reports. Nothing is sent until you say yes.` },
       { kind: "button", label: "Answer yes or no", href: input.confirmUrl },
       { kind: "note", text: "If you don't know them, ignore this email or answer no, and it never emails you. The link works for a week." },
+    ],
+  });
+}
+
+/** Sent each time the account's MASTER_KEY is shown on the export page. */
+export function keyRevealedEmail(input: { at: number; exportUrl: string }): RenderedEmail {
+  const intro = `Your OpenPing's key was shown on your account page at ${emailTime(input.at)}.`;
+  return email({
+    subject: "Your OpenPing key was shown",
+    preheader: intro,
+    heading: "Your key was shown",
+    blocks: [
+      { kind: "p", text: intro },
+      { kind: "note", text: `If that was you, moving your OpenPing to your own Cloudflare account, there's nothing to do. If it wasn't, someone can sign in to your account: change your email password and write to ${SUPPORT_EMAIL} at once.` },
+      { kind: "link", label: "Your exports", href: input.exportUrl },
     ],
   });
 }

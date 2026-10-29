@@ -76,7 +76,7 @@ type Ctx = Context<Env>;
 const NO_STORE = { "cache-control": "no-store" } as const;
 
 /** Where a sign-in may send the browser afterwards: only these local paths. */
-const NEXT_PATTERN = /^\/(?:account|start|billing|billing\/upgrade|open\?tenant=[a-z][a-z0-9-]{1,29})$/;
+const NEXT_PATTERN = /^\/(?:account|account\/export|start|billing|billing\/upgrade|open\?tenant=[a-z][a-z0-9-]{1,29})$/;
 
 export function safeNext(value: unknown): string | null {
   return typeof value === "string" && (NEXT_PATTERN.test(value) || ADMIN_NEXT_PATTERN.test(value)) ? value : null;

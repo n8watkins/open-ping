@@ -163,7 +163,8 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
 - [x] **B6 Owner's admin console (M), done.** Tenant list and search, status, plan, version, last run, usage, suspend and resume, impersonate-for-support with an audit trail, waitlist import. Needs: B1.
   The owner is named in `PLATFORM_OWNERS` and needs a passkey sign-in (10 minutes old at most for a change); anyone else gets a 404.
   The waitlist comes in as the canonical install's CSV export, uploaded by the owner, with no call between the two.
-- **B7 Lifecycle jobs (M).** Trial ending emails, suspension, 30-day deletion with an export first, tenant export to a self-host bundle (D1 export plus instructions). Needs: B3, B5.
+- [x] **B7 Lifecycle jobs (M), done.** Trial ending emails, suspension, 30-day deletion with an export first, tenant export to a self-host bundle (D1 export plus instructions). Needs: B3, B5.
+  `platform/src/lifecycle/`: the account emails once each, deletion only after an export read back from R2 and a warning a week before, and `/account/export` for the customer (the database, the steps, and their `MASTER_KEY` after a fresh sign-in). It reads billing's state through one small interface (`billing-view.ts`), so it works with or without B5's own columns.
 
 ### C. Shared and cross-cutting
 
