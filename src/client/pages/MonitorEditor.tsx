@@ -16,7 +16,8 @@ import { ArrowLeft, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { useFetch } from "../lib/useFetch";
-import { defaultIntervalMinutes, monitorLimitReached, planLimitFromError, usePlan } from "../lib/plan-limits";
+import { defaultIntervalMinutes, fastUsage, monitorLimitReached, planLimitFromError, usePlan } from "../lib/plan-limits";
+import type { FastCandidate } from "../../shared/check-interval";
 import { PlanLimitNotice } from "../components/PlanLimitNotice";
 import { CheckIntervalPicker } from "../components/CheckIntervalPicker";
 import type { PlanLimitBody } from "../../shared/hosted-contract";
@@ -433,12 +434,16 @@ export default function MonitorEditor() {
   // Hosted mode: a create the plan has no room for. Known before the form is
   // filled in (atLimit), or answered by the server (refused, 402).
   const plan = usePlan();
-  const { data: existing } = useFetch<{ monitors: unknown[] }>(plan && !isEdit ? "/api/monitors" : null);
-  const atLimit = existing ? monitorLimitReached(plan, existing.monitors.length) : null;
+  const { data: existing } = useFetch<{ monitors: FastCandidate[] }>(plan ? "/api/monitors" : null);
+  const atLimit = existing && !isEdit ? monitorLimitReached(plan, existing.monitors.length) : null;
   const [refused, setRefused] = useState<PlanLimitBody | null>(null);
+  // Hosted mode: how many fast monitors the plan allows and the others use.
+  const fast = existing ? fastUsage(plan, existing.monitors, id ?? null) : null;
+  // The saved interval when editing, which the server always lets it keep.
+  const [storedInterval, setStoredInterval] = useState<number | undefined>(undefined);
   // Hosted mode: how often a polled monitor is checked (a self-hosted install
   // checks every one on each 12-minute run, so it sends none).
-  const checkIntervalMinutes = form.checkIntervalMinutes ?? (plan ? defaultIntervalMinutes(plan) : 12);
+  const checkIntervalMinutes = form.checkIntervalMinutes ?? (plan ? defaultIntervalMinutes(plan, fast) : 12);
   // Focused on submit so screen-reader + keyboard users land on the error
   // summary (which also carries role="alert").
   const errorSummaryRef = useRef<HTMLDivElement>(null);
@@ -475,7 +480,9 @@ export default function MonitorEditor() {
           `/api/monitors/${id}`,
         );
         if (cancelled) return;
-        setForm(prefill(monitor));
+        const loaded = prefill(monitor);
+        setForm(loaded);
+        setStoredInterval(loaded.checkIntervalMinutes ?? undefined);
         setPreserved({ notify: monitor.notify, public: monitor.public });
       } catch (e) {
         if (!cancelled) {
@@ -1538,6 +1545,8 @@ export default function MonitorEditor() {
             <CheckIntervalPicker
               plan={plan}
               value={checkIntervalMinutes}
+              stored={storedInterval}
+              fast={fast}
               onChange={(minutes) => set("checkIntervalMinutes", minutes)}
             />
           </FormCard>
