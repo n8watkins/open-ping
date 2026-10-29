@@ -106,6 +106,9 @@ export const WINDOW_SQL = `SELECT COUNT(*) AS minutes, COALESCE(SUM(runs), 0) AS
     ${BUCKET_COLUMNS.map((d) => `COALESCE(SUM(${d}), 0) AS ${d}`).join(", ")}
   FROM scheduler_minutes WHERE minute >= ?1 AND minute < ?2`;
 
+/** The oldest minute kept: where the data starts, the table's first primary key. */
+export const FIRST_MINUTE_SQL = "SELECT MIN(minute) AS minute FROM scheduler_minutes";
+
 /** The same range, by hour: at most 24 groups for a day. */
 export const HOURS_SQL = `SELECT minute / 60 AS hour, SUM(runs) AS runs, SUM(errors) AS errors, SUM(total_ms) AS total_ms,
     MAX(max_ms) AS max_ms, MAX(lag_max_ms) AS lag_max_ms
@@ -115,6 +118,7 @@ export interface RunWindow {
   /** The window's length in minutes (complete minutes, ending at the last full one). */
   minutes: number;
   runs: number;
+  /** Over the window, or over the minutes since its first recorded run when that is shorter. */
   runsPerMinute: number;
   errors: number;
   timeouts: number;
@@ -156,13 +160,24 @@ export function quantileFromBuckets(counts: number[], q: number): { ms: number |
 
 type WindowRow = Record<string, number>;
 
-function toWindow(row: WindowRow, minutes: number): RunWindow {
+/**
+ * The minutes a window's rate is over: the whole window, or, while the
+ * table holds less than that (a new platform), the minutes since its first
+ * recorded run. A quiet stretch inside the data still counts as minutes.
+ */
+export function rateMinutes(window: number, to: number, firstMinute: number | null | undefined): number {
+  if (firstMinute === null || firstMinute === undefined) return window;
+  return Math.max(1, Math.min(window, to - firstMinute));
+}
+
+function toWindow(row: WindowRow, minutes: number, to: number, firstMinute: number | null): RunWindow {
   const runs = row.runs ?? 0;
+  const over = rateMinutes(minutes, to, firstMinute);
   const p95 = quantileFromBuckets(BUCKET_COLUMNS.map((d) => row[d] ?? 0), 0.95);
   return {
     minutes,
     runs,
-    runsPerMinute: minutes ? runs / minutes : 0,
+    runsPerMinute: runs / over,
     errors: row.errors ?? 0,
     timeouts: row.timeouts ?? 0,
     busy: row.busy ?? 0,
@@ -195,8 +210,10 @@ export async function runMetrics(db: D1Database, now: number): Promise<RunMetric
   const results = await db.batch<Record<string, number>>([
     ...WINDOWS.map((m) => db.prepare(WINDOW_SQL).bind(to - m, to)),
     db.prepare(HOURS_SQL).bind(to - 1440, to),
+    db.prepare(FIRST_MINUTE_SQL),
   ]);
-  const windows = WINDOWS.map((m, i) => toWindow(results[i]!.results[0] ?? {}, m));
+  const first = (results[WINDOWS.length + 1]!.results[0] as { minute?: number | null } | undefined)?.minute ?? null;
+  const windows = WINDOWS.map((m, i) => toWindow(results[i]!.results[0] ?? {}, m, to, first));
   const hours = (results[WINDOWS.length]!.results as { hour: number; runs: number; errors: number; total_ms: number; max_ms: number; lag_max_ms: number }[]).map(
     (h): RunHour => ({
       at: h.hour * 3_600_000,

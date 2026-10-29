@@ -1018,18 +1018,17 @@ describe("the Operations tab", () => {
     await db.prepare("UPDATE tenants SET schedule_next_at = 0 WHERE id = ?").bind(late.id).run();
   });
 
-  it("lists the failing and overdue tenants from their partial indexes only", async () => {
-    for (const [sql, index, binds] of [
-      [FAILING_LIST_SQL, "idx_scheduler_stats_failing", []],
-      [OVERDUE_LIST_SQL, "idx_tenants_schedule_due", [clock]],
-    ] as const) {
-      const plan = await env.PLATFORM_DB.prepare(`EXPLAIN QUERY PLAN ${sql}`).bind(...binds).all<{ detail: string }>();
-      const details = plan.results.map((r) => r.detail).join(" | ");
-      expect(details).toContain(index);
-      expect(details).not.toMatch(/SCAN (tenants|t|s)\b/);
-      // Already in the order shown: no sort.
-      expect(details).not.toContain("TEMP B-TREE");
-    }
+  it("lists the failing and overdue tenants from their indexes, never a table scan", async () => {
+    const failing = (await env.PLATFORM_DB.prepare(`EXPLAIN QUERY PLAN ${FAILING_LIST_SQL}`).all<{ detail: string }>()).results.map((r) => r.detail).join(" | ");
+    expect(failing).toContain("idx_scheduler_stats_failing");
+    expect(failing).not.toMatch(/SCAN (tenants|t|s)\b/);
+    // Already in the order shown: no sort.
+    expect(failing).not.toContain("TEMP B-TREE");
+    const overdue = (await env.PLATFORM_DB.prepare(`EXPLAIN QUERY PLAN ${OVERDUE_LIST_SQL}`).bind(clock).all<{ detail: string }>()).results.map((r) => r.detail).join(" | ");
+    expect(overdue).toContain("SEARCH tenants USING INDEX idx_tenants_schedule_due (schedule_next_at<?)");
+    expect(overdue).not.toMatch(/SCAN (tenants|t|s)\b/);
+    // Sorted by how long each has waited, but only the late rows, at most 1,000 of them.
+    expect(OVERDUE_LIST_SQL).toContain("LIMIT 1000)");
   });
 });
 

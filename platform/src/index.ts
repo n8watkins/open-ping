@@ -140,6 +140,10 @@ async function lifecycle(env: PlatformEnv, ctx: ExecutionContext): Promise<void>
 async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx: ExecutionContext): Promise<void> {
   const now = Date.now();
   const db = env.PLATFORM_DB;
+  // First and on its own: the health check's proof that the cron fires (src/observability/health.ts), whatever else fails.
+  const heartbeat = heartbeatStatement(db, "cron", now)
+    .run()
+    .catch((error) => log.error("cron.heartbeat_failed", { error }));
   // Trials past their 14 days stop first (billing, B5), so the scheduler doesn't enqueue them.
   await endTrials(db, now)
     .then((ended) => {
@@ -159,10 +163,8 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
       : [];
   if (new Date(controller.scheduledTime).getUTCMinutes() % LIFECYCLE_EVERY_MINUTES === 0) ctx.waitUntil(lifecycle(env, ctx));
   ctx.waitUntil(releases(env, ctx));
-  // The cron's heartbeat rides in the cleanup batch it already sends: no extra round trip.
   await db
     .batch([
-      heartbeatStatement(db, "cron", now),
       sessionCleanup(db, now),
       emailSignInCleanup(db, now),
       ceremonyCleanup(db, now),
@@ -178,7 +180,7 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
     const outcomes = await provisionDue(setup.deps);
     if (outcomes.length) log.info("provision.sweep", { outcomes: outcomes.map((o) => `${o.tenantId}:${o.kind}`) });
   }
-  await schedule;
+  await Promise.all([schedule, heartbeat]);
 }
 
 /** The queues' consumer: the scheduler's runs and provisioning's. */

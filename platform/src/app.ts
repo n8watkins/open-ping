@@ -22,7 +22,7 @@ import { DISPATCH_LIMITS, buildTenantProps, newCallId, publicRequest, type Tenan
 import type { PlatformEnv } from "./env";
 import { appOrigin, classifyHost } from "./hosts";
 import { mailerFromEnv } from "./mail";
-import { PLATFORM_HEALTH_ROUTE, healthResponse } from "./observability/health";
+import { PLATFORM_HEALTH_ROUTE, defaultEdgeCache, healthResponse, livenessResponse } from "./observability/health";
 import {
   appNotFoundPage,
   tenantNotFoundPage,
@@ -50,6 +50,8 @@ export interface AppDeps {
   newCallId?: () => string;
   /** Tests only: the clock of the health endpoint. */
   now?: () => number;
+  /** Tests only: the health endpoints' location cache (caches.default otherwise; null for none). */
+  edgeCache?: Cache | null;
 }
 
 const DEFAULT_ACCOUNT_DEPS: AccountDeps = {
@@ -65,21 +67,16 @@ const NO_STORE = { "cache-control": "no-store" };
 function appHost(deps: AppDeps): Hono<Platform> {
   const app = new Hono<Platform>();
 
-  // The simplest liveness check: the Worker runs and its database answers.
-  // /__health below is the full one.
-  app.get("/healthz", async (c) => {
-    try {
-      await c.env.PLATFORM_DB.prepare("SELECT 1").first();
-      return c.json({ ok: true, service: "openping-platform", db: "ok" }, 200, NO_STORE);
-    } catch (error) {
-      log.error("health.db_failed", { path: "/healthz", error });
-      return c.json({ ok: false, service: "openping-platform", db: "error" }, 503, NO_STORE);
-    }
+  // For outside monitors (C4, src/observability/health.ts): /healthz, the
+  // Worker runs and its database answers; /__health, the whole platform.
+  // Both answer 200 or 503, shared per location for 10 seconds.
+  const healthDeps = (c: { req: { header(name: string): string | undefined } }) => ({
+    now: (deps.now ?? Date.now)(),
+    cache: deps.edgeCache === undefined ? defaultEdgeCache() : deps.edgeCache,
+    clientIp: c.req.header("cf-connecting-ip") ?? null,
   });
-
-  // For outside monitors (C4): the whole platform's health, 200 or 503 with
-  // the detail as JSON, cached briefly per isolate (src/observability/health.ts).
-  app.get(PLATFORM_HEALTH_ROUTE, (c) => healthResponse(c.env, (deps.now ?? Date.now)()));
+  app.get("/healthz", (c) => livenessResponse(c.env, c.req.raw, healthDeps(c)));
+  app.get(PLATFORM_HEALTH_ROUTE, (c) => healthResponse(c.env, c.req.raw, healthDeps(c)));
 
   const accounts = deps.accounts ?? DEFAULT_ACCOUNT_DEPS;
 

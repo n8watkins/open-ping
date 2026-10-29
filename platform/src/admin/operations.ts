@@ -17,6 +17,7 @@
 
 import type { PlatformEnv } from "../env";
 import {
+  COUNT_CAP,
   FAILING_STREAK,
   LAG_DEGRADED_MS,
   OVERDUE_MS,
@@ -42,11 +43,17 @@ export const FAILING_LIST_SQL = `SELECT s.tenant_id, t.slug, s.streak, s.last_ou
   WHERE s.streak > 0 AND ${SCHEDULABLE_T}
   ORDER BY s.streak DESC LIMIT ${OPERATIONS_LIST}`;
 
-/** The tenants waiting longest past their due time: the due index from its start, late rows only. */
-export const OVERDUE_LIST_SQL = `SELECT id, slug, schedule_next_at, schedule_lease_until FROM tenants INDEXED BY idx_tenants_schedule_due
-  WHERE provision_state = 'ready' AND status <> 'suspended' AND owner_suspended_at IS NULL
-    AND schedule_next_at > 0 AND schedule_next_at <= ?1
-  ORDER BY schedule_next_at LIMIT ${OPERATIONS_LIST}`;
+/**
+ * The tenants waiting longest past their due time, a new tenant (due 0) from
+ * when its row last changed: the late entries of the due index (at most
+ * COUNT_CAP of them), then sorted by how long each has waited.
+ */
+export const OVERDUE_LIST_SQL = `SELECT id, slug, schedule_next_at, updated_at, schedule_lease_until FROM (
+    SELECT id, slug, schedule_next_at, updated_at, schedule_lease_until FROM tenants INDEXED BY idx_tenants_schedule_due
+    WHERE provision_state = 'ready' AND status <> 'suspended' AND owner_suspended_at IS NULL
+      AND schedule_next_at <= ?1 AND (schedule_next_at > 0 OR updated_at <= ?1)
+    LIMIT ${COUNT_CAP})
+  ORDER BY CASE WHEN schedule_next_at > 0 THEN schedule_next_at ELSE updated_at END LIMIT ${OPERATIONS_LIST}`;
 
 export interface FailingTenant {
   id: string;
@@ -62,6 +69,8 @@ export interface OverdueTenant {
   id: string;
   slug: string;
   dueAt: number;
+  /** It has never run: due since it became ready. */
+  firstRun: boolean;
   /** A run holds it until then (it is being run now). */
   leaseUntil: number | null;
 }
@@ -84,8 +93,9 @@ export async function operationsView(db: D1Database, env: PlatformEnv, now: numb
   const failing = (lists[0]!.results as { tenant_id: string; slug: string; streak: number; last_outcome: RunOutcome; last_error: string | null; last_at: number; last_ok_at: number | null }[]).map(
     (r): FailingTenant => ({ id: r.tenant_id, slug: r.slug, streak: r.streak, outcome: r.last_outcome, error: r.last_error, lastAt: r.last_at, okAt: r.last_ok_at }),
   );
-  const overdue = (lists[1]!.results as { id: string; slug: string; schedule_next_at: number; schedule_lease_until: number | null }[]).map(
-    (r): OverdueTenant => ({ id: r.id, slug: r.slug, dueAt: r.schedule_next_at, leaseUntil: r.schedule_lease_until }),
+  const overdue = (lists[1]!.results as { id: string; slug: string; schedule_next_at: number; updated_at: number; schedule_lease_until: number | null }[]).map(
+    // A new tenant (due 0) has been due since its row last changed.
+    (r): OverdueTenant => ({ id: r.id, slug: r.slug, dueAt: r.schedule_next_at > 0 ? r.schedule_next_at : r.updated_at, firstRun: r.schedule_next_at === 0, leaseUntil: r.schedule_lease_until }),
   );
   return { now, report: healthReport(state, configChecks(env), now), state, metrics, failing, overdue };
 }
@@ -245,7 +255,7 @@ function overdueTable(v: OperationsView): Html {
 <td class="primary"><a href="/admin/tenants/${t.id}">${t.slug}</a></td>
 <td class="num" data-label="Waiting"><span class="${v.now - t.dueAt > LAG_DEGRADED_MS ? "bad-text" : "warn-text"}">${durationText(v.now - t.dueAt)}</span></td>
 <td data-label="Due" class="nowrap">${timeText(t.dueAt)}</td>
-<td data-label="Now">${t.leaseUntil !== null && t.leaseUntil > v.now ? "Being run" : "Waiting for the cron"}</td>
+<td data-label="Now">${t.leaseUntil !== null && t.leaseUntil > v.now ? "Being run" : t.firstRun ? "Waiting for its first run" : "Waiting for the cron"}</td>
 </tr>`,
   )}</tbody></table>${v.state.overdue > v.overdue.length ? html`<p class="detail-text">The ${v.overdue.length} waiting longest of ${num(v.state.overdue)}.</p>` : ""}`;
 }

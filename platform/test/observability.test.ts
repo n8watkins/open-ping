@@ -19,15 +19,17 @@ import {
   LAG_DEGRADED_MS,
   LAST_RUN_SQL,
   OLDEST_DUE_SQL,
+  OLDEST_NEW_SQL,
   OVERDUE_SQL,
   OVERDUE_MS,
+  RELEASE_STALE_MS,
   clearHealthCache,
   configChecks,
   healthReport,
   heartbeatStatement,
   platformHealth,
   readPlatformState,
-  type HealthReport,
+  type PublicHealth,
 } from "../src/observability/health";
 import {
   DURATION_BUCKETS_MS,
@@ -38,6 +40,7 @@ import {
   WINDOW_SQL,
   bucketOf,
   quantileFromBuckets,
+  rateMinutes,
   runMetrics,
   runMinuteStatements,
   schedulerMinutesCleanup,
@@ -70,7 +73,7 @@ function platformEnv(over: Partial<PlatformEnv> = {}): PlatformEnv {
 }
 
 let seq = 0;
-async function tenant(options: { nextAt?: number; status?: string; state?: string; ownerSuspended?: boolean; streak?: number } = {}): Promise<string> {
+async function tenant(options: { nextAt?: number; status?: string; state?: string; ownerSuspended?: boolean; streak?: number; updatedAt?: number } = {}): Promise<string> {
   seq++;
   const id = `obs${String(seq).padStart(13, "0")}`;
   const account = `acc_obs${seq}`;
@@ -79,9 +82,9 @@ async function tenant(options: { nextAt?: number; status?: string; state?: strin
     db
       .prepare(
         `INSERT INTO tenants (id, account_id, slug, script_name, status, plan, provision_state, schedule_next_at, owner_suspended_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'hosted', ?, ?, ?, 0, 0)`,
+         VALUES (?, ?, ?, ?, ?, 'hosted', ?, ?, ?, 0, ?)`,
       )
-      .bind(id, account, `obs${seq}`, `t-${id}`, options.status ?? "active", options.state ?? "ready", options.nextAt ?? T0 + 5 * MINUTE_MS, options.ownerSuspended ? T0 : null),
+      .bind(id, account, `obs${seq}`, `t-${id}`, options.status ?? "active", options.state ?? "ready", options.nextAt ?? T0 + 5 * MINUTE_MS, options.ownerSuspended ? T0 : null, options.updatedAt ?? T0 - 30_000),
   ]);
   if (options.streak !== undefined) {
     await db
@@ -215,11 +218,34 @@ describe("the platform health check", () => {
     await tenant({ nextAt: long, status: "suspended" });
     await tenant({ nextAt: long, ownerSuspended: true });
     await tenant({ nextAt: long, state: "uploaded" });
-    // A new tenant (due 0, "as soon as it is ready") is the cron's next claim, not lag.
-    await tenant({ nextAt: 0 });
+    // A tenant that just became ready (due 0) is the cron's next claim, not lag.
+    await tenant({ nextAt: 0, updatedAt: T0 - 30_000 });
     const r = await report();
     expect(r.ok).toBe(true);
-    expect(r.checks.scheduler).toMatchObject({ oldestOverdueSeconds: 0, overdueTenants: 0 });
+    expect(r.checks.scheduler).toMatchObject({ oldestOverdueSeconds: 30, overdueTenants: 0 });
+  });
+
+  it("counts a new tenant that never gets its first run, from when it became ready", async () => {
+    await beats();
+    await tenant({ nextAt: 0, updatedAt: T0 - 3 * MINUTE_MS });
+    let r = await report();
+    expect(r.checks.scheduler).toMatchObject({ ok: true, oldestOverdueSeconds: 180, overdueTenants: 1 });
+    clearHealthCache();
+    await tenant({ nextAt: 0, updatedAt: T0 - 20 * MINUTE_MS });
+    r = await report();
+    expect(r.checks.scheduler).toMatchObject({ ok: false, oldestOverdueSeconds: 1200, overdueTenants: 2 });
+  });
+
+  it("is degraded when the queue refused the scheduler's last batch, though the enqueue ran", async () => {
+    await db.batch([heartbeatStatement(db, "cron", T0 - 20_000), heartbeatStatement(db, "enqueue", T0 - 20_000, { sent: 0, returned: 40 })]);
+    let r = await report();
+    expect(r.checks.queue).toMatchObject({ ok: false, sent: 0, returned: 40 });
+    expect(r.problems).toEqual(["The queue refused the scheduler's last batch."]);
+    // Some sent and some given back is a partial hiccup the next tick retries, not an outage.
+    clearHealthCache();
+    await heartbeatStatement(db, "enqueue", T0 - 20_000, { sent: 100, returned: 40 }).run();
+    r = await report();
+    expect(r.checks.queue.ok).toBe(true);
   });
 
   it("counts tenants failing 3 runs in a row, and alarms at 5 of them", async () => {
@@ -249,6 +275,15 @@ describe("the platform health check", () => {
     r = await report();
     expect(r.ok).toBe(false);
     expect(r.problems).toEqual(["The rollout of 0.17.0 is paused and needs the owner."]);
+    // Rolling, but nothing has moved for over an hour: stuck.
+    clearHealthCache();
+    await db.prepare("UPDATE releases SET state = 'rolling', updated_at = ?").bind(T0 - RELEASE_STALE_MS - 60_000).run();
+    r = await report();
+    expect(r.checks.release.ok).toBe(false);
+    expect(r.problems).toEqual(["The rollout of 0.17.0 hasn't moved in 61 minutes."]);
+    clearHealthCache();
+    await db.prepare("UPDATE releases SET updated_at = ?").bind(T0 - RELEASE_STALE_MS + 60_000).run();
+    expect((await report()).checks.release.ok).toBe(true);
     // A finished release isn't in progress.
     clearHealthCache();
     await db.prepare("UPDATE releases SET state = 'done'").run();
@@ -290,39 +325,49 @@ describe("the platform health check", () => {
   });
 });
 
-describe("GET app.<domain>/__health", () => {
-  const app = createApp({
-    dispatcher: () => new FakeDispatcher(),
-    capability: () => ({}) as PlatformCapability,
-    now: () => T0,
-  });
+describe("GET app.<domain>/__health and /healthz", () => {
+  const appWith = (edgeCache: Cache | null) =>
+    createApp({ dispatcher: () => new FakeDispatcher(), capability: () => ({}) as PlatformCapability, now: () => T0, edgeCache });
+  const app = appWith(null);
 
-  async function get(host: string, path = "/__health", over: Partial<PlatformEnv> = {}) {
+  async function get(host: string, path = "/__health", over: Partial<PlatformEnv> = {}, a = app, ip = "192.0.2.7") {
     const ctx = createExecutionContext();
-    const res = await app.fetch(new Request(`https://${host}${path}`), platformEnv(over), ctx);
+    const res = await a.fetch(new Request(`https://${host}${path}`, { headers: { "cf-connecting-ip": ip } }), platformEnv(over), ctx);
     await waitOnExecutionContext(ctx);
     return res;
   }
 
-  it("answers 200 with the report when the platform is well, uncached by anything between", async () => {
+  it("answers 200 with each check as a yes or no, and nothing else, uncached by anything between", async () => {
     await beats();
+    await tenant({ streak: 4 });
+    await release("rolling");
     const res = await get(`app.${DOMAIN}`);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("content-type")).toContain("application/json");
-    const body = (await res.json()) as HealthReport;
-    expect(body.ok).toBe(true);
-    expect(body.checks.scheduler.ok).toBe(true);
+    const body = (await res.json()) as PublicHealth;
+    expect(body).toEqual({
+      ok: true,
+      status: "ok",
+      service: "openping-platform",
+      checkedAt: new Date(T0).toISOString(),
+      maxAgeSeconds: 10,
+      checks: { database: true, cron: true, queue: true, scheduler: true, tenants: true, release: true, config: true },
+    });
   });
 
-  it("answers 503 when it isn't, so a plain HTTP monitor alerts on the status alone", async () => {
-    const res = await get(`app.${DOMAIN}`);
+  it("answers 503 when it isn't, so a plain HTTP monitor alerts on the status alone, and never says why in public", async () => {
+    await release("paused");
+    for (let i = 0; i < FAILING_DEGRADED; i++) await tenant({ streak: 7 });
+    const res = await get(`app.${DOMAIN}`, "/__health", { STRIPE_WEBHOOK_SECRET: "" });
     expect(res.status).toBe(503);
-    const body = (await res.json()) as HealthReport;
+    const text = await res.text();
+    const body = JSON.parse(text) as PublicHealth;
     expect(body).toMatchObject({ ok: false, status: "degraded" });
     // The part a public status page watches is in the JSON, at a stable path.
-    expect(body.checks.scheduler.ok).toBe(true);
-    expect(body.checks.cron.ok).toBe(false);
+    expect(body.checks).toMatchObject({ scheduler: true, cron: false, tenants: false, release: false, config: false });
+    // No counts, versions, reasons or setting names.
+    for (const leak of ["0.17.0", "problems", "failing", "billing", "STRIPE", "sent", String(FAILING_DEGRADED)]) expect(text).not.toContain(leak);
   });
 
   it("is only on the platform's own host, never on a customer's", async () => {
@@ -336,7 +381,71 @@ describe("GET app.<domain>/__health", () => {
     expect((await get(`app.${DOMAIN}`)).status).toBe(200);
     const live = await get(`app.${DOMAIN}`, "/healthz");
     expect(live.status).toBe(200);
+    expect(live.headers.get("cache-control")).toBe("no-store");
     expect(await live.json()).toEqual({ ok: true, service: "openping-platform", db: "ok" });
+  });
+
+  it("shares each answer per location for 10 seconds, so a burst reaches the database once", async () => {
+    const cache = await caches.open(`health-${crypto.randomUUID()}`);
+    const cachedApp = appWith(cache);
+    await beats();
+    let batches = 0;
+    let firsts = 0;
+    const counting = new Proxy(db, {
+      get(target, prop) {
+        if (prop === "batch") return (s: D1PreparedStatement[]) => (batches++, target.batch(s));
+        if (prop === "prepare") {
+          return (sql: string) => {
+            const statement = target.prepare(sql);
+            if (sql === "SELECT 1") {
+              return { first: () => (firsts++, statement.first()) } as unknown as D1PreparedStatement;
+            }
+            return statement;
+          };
+        }
+        const value = Reflect.get(target, prop) as unknown;
+        return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    for (let i = 0; i < 20; i++) {
+      clearHealthCache(); // not the isolate's copy: the location's
+      const health = await get(`app.${DOMAIN}`, `/__health?n=${i}`, { PLATFORM_DB: counting }, cachedApp);
+      expect(health.status).toBe(200);
+      expect(health.headers.get("cache-control")).toBe("no-store");
+      expect(health.headers.get("x-health-cache")).toBe(i === 0 ? "miss" : "hit");
+      expect((await get(`app.${DOMAIN}`, "/healthz", { PLATFORM_DB: counting }, cachedApp)).status).toBe(200);
+    }
+    expect(batches).toBe(1);
+    expect(firsts).toBe(1);
+  });
+
+  it("caches an outage's 503 the same way, so it logs about once per location per 10 seconds", async () => {
+    const cache = await caches.open(`health-${crypto.randomUUID()}`);
+    const cachedApp = appWith(cache);
+    const broken = { prepare: () => ({ first: () => Promise.reject(new Error("D1 down")) }), batch: () => Promise.reject(new Error("D1 down")) } as unknown as D1Database;
+    const lines: LogLine[] = [];
+    restoreLogs = captureLogs((l) => lines.push(l));
+    for (let i = 0; i < 5; i++) {
+      clearHealthCache();
+      expect((await get(`app.${DOMAIN}`, "/healthz", { PLATFORM_DB: broken }, cachedApp)).status).toBe(503);
+      expect((await get(`app.${DOMAIN}`, "/__health", { PLATFORM_DB: broken }, cachedApp)).status).toBe(503);
+    }
+    expect(lines.filter((l) => l.event === "health.db_failed")).toHaveLength(2);
+  });
+
+  it("answers 429 to one caller past the rate limit binding, and keys an IPv6 caller by its /64", async () => {
+    await beats();
+    const keys: string[] = [];
+    const limiter: RateLimit = { limit: async ({ key }) => (keys.push(key), { success: keys.length <= 2 }) };
+    expect((await get(`app.${DOMAIN}`, "/__health", { HEALTH_RATE_LIMIT: limiter }, app, "2001:db8:1:2:3:4:5:6")).status).toBe(200);
+    expect((await get(`app.${DOMAIN}`, "/healthz", { HEALTH_RATE_LIMIT: limiter }, app, "2001:db8:1:2:9:9:9:9")).status).toBe(200);
+    const limited = await get(`app.${DOMAIN}`, "/__health", { HEALTH_RATE_LIMIT: limiter }, app, "2001:db8:1:2::1");
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("10");
+    expect(new Set(keys)).toEqual(new Set(["2001:db8:1:2"]));
+    // A limiter that fails never fails the check.
+    const failing: RateLimit = { limit: async () => Promise.reject(new Error("binding down")) };
+    expect((await get(`app.${DOMAIN}`, "/__health", { HEALTH_RATE_LIMIT: failing })).status).toBe(200);
   });
 });
 
@@ -357,6 +466,7 @@ describe("the health check's reads", () => {
     const plans = {
       heartbeats: await plan(HEARTBEATS_SQL),
       oldest: await plan(OLDEST_DUE_SQL),
+      oldestNew: await plan(OLDEST_NEW_SQL),
       overdue: await plan(OVERDUE_SQL, T0),
       failing: await plan(FAILING_SQL, FAILING_STREAK),
       lastRun: await plan(LAST_RUN_SQL),
@@ -364,7 +474,8 @@ describe("the health check's reads", () => {
     };
     expect(plans.heartbeats).toContain("SEARCH platform_heartbeats USING PRIMARY KEY (name=?)");
     expect(plans.oldest).toContain("SEARCH tenants USING INDEX idx_tenants_schedule_due (schedule_next_at>?)");
-    expect(plans.overdue).toContain("SEARCH tenants USING INDEX idx_tenants_schedule_due (schedule_next_at>? AND schedule_next_at<?)");
+    expect(plans.overdue).toContain("SEARCH tenants USING INDEX idx_tenants_schedule_due (schedule_next_at<?)");
+    expect(plans.oldestNew).toContain("SEARCH tenants USING INDEX idx_tenants_schedule_due (schedule_next_at=?)");
     // The failing index first, then each failing tenant's row by its key.
     expect(plans.failing).toContain("SEARCH s USING COVERING INDEX idx_scheduler_stats_failing (streak>?)");
     expect(plans.failing).toMatch(/SEARCH t USING INDEX sqlite_autoindex_tenants_1 \(id=\?\)/);
@@ -382,6 +493,7 @@ describe("the health check's reads", () => {
     const statements = [
       db.prepare(HEARTBEATS_SQL),
       db.prepare(OLDEST_DUE_SQL),
+      db.prepare(OLDEST_NEW_SQL),
       db.prepare(OVERDUE_SQL).bind(T0 - OVERDUE_MS),
       db.prepare(FAILING_SQL).bind(FAILING_STREAK),
       db.prepare(LAST_RUN_SQL),
@@ -390,7 +502,7 @@ describe("the health check's reads", () => {
     const results = await db.batch(statements);
     const read = results.map((r) => r.meta.rows_read);
     // 61 tenants, 61 stats rows: the reads stay at the rows in trouble plus index probes.
-    expect(read.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(12);
+    expect(read.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(14);
     const state = await readPlatformState(db, T0);
     expect(state).toMatchObject({ overdue: 1, failing: 1, oldestDueAt: T0 - 10 * MINUTE_MS, lastRunAt: T0 - MINUTE_MS });
   });
@@ -448,6 +560,8 @@ describe("the run metrics", () => {
     expect(quarter!.runsPerMinute).toBeCloseTo(21 / 15);
     expect(hour).toMatchObject({ minutes: 60, runs: 21 });
     expect(day).toMatchObject({ minutes: 1440, runs: 22 });
+    // The data starts 3 hours back: the day's rate is over those 180 minutes, not 1,440.
+    expect(day!.runsPerMinute).toBeCloseTo(22 / 180);
     expect(metrics.hours.map((h) => [new Date(h.at).toISOString(), h.runs, h.errors])).toEqual([
       ["2026-11-02T06:00:00.000Z", 1, 0],
       ["2026-11-02T08:00:00.000Z", 21, 1],
@@ -475,6 +589,13 @@ describe("the run metrics", () => {
     expect(day.results).toHaveLength(24);
     // Each of the day's minutes once, and once more from the GROUP BY's sorter: never the older day.
     expect(day.meta.rows_read).toBeLessThanOrEqual(2 * 1441);
+  });
+
+  it("rate over the whole window, or the minutes since the data starts when that is shorter", () => {
+    expect(rateMinutes(1440, 10_000, null)).toBe(1440);
+    expect(rateMinutes(1440, 10_000, 10_000 - 90)).toBe(90);
+    expect(rateMinutes(15, 10_000, 10_000 - 90)).toBe(15);
+    expect(rateMinutes(15, 10_000, 10_000)).toBe(1);
   });
 
   it("keep 8 days", async () => {
