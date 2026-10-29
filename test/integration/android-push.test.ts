@@ -138,6 +138,54 @@ describe("the Android app's notifications", () => {
     expect(n).toBe(0);
   });
 
+  it("stay off once turned off or removed, however often the app refreshes", async () => {
+    const { device } = await (await register(ENV, { token: TOKEN, projectId: FAKE_PROJECT })).json<{ device: { id: string } }>();
+    const refresh = (token: string, extra: Record<string, unknown> = {}) =>
+      register(ENV, { token, projectId: FAKE_PROJECT, refresh: true, ...extra });
+
+    // Turned off under Push devices: a refresh keeps it off.
+    expect((await call(ENV, `/api/push/devices/${device.id}/disable`, { method: "POST" })).status).toBe(200);
+    const kept = await refresh(TOKEN);
+    expect(kept.status).toBe(200);
+    expect((await kept.json<{ device: { disabled: boolean } }>()).device.disabled).toBe(true);
+
+    // Turned on again by a person tapping "Turn on for this phone".
+    const on = await register(ENV, { token: TOKEN, projectId: FAKE_PROJECT });
+    expect((await on.json<{ device: { disabled: boolean } }>()).device.disabled).toBe(false);
+
+    // Firebase changed the token: the refresh moves the same row to the new one.
+    const NEW = `${TOKEN}-rotated`;
+    const moved = await (await refresh(NEW, { previousToken: TOKEN })).json<{ device: { id: string } }>();
+    expect(moved.device.id).toBe(device.id);
+    await downIncident(ENV);
+    await processOutbox(ENV);
+    expect(fake.sent.map((m) => m.token)).toEqual([NEW]);
+
+    // Removed: the refresh says so and adds nothing back.
+    expect((await call(ENV, `/api/push/devices/${device.id}`, { method: "DELETE" })).status).toBe(200);
+    const gone = await refresh(NEW);
+    expect(gone.status).toBe(404);
+    expect(await gone.json()).toEqual({ error: "fcm_device_removed" });
+    const { n } = (await env.DB.prepare("SELECT COUNT(*) AS n FROM push_subscriptions").first<{ n: number }>())!;
+    expect(n).toBe(0);
+  });
+
+  it("are forgotten when the app removes the install, and capped at 20 phones", async () => {
+    await register(ENV, { token: TOKEN, projectId: FAKE_PROJECT });
+    const del = await call(ENV, "/api/push/fcm", { method: "DELETE", json: { token: TOKEN } });
+    expect(del.status).toBe(200);
+    expect((await call(ENV, "/api/push/fcm", { method: "DELETE", json: { token: TOKEN } })).status).toBe(404);
+
+    for (let i = 0; i < 20; i++) {
+      expect((await register(ENV, { token: `${TOKEN}-${i}`, projectId: FAKE_PROJECT })).status).toBe(201);
+    }
+    const over = await register(ENV, { token: `${TOKEN}-20`, projectId: FAKE_PROJECT });
+    expect(over.status).toBe(409);
+    expect(await over.json()).toEqual({ error: "fcm_device_limit", limit: 20 });
+    // A phone already on the list still refreshes.
+    expect((await register(ENV, { token: `${TOKEN}-3`, projectId: FAKE_PROJECT })).status).toBe(201);
+  });
+
   it("send a test notification from Integrations", async () => {
     const { device } = await (await register(ENV, { token: TOKEN, projectId: FAKE_PROJECT })).json<{ device: { id: string } }>();
     const res = await call(ENV, `/api/push/devices/${device.id}/test`, { method: "POST" });

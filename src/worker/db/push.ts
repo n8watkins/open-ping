@@ -281,49 +281,75 @@ export function sendableIds(rows: Array<{ id: string; kind?: string | null }>, s
     .map((row) => row.id);
 }
 
+/** At most this many phones with the Android app per install. */
+export const MAX_FCM_DEVICES = 20;
+
+export type FcmRegistration =
+  | { ok: true; device: PushSubscriptionRecord }
+  | { ok: false; error: "fcm_device_removed" | "fcm_device_limit" };
+
+const fcmHash = (token: string) => sha256hex(`fcm:${token}`);
+
 /**
- * Register (or refresh) the Android app on one phone by its FCM token
- * (POST /api/push/fcm). Keyed by the token's hash, like a Web Push endpoint;
- * a phone whose token changed registers again and the old row is pruned
- * when FCM reports it gone.
+ * The Android app on one phone, by its FCM token (POST /api/push/fcm), keyed
+ * by the token's hash like a Web Push endpoint.
+ *
+ * - Turning notifications on (`refresh` false) adds the phone, or turns its
+ *   row back on, within MAX_FCM_DEVICES.
+ * - The app's quiet refresh on each start (`refresh` true) only keeps an
+ *   existing row up to date: a new token replaces `previousToken`'s, and a
+ *   row the owner turned off stays off. A phone the owner removed is not
+ *   added back ("fcm_device_removed"), so the app stops asking.
  */
-export async function upsertFcmDevice(
+export async function registerFcmDevice(
   env: Env,
-  input: { token: string; label?: string; userAgent?: string },
-): Promise<PushSubscriptionRecord> {
-  const endpointHash = await sha256hex(`fcm:${input.token}`);
-  const sealed = await protectPushSecrets(env, { endpoint: input.token, p256dh: "", auth: "" });
-  // A re-registration refreshes the row; INSERT OR IGNORE covers two at once
-  // (the endpoint and its hash are both unique).
-  const updated = await env.DB.prepare(
-    `UPDATE push_subscriptions SET label = ?, user_agent = ?, disabled = 0, failures = 0, last_failure_at = NULL
-      WHERE endpoint_hash = ?`,
+  input: { token: string; previousToken?: string; label?: string; userAgent?: string; refresh: boolean },
+): Promise<FcmRegistration> {
+  const hash = await fcmHash(input.token);
+  const previousHash = input.previousToken && input.previousToken !== input.token ? await fcmHash(input.previousToken) : null;
+  const existing = await env.DB.prepare(
+    `SELECT id, endpoint_hash FROM push_subscriptions
+      WHERE kind = 'fcm' AND endpoint_hash IN (?, ?) ORDER BY endpoint_hash = ? DESC LIMIT 1`,
   )
-    .bind(input.label ?? null, input.userAgent ?? null, endpointHash)
-    .run();
-  if (!updated.meta.changes) {
+    .bind(hash, previousHash ?? hash, hash)
+    .first<{ id: string; endpoint_hash: string }>();
+
+  if (existing) {
+    const sealed = await protectPushSecrets(env, { endpoint: input.token, p256dh: "", auth: "" });
+    await env.DB.prepare(
+      `UPDATE push_subscriptions SET endpoint = ?, endpoint_hash = ?, label = ?, user_agent = ?,
+         failures = 0, last_failure_at = NULL${input.refresh ? "" : ", disabled = 0"}
+        WHERE id = ?`,
+    )
+      .bind(sealed.endpoint, hash, input.label ?? null, input.userAgent ?? null, existing.id)
+      .run();
+  } else {
+    if (input.refresh) return { ok: false, error: "fcm_device_removed" };
+    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM push_subscriptions WHERE kind = 'fcm'").first<{ n: number }>();
+    if ((count?.n ?? 0) >= MAX_FCM_DEVICES) return { ok: false, error: "fcm_device_limit" };
+    const sealed = await protectPushSecrets(env, { endpoint: input.token, p256dh: "", auth: "" });
+    // INSERT OR IGNORE: two registrations at once make one row (the hash is unique).
     await env.DB.prepare(
       `INSERT OR IGNORE INTO push_subscriptions (
          id, kind, endpoint, endpoint_hash, p256dh, auth, label, user_agent, platform, created_at
        ) VALUES (?, 'fcm', ?, ?, ?, ?, ?, ?, 'android', ?)`,
     )
-      .bind(
-        newId("psub"),
-        sealed.endpoint,
-        endpointHash,
-        sealed.p256dh,
-        sealed.auth,
-        input.label ?? null,
-        input.userAgent ?? null,
-        Date.now(),
-      )
+      .bind(newId("psub"), sealed.endpoint, hash, sealed.p256dh, sealed.auth, input.label ?? null, input.userAgent ?? null, Date.now())
       .run();
   }
   const row = await env.DB.prepare("SELECT * FROM push_subscriptions WHERE endpoint_hash = ?")
-    .bind(endpointHash)
+    .bind(hash)
     .first<PushSubscriptionRow>();
-  if (!row) throw new Error("upsertFcmDevice: failed to read back the device");
-  return rowToSubscription(env, row);
+  if (!row) throw new Error("registerFcmDevice: failed to read back the device");
+  return { ok: true, device: await rowToSubscription(env, row) };
+}
+
+/** Forget this phone's app (DELETE /api/push/fcm, when the app removes the install). */
+export async function deleteFcmDevice(env: Env, token: string): Promise<boolean> {
+  const res = await env.DB.prepare("DELETE FROM push_subscriptions WHERE kind = 'fcm' AND endpoint_hash = ?")
+    .bind(await fcmHash(token))
+    .run();
+  return (res.meta.changes ?? 0) > 0;
 }
 
 export async function subscriptionExists(env: Env, id: string): Promise<boolean> {

@@ -85,5 +85,7 @@ export type AppBridgeReply =
       projectId: string;
       /** The phone, for the device list: "Pixel 8". */
       device?: string;
+      /** The token this install's page was given before, when Firebase has changed it since. */
+      previousToken?: string;
     }
   | { type: "push.error"; reason: "unavailable" | "denied" | "failed" };

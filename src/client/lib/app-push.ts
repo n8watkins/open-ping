@@ -27,7 +27,7 @@ function remembered(): boolean {
   }
 }
 
-export type AppPushResult = { ok: true } | { ok: false; message: string };
+export type AppPushResult = { ok: true } | { ok: false; message: string; code?: string };
 
 /** What went wrong, for the person: never a raw error code. */
 export function appPushError(reason: string): string {
@@ -44,6 +44,8 @@ export function appPushError(reason: string): string {
       return "This OpenPing can't send notifications to the app yet: its owner sets FCM_SERVICE_ACCOUNT first.";
     case "fcm_project_mismatch":
       return "This OpenPing sends through a different Firebase project than this app uses, so its notifications can't reach it.";
+    case "fcm_device_limit":
+      return "This OpenPing already sends to 20 phones with the app. Remove one under Push devices first.";
     default:
       return "Couldn't turn on notifications for this phone. Please try again.";
   }
@@ -56,17 +58,23 @@ async function register(csrf: string | undefined, interactive: boolean): Promise
     ["push.token", "push.error"],
     interactive ? 120_000 : 10_000,
   );
-  if (!reply) return { ok: false, message: appPushError("no_answer") };
-  if (reply.type === "push.error") return { ok: false, message: appPushError(reply.reason) };
+  if (!reply) return { ok: false, message: appPushError("no_answer"), code: "no_answer" };
+  if (reply.type === "push.error") return { ok: false, message: appPushError(reply.reason), code: reply.reason };
   try {
     await api("/api/push/fcm", {
       method: "POST",
       csrf,
-      json: { token: reply.token, projectId: reply.projectId, label: reply.device },
+      json: {
+        token: reply.token,
+        projectId: reply.projectId,
+        label: reply.device,
+        ...(interactive ? {} : { refresh: true }),
+        ...(reply.previousToken ? { previousToken: reply.previousToken } : {}),
+      },
     });
   } catch (e) {
     const code = e instanceof ApiError ? (e.data as { error?: string } | null)?.error : undefined;
-    return { ok: false, message: appPushError(code ?? "") };
+    return { ok: false, message: appPushError(code ?? ""), code };
   }
   remember(true);
   return { ok: true };
@@ -79,11 +87,14 @@ export function enableAppPush(csrf: string | undefined): Promise<AppPushResult> 
 
 /**
  * Send this phone's token again if it was registered here before: Firebase
- * changes tokens now and then. Asks nothing; does nothing in a browser.
+ * changes tokens now and then. Asks nothing, never adds the phone back or
+ * turns it on again (the server keeps a removed or turned-off phone that
+ * way), and does nothing in a browser.
  */
 export async function refreshAppPush(csrf: string | undefined): Promise<void> {
   if (!remembered()) return;
   const result = await register(csrf, false);
-  // Notifications were turned off on the phone: stop trying until they are turned on here again.
-  if (!result.ok && result.message === appPushError("denied")) remember(false);
+  // Removed under Push devices, or notifications turned off on the phone:
+  // stop until someone turns them on here again.
+  if (!result.ok && (result.code === "fcm_device_removed" || result.code === "denied")) remember(false);
 }

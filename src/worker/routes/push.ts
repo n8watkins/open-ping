@@ -10,7 +10,9 @@ import {
   deleteSubscription,
   setDisabled,
   recordPushResult,
-  upsertFcmDevice,
+  registerFcmDevice,
+  deleteFcmDevice,
+  MAX_FCM_DEVICES,
 } from "../db/push";
 import { fcmProjectId, isFcmToken, sendFcm, serviceAccount } from "../notifications/push/fcm";
 import { fcmAlert } from "../notifications/dispatcher";
@@ -80,6 +82,10 @@ const fcmSchema = z.object({
   projectId: z.string().min(1).max(100),
   /** The phone, for the device list: "Pixel 8". */
   label: z.string().max(80).optional(),
+  /** The app's quiet refresh on start: never adds a phone or turns one back on. */
+  refresh: z.boolean().optional(),
+  /** The token the app sent before, when Firebase has changed it since. */
+  previousToken: z.string().refine(isFcmToken).optional(),
 });
 
 /** Register the Android app on this phone: its FCM token, revocable like any push device. */
@@ -90,13 +96,27 @@ push.post("/fcm", async (c) => {
   if (!parsed.success) return c.json({ error: "validation", issues: parsed.error.issues }, 400);
   // A token from another Firebase project would only ever fail to send.
   if (parsed.data.projectId !== projectId) return c.json({ error: "fcm_project_mismatch", projectId }, 409);
-  const device = await upsertFcmDevice(c.env, {
+  const result = await registerFcmDevice(c.env, {
     token: parsed.data.token,
+    previousToken: parsed.data.previousToken,
     label: parsed.data.label ? `OpenPing app on ${parsed.data.label}` : "OpenPing app",
     userAgent: c.req.header("user-agent") ?? undefined,
+    refresh: parsed.data.refresh === true,
   });
-  const { endpoint: _token, p256dh: _p, auth: _a, ...summary } = device;
-  return c.json({ device: summary }, 201);
+  if (!result.ok) {
+    // Removed under Push devices: the app forgets it was registered here.
+    if (result.error === "fcm_device_removed") return c.json({ error: result.error }, 404);
+    return c.json({ error: result.error, limit: MAX_FCM_DEVICES }, 409);
+  }
+  const { endpoint: _token, p256dh: _p, auth: _a, ...summary } = result.device;
+  return c.json({ device: summary }, parsed.data.refresh ? 200 : 201);
+});
+
+/** The app forgets this install (it was removed in the app): forget this phone's notifications. */
+push.delete("/fcm", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { token?: unknown };
+  if (!isFcmToken(body.token)) return c.json({ error: "validation" }, 400);
+  return (await deleteFcmDevice(c.env, body.token)) ? c.json({ ok: true }) : c.json({ error: "not_found" }, 404);
 });
 
 push.get("/devices", async (c) => {
