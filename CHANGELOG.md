@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.18.0 - 2026-10-29
+
+### New
+
+- Settings > Sign-in & security now lists every signed-in session with its own Sign out, ready for the OpenPing Android app.
+- The planned price of 1-minute checks on OpenPing Hosted is now $24 a year.
+
+### Fixed
+
+- Sites whose names start with fc, fd, fe or ff, such as fedoraproject.org, feedly.com and ffmpeg.org, can be monitored and used as alert destinations again; they were wrongly refused as private addresses.
+
 ## 0.17.1 - 2026-10-29
 
 ### Fixed
