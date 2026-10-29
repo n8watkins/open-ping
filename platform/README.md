@@ -74,7 +74,11 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
   - dunning: a failed payment emails the customer at once with Stripe's next try and a link to `/billing` (once per invoice and attempt, `billing_emails`, however often the event is delivered), and the account page shows it until it is paid; failures and payments are ordered by when they happened, so a late `payment_failed` after a later `invoice.paid` shows and sends nothing; Stripe retries on its own schedule, and after the last retry it cancels the subscription (decision D11, a Stripe setting in owner setup below), which suspends the tenant as `canceled`; the account page then offers to subscribe again;
   - billing writes only `tenants.status`, `.plan`, `.billing_reason` and `.suspended_at`, never the owner's `owner_suspended_*`, so a payment can't lift the owner's suspension; a change reaches the tenant's props on its next call (at once in the isolate that took the webhook, within 30 seconds elsewhere, and on the scheduler's next run);
   - every Stripe request pins API version `2026-09-30.endive`, and the shapes it reads are checked against Stripe's current reference (links in `src/billing/stripe.ts`).
-- Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit` and `reportUsage` are real, the latter keeping each tenant's latest counts in `tenant_usage` for the console; `sendEmail` is a stub until A5).
+- Exposes `TenantPlatform`, the capability each customer's OpenPing receives as `props.platform` (`audit`, `reportUsage`, which keeps each tenant's latest counts in `tenant_usage` for the console, and `sendEmail`).
+- Sends all its mail through one Resend account (`src/mail.ts`) from the Hosted domain, so no customer ever holds the key:
+  - its own emails (`src/emails.ts`: sign-in, a new passkey, and the account emails of D2), from `MAIL_FROM`, with replies to the support address;
+  - each customer's OpenPing's email through `sendEmail`, from `TENANT_MAIL_FROM` (or `MAIL_FROM`), one message per recipient, tagged with the tenant and the category, capped at the plan's `emailsPerDay` per UTC day in `tenant_email_usage` (one statement reserves the places, so two sends can't both take the last one; a send the provider refuses gives its place back), with the contract's answers: over the cap, or when Resend's own day is spent, `email_quota_exceeded`, which the tenant holds until the next UTC midnight;
+  - all of it is off while `RESEND_API_KEY` is missing or a From isn't on `HOSTED_DOMAIN`; the console's tenant page shows that tenant's emails today, failed and over the cap.
 
 ## Layout
 
@@ -93,7 +97,8 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 | `src/ui.ts` | The HTML shell, the stylesheet in OpenPing's tokens, and the escaping `html` template |
 | `src/account-routes.ts`, `src/account-pages.ts` | Sign-up, sign-in, the account page, `/start` and `/open` |
 | `src/auth/` | Sessions, email codes and links, passkeys, GitHub OAuth, ceremonies and rate limits |
-| `src/accounts.ts`, `src/mail.ts`, `src/handoff.ts` | Accounts and identities, the Resend mailer, minting hand-off tokens |
+| `src/accounts.ts`, `src/handoff.ts` | Accounts and identities, minting hand-off tokens |
+| `src/mail.ts`, `src/emails.ts` | The Resend mailer and its settings; the platform's emails |
 | `src/admin/` | The admin console: `owner.ts` (who may use it), `data.ts` (queries, suspend and resume), `waitlist.ts` (the import), `pages.ts`, `routes.ts` |
 | `src/provisioning.ts` | The provisioning state machine: `requestTenant`, `runProvisioning`, `removeTenant`, and `provisionDue` (the retry sweep) |
 | `src/billing/` | Billing: `stripe.ts` (the Stripe client, pinned version), `signature.ts` (webhook signatures), `webhook.ts`, `state.ts` (the state machine and the trial sweep), `routes.ts`, `pages.ts`, `config.ts` |
@@ -104,7 +109,7 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 | `src/cloudflare/upload.ts` | Uploading a user Worker: the assets manifest and buckets, then the script with its metadata |
 | `src/keys.ts` | Tenant `MASTER_KEY` generation and escrow under `PLATFORM_KEY` |
 | `src/bundle.ts` | The tenant bundle (one OpenPing release) and where provisioning reads it from (R2, written by the release runner) |
-| `test/` | workerd tests; `FakeDispatcher` (the dispatch namespace), `FakeCloudflareApi` (the Cloudflare API) and `fakeOpenPing` (a tenant answering the internal paths) |
+| `test/` | workerd tests; `FakeDispatcher` (the dispatch namespace), `FakeCloudflareApi` (the Cloudflare API), `FakeMailer` (the outbox) and `fakeOpenPing` (a tenant answering the internal paths) |
 
 The contract types come from [`../src/shared/hosted-contract.ts`](../src/shared/hosted-contract.ts), shared with OpenPing.
 The platform has no dependencies of its own; it uses the repository's Hono, Wrangler and test tooling.
@@ -174,7 +179,7 @@ They are needed before staging in wave 3 ([build plan, section 12](../docs/HOSTE
 5. **The queues:** `wrangler queues create openping-provision` (provisioning) and `wrangler queues create openping-schedule` (the scheduler, B4); this Worker consumes both (`queues.consumers` in `wrangler.jsonc`).
    For staging, `openping-provision-staging` and `openping-schedule-staging`: the consumer routes by the queue name's prefix.
 6. **The bundle bucket:** `wrangler r2 bucket create openping-tenant-bundles`; the release runner (C1) writes each release there in the layout `src/bundle.ts` describes.
-7. **Mail and GitHub for sign-in:** verify a sending domain in Resend and set `MAIL_FROM`; create a GitHub OAuth app with the callback `https://app.<domain>/auth/github/callback` and set `GITHUB_CLIENT_ID`; set `SIGN_UPS` to `open` at launch.
+7. **Mail and GitHub for sign-in:** verify `HOSTED_DOMAIN` (or a subdomain of it, such as `mail.<domain>`) as a sending domain in Resend, with its SPF, DKIM and DMARC records in Cloudflare DNS; set `MAIL_FROM` (for example `OpenPing Hosted <signin@<domain>>`) and `TENANT_MAIL_FROM` (for example `OpenPing <alerts@<domain>>`), both on that domain; make the Resend API key with **Sending access** to that domain only; create a GitHub OAuth app with the callback `https://app.<domain>/auth/github/callback` and set `GITHUB_CLIENT_ID`; set `SIGN_UPS` to `open` at launch.
 8. **Secrets**, with `wrangler secret put` from the owner's machine and a copy of each in the password manager:
    - `HANDOFF_SIGNING_KEY`: the hand-off private key; `generateHandoffKeyPair()` in the contract makes the pair, and the public half goes in the `HANDOFF_PUBLIC_KEY` var in `wrangler.jsonc`, which provisioning copies to every tenant (O6);
    - `PLATFORM_KEY`: 32 random bytes in base64 (`openssl rand -base64 32`), encrypts the escrowed tenant keys (decision D4, O6); losing it means no tenant backup can be restored;

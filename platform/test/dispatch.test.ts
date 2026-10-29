@@ -167,7 +167,7 @@ describe("the platform capability", () => {
     expect(auditEventProblem({ action: "monitor.deleted", actor: "support", detail: { id: "m_1", n: 1, ok: true, none: null }, at: 0 })).toBeNull();
   });
 
-  it("answers email_unavailable until mail is wired", async () => {
+  it("answers email_unavailable while the platform has no mail set up", async () => {
     const cap = new TenantCapability(env.PLATFORM_DB, TENANT.id, TENANT.accountId);
     expect(await cap.sendEmail({ to: ["a@example.com"], subject: "s", text: "t", category: "alert" })).toMatchObject({
       ok: false,

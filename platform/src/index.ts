@@ -23,7 +23,7 @@ import { ceremonyCleanup } from "./auth/ceremonies";
 import { emailSignInCleanup } from "./auth/email-sign-in";
 import { rateLimitCleanup } from "./auth/rate-limit";
 import { sessionCleanup } from "./auth/sessions";
-import { TenantCapability } from "./capability";
+import { TenantCapability, emailUsageCleanup, tenantMailFromEnv } from "./capability";
 import { NamespaceDispatcher } from "./dispatch";
 import type { PlatformEnv } from "./env";
 import { mailerFromEnv } from "./mail";
@@ -44,7 +44,10 @@ export class TenantPlatform
   implements PlatformCapability
 {
   private capability(): TenantCapability {
-    return new TenantCapability(this.env.PLATFORM_DB, this.ctx.props.tenantId, this.ctx.props.accountId);
+    // The platform's own Resend key, in the platform only: the tenant gets a
+    // stub that can ask for one email at a time, capped per day.
+    const mail = tenantMailFromEnv(this.env, mailerFromEnv(this.env));
+    return new TenantCapability(this.env.PLATFORM_DB, this.ctx.props.tenantId, this.ctx.props.accountId, Date.now, mail);
   }
 
   sendEmail(message: HostedEmail): Promise<SendEmailResult> {
@@ -110,7 +113,7 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
     .catch((error) => console.error("[schedule] enqueue failed", error));
   const hourly = new Date(controller.scheduledTime).getUTCMinutes() === 7 ? [schedulerDaysCleanup(db, now), ...billingRecordsCleanup(db, now)] : [];
   await db
-    .batch([sessionCleanup(db, now), emailSignInCleanup(db, now), ceremonyCleanup(db, now), rateLimitCleanup(db, now), ...hourly])
+    .batch([sessionCleanup(db, now), emailSignInCleanup(db, now), ceremonyCleanup(db, now), rateLimitCleanup(db, now), emailUsageCleanup(db, now), ...hourly])
     .catch((error) => console.error("[cleanup] failed", error));
   const setup = provisioningSetup(env, (tenant) => capabilityFor(ctx, tenant));
   if (!setup.ok) {

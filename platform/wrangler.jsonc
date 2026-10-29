@@ -34,9 +34,15 @@
     // "open" lets new accounts be made at app.<domain>/sign-up; anything else
     // lets only existing accounts sign in (staging testers, then launch).
     "SIGN_UPS": "closed",
-    // The From of sign-in emails, on a domain verified in Resend; email
-    // sign-in is off while it (or the RESEND_API_KEY secret) is empty.
+    // The From of the platform's own emails (sign-in, the account emails),
+    // an address on HOSTED_DOMAIN, the one domain verified in Resend. All
+    // platform mail is off while it (or the RESEND_API_KEY secret) is empty
+    // or on another domain (src/mail.ts).
     "MAIL_FROM": "",
+    // The From of every customer's OpenPing's mail (alerts, reports), sent
+    // through the platform capability with the platform's key; also on
+    // HOSTED_DOMAIN. Empty: MAIL_FROM.
+    "TENANT_MAIL_FROM": "",
     // The platform's GitHub OAuth app; GitHub sign-in is off while it (or the
     // GITHUB_CLIENT_SECRET secret) is empty.
     "GITHUB_CLIENT_ID": "",

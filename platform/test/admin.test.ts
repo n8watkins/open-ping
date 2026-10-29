@@ -21,7 +21,7 @@ import { StaticBundleSource, type TenantBundle } from "../src/bundle";
 import { TenantCapability } from "../src/capability";
 import type { PlatformEnv } from "../src/env";
 import { generateMasterKey } from "../src/keys";
-import type { Mailer, OutgoingEmail } from "../src/mail";
+import { FakeMailer } from "./fake-mailer";
 import { requestTenant, type ProvisioningDeps } from "../src/provisioning";
 import { clearTenantCache } from "../src/tenants";
 import { FakeCloudflareApi } from "./fake-cloudflare";
@@ -39,17 +39,7 @@ let owners = "";
 let pinned = "";
 let signingKey: string | undefined;
 
-class Outbox implements Mailer {
-  sent: OutgoingEmail[] = [];
-  async send(message: OutgoingEmail) {
-    this.sent.push(message);
-    return { ok: true as const, id: `m${this.sent.length}` };
-  }
-  lastCode(): string {
-    return /Code: (\d{6})/.exec(this.sent.at(-1)!.text)![1]!;
-  }
-}
-const outbox = new Outbox();
+const outbox = new FakeMailer();
 
 const noopPlatform: PlatformCapability = {
   sendEmail: async () => ({ ok: false, error: "email_unavailable", message: "" }),
@@ -465,6 +455,9 @@ describe("a tenant's page", () => {
     await env.PLATFORM_DB.prepare("INSERT INTO audit_events (at, account_id, tenant_id, actor, action, detail) VALUES (?, ?, ?, 'system', 'tenant.provisioned', ?)")
       .bind(clock, tenant.accountId, tenant.id, JSON.stringify({ version: "0.11.0", seconds: 41 }))
       .run();
+    await env.PLATFORM_DB.prepare("INSERT INTO tenant_email_usage (tenant_id, day, category, sent, failed, refused) VALUES (?, ?, 'alert', 12, 1, 0), (?, ?, 'report', 2, 0, 3)")
+      .bind(tenant.id, new Date(clock).toISOString().slice(0, 10), tenant.id, new Date(clock).toISOString().slice(0, 10))
+      .run();
     const res = await browser.fetch(`/admin/tenants/${tenant.id}`);
     expect(res.status).toBe(200);
     const page = await text(res);
@@ -478,6 +471,7 @@ describe("a tenant's page", () => {
       "Oct 28, 2026, 12:00 UTC",
       "7 of 20",
       "1 of 2",
+      "<dt>Emails today (UTC)</dt><dd>14 of 500, 1 failed, 3 over the cap</dd>",
       "tenant.provisioned",
       "version: 0.11.0 · seconds: 41",
       `href="https://detailco.${DOMAIN}"`,

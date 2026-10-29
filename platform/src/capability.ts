@@ -9,6 +9,8 @@
  * partial write.
  */
 
+import { tenantMailFrom, type Mailer, type MailEnv } from "./mail";
+import { effectiveLimits, tenantFromRow } from "./tenants";
 import {
   AUDIT_ACTION_PATTERN,
   AUDIT_ACTORS,
@@ -22,17 +24,158 @@ import {
 /** Upper bound on an audit event's JSON detail. */
 export const AUDIT_DETAIL_MAX_BYTES = 2048;
 
+/** The platform's mailer and the From a tenant's mail goes out as, or null while mail is off. */
+export interface TenantMail {
+  mailer: Mailer;
+  from: string;
+}
+
+/** The tenant mail for this env: Resend with the platform's key, from the Hosted domain. */
+export function tenantMailFromEnv(env: MailEnv, mailer: Mailer | null): TenantMail | null {
+  const from = tenantMailFrom(env);
+  return mailer && from ? { mailer, from } : null;
+}
+
+/** Limits on what one sendEmail may carry; OpenPing's own mail is far below them. */
+export const EMAIL_LIMITS = { recipients: 10, subject: 300, textBytes: 200_000, htmlBytes: 500_000 } as const;
+const CATEGORY_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
+// One address, no spaces, no angle brackets or commas that could smuggle in a second one.
+const ADDRESS_PATTERN = /^[^\s@<>,;"]{1,64}@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
+const bytes = (s: string) => new TextEncoder().encode(s).length;
+
+/** Why an email from a tenant is refused (one plain phrase), or null when it is fine. */
+export function hostedEmailProblem(message: HostedEmail): string | null {
+  if (!message || typeof message !== "object") return "not an object";
+  if (!Array.isArray(message.to) || message.to.length === 0) return "no recipient";
+  if (message.to.length > EMAIL_LIMITS.recipients) return `more than ${EMAIL_LIMITS.recipients} recipients`;
+  for (const to of message.to) if (typeof to !== "string" || to.length > 254 || !ADDRESS_PATTERN.test(to)) return "a recipient isn't an email address";
+  if (message.replyTo !== undefined && (typeof message.replyTo !== "string" || message.replyTo.length > 254 || !ADDRESS_PATTERN.test(message.replyTo))) {
+    return "the reply-to isn't an email address";
+  }
+  if (typeof message.subject !== "string" || !message.subject.trim() || message.subject.length > EMAIL_LIMITS.subject || /[\r\n]/.test(message.subject)) {
+    return "the subject is empty, too long, or has a line break";
+  }
+  if (typeof message.text !== "string" || bytes(message.text) > EMAIL_LIMITS.textBytes) return "the text is missing or too long";
+  if (message.html !== undefined && (typeof message.html !== "string" || bytes(message.html) > EMAIL_LIMITS.htmlBytes)) return "the HTML is too long";
+  if (typeof message.category !== "string" || !CATEGORY_PATTERN.test(message.category)) return "the category";
+  return null;
+}
+
+/** The UTC day of `ms`, as the usage table keys it. */
+export function utcDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/** How long a day's counts are kept, for the console's history and abuse signals. */
+export const EMAIL_USAGE_KEEP_DAYS = 35;
+
+/** Old days of email counts, for the cron's cleanup. */
+export function emailUsageCleanup(db: D1Database, now: number): D1PreparedStatement {
+  return db.prepare("DELETE FROM tenant_email_usage WHERE day < ?").bind(utcDay(now - EMAIL_USAGE_KEEP_DAYS * 86_400_000));
+}
+
+/** One tenant's emails today (UTC): sent, failed, refused by the cap. */
+export async function emailsToday(db: D1Database, tenantId: string, now: number): Promise<{ sent: number; failed: number; refused: number }> {
+  const row = await db
+    .prepare("SELECT COALESCE(SUM(sent), 0) AS sent, COALESCE(SUM(failed), 0) AS failed, COALESCE(SUM(refused), 0) AS refused FROM tenant_email_usage WHERE tenant_id = ? AND day = ?")
+    .bind(tenantId, utcDay(now))
+    .first<{ sent: number; failed: number; refused: number }>();
+  return { sent: row?.sent ?? 0, failed: row?.failed ?? 0, refused: row?.refused ?? 0 };
+}
+
 export class TenantCapability implements PlatformCapability {
   constructor(
     private readonly db: D1Database,
     private readonly tenantId: string,
     private readonly accountId: string | null,
     private readonly now: () => number = Date.now,
+    private readonly mail: TenantMail | null = null,
   ) {}
 
-  /** Mail goes through the platform's provider once A5 and B2 wire it; until then nothing is sent. */
-  async sendEmail(_message: HostedEmail): Promise<SendEmailResult> {
-    return { ok: false, error: "email_unavailable", message: "Email isn't available on OpenPing Hosted yet." };
+  /**
+   * Sends one email from the platform's domain (contract, section 4), one
+   * message per recipient so no recipient sees another, counted against the
+   * plan's emailsPerDay for the UTC day: reserved before the send, given
+   * back when the provider refuses it. Never throws for a delivery problem.
+   */
+  async sendEmail(message: HostedEmail): Promise<SendEmailResult> {
+    const problem = hostedEmailProblem(message);
+    if (problem) return { ok: false, error: "email_rejected", message: `That email can't be sent: ${problem}.` };
+    if (!this.mail) return { ok: false, error: "email_unavailable", message: "Email isn't set up on OpenPing Hosted yet." };
+    const row = await this.db
+      .prepare(
+        `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, trial_ends_at
+         FROM tenants WHERE id = ?`,
+      )
+      .bind(this.tenantId)
+      .first<Parameters<typeof tenantFromRow>[0]>();
+    if (!row || row.provision_state === "deleting") return { ok: false, error: "email_unavailable", message: "This OpenPing is being removed." };
+    const tenant = tenantFromRow(row);
+    if (tenant.status === "suspended") return { ok: false, error: "email_unavailable", message: "This OpenPing is paused, so it sends no email." };
+
+    const limit = effectiveLimits(tenant).emailsPerDay;
+    const day = utcDay(this.now());
+    const recipients = [...new Set(message.to.map((t) => t.trim().toLowerCase()))];
+    // Reserve them all at once: one statement, so two sends at the same
+    // moment can't both take the last places.
+    const reserved = await this.db
+      .prepare(
+        `INSERT INTO tenant_email_usage (tenant_id, day, category, sent)
+         SELECT ?1, ?2, ?3, ?4
+         WHERE (SELECT COALESCE(SUM(sent), 0) FROM tenant_email_usage WHERE tenant_id = ?1 AND day = ?2) + ?4 <= ?5
+         ON CONFLICT (tenant_id, day, category) DO UPDATE SET sent = sent + excluded.sent`,
+      )
+      .bind(this.tenantId, day, message.category, recipients.length, limit)
+      .run();
+    if ((reserved.meta.changes ?? 0) === 0) {
+      await this.db
+        .prepare(
+          `INSERT INTO tenant_email_usage (tenant_id, day, category, refused) VALUES (?, ?, ?, 1)
+           ON CONFLICT (tenant_id, day, category) DO UPDATE SET refused = refused + 1`,
+        )
+        .bind(this.tenantId, day, message.category)
+        .run();
+      return { ok: false, error: "email_quota_exceeded", message: `Your plan sends up to ${limit} emails a day; the rest go out tomorrow (UTC).` };
+    }
+
+    let firstId: string | null = null;
+    let failure: SendEmailResult | null = null;
+    let failed = 0;
+    for (const to of recipients) {
+      const result = await this.mail.mailer.send({
+        to,
+        from: this.mail.from,
+        subject: message.subject.trim(),
+        text: message.text,
+        html: message.html ?? "",
+        ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+        category: message.category,
+        tenantId: this.tenantId,
+      });
+      if (result.ok) {
+        firstId ??= result.id;
+        continue;
+      }
+      failed++;
+      console.error("[mail] tenant email not sent", { tenant: this.tenantId, category: message.category, error: result.error, message: result.message });
+      failure ??=
+        result.error === "rejected"
+          ? { ok: false, error: "email_rejected", message: "The mail provider refused this email." }
+          : result.error === "quota"
+            ? { ok: false, error: "email_quota_exceeded", message: "OpenPing Hosted can't send more email today; it goes out tomorrow (UTC)." }
+            : { ok: false, error: "email_unavailable", message: "The mail provider didn't answer; try again later." };
+    }
+    if (failed) {
+      // Only what went out counts against the day.
+      await this.db
+        .prepare("UPDATE tenant_email_usage SET sent = MAX(0, sent - ?1), failed = failed + ?1 WHERE tenant_id = ?2 AND day = ?3 AND category = ?4")
+        .bind(failed, this.tenantId, day, message.category)
+        .run();
+    }
+    // Every address got it, or none did, for a single-recipient email (all OpenPing sends).
+    if (failure && failed === recipients.length) return failure;
+    if (failure) console.warn("[mail] tenant email reached only some recipients", { tenant: this.tenantId, failed, of: recipients.length });
+    return { ok: true, id: firstId! };
   }
 
   /**

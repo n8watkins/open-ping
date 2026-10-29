@@ -32,8 +32,10 @@ export interface PlatformEnv {
   HANDOFF_SIGNING_KEY?: string;
   /** Secret: the platform's Resend API key, for sign-in codes. */
   RESEND_API_KEY?: string;
-  /** Var: the From of the platform's mail, on a domain verified in Resend, e.g. "OpenPing Hosted <signin@<domain>>". */
+  /** Var: the From of the platform's mail, on HOSTED_DOMAIN (verified in Resend), e.g. "OpenPing Hosted <signin@<domain>>". */
   MAIL_FROM?: string;
+  /** Var: the From of each customer's OpenPing's mail (alerts, reports), on HOSTED_DOMAIN; MAIL_FROM when empty. */
+  TENANT_MAIL_FROM?: string;
   /** Var and secret: the platform's GitHub OAuth app (callback https://app.<domain>/auth/github/callback). */
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;

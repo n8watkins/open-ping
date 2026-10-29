@@ -17,6 +17,7 @@ import { Hono, type Context } from "hono";
 
 import { PLATFORM_HEALTH_PATH, type HealthResponse, type PlatformCapability } from "../../../src/shared/hosted-contract";
 import { audit } from "../accounts";
+import { emailsToday } from "../capability";
 import { continuePage, messagePage } from "../account-pages";
 import { listPasskeys } from "../auth/passkeys";
 import { LIMITS, hitInOrder } from "../auth/rate-limit";
@@ -188,10 +189,11 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
     const db = c.env.PLATFORM_DB;
     const detail = await tenantDetail(db, c.req.param("id"));
     if (!detail) return appNotFoundPage(appOrigin(c.env.HOSTED_DOMAIN));
-    const [history, health, schedule] = await Promise.all([
+    const [history, health, schedule, emails] = await Promise.all([
       tenantHistory(db, detail.record.id),
       liveHealth(c, detail.record),
       scheduleView(db, detail.record),
+      emailsToday(db, detail.record.id, c.get("now")),
     ]);
     return tenantPage({
       detail,
@@ -201,6 +203,7 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
       tenantUrl: requestTenantOrigin(c.req.url, detail.record.slug, c.env.HOSTED_DOMAIN),
       recent: c.get("recent"),
       supportOn: Boolean(c.env.HANDOFF_SIGNING_KEY),
+      emails,
       flash: FLASH[c.req.query("done") ?? ""] ?? null,
     });
   });
