@@ -15,7 +15,7 @@ import { createApp } from "../src/app";
 import { StaticBundleSource, type TenantBundle } from "../src/bundle";
 import type { PlatformEnv } from "../src/env";
 import { generateMasterKey } from "../src/keys";
-import type { Mailer, OutgoingEmail } from "../src/mail";
+import { FakeMailer } from "./fake-mailer";
 import type { ProvisioningDeps } from "../src/provisioning";
 import { FakeCloudflareApi } from "./fake-cloudflare";
 import { FakeDispatcher } from "./fake-dispatcher";
@@ -27,14 +27,7 @@ let keys: { publicKey: string; privateKey: string };
 
 // --- The world: mail, GitHub, provisioning, all in memory -------------------
 
-class Outbox implements Mailer {
-  sent: OutgoingEmail[] = [];
-  fail = false;
-  async send(message: OutgoingEmail) {
-    if (this.fail) return { ok: false as const, error: "down" };
-    this.sent.push(message);
-    return { ok: true as const, id: `m${this.sent.length}` };
-  }
+class Outbox extends FakeMailer {
   last(): { code: string; link: string; to: string; subject: string } {
     const m = this.sent.at(-1)!;
     return { to: m.to, subject: m.subject, code: /Code: (\d{6})/.exec(m.text)![1]!, link: /(https:\/\/\S+sign-in\/link\?token=\S+)/.exec(m.text)![1]! };
@@ -345,7 +338,7 @@ describe("the email code", () => {
   });
 
   it("says so when the email can't be sent", async () => {
-    outbox.fail = true;
+    outbox.fail = "unavailable";
     const res = await new Browser().fetch("/sign-in/email", { form: { email: newEmail() } });
     expect(res.status).toBe(502);
     expect(await textOf(res)).toContain("couldn't send the email");

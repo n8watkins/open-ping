@@ -18,7 +18,6 @@
 
 import { randomToken, sha256hex } from "../../../src/worker/lib/ids";
 import { timingSafeEqual } from "../../../src/worker/lib/timing";
-import { escapeHtml } from "../ui";
 
 export const EMAIL_SIGN_IN_TTL_MS = 15 * 60_000;
 export const CODE_MAX_ATTEMPTS = 5;
@@ -121,63 +120,8 @@ export async function checkEmailCode(db: D1Database, loginId: string, code: stri
   return { ok: true, email: row.email, nextPath: row.next_path };
 }
 
-/** The email for one sign-in: the code first (it shows in phone notifications), then the link. */
-export function signInEmail(input: { code: string; link: string; newAccount: boolean }): { subject: string; text: string; html: string } {
-  const intro = input.newAccount ? "Here is your code to finish signing up for OpenPing Hosted." : "Here is your code to sign in to OpenPing Hosted.";
-  const subject = `${input.code} is your OpenPing sign-in code`;
-  const text = [
-    intro,
-    "",
-    `Code: ${input.code}`,
-    "",
-    `Or open this link on this device: ${input.link}`,
-    "",
-    "The code and the link work once, for 15 minutes.",
-    "If you didn't ask for this, you can ignore this email; nobody can sign in without it.",
-    "",
-    "-- ",
-    "OpenPing Hosted. Questions? support@n8builds.dev",
-  ].join("\n");
-  const font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>${escapeHtml(subject)}</title></head>
-<body style="margin:0;padding:0;background:#f6f8fb;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f6f8fb;"><tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" width="480" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:480px;background:#ffffff;border:1px solid #d8e0ea;border-radius:14px;">
-<tr><td style="padding:28px 24px;font-family:${font};color:#16233a;">
-<p style="margin:0 0 20px;font-size:14px;font-weight:600;color:#475569;">OpenPing Hosted</p>
-<p style="margin:0 0 16px;font-size:16px;line-height:1.5;">${escapeHtml(intro)}</p>
-<p style="margin:0 0 20px;font-size:32px;font-weight:700;letter-spacing:6px;font-family:ui-monospace,Menlo,Consolas,monospace;">${escapeHtml(input.code)}</p>
-<p style="margin:0 0 24px;"><a href="${escapeHtml(input.link)}" style="display:inline-block;background:#3b5bdb;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 20px;border-radius:8px;">Sign in on this device</a></p>
-<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#475569;">The code and the link work once, for 15 minutes.</p>
-<p style="margin:0;font-size:13px;line-height:1.5;color:#475569;">If you didn't ask for this, you can ignore this email; nobody can sign in without it.</p>
-</td></tr></table>
-<p style="margin:16px 0 0;font-family:${font};font-size:12px;color:#5f6f87;">Questions? <a href="mailto:support@n8builds.dev" style="color:#3b5bdb;">support@n8builds.dev</a></p>
-</td></tr></table></body></html>`;
-  return { subject, text, html };
-}
-
-/** The notice every account gets when a passkey is added to it. */
-export function passkeyAddedEmail(input: { label: string; at: number; accountUrl: string }): { subject: string; text: string; html: string } {
-  const subject = "A passkey was added to your OpenPing Hosted account";
-  const when = `${new Date(input.at).toISOString().slice(0, 16).replace("T", " ")} UTC`;
-  const intro = `A passkey named "${input.label}" was added to your OpenPing Hosted account at ${when}.`;
-  const warning = "If that wasn't you, someone can read this inbox: remove the passkey on your account page, change your email password, and write to support@n8builds.dev.";
-  const text = [intro, "", warning, "", `Your account: ${input.accountUrl}`, "", "-- ", "OpenPing Hosted. Questions? support@n8builds.dev"].join("\n");
-  const font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>${escapeHtml(subject)}</title></head>
-<body style="margin:0;padding:0;background:#f6f8fb;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f6f8fb;"><tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" width="480" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:480px;background:#ffffff;border:1px solid #d8e0ea;border-radius:14px;">
-<tr><td style="padding:28px 24px;font-family:${font};color:#16233a;">
-<p style="margin:0 0 20px;font-size:14px;font-weight:600;color:#475569;">OpenPing Hosted</p>
-<p style="margin:0 0 16px;font-size:16px;line-height:1.5;">${escapeHtml(intro)}</p>
-<p style="margin:0 0 24px;font-size:14px;line-height:1.5;color:#475569;">${escapeHtml(warning)}</p>
-<p style="margin:0;"><a href="${escapeHtml(input.accountUrl)}" style="display:inline-block;background:#3b5bdb;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 20px;border-radius:8px;">Open your account</a></p>
-</td></tr></table>
-<p style="margin:16px 0 0;font-family:${font};font-size:12px;color:#5f6f87;">Questions? <a href="mailto:support@n8builds.dev" style="color:#3b5bdb;">support@n8builds.dev</a></p>
-</td></tr></table></body></html>`;
-  return { subject, text, html };
-}
+// The emails themselves live with the platform's other emails.
+export { passkeyAddedEmail, signInEmail } from "../emails";
 
 /** Spent and expired sign-ins, for the cron's cleanup. */
 export function emailSignInCleanup(db: D1Database, now: number): D1PreparedStatement {

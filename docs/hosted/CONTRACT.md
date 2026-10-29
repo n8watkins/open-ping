@@ -98,7 +98,11 @@ Each method runs inside the platform Worker, already bound to the calling tenant
   Support sign-ins (section 7) are always audited, by both sides.
 
 `audit` records the event in the platform's audit log, and `reportUsage` keeps each tenant's latest counts for the admin console, ignoring a report older than the stored one (ordered by the tenant's own `at`).
-`sendEmail` still answers `email_unavailable`: the tenant side (A5) is done, and the platform's mail provider is wired in wave 3.
+`sendEmail` sends through the platform's one Resend account, from `TENANT_MAIL_FROM` (or `MAIL_FROM`) on the Hosted domain, one message per recipient, and counts each against `limits.emailsPerDay` for the UTC day, reserved before the send and given back when the provider refuses it.
+Only the account's own email and addresses that confirmed get mail: the first time a tenant mails any other address, the platform sends that address one email asking it to confirm (a link to a page with yes and no, at most once a day per address and ten a day per tenant), and answers `email_rejected` with a message naming the address and saying so; once it says yes it gets the tenant's mail, and once it says no it is never asked again.
+A `replyTo` that isn't the account's email or a confirmed address is dropped.
+Each send carries Resend's idempotency key, so the same message to the same address within 24 hours goes out once.
+Over the cap it answers `email_quota_exceeded`, and so it does when Resend's own daily or monthly quota is spent, so mail waits a day at a time rather than retrying every few minutes; a message it won't send (no or too many recipients, a line break in the subject, an unknown category, too long) is `email_rejected`; and a paused tenant, or a platform without mail set up, gets `email_unavailable`.
 
 ### How OpenPing sends its email
 

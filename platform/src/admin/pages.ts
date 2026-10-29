@@ -312,6 +312,8 @@ export interface TenantPageInput {
   tenantUrl: string;
   recent: boolean;
   supportOn: boolean;
+  /** Its email through the platform today: sent, failed, refused by the cap. */
+  emails?: { sent: number; failed: number; refused: number } | null;
   flash?: { message: string; tone: "ok" | "error" } | null;
 }
 
@@ -332,7 +334,7 @@ ${run ? fact("Outcome", html`<span class="${run.outcome === "ran" ? "ok-text" : 
 </dl>`;
 }
 
-function usageFacts(d: TenantDetail): Html {
+function usageFacts(d: TenantDetail, emails: TenantPageInput["emails"]): Html {
   const u = d.usage;
   const of = (n: number | undefined, limit: number) => (n === undefined ? `Limit ${limit}` : `${n} of ${limit}`);
   return html`<dl class="facts">
@@ -340,7 +342,14 @@ ${fact("Monitors", of(u?.monitors, d.limits.monitors))}
 ${fact("Status pages", of(u?.statusPages, d.limits.statusPages))}
 ${fact("Alert channels", u ? String(u.channels) : "Not reported")}
 ${fact("Fastest check", d.limits.minIntervalMinutes === 1 ? "1 minute" : `${d.limits.minIntervalMinutes} minutes`)}
-${fact("Emails a day", String(d.limits.emailsPerDay))}
+${
+  emails
+    ? fact(
+        "Emails today (UTC)",
+        `${emails.sent} of ${d.limits.emailsPerDay}${emails.failed ? `, ${emails.failed} failed` : ""}${emails.refused ? `, ${emails.refused} over the cap` : ""}`,
+      )
+    : fact("Emails a day", String(d.limits.emailsPerDay))
+}
 ${fact("Reported", u ? timeText(u.reportedAt) : "Never")}
 </dl>`;
 }
@@ -500,7 +509,7 @@ ${fact("Version", t.version ?? "None yet", true)}
 ${fact("Ready since", d.provisionedAt ? timeText(d.provisionedAt) : "Not ready")}
 </dl></section></div>
 <div><section><h2>Health</h2>${healthFacts(input.health)}</section>
-<section><h2>Usage</h2>${usageFacts(d)}</section>
+<section><h2>Usage</h2>${usageFacts(d, input.emails ?? null)}</section>
 <section><h2>Provisioning</h2><dl class="facts">
 ${fact("State", SETUP_LABELS[t.provisionState])}
 ${fact("Failed tries", String(d.provision.attempts))}

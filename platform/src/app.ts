@@ -13,6 +13,7 @@ import { Hono } from "hono";
 import { accountRoutes, type AccountDeps } from "./account-routes";
 import { billingSetup } from "./billing/config";
 import { handleStripeWebhook } from "./billing/webhook";
+import { recipientRoutes } from "./recipients";
 import { adminRoutes } from "./admin/routes";
 import { HOSTED_ERRORS, isInternalPath, type PlatformCapability } from "../../src/shared/hosted-contract";
 import { DISPATCH_LIMITS, buildTenantProps, newCallId, publicRequest, type TenantDispatcher } from "./dispatch";
@@ -84,6 +85,8 @@ function appHost(deps: AppDeps): Hono<Platform> {
     "/admin",
     adminRoutes({ dispatcher: deps.dispatcher, capability: deps.capability, provisioning: accounts.provisioning, now: accounts.now }),
   );
+  // An address a tenant wants to email says yes or no (src/recipients.ts).
+  app.route("/email", recipientRoutes({ now: accounts.now }));
   app.route("/", accountRoutes(accounts));
   app.notFound((c) => appNotFoundPage(appOrigin(c.env.HOSTED_DOMAIN)));
   return app;

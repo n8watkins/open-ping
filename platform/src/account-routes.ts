@@ -49,7 +49,7 @@ import { PASSKEY_SCRIPT, PASSKEY_SCRIPT_PATH } from "./client-script";
 import type { PlatformEnv } from "./env";
 import { handoffUrl, mintHandoffToken } from "./handoff";
 import { requestAppOrigin, requestTenantOrigin } from "./hosts";
-import type { Mailer } from "./mail";
+import { PLATFORM_REPLY_TO, type Mailer } from "./mail";
 import { requestTenant, runProvisioning } from "./provisioning";
 import type { ProvisioningSetup } from "./provisioning-env";
 import { enqueueProvisioning } from "./provisioning-queue";
@@ -287,7 +287,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     const started = await createEmailSignIn(c.env.PLATFORM_DB, { email, nextPath: next, now: c.get("now") });
     const link = `${origin(c)}/sign-in/link?token=${encodeURIComponent(started.token)}`;
     const message = signInEmail({ code: started.code, link, newAccount: !existing });
-    const sent = await mailer.send({ to: email, ...message });
+    const sent = await mailer.send({ to: email, ...message, category: "signin", replyTo: PLATFORM_REPLY_TO });
     if (!sent.ok) {
       console.error("[sign-in] email not sent", { error: sent.error });
       return page("We couldn't send the email just now. Please try again in a minute.", 502);
@@ -447,7 +447,12 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     // Always told: a passkey added by someone who got into the inbox is the first thing to notice.
     const mailer = deps.mailer(c.env);
     if (mailer) {
-      const sent = await mailer.send({ to: session.account.email, ...passkeyAddedEmail({ label, at: c.get("now"), accountUrl: `${origin(c)}/account` }) });
+      const sent = await mailer.send({
+        to: session.account.email,
+        ...passkeyAddedEmail({ label, at: c.get("now"), accountUrl: `${origin(c)}/account` }),
+        category: "passkey_added",
+        replyTo: PLATFORM_REPLY_TO,
+      });
       if (!sent.ok) console.error("[passkeys] added-passkey email not sent", { error: sent.error });
     }
     return withCookies(c.json({ ok: true, redirect: "/account?done=passkey" }, 200, NO_STORE), [clearCeremonyCookie()]);
