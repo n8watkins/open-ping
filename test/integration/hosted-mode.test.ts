@@ -3,6 +3,7 @@ import { applyD1Migrations, createExecutionContext } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import worker from "../../src/worker/index";
+import { s256 } from "../../src/worker/routes/app-signin";
 import type { Env } from "../../src/worker/types";
 import { expiredAuthCleanupStatements } from "../../src/worker/lib/sessions";
 import {
@@ -178,6 +179,8 @@ describe("a plain install (HOSTED_MODE unset)", () => {
         "passkeyOrigin",
         "homePage",
         "waitlistEnabled",
+        // The Android app's browser sign-in (routes/app-signin.ts), on every install.
+        "appSignIn",
       ].sort(),
     );
     expect(status.setupComplete).toBe(false);
@@ -331,6 +334,33 @@ describe("the sign-in hand-off", () => {
 
     // The session works for the admin API like any other.
     expect((await browser.fetch("/api/monitors")).status).toBe(200);
+  });
+
+  it("signs the Android app in through the platform: start, the platform's sign-in, the hand-off, finish", async () => {
+    const browser = hostedBrowser();
+    const verifier = "v".repeat(43);
+    const start = await browser.fetch(`/auth/app/start?challenge=${await s256(verifier)}&state=${"s".repeat(16)}`);
+    expect(start.status).toBe(302);
+    // Always a fresh sign-in on the platform, even with a platform session.
+    expect(start.headers.get("location")).toBe(`${URLS.signIn}?reauth=1`);
+    // The platform signs the customer in and hands the browser back.
+    const handoff = await browser.fetch(handoffPath(await token()));
+    expect(handoff.headers.get("location")).toBe("/auth/app/finish");
+    const finish = await browser.fetch("/auth/app/finish");
+    expect(finish.status).toBe(200);
+    expect(await finish.text()).toContain("Open the OpenPing app");
+
+    // A hand-off from before the app asked doesn't count as that fresh sign-in.
+    const stale = hostedBrowser();
+    await stale.fetch(handoffPath(await token()));
+    await stale.fetch(`/auth/app/start?challenge=${await s256(verifier)}&state=${"s".repeat(16)}`);
+    expect((await stale.fetch("/auth/app/finish")).status).toBe(403);
+
+    // A support sign-in stays in its browser.
+    const support = hostedBrowser();
+    await support.fetch(`/auth/app/start?challenge=${await s256(verifier)}&state=${"s".repeat(16)}`);
+    await support.fetch(handoffPath(await token({ role: "support" })));
+    expect((await support.fetch("/auth/app/finish")).status).toBe(403);
   });
 
   it("signs support in for an hour, and only when the platform records it", async () => {

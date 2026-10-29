@@ -6,14 +6,17 @@
  * - iPhone and iPad have no prompt: the steps are Share, then Add to Home
  *   Screen.
  * - Once installed (running standalone, or `appinstalled` fired) the button
- *   hides.
+ *   hides, and inside the OpenPing Android app it is never shown.
  *
  * The event can fire before React renders anything, so the listeners attach
  * when this module first loads (AppLayout imports it eagerly).
  */
 import { useSyncExternalStore } from "react";
+import { isInApp } from "./native-app";
 
 export type InstallState =
+  /** Inside the OpenPing Android app: there is nothing to install. */
+  | "app"
   /** Running as the installed app, or this browser installed it. */
   | "installed"
   /** The browser handed us its install prompt: show the button. */
@@ -32,6 +35,8 @@ export interface InstallSignals {
   installedBefore: boolean;
   /** An iPhone, iPad or iPod (including iPadOS posing as a Mac). */
   ios: boolean;
+  /** Inside the OpenPing Android app's web view (lib/native-app.ts). */
+  app?: boolean;
 }
 
 /**
@@ -39,6 +44,7 @@ export interface InstallSignals {
  * offers the prompt again when the app was uninstalled.
  */
 export function installState(s: InstallSignals): InstallState {
+  if (s.app) return "app";
   if (s.standalone) return "installed";
   if (s.hasPrompt) return "prompt";
   if (s.installedBefore) return "installed";
@@ -107,6 +113,7 @@ function recompute() {
     hasPrompt: deferredPrompt !== null,
     installedBefore: readInstalledBefore(),
     ios: isIosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints ?? 0),
+    app: isInApp(),
   });
   if (next === snapshot) return;
   snapshot = next;

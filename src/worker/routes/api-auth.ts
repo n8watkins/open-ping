@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { deleteCookie } from "hono/cookie";
 import type { AppEnv } from "../types";
-import { getSession, destroySession, revokeAllSessions, SESSION_COOKIE } from "../lib/sessions";
+import { getSession, destroySession, listSessions, revokeAllSessions, revokeSession, SESSION_COOKIE } from "../lib/sessions";
 import { getAdminGithubLogin, getAdminEmail } from "../lib/admin";
 import { getSetting } from "../db/settings";
 import { timingSafeEqual } from "../lib/timing";
@@ -62,6 +62,7 @@ apiAuth.get("/status", async (c) => {
       homePage: homePage(c.env),
       waitlistEnabled: waitlistEnabled(c.env),
       hosted: hostedStatus(hosted),
+      appSignIn: APP_SIGNIN_VERSION,
     });
   }
   return c.json({
@@ -77,10 +78,18 @@ apiAuth.get("/status", async (c) => {
     passkeyOrigin: rp.origin,
     homePage: homePage(c.env),
     waitlistEnabled: waitlistEnabled(c.env),
+    appSignIn: APP_SIGNIN_VERSION,
     // Only once Hosted opens, so the answer is unchanged until then.
     ...hostedOffer(c.env),
   });
 });
+
+/**
+ * The version of the Android app's browser sign-in this install speaks
+ * (routes/app-signin.ts). The app reads it before it adds an install, and asks
+ * an older one to update first.
+ */
+export const APP_SIGNIN_VERSION = 1;
 
 /** `hostedSignupUrl` for the landing page's trial buttons, present only when the var is set and valid. */
 function hostedOffer(env: AppEnv["Bindings"]): { hostedSignupUrl?: string } {
@@ -124,6 +133,30 @@ apiAuth.post("/logout-all", async (c) => {
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
   const signOutUrl = markSignedOut(c);
   return c.json(signOutUrl ? { ok: true, signOutUrl } : { ok: true });
+});
+
+/**
+ * Every signed-in session (Settings > Sign-in & security): which way it signed
+ * in, whether it is the Android app's, its browser, and when it was last used.
+ */
+apiAuth.get("/sessions", requireAuth, async (c) => {
+  const current = c.get("session")?.id ?? null;
+  return c.json({ sessions: await listSessions(c.env, current) });
+});
+
+/** Sign one session out: a phone you lost, the app on a phone you don't recognise. */
+apiAuth.delete("/sessions/:id", requireAuth, async (c) => {
+  const session = c.get("session");
+  // Support can't sign the customer out (lib/support.ts).
+  if (session && isSupportSession(session)) {
+    await recordSupportActivity(c.env, { kind: "refused", identity: session.identity, method: "DELETE", path: c.req.path, status: 403 });
+    await auditSupportChange(c, { method: "DELETE", path: c.req.path, status: 403, refused: "sessions" });
+    return c.json(SUPPORT_RESTRICTED, 403);
+  }
+  const id = c.req.param("id");
+  if (!/^[0-9a-f]{64}$/.test(id) || !(await revokeSession(c.env, id))) return c.json({ error: "not_found" }, 404);
+  if (session?.id === id) deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  return c.json({ ok: true });
 });
 
 /**

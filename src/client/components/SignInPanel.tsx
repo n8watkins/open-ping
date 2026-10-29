@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Fingerprint, Github, Loader2, Mail, MailCheck } from "lucide-react";
+import { ArrowRight, ExternalLink, Fingerprint, Github, Loader2, Mail, MailCheck } from "lucide-react";
 import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { isLandingInstall } from "../lib/home";
 import { hostedOffer } from "../lib/hosted-offer";
+import { safeNextPath, tellApp } from "../lib/native-app";
 import {
   conditionalMediationAvailable,
   getPasskey,
@@ -82,6 +83,8 @@ function errorMessage(error: string, landing: boolean, trialUrl: string | null):
       return "Couldn't read your GitHub account. Please try again.";
     case "magic_invalid":
       return "That sign-in link has expired or was already used. Request a new one below.";
+    case "app_signin_failed":
+      return "Signing in to the app didn't finish, or took too long. Please try again.";
     default:
       return "Sign-in didn't work. Please try again.";
   }
@@ -112,9 +115,10 @@ export function usePasskeySignIn(enabled: boolean, autofill: boolean) {
         signal: controller.signal,
       });
       const credential = await getPasskey(options, { conditional, signal: controller.signal });
-      await api("/api/auth/passkeys/login/verify", { method: "POST", json: { credential } });
-      // Same landing as the GitHub and email flows: a fresh load of the dashboard.
-      window.location.assign("/");
+      const done = await api<{ next?: string }>("/api/auth/passkeys/login/verify", { method: "POST", json: { credential } });
+      // Same landing as the GitHub and email flows: a fresh load of the
+      // dashboard, or on to the Android app when the sign-in started there.
+      window.location.assign(safeNextPath(done?.next));
     } catch (err) {
       // A superseded or unmounted request is not an error worth showing.
       if (controller.signal.aborted) return;
@@ -389,6 +393,48 @@ export function SignInPanel({
           )}
         </p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Sign-in inside the OpenPing Android app: one button that signs in through
+ * the phone's browser, where passkeys, GitHub and email links all work, and
+ * comes back to the app signed in (routes/app-signin.ts, docs/ANDROID.md).
+ */
+export function AppSignInPanel({ error, hosted }: { error?: string | null; hosted: boolean }) {
+  const host = typeof window === "undefined" ? "" : window.location.host;
+  return (
+    <div>
+      <h1 className="text-center text-lg font-semibold tracking-tight text-ink">Sign in to this OpenPing</h1>
+      {host && (
+        <p className="mt-2 flex justify-center">
+          <span className="max-w-full truncate rounded-md border border-line bg-canvas/60 px-2 py-0.5 font-mono text-xs text-ink-muted">
+            {host}
+          </span>
+        </p>
+      )}
+      <p className="mt-3 text-center text-sm leading-relaxed text-ink-muted">
+        {hosted
+          ? "You sign in with your OpenPing Hosted account in your browser, then come straight back here."
+          : "Sign in with your browser using a passkey, GitHub or an email link, then come straight back here."}
+      </p>
+      {error && (
+        <p role="alert" className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2.5 text-sm leading-relaxed text-ink">
+          {errorMessage(error, false, null)}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={() => tellApp({ type: "signin" })}
+        className="mt-6 flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-semibold text-canvas transition-opacity hover:opacity-90"
+      >
+        <ExternalLink className="size-4" aria-hidden />
+        Sign in with your browser
+      </button>
+      <p className="mt-4 text-balance text-center text-xs leading-relaxed text-ink-faint">
+        Only this OpenPing's administrator can sign in.
+      </p>
     </div>
   );
 }

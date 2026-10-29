@@ -12,6 +12,8 @@ import { mcp, MCP_MAX_BODY_BYTES } from "./mcp/handler";
 import { runScheduled } from "./scheduler";
 import { hostedAuth } from "./routes/hosted-auth";
 import { platformRoutes } from "./routes/platform";
+import { appSignIn } from "./routes/app-signin";
+import { assetLinks } from "./lib/android-app-links";
 import { forgetSchemaCheck, isSchemaError } from "./lib/migrate";
 import { reportUsageAfterChange } from "./lib/plan-limits";
 import { hostedGate, hostedSchemaGate, refuseWhenHosted, signOutRedirect } from "./lib/hosted";
@@ -121,6 +123,7 @@ app.use("/api/auth/passkeys/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: 
 app.use("/api/tools/is-it-down", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/api/events", bodyLimit({ maxSize: 1024, onError: payloadTooLarge }));
 app.use("/api/waitlist", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
+app.use("/auth/app/*", bodyLimit({ maxSize: 4 * 1024, onError: payloadTooLarge }));
 app.use("/hb/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/mcp", bodyLimit({ maxSize: MCP_MAX_BODY_BYTES, onError: payloadTooLarge }));
 app.use("/api/*", bodyLimit({ maxSize: API_BODY_LIMIT, onError: payloadTooLarge }));
@@ -136,6 +139,9 @@ app.route(HANDOFF_PATH, hostedAuth);
 // The platform's internal calls: the scheduler entry and health (hosted mode
 // only, and only from the platform; passes through otherwise).
 app.route(INTERNAL_PATH_PREFIX.slice(0, -1), platformRoutes);
+
+// Signing in to the Android app through the phone's browser (docs/ANDROID.md).
+app.route("/auth/app", appSignIn);
 
 // Browser-facing OAuth / magic-link redirect flows.
 app.route("/auth", auth);
@@ -157,6 +163,15 @@ app.route("/mcp", mcp);
 app.all("/.well-known/*", async (c, next) => {
   if (c.req.path.startsWith("/.well-known/oauth-")) return c.json({ error: "not_found" }, 404);
   await next();
+});
+
+// Digital Asset Links for the Android app, only when ANDROID_APP_LINKS is set
+// (lib/android-app-links.ts); otherwise a plain 404, never the SPA's shell.
+app.get("/.well-known/assetlinks.json", (c) => {
+  const links = assetLinks(c.env);
+  if (!links) return c.json({ error: "not_found" }, 404);
+  c.header("Cache-Control", "public, max-age=3600");
+  return c.json(links);
 });
 
 // Hosted mode: a browser that just signed out goes on to the platform's sign-out.

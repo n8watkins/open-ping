@@ -253,7 +253,10 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
   for (const mode of ["sign-in", "sign-up"] as const) {
     app.get(`/${mode}`, (c) => {
       const next = nextFromQuery(c);
-      if (c.get("session")) return seeOther(c, next ?? "/account");
+      // `reauth=1`: a customer's OpenPing wants a fresh sign-in (the Android
+      // app's browser sign-in, src/worker/routes/app-signin.ts), so the page
+      // shows even with a session, and signing in replaces that session.
+      if (c.get("session") && c.req.query("reauth") !== "1") return seeOther(c, next ?? "/account");
       return signInPage({
         mode,
         next,

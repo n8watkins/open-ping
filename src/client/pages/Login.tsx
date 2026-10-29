@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Fingerprint, Loader2 } from "lucide-react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { Logo } from "../components/Logo";
-import { SignInPanel, usePasskeySignIn } from "../components/SignInPanel";
+import { AppSignInPanel, SignInPanel, usePasskeySignIn } from "../components/SignInPanel";
+import { hasAppBridge, isInApp } from "../lib/native-app";
 import { useBootstrap, type AuthStatus } from "../lib/bootstrap";
 import { setPageMeta } from "../lib/meta";
 import { hostMatchesRpId, passkeysSupported } from "../lib/webauthn";
@@ -11,6 +12,8 @@ export default function Login() {
   const { loading, status, me, error: bootstrapError, refresh } = useBootstrap();
   const [params] = useSearchParams();
   const error = params.get("error");
+  // Opened from the Android app's browser sign-in (routes/app-signin.ts).
+  const forApp = params.get("app") === "1";
 
   useEffect(() => {
     setPageMeta({ title: "Sign in | OpenPing", noindex: true });
@@ -47,7 +50,24 @@ export default function Login() {
     !status.passkeyConfigured
   )
     return <Navigate to="/setup" replace />;
-  if (me?.authenticated) return <Navigate to="/" replace />;
+  // Signing in for the Android app needs a fresh sign-in, even in a browser
+  // that is signed in already (routes/app-signin.ts).
+  if (me?.authenticated && !forApp) return <Navigate to="/" replace />;
+  // Inside the Android app, every sign-in goes through the phone's browser.
+  if (status?.appSignIn && isInApp() && hasAppBridge()) {
+    return (
+      <div className="grid min-h-full place-items-center px-4 py-10">
+        <main className="w-full max-w-sm">
+          <div className="mb-8 flex justify-center">
+            <Logo />
+          </div>
+          <div className="rounded-card border border-line bg-surface p-6">
+            <AppSignInPanel error={error} hosted={!!status.hosted} />
+          </div>
+        </main>
+      </div>
+    );
+  }
   // OpenPing Hosted signs its customer in; their own passkeys work here too.
   if (status?.hosted) return <HostedSignIn status={status} signInUrl={status.hosted.signInUrl} />;
 
@@ -91,6 +111,11 @@ export default function Login() {
           <Logo />
         </div>
 
+        {forApp && (
+          <p role="status" className="mb-4 rounded-lg border border-accent/40 bg-accent-soft px-3.5 py-3 text-center text-sm leading-relaxed text-ink">
+            Signing in for the OpenPing app. Sign in here, even if you already are, and you go back to the app.
+          </p>
+        )}
         <div className="rounded-card border border-line bg-surface p-6">
           <SignInPanel error={error} />
         </div>

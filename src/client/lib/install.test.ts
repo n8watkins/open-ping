@@ -20,6 +20,11 @@ describe("installState", () => {
     expect(installState({ standalone: true, hasPrompt: true, installedBefore: false, ios: true })).toBe("installed");
   });
 
+  it("offers nothing to install inside the OpenPing Android app, even with a prompt", () => {
+    expect(installState({ ...base, app: true })).toBe("app");
+    expect(installState({ ...base, app: true, hasPrompt: true, standalone: true })).toBe("app");
+  });
+
   it("offers the button when the browser handed over its prompt", () => {
     expect(installState({ ...base, hasPrompt: true })).toBe("prompt");
   });

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CheckCircle2, Download, Share, SquarePlus, X } from "lucide-react";
+import { ArrowLeftRight, CheckCircle2, Download, Share, Smartphone, SquarePlus, X } from "lucide-react";
 import { cn } from "../lib/cn";
 import { promptInstall, useInstallState, type InstallState } from "../lib/install";
+import { hasAppBridge, tellApp } from "../lib/native-app";
 import { Card, CardHeader, CardTitle } from "./ui/Card";
 
 /**
@@ -13,6 +14,14 @@ import { Card, CardHeader, CardTitle } from "./ui/Card";
 /** Whether there is something to offer: a prompt, or the iPhone steps. */
 export function canOfferInstall(state: InstallState): boolean {
   return state === "prompt" || state === "ios";
+}
+
+/**
+ * Whether the sidebar and More menu have an entry: the install, or, inside the
+ * OpenPing Android app, "Switch OpenPing" to its list of installs.
+ */
+export function hasNavEntry(state: InstallState): boolean {
+  return canOfferInstall(state) || (state === "app" && hasAppBridge());
 }
 
 /** The iPhone and iPad steps: Safari has no install prompt. */
@@ -135,17 +144,26 @@ export function InstallNavButton({
   onShowSteps: () => void;
 }) {
   const state = useInstallState();
-  if (!canOfferInstall(state)) return null;
+  if (!hasNavEntry(state)) return null;
+  const className = cn(
+    "flex w-full items-center gap-3 font-medium transition-colors",
+    variant === "sidebar"
+      ? "rounded-lg px-3 py-2 text-sm text-ink-muted hover:bg-surface-2/70 hover:text-ink"
+      : "min-h-11 rounded-lg px-3 py-2.5 text-sm text-ink-muted hover:bg-surface-2 hover:text-ink",
+  );
+  if (state === "app") {
+    return (
+      <button type="button" onClick={() => tellApp({ type: "switch" })} className={className}>
+        <ArrowLeftRight className="size-[18px] shrink-0 text-accent" />
+        Switch OpenPing
+      </button>
+    );
+  }
   return (
     <button
       type="button"
       onClick={() => void startInstall(state, onShowSteps)}
-      className={cn(
-        "flex w-full items-center gap-3 font-medium transition-colors",
-        variant === "sidebar"
-          ? "rounded-lg px-3 py-2 text-sm text-ink-muted hover:bg-surface-2/70 hover:text-ink"
-          : "min-h-11 rounded-lg px-3 py-2.5 text-sm text-ink-muted hover:bg-surface-2 hover:text-ink",
-      )}
+      className={className}
     >
       <Download className="size-[18px] shrink-0 text-accent" />
       Install OpenPing
@@ -170,13 +188,31 @@ export function InstallCard() {
   return (
     <Card className="p-5">
       <CardHeader>
-        <CardTitle>Install the app</CardTitle>
+        <CardTitle>{state === "app" ? "The OpenPing app" : "Install the app"}</CardTitle>
       </CardHeader>
       <p className="-mt-1 mb-4 text-sm text-ink-muted">
-        OpenPing works as an app on your phone or computer: its own icon and window, alerts as notifications, and the
-        last known status even without a connection.
+        {state === "app"
+          ? "The app opens this OpenPing and any other you add, and switches between them."
+          : "OpenPing works as an app on your phone or computer: its own icon and window, alerts as notifications, and the last known status even without a connection."}
       </p>
-      {state === "installed" ? (
+      {state === "app" ? (
+        <div className="space-y-3">
+          <p className="flex items-center gap-2 text-sm text-up">
+            <Smartphone className="size-4 shrink-0" />
+            You're using the OpenPing app on this phone.
+          </p>
+          {hasAppBridge() && (
+            <button
+              type="button"
+              onClick={() => tellApp({ type: "switch" })}
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-surface-2 px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-line"
+            >
+              <ArrowLeftRight className="size-4" />
+              Switch OpenPing
+            </button>
+          )}
+        </div>
+      ) : state === "installed" ? (
         <p className="flex items-center gap-2 text-sm text-up">
           <CheckCircle2 className="size-4 shrink-0" />
           OpenPing is installed on this device.

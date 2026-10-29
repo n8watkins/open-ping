@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, LogOut, Terminal } from "lucide-react";
+import { ArrowRight, LogOut, Smartphone, Terminal } from "lucide-react";
 import { api } from "../../lib/api";
 import { useBootstrap } from "../../lib/bootstrap";
 import { useFetch } from "../../lib/useFetch";
@@ -8,6 +8,8 @@ import { Card, CardHeader, CardTitle } from "../../components/ui/Card";
 import { PasskeysCard } from "../../components/PasskeysCard";
 import { EncryptionCard } from "./EncryptionCard";
 import { ErrorBanner, SecondaryButton, errMessage, plural } from "./shared";
+import { sessionDevice } from "../../lib/session-device";
+import { formatRelativeTime } from "../../lib/format";
 
 const KIND_LABEL: Record<string, string> = {
   github: "GitHub",
@@ -101,8 +103,88 @@ function SessionsCard({ csrf }: { csrf: string | undefined }) {
             <ErrorBanner>{error}</ErrorBanner>
           </div>
         )}
+        <SessionList csrf={csrf} />
       </Card>
     </section>
+  );
+}
+
+interface SessionSummary {
+  id: string;
+  identityKind: string;
+  via: "app" | null;
+  userAgent: string | null;
+  createdAt: number;
+  lastSeenAt: number | null;
+  current: boolean;
+}
+
+/** Every signed-in browser and OpenPing app, each with its own sign-out. */
+function SessionList({ csrf }: { csrf: string | undefined }) {
+  const { data, error: loadError, reload } = useFetch<{ sessions: SessionSummary[] }>("/api/auth/sessions");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const sessions = data?.sessions ?? [];
+
+  async function signOut(s: SessionSummary) {
+    if (!window.confirm(`Sign out ${sessionDevice(s.userAgent, s.via)}?`)) return;
+    setBusy(s.id);
+    setError(null);
+    try {
+      await api(`/api/auth/sessions/${s.id}`, { method: "DELETE", csrf });
+      if (s.current) {
+        window.location.assign("/login");
+        return;
+      }
+      await reload();
+    } catch (e) {
+      setError(errMessage(e, "Could not sign that session out."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (loadError) return null;
+  if (!data) return null;
+  return (
+    <div className="mt-5 border-t border-line pt-4">
+      <h3 className="text-sm font-semibold text-ink">Signed in now</h3>
+      <p className="mt-1 text-xs text-ink-faint">
+        Each browser and OpenPing app signed in here. Sign out any you don't recognise.
+      </p>
+      {error && (
+        <div className="mt-3">
+          <ErrorBanner>{error}</ErrorBanner>
+        </div>
+      )}
+      <ul className="mt-3 divide-y divide-line overflow-hidden rounded-lg border border-line">
+        {sessions.map((s) => (
+          <li key={s.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+            <div className="flex min-w-0 items-center gap-2.5">
+              {s.via === "app" && <Smartphone className="size-4 shrink-0 text-accent" aria-hidden />}
+              <div className="min-w-0">
+                <p className="text-sm font-medium break-words text-ink">
+                  {sessionDevice(s.userAgent, s.via)}
+                  {s.current && <span className="ml-2 text-xs font-normal whitespace-nowrap text-up">This one</span>}
+                </p>
+                <p className="text-xs leading-relaxed text-ink-faint">
+                  Signed in {formatRelativeTime(s.createdAt)} with {KIND_LABEL[s.identityKind] ?? s.identityKind}
+                  {s.lastSeenAt ? `, last used ${formatRelativeTime(s.lastSeenAt)}` : ""}
+                </p>
+              </div>
+            </div>
+            <SecondaryButton
+              onClick={() => void signOut(s)}
+              disabled={busy !== null}
+              className="shrink-0"
+              aria-label={`Sign out ${sessionDevice(s.userAgent, s.via)}`}
+            >
+              Sign out
+            </SecondaryButton>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

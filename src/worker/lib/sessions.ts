@@ -26,6 +26,8 @@ export async function createSession(
   identity: string,
   identityKind: SessionRow["identity_kind"],
   ttlMs: number = DEFAULT_TTL_MS,
+  /** "app": redeemed by the Android app (routes/app-signin.ts). */
+  via: SessionRow["via"] = null,
 ): Promise<{ id: string; csrf: string; expiresAt: number }> {
   const token = randomToken(32);
   const id = await sha256hex(token);
@@ -35,8 +37,8 @@ export async function createSession(
 
   await c.env.DB.prepare(
     `INSERT INTO sessions
-       (id, identity, identity_kind, csrf_secret, created_at, expires_at, last_seen_at, user_agent, ip)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, identity, identity_kind, csrf_secret, created_at, expires_at, last_seen_at, user_agent, ip, via)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
@@ -48,6 +50,7 @@ export async function createSession(
       now,
       c.req.header("user-agent") ?? null,
       c.req.header("cf-connecting-ip") ?? null,
+      via,
     )
     .run();
 
@@ -105,6 +108,45 @@ export async function destroySession(c: Ctx): Promise<void> {
 
 async function destroySessionById(env: Env, id: string): Promise<void> {
   await env.DB.prepare(`DELETE FROM sessions WHERE id = ?`).bind(id).run();
+}
+
+/** A session as Settings lists it: never its CSRF secret. */
+export interface SessionSummary {
+  /** The row id (the SHA-256 of the cookie, which can't be turned back into it). */
+  id: string;
+  identityKind: SessionRow["identity_kind"];
+  via: SessionRow["via"];
+  userAgent: string | null;
+  createdAt: number;
+  lastSeenAt: number | null;
+  expiresAt: number;
+  current: boolean;
+}
+
+/** Every unexpired session, the newest first (Settings > Sign-in & security). */
+export async function listSessions(env: Env, currentId: string | null): Promise<SessionSummary[]> {
+  const res = await env.DB.prepare(
+    `SELECT id, identity_kind, via, user_agent, created_at, last_seen_at, expires_at
+       FROM sessions WHERE expires_at > ? ORDER BY created_at DESC LIMIT 200`,
+  )
+    .bind(Date.now())
+    .all<Pick<SessionRow, "id" | "identity_kind" | "via" | "user_agent" | "created_at" | "last_seen_at" | "expires_at">>();
+  return (res.results ?? []).map((r) => ({
+    id: r.id,
+    identityKind: r.identity_kind,
+    via: r.via ?? null,
+    userAgent: r.user_agent,
+    createdAt: r.created_at,
+    lastSeenAt: r.last_seen_at,
+    expiresAt: r.expires_at,
+    current: r.id === currentId,
+  }));
+}
+
+/** Sign one session out (Settings). False when there is no such session. */
+export async function revokeSession(env: Env, id: string): Promise<boolean> {
+  const res = await env.DB.prepare(`DELETE FROM sessions WHERE id = ?`).bind(id).run();
+  return (res.meta.changes ?? 0) > 0;
 }
 
 /**

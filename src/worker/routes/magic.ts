@@ -9,6 +9,7 @@ import { getSetting } from "../db/settings";
 import { appOrigin } from "../lib/app-origin";
 import { sendEmail } from "../notifications/mail";
 import { hitRateLimit } from "../db/rate-limit";
+import { afterSignInPath } from "./app-signin";
 import {
   escapeHtml,
   renderEmailLayout,
@@ -212,5 +213,5 @@ magicFlow.get("/verify", async (c) => {
 
   // Rotate: a fresh session is issued on every login.
   await createSession(c, email, "email");
-  return c.redirect(`${base}/`, 302);
+  return c.redirect(`${base}${afterSignInPath(c)}`, 302);
 });

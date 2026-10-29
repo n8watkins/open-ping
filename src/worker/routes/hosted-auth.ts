@@ -14,7 +14,8 @@ import { recordSupportActivity } from "../lib/support";
 import { setSetting } from "../db/settings";
 import { createSession, endCurrentSession } from "../lib/sessions";
 import { hostedProps } from "../lib/hosted";
-import { escapeHtml } from "../notifications/email-layout";
+import { renderPlainPage } from "../lib/plain-page";
+import { afterSignInPath } from "./app-signin";
 
 /**
  * GET /auth/hosted?t=<token>: the OpenPing Hosted sign-in hand-off
@@ -58,8 +59,9 @@ hostedAuth.get("/", async (c, next) => {
     console.warn(`[hosted] sign-in hand-off refused: ${outcome.reason}`);
     return c.html(handoffFailedPage(props.tenant.urls.signIn), REFUSAL_STATUS[outcome.reason] ?? 400);
   }
-  // A relative redirect to the dashboard: the token is gone from the address.
-  return c.redirect("/", 302);
+  // A relative redirect to the dashboard (or on to the Android app, when the
+  // sign-in started there): the token is gone from the address.
+  return c.redirect(afterSignInPath(c), 302);
 });
 
 async function handOff(c: Ctx, props: TenantProps): Promise<Outcome> {
@@ -138,100 +140,11 @@ async function handOff(c: Ctx, props: TenantProps): Promise<Outcome> {
  * script, styled like the app, with a way back to the platform's sign-in.
  */
 export function handoffFailedPage(signInUrl: string): string {
-  const href = escapeHtml(signInUrl);
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0b1220" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="robots" content="noindex" />
-    <title>Sign-in link expired | OpenPing</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <style>
-      :root {
-        --canvas: #0b1220;
-        --surface: #111b2e;
-        --line: #1f2c44;
-        --ink: #e6edf6;
-        --ink-muted: #9fb0c5;
-        --ink-faint: #8595ad;
-        --accent: #6d8bff;
-      }
-      * { box-sizing: border-box; }
-      html, body { min-height: 100%; margin: 0; }
-      body {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 100vh;
-        padding: 1.5rem 1rem;
-        background-color: var(--canvas);
-        color: var(--ink);
-        -webkit-font-smoothing: antialiased;
-        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      }
-      main { width: 100%; max-width: 24rem; }
-      .brand {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.5rem;
-        margin: 0 0 2rem;
-        font-size: 1.125rem;
-        font-weight: 700;
-        letter-spacing: -0.01em;
-        color: var(--ink);
-      }
-      .brand svg { width: 28px; height: 28px; }
-      .brand .ping { color: var(--accent); }
-      .card {
-        padding: 1.5rem;
-        border: 1px solid var(--line);
-        border-radius: 0.875rem;
-        background-color: var(--surface);
-        text-align: center;
-      }
-      h1 { margin: 0; font-size: 1.125rem; font-weight: 600; letter-spacing: -0.01em; }
-      p { margin: 0.75rem 0 0; font-size: 0.875rem; line-height: 1.6; color: var(--ink-muted); }
-      .button {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        height: 2.75rem;
-        margin-top: 1.5rem;
-        border-radius: 0.5rem;
-        background-color: var(--ink);
-        color: var(--canvas);
-        font-size: 0.875rem;
-        font-weight: 600;
-        text-decoration: none;
-      }
-      .button:hover { opacity: 0.9; }
-      .button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-      .fine { margin-top: 1.5rem; font-size: 0.75rem; color: var(--ink-faint); text-align: center; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <p class="brand" aria-label="OpenPing">
-        <svg viewBox="0 0 32 32" aria-hidden="true">
-          <rect width="32" height="32" rx="8" fill="#111b2e" />
-          <circle cx="16" cy="16" r="4" fill="#6d8bff" />
-          <circle cx="16" cy="16" r="9" fill="none" stroke="#6d8bff" stroke-width="1.5" opacity="0.5" />
-          <circle cx="16" cy="16" r="13" fill="none" stroke="#6d8bff" stroke-width="1.5" opacity="0.2" />
-        </svg>
-        <span>Open<span class="ping">Ping</span></span>
-      </p>
-      <div class="card">
-        <h1>This sign-in link has expired</h1>
-        <p>Sign-in links from OpenPing Hosted work once, for a minute. Sign in again to get a new one.</p>
-        <a class="button" href="${href}">Sign in again</a>
-      </div>
-      <p class="fine">Your monitors keep running while you're signed out.</p>
-    </main>
-  </body>
-</html>
-`;
+  return renderPlainPage({
+    title: "Sign-in link expired",
+    heading: "This sign-in link has expired",
+    body: ["Sign-in links from OpenPing Hosted work once, for a minute. Sign in again to get a new one."],
+    action: { href: signInUrl, label: "Sign in again" },
+    fine: "Your monitors keep running while you're signed out.",
+  });
 }

@@ -4,6 +4,7 @@ import { emailConfigured } from "../notifications/mail";
 import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
 import { createSession, revokeAllSessions } from "../lib/sessions";
+import { afterSignInPath } from "./app-signin";
 import { appUrlFromEnv } from "../lib/app-origin";
 import { hitRateLimit } from "../db/rate-limit";
 import { getAdminEmail, getAdminGithubLogin } from "../lib/admin";
@@ -200,7 +201,8 @@ passkeyAuth.post("/login/verify", async (c) => {
     }
     // Exactly like GitHub and email: a fresh session (and CSRF secret) per sign-in.
     await createSession(c, row.id, "passkey");
-    return c.json({ ok: true });
+    // Where the page goes next: the dashboard, or on to the Android app.
+    return c.json({ ok: true, next: afterSignInPath(c) });
   } catch (e) {
     return ceremonyErrorResponse(c, e);
   }
