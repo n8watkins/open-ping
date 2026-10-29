@@ -109,6 +109,7 @@ const EVENT_TITLE: Record<NotifyEvent, (name: string) => string> = {
   heartbeat_missed: (n) => `🔴 ${n} missed its heartbeat`,
   flapping: (n) => `🟠 ${n} is flapping`,
   degraded: (n) => `🟠 ${n} is degraded`,
+  cert_expiring: (n) => `🟠 ${n}: certificate expires soon`,
   maintenance_start: (n) => `🔧 Maintenance started: ${n}`,
   maintenance_end: (n) => `🔧 Maintenance ended: ${n}`,
   incident_update: (n) => `📢 Incident update: ${n}`,
@@ -184,6 +185,33 @@ export function buildIncidentUpdatePayload(
   };
 }
 
+/**
+ * The alert a certificate monitor sends as it crosses one of its warning
+ * thresholds (checks/cert.ts): no incident, the monitor is still up (amber).
+ */
+export function buildCertExpiringPayload(
+  monitor: Pick<MonitorRecord, "id" | "name">,
+  warning: { daysUntil: number; validTo: number; host: string },
+  at: number,
+  appUrl?: string,
+): NotificationPayload {
+  const base = appUrl ? appUrl.replace(/\/$/, "") : undefined;
+  const date = new Date(warning.validTo).toUTCString().replace(/ \d{2}:\d{2}:\d{2} GMT$/, "");
+  const when =
+    warning.daysUntil <= 0 ? "today" : warning.daysUntil === 1 ? "tomorrow" : `in ${warning.daysUntil} days`;
+  return {
+    event: "cert_expiring",
+    monitorId: monitor.id,
+    monitorName: monitor.name,
+    // The webhook contract's state is up or down, and the site is still up.
+    state: "up",
+    title: `🟠 ${monitor.name}: certificate expires ${when}`,
+    body: `The SSL certificate for ${warning.host} expires ${when}, on ${date}. Renew it before then, or visitors will see a security warning.`,
+    url: base ? `${base}/monitors/${monitor.id}` : undefined,
+    detectedAt: at,
+  };
+}
+
 /** A synthetic payload for the "send test notification" action. */
 export function buildTestPayload(channelName: string, appUrl?: string): NotificationPayload {
   const base = appUrl ? appUrl.replace(/\/$/, "") : undefined;
@@ -212,6 +240,7 @@ export const EVENT_PILL: Record<NotifyEvent, string> = {
   heartbeat_missed: "Missed heartbeat",
   flapping: "Flapping",
   degraded: "Degraded",
+  cert_expiring: "Expires soon",
   maintenance_start: "Maintenance",
   maintenance_end: "Maintenance",
   incident_update: "Update",
@@ -222,7 +251,7 @@ export const EVENT_PILL: Record<NotifyEvent, string> = {
 /** CTA label per event: incidents link to the monitor, test opens the app. */
 export function emailButtonLabel(event: NotifyEvent): string {
   if (event === "test") return "Open OpenPing";
-  if (event === "maintenance_start" || event === "maintenance_end") return "View monitor";
+  if (event === "maintenance_start" || event === "maintenance_end" || event === "cert_expiring") return "View monitor";
   return "View incident";
 }
 
@@ -322,6 +351,7 @@ export function eventColorState(event: NotifyEvent): string {
       return "up";
     case "flapping":
     case "degraded":
+    case "cert_expiring":
     case "maintenance_start":
       return "degraded"; // amber, not red
     case "incident_update":

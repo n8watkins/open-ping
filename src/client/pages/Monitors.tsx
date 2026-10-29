@@ -49,6 +49,7 @@ const NEW_MONITOR_OPTIONS = [
   { type: "dns", label: "DNS record" },
   { type: "tcp", label: "TCP port" },
   { type: "domain", label: "Domain expiry" },
+  { type: "cert", label: "SSL certificate" },
 ] as const;
 
 export default function Monitors() {

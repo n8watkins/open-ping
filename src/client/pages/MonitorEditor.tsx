@@ -23,8 +23,10 @@ import type { PlanLimitBody } from "../../shared/hosted-contract";
 import { Card } from "../components/ui/Card";
 import { cn } from "../lib/cn";
 import type { Category } from "../lib/types";
+import { CERT_DEFAULT_WARN_DAYS, parseCertTarget, parseWarnDays } from "../../shared/cert";
 import type {
   Assertion,
+  CertConfig,
   ConfirmFailures,
   DnsConfig,
   DomainConfig,
@@ -43,7 +45,7 @@ import type {
  * returns `{ issues }` on 400 which we surface inline.
  */
 
-type MonitorType = "http" | "heartbeat" | "dns" | "tcp" | "domain";
+type MonitorType = "http" | "heartbeat" | "dns" | "tcp" | "domain" | "cert";
 type AuthType = "none" | "basic" | "bearer";
 type AssertionKind = Assertion["kind"];
 type ScheduleMode = Schedule["mode"];
@@ -56,6 +58,7 @@ const MONITOR_TYPES: MonitorType[] = [
   "dns",
   "tcp",
   "domain",
+  "cert",
 ];
 
 function monitorTypeFromQuery(value: string | null): MonitorType {
@@ -124,6 +127,11 @@ interface FormState {
   domainName: string;
   domainWarnDays: number;
   domainTimeoutMs: number;
+  // SSL certificate config; the thresholds as typed ("30, 14, 7")
+  certHost: string;
+  certPort: number;
+  certWarnDays: string;
+  certTimeoutMs: number;
   // Schedule
   scheduleMode: ScheduleMode;
   bizWeekdays: number[];
@@ -149,7 +157,7 @@ interface LoadedMonitor {
   type: MonitorType;
   name: string;
   enabled: boolean;
-  config: HttpConfig | HeartbeatConfig | DnsConfig | TcpConfig | DomainConfig;
+  config: HttpConfig | HeartbeatConfig | DnsConfig | TcpConfig | DomainConfig | CertConfig;
   schedule: Schedule;
   assertions: Assertion[];
   notify: unknown;
@@ -180,6 +188,7 @@ const TYPE_DESCRIPTIONS: Record<MonitorType, string> = {
   dns: "Resolve a DNS record and optionally assert its value.",
   tcp: "Open a TCP connection to a host and port.",
   domain: "Track a domain's registration expiry.",
+  cert: "Warn before a site's SSL certificate expires.",
 };
 
 const ASSERTION_KINDS: { value: AssertionKind; label: string }[] = [
@@ -249,6 +258,10 @@ function initialForm(type: MonitorType = "http"): FormState {
     domainName: "",
     domainWarnDays: 30,
     domainTimeoutMs: 15000,
+    certHost: "",
+    certPort: 443,
+    certWarnDays: CERT_DEFAULT_WARN_DAYS.join(", "),
+    certTimeoutMs: 10000,
     scheduleMode: "always",
     bizWeekdays: [1, 2, 3, 4, 5],
     bizStart: "08:00",
@@ -336,6 +349,12 @@ function prefill(m: LoadedMonitor): FormState {
     base.domainName = c.domain ?? "";
     base.domainWarnDays = c.warnDays ?? 30;
     base.domainTimeoutMs = c.timeoutMs ?? 15000;
+  } else if (m.type === "cert") {
+    const c = m.config as CertConfig;
+    base.certHost = c.host ?? "";
+    base.certPort = c.port ?? 443;
+    base.certWarnDays = (Array.isArray(c.warnDays) ? c.warnDays : CERT_DEFAULT_WARN_DAYS).join(", ");
+    base.certTimeoutMs = c.timeoutMs ?? 10000;
   } else {
     const c = m.config as HeartbeatConfig;
     base.intervalSeconds = c.intervalSeconds ?? 3600;
@@ -694,6 +713,17 @@ export default function MonitorEditor() {
       return { type: "domain", ...common, config };
     }
 
+    if (form.type === "cert") {
+      const target = parseCertTarget(form.certHost);
+      const config: CertConfig = {
+        host: target.host,
+        port: form.certPort,
+        warnDays: parseWarnDays(form.certWarnDays),
+        timeoutMs: form.certTimeoutMs,
+      };
+      return { type: "cert", ...common, config };
+    }
+
     const config: HeartbeatConfig = {
       intervalSeconds: form.intervalSeconds,
       graceSeconds: form.graceSeconds,
@@ -841,6 +871,7 @@ export default function MonitorEditor() {
                 <option value="dns">DNS record</option>
                 <option value="tcp">TCP port</option>
                 <option value="domain">Domain expiry</option>
+                <option value="cert">SSL certificate</option>
               </select>
             </Field>
             <div className="flex items-end">
@@ -1415,6 +1446,84 @@ export default function MonitorEditor() {
                     onChange={(e) =>
                       set("domainTimeoutMs", Number(e.target.value))
                     }
+                    className="input"
+                  />
+                </Field>
+              </div>
+            </details>
+          </FormCard>
+        )}
+
+        {/* 4d. SSL certificate config */}
+        {form.type === "cert" && (
+          <FormCard
+            title="SSL certificate"
+            description="Read the certificate the server serves and warn before it expires."
+          >
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_8rem]">
+              <Field label="Host" required hint="The site's host name. A pasted URL works too.">
+                <input
+                  value={form.certHost}
+                  onChange={(e) => set("certHost", e.target.value)}
+                  onBlur={(e) => {
+                    const target = parseCertTarget(e.target.value);
+                    if (target.host !== form.certHost) set("certHost", target.host);
+                    if (target.port) set("certPort", target.port);
+                  }}
+                  placeholder="example.com"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  inputMode="url"
+                  required
+                  className="input"
+                />
+              </Field>
+              <Field label="Port" required>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={form.certPort}
+                  onChange={(e) => set("certPort", Number(e.target.value))}
+                  required
+                  className="input"
+                />
+              </Field>
+            </div>
+            <Field
+              label="Warn at (days before expiry)"
+              hint="Up to 5, separated by commas. The largest marks the monitor degraded, and each one sends one alert as it's reached."
+            >
+              <input
+                value={form.certWarnDays}
+                onChange={(e) => set("certWarnDays", e.target.value)}
+                onBlur={(e) => {
+                  const days = parseWarnDays(e.target.value);
+                  if (days.length && !days.some(Number.isNaN)) set("certWarnDays", days.join(", "));
+                }}
+                placeholder="30, 14, 7"
+                className="input"
+              />
+            </Field>
+            <p className="rounded-lg border border-line bg-surface-2/40 px-3 py-2.5 text-xs leading-relaxed text-ink-muted">
+              Read once a day, and every hour once a warning starts. Sites behind Cloudflare's proxy (every
+              Render app, for example) and servers that only speak TLS 1.3 can't be read from Cloudflare
+              Workers: they show <span className="font-medium text-ink">Can't check</span>, never Down.
+            </p>
+
+            <details className="rounded-lg border border-line bg-surface-2/40 p-3">
+              <summary className="cursor-pointer text-xs font-medium text-ink-muted">
+                Advanced
+              </summary>
+              <div className="mt-3">
+                <Field label="Timeout (ms)">
+                  <input
+                    type="number"
+                    min={1000}
+                    max={30000}
+                    value={form.certTimeoutMs}
+                    onChange={(e) => set("certTimeoutMs", Number(e.target.value))}
                     className="input"
                   />
                 </Field>

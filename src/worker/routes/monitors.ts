@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv, Env } from "../types";
 import { requireAuth } from "../middleware/auth";
-import { createMonitorSchema, intervalSecondsOf, type CreateMonitorInput } from "../../shared/schemas";
+import { createMonitorSchema, intervalSecondsOf, type CertConfig, type CreateMonitorInput } from "../../shared/schemas";
 import {
   createMonitor,
   deleteMonitor,
@@ -15,6 +15,7 @@ import {
 import { runMonitorCheck } from "../checks/runner";
 import { applyCheckResult, readState } from "../checks/state";
 import { parseDomainCache } from "../checks/domain";
+import { certificateDetail, parseCertCache } from "../checks/cert";
 import { firstCheckWithin, type FirstCheckResult } from "../checks/first-check";
 import {
   computeUptime,
@@ -333,14 +334,15 @@ monitors.get("/:id/detail", async (c) => {
   const now = Date.now();
   const DAY = 86400000;
 
-  const state = await c.env.DB.prepare(
+  const stateRow = await c.env.DB.prepare(
     `SELECT state, state_since, last_checked_at, last_success_at, last_duration_ms,
             last_status_code, last_error, consecutive_failures, consecutive_successes,
-            next_check_at, active_incident_id, is_flapping
+            next_check_at, active_incident_id, is_flapping, cert_cache
      FROM monitor_state WHERE monitor_id = ?`,
   )
     .bind(id)
-    .first();
+    .first<Record<string, unknown> & { cert_cache: string | null }>();
+  const { cert_cache: certCacheRaw = null, ...state } = stateRow ?? {};
 
   const [d1, d7, d30, d90, d365] = await Promise.all([
     computeUptime(c.env, id, now - DAY, now),
@@ -410,7 +412,12 @@ monitors.get("/:id/detail", async (c) => {
 
   return c.json({
     monitor: redactMonitor(monitor),
-    state,
+    state: stateRow ? state : null,
+    // A certificate monitor's last read, for the Certificate panel (SANs and
+    // all, which the samples leave out); null before the first read.
+    ...(monitor.type === "cert"
+      ? { certificate: certificateDetail(monitor.config as CertConfig, parseCertCache(certCacheRaw), now) }
+      : {}),
     uptime: {
       d1: d1.uptimePct,
       d7: d7.uptimePct,
@@ -499,9 +506,10 @@ monitors.post("/:id/rotate-heartbeat-token", async (c) => {
 /**
  * Manual test (PRD §9). Runs a check now and returns the outcome. By default it
  * does NOT affect stored history/state; pass ?apply=1 to persist the result.
- * Available for all polled types (http/dns/tcp/domain); heartbeats are
+ * Available for all polled types (http/dns/tcp/domain/cert); heartbeats are
  * push-driven and cannot be actively probed. A domain monitor always asks RDAP,
- * falling back to its cached read if that fails, like a scheduled check. An
+ * falling back to its cached read if that fails, like a scheduled check, and
+ * a certificate monitor always reads the server the same way. An
  * outcome whose confirmation was deferred (RDAP rate limited the lookup) is
  * returned but never applied: it is the scheduler's to retry.
  */
@@ -512,12 +520,14 @@ monitors.post("/:id/test", async (c) => {
     return c.json({ error: "not_testable", message: "Heartbeat monitors are push-driven." }, 400);
   }
   const apply = c.req.query("apply") === "1" || c.req.query("apply") === "true";
-  const known = monitor.type === "domain" || apply ? await readState(c.env, monitor.id) : undefined;
+  const known =
+    monitor.type === "domain" || monitor.type === "cert" || apply ? await readState(c.env, monitor.id) : undefined;
   const outcome = await runMonitorCheck(monitor, {
     confirm: monitor.confirmFailures !== "off",
     ...(monitor.type === "domain"
       ? { domainCache: parseDomainCache(known?.domain_cache), refreshDomain: true }
       : {}),
+    ...(monitor.type === "cert" ? { certCache: parseCertCache(known?.cert_cache), refreshCert: true } : {}),
     now: Date.now(),
   });
   const applied = apply && outcome.confirmation !== "deferred";

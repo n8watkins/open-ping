@@ -109,11 +109,11 @@ export function overallState(counts: Record<string, number>): string {
 function stateCounts(counts: Record<string, number>): string {
   const order: MonitorState[] = [
     "down", "suspended", "degraded", "maintenance", "warming_up", "up",
-    "scheduled_off", "paused", "unknown",
+    "scheduled_off", "paused", "cant_check", "unknown",
   ];
   const parts = order
     .filter((s) => (counts[s] ?? 0) > 0)
-    .map((s) => `${counts[s]} ${s.replace("_", " ")}`);
+    .map((s) => `${counts[s]} ${s === "cant_check" ? "can't check" : s.replace("_", " ")}`);
   return parts.length ? parts.join(", ") : "none";
 }
 
@@ -635,6 +635,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         'http config: {"url":"https://...","method":"GET","expectedStatus":{"min":200,"max":399},"timeoutMs":60000}.',
         'heartbeat config: {"intervalSeconds":3600,"graceSeconds":300}; the result has the ping URL, shown only this once.',
         'dns: {"hostname":"example.com","recordType":"A"}. tcp: {"host":"db.example.com","port":5432}. domain: {"domain":"example.com","warnDays":30}.',
+        'cert (SSL certificate expiry): {"host":"example.com","port":443,"warnDays":[30,14,7]}; it shows cant_check when the host is behind Cloudflare or only speaks TLS 1.3.',
       ].join(" "),
       inputSchema: z.object({
         type: z.enum(MONITOR_TYPES),

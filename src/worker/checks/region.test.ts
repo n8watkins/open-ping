@@ -81,11 +81,12 @@ describe("the data-center lookup", () => {
 });
 
 describe("supportsRemoteRecheck", () => {
-  it("covers http, dns and tcp, not domain (RDAP answers the same everywhere)", () => {
-    expect(["http", "dns", "tcp", "domain", "heartbeat"].map((t) => supportsRemoteRecheck(t as never))).toEqual([
+  it("covers http, dns and tcp, not domain (RDAP answers the same everywhere) or cert", () => {
+    expect(["http", "dns", "tcp", "domain", "cert", "heartbeat"].map((t) => supportsRemoteRecheck(t as never))).toEqual([
       true,
       true,
       true,
+      false,
       false,
       false,
     ]);

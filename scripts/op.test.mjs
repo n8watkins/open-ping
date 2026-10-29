@@ -131,6 +131,20 @@ describe("flag builders", () => {
     expect(() => configFromFlags("dns", { url: "https://a" })).toThrow(/--url is for http monitors/);
   });
 
+  it("builds certificate and domain thresholds from --warn-days", () => {
+    expect(configFromFlags("cert", { host: "example.com", "warn-days": "30, 14,7" })).toEqual({
+      host: "example.com",
+      warnDays: [30, 14, 7],
+    });
+    expect(configFromFlags("domain", { domain: "example.com", "warn-days": "21" })).toEqual({
+      domain: "example.com",
+      warnDays: 21,
+    });
+    expect(() => configFromFlags("domain", { "warn-days": "30,7" })).toThrow(/one number/);
+    expect(() => configFromFlags("cert", { "warn-days": "soon" })).toThrow(/whole number/);
+    expect(() => configFromFlags("http", { host: "example.com" })).toThrow(/--host is for tcp or cert monitors/);
+  });
+
   it("builds and adjusts business-hours schedules", () => {
     expect(scheduleFromFlags({}, null)).toBeNull();
     expect(scheduleFromFlags({ schedule: "always" }, null)).toEqual({ mode: "always" });

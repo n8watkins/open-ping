@@ -9,16 +9,22 @@ vi.mock("./domain", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./domain")>()),
   runDomainCheck: vi.fn(),
 }));
+vi.mock("./cert", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./cert")>()),
+  runCertCheck: vi.fn(),
+}));
 import { runHttpCheck } from "./http";
 import { runDnsCheck } from "./dns";
 import { runTcpCheck } from "./tcp";
 import { runDomainCheck } from "./domain";
+import { runCertCheck } from "./cert";
 import { classifyCheck, CONFIRM_DELAY_MS, probeFetchLimit, runMonitorCheck } from "./runner";
 
 const mockedRun = vi.mocked(runHttpCheck);
 const mockedDns = vi.mocked(runDnsCheck);
 const mockedTcp = vi.mocked(runTcpCheck);
 const mockedDomain = vi.mocked(runDomainCheck);
+const mockedCert = vi.mocked(runCertCheck);
 
 function result(over: Partial<HttpCheckResult> = {}): HttpCheckResult {
   return { ok: true, durationMs: 100, statusCode: 200, ...over };
@@ -300,6 +306,82 @@ describe("probeFetchLimit", () => {
     expect(probeFetchLimit(domain, { cache, now })).toBe(0);
     expect(probeFetchLimit(domain, { cache: { ...cache, checkedAt: now - 7 * 3_600_000 }, now })).toBe(2);
     expect(probeFetchLimit(domain, { cache: null, now })).toBe(2);
+  });
+
+  it("reserves a socket and a DNS lookup for a cert read, nothing for a fresh cached one", () => {
+    const now = Date.UTC(2026, 9, 28);
+    const cert = {
+      type: "cert",
+      config: { host: "x.test", port: 443, warnDays: [30, 14, 7], timeoutMs: 10000 },
+    } as unknown as MonitorRecord;
+    const read = {
+      kind: "cert" as const,
+      chainLength: 1,
+      cert: {
+        subject: null,
+        issuerOrg: null,
+        issuerName: null,
+        validFrom: now - 86_400_000,
+        validTo: now + 200 * 86_400_000,
+        sans: [],
+        sanCount: 0,
+        serial: "01",
+      },
+    };
+    const cache = { host: "x.test", port: 443, checkedAt: now - 60_000, read };
+    expect(probeFetchLimit(cert)).toBe(2);
+    expect(probeFetchLimit(cert, { cache, now })).toBe(0);
+    expect(probeFetchLimit(cert, { cache: { ...cache, checkedAt: now - 25 * 3_600_000 }, now })).toBe(2);
+    expect(probeFetchLimit(cert, { cache: null, now })).toBe(2);
+  });
+});
+
+describe("cert cycles", () => {
+  beforeEach(() => mockedCert.mockReset());
+  const cert = (config = {}) =>
+    ({
+      id: "m1",
+      type: "cert",
+      config: { host: "x.test", port: 443, warnDays: [30, 14, 7], timeoutMs: 10000, ...config },
+    }) as unknown as MonitorRecord;
+
+  it("reports can't check as its own neutral state, without a re-check", async () => {
+    mockedCert.mockResolvedValue({ ok: true, cantCheck: true, fetches: 1, meta: { cantCheck: { reason: "cloudflare" } } });
+    const o = await runMonitorCheck(cert(), { sleep: vi.fn(), now: 1 });
+    expect(o).toMatchObject({ state: "cant_check", ok: true, fetches: 1, attempts: 1 });
+    expect(o.confirmation).toBeUndefined();
+    expect(mockedCert).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the cache and the planned time, and forces a read on a manual test", async () => {
+    mockedCert.mockResolvedValue({ ok: true, fetches: 0 });
+    const certCache = { host: "x.test", port: 443, checkedAt: 5, read: { kind: "cant_check" as const, reason: "refused" as const, detail: "" } };
+    await runMonitorCheck(cert(), { certCache, plannedAt: 7, refreshCert: true, now: 9 });
+    expect(mockedCert).toHaveBeenCalledWith(expect.objectContaining({ host: "x.test" }), {
+      cache: certCache,
+      now: 7,
+      force: true,
+    });
+  });
+
+  it("carries the new cache and a crossed threshold to the outcome", async () => {
+    const certWarning = { threshold: 14, daysUntil: 13, validTo: 99, host: "x.test" };
+    const certCache = { host: "x.test", port: 443, checkedAt: 5, read: { kind: "cant_check" as const, reason: "refused" as const, detail: "" } };
+    mockedCert.mockResolvedValue({ ok: true, degraded: true, fetches: 1, certWarning, certCache });
+    const o = await runMonitorCheck(cert(), { now: 1 });
+    expect(o).toMatchObject({ state: "degraded", certWarning, certCache });
+  });
+
+  it("confirms a failed read with no cache once, and skips the re-check for an expired date", async () => {
+    mockedCert.mockResolvedValue({ ok: false, error: "cert_timeout", fetches: 1 });
+    const sleep = vi.fn(async () => {});
+    const o = await runMonitorCheck(cert(), { sleep, now: 1 });
+    expect(o).toMatchObject({ state: "down", confirmation: "confirmed", fetches: 2 });
+    mockedCert.mockReset();
+    mockedCert.mockResolvedValue({ ok: false, error: "cert_expired", recheck: "skip", fetches: 0 });
+    const expired = await runMonitorCheck(cert(), { sleep, now: 1 });
+    expect(expired).toMatchObject({ state: "down", error: "cert_expired", fetches: 0 });
+    expect(expired.confirmation).toBeUndefined();
   });
 });
 

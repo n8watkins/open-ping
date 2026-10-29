@@ -1,9 +1,10 @@
 import type { MonitorState } from "../../shared/states";
 import type { DomainCache } from "./domain";
+import type { CertCache, CertWarning } from "./cert";
 
 /**
  * The raw result of a single probe attempt, shared by every executor
- * (http/dns/tcp/domain). Executors return this; the runner classifies it into a
+ * (http/dns/tcp/domain/cert). Executors return this; the runner classifies it into a
  * `CheckOutcome`. `meta` carries type-specific detail (resolved DNS records,
  * domain expiry, …) that is persisted on the sample and surfaced in the UI.
  */
@@ -35,6 +36,15 @@ export interface ProbeResult {
   recheck?: "skip" | "defer";
   /** A domain check's new cached read to store (monitor_state.domain_cache); absent leaves it as is. */
   domainCache?: DomainCache;
+  /** A certificate check's new cached read to store (monitor_state.cert_cache); absent leaves it as is. */
+  certCache?: CertCache;
+  /**
+   * The certificate can't be read from a Worker (behind Cloudflare, TLS 1.3
+   * only): the cycle is neither up nor down but `cant_check` (checks/cert.ts).
+   */
+  cantCheck?: boolean;
+  /** A certificate warning threshold this cycle crossed, to alert once. */
+  certWarning?: CertWarning;
 }
 
 /** The classified result of one full check cycle for a monitor. */
@@ -72,6 +82,10 @@ export interface CheckOutcome {
   meta?: unknown;
   /** A domain check's new cached read to store; absent leaves the stored one as is. */
   domainCache?: DomainCache;
+  /** A certificate check's new cached read to store; absent leaves the stored one as is. */
+  certCache?: CertCache;
+  /** A certificate warning threshold this cycle crossed: the write queues its alert (checks/state.ts). */
+  certWarning?: CertWarning;
   /** Outbound requests the whole cycle made: every probe, redirect hops included. */
   fetches: number;
   /** Epoch ms when the cycle completed. */

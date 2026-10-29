@@ -14,6 +14,7 @@ const DOT: Record<MonitorState, string> = {
   paused: "bg-paused",
   warming_up: "bg-warming",
   unknown: "bg-paused",
+  cant_check: "bg-paused",
 };
 
 const TEXT: Record<MonitorState, string> = {
@@ -26,6 +27,7 @@ const TEXT: Record<MonitorState, string> = {
   paused: "text-paused",
   warming_up: "text-warming",
   unknown: "text-paused",
+  cant_check: "text-paused",
 };
 
 /**

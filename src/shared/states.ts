@@ -9,6 +9,7 @@ export const MONITOR_STATES = [
   "scheduled_off",
   "paused",
   "maintenance",
+  "cant_check",
 ] as const;
 
 export type MonitorState = (typeof MONITOR_STATES)[number];
@@ -24,7 +25,7 @@ export const DOWNTIME_STATES: ReadonlySet<MonitorState> = new Set([
   "suspended",
 ]);
 
-export const MONITOR_TYPES = ["http", "heartbeat", "dns", "tcp", "domain"] as const;
+export const MONITOR_TYPES = ["http", "heartbeat", "dns", "tcp", "domain", "cert"] as const;
 export type MonitorType = (typeof MONITOR_TYPES)[number];
 
 export const SCHEDULE_MODES = ["always", "business_hours", "custom"] as const;
@@ -41,4 +42,8 @@ export const STATE_META: Record<MonitorState, { label: string; token: string }> 
   scheduled_off: { label: "Scheduled off", token: "scheduled" },
   paused: { label: "Paused", token: "paused" },
   maintenance: { label: "Maintenance", token: "maint" },
+  // A certificate monitor whose certificate can't be read from Cloudflare's
+  // network (the host is behind Cloudflare's proxy, or only speaks TLS 1.3):
+  // neutral, never an outage, no incident and no alert (checks/cert.ts).
+  cant_check: { label: "Can't check", token: "paused" },
 };

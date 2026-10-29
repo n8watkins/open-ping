@@ -3,6 +3,7 @@ import { applyD1Migrations, createExecutionContext } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import worker from "../../src/worker/index";
+import { tlsReader } from "../../src/worker/checks/cert";
 import type { Env } from "../../src/worker/types";
 import {
   PLAN_LIMITS,
@@ -192,6 +193,28 @@ describe("monitors", () => {
     // A heartbeat's interval is how often its job pings, not a check.
     const hb = await call("/api/monitors", { json: { type: "heartbeat", name: "Fast job", config: { intervalSeconds: 60, graceSeconds: 0 } } });
     expect(hb.status).toBe(201);
+  });
+
+  it("applies the same limits to an SSL certificate monitor", async () => {
+    limits = { ...PLAN_LIMITS.trial, minIntervalMinutes: 15 };
+    vi.spyOn(tlsReader, "read").mockResolvedValue({
+      ok: false,
+      kind: "connect_failed",
+      message: "proxy request failed, cannot connect to the specified address",
+      durationMs: 1,
+    });
+    const cert = { type: "cert", name: "TLS", config: { host: "shop.example.com" } };
+    const fast = await call("/api/monitors", { json: { ...cert, intervalSeconds: 60 } });
+    expect(fast.status).toBe(402);
+    expect(await fast.json()).toMatchObject({ limit: "interval", allowed: 15, requested: 1 });
+    const fits = await call("/api/monitors", { json: cert });
+    expect(fits.status).toBe(201);
+    expect(await fits.json()).toMatchObject({ monitor: { intervalSeconds: 900 }, firstCheck: { state: "cant_check" } });
+
+    limits = { ...PLAN_LIMITS.trial, monitors: 1 };
+    const over = await call("/api/monitors", { json: { ...cert, name: "TLS 2" } });
+    expect(over.status).toBe(402);
+    expect(await over.json()).toMatchObject({ limit: "monitors" });
   });
 
   it("refuses create_monitor over MCP the same way", async () => {

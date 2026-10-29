@@ -20,6 +20,7 @@ import {
 } from "./lib/cadence";
 import { probeFetchLimit, runMonitorCheck } from "./checks/runner";
 import { parseDomainCache } from "./checks/domain";
+import { parseCertCache } from "./checks/cert";
 import {
   regionalRechecker,
   REMOTE_RECHECK_OVERHEAD,
@@ -81,7 +82,7 @@ import { newId } from "./lib/ids";
 const LEASE_NAME = "scheduler";
 const LEASE_TTL_MS = 5 * 60 * 1000; // shorter than the 12-min cadence
 const CONCURRENCY = 6;
-// How many polled checks (http/dns/tcp/domain) one tick runs is set by the
+// How many polled checks (http/dns/tcp/domain/cert) one tick runs is set by the
 // plan's per-invocation budget (lib/budget.ts): on the Free plan a run may make
 // only 50 D1 queries and 50 outbound fetches, so it checks a handful of
 // monitors and defers the rest (oldest next_check_at first) to the next tick.
@@ -145,7 +146,7 @@ const RUN_SETTINGS = [
  * One check cycle (PRD §9): every 12 minutes on the cron, and whenever the
  * platform calls on OpenPing Hosted (lib/cadence.ts). Acquires an execution lease, evaluates
  * each enabled monitor against its schedule, runs due polled checks
- * (http/dns/tcp/domain) concurrently (with warm-up + retries via the runner),
+ * (http/dns/tcp/domain/cert) concurrently (with warm-up + retries via the runner),
  * detects missed heartbeats, applies
  * the incident lifecycle, flushes queued notifications, runs history rollups +
  * retention/cleanup, and records run diagnostics.
@@ -358,7 +359,7 @@ export async function runScheduled(
         continue;
       }
 
-      // Polled monitor (http/dns/tcp/domain): due if next_check_at lands within
+      // Polled monitor (http/dns/tcp/domain/cert): due if next_check_at lands within
       // this cycle (+slack).
       const slack = dueSlackMs(m.intervalSeconds, cadence);
       if ((st?.next_check_at ?? 0) > base + slack) {
@@ -386,11 +387,12 @@ export async function runScheduled(
     const remoteRecheck = regionalRechecker(env, opts.regional);
     await mapLimit(duePolled, CONCURRENCY, async (m) => {
       const st = states.get(m.id);
-      // A domain cycle judged from its cached read (checks/domain.ts) makes no
-      // request, so it reserves no fetch; plannedAt keeps that decision and the
+      // A domain or cert cycle judged from its cached read (checks/domain.ts,
+      // checks/cert.ts) makes no request, so it reserves no fetch; plannedAt keeps that decision and the
       // check's own the same.
       const plannedAt = Date.now();
       const domainCache = m.type === "domain" ? parseDomainCache(st?.domain_cache) : null;
+      const certCache = m.type === "cert" ? parseCertCache(st?.cert_cache) : null;
       // Warm-up applies on a cold start (never checked) or the first check after
       // the monitor comes back on schedule or out of maintenance. A monitor
       // already in `warming_up` is NOT warmed up again: the next check is a
@@ -412,7 +414,14 @@ export async function runScheduled(
       // that may confirm holds its re-check's fetches too (a fresh probe, so no
       // cached read), so a failure it finds can always be confirmed.
       const ticket = await budget.startCheck(
-        probeFetchLimit(m, m.type === "domain" ? { cache: domainCache, now: plannedAt } : undefined),
+        probeFetchLimit(
+          m,
+          m.type === "domain"
+            ? { cache: domainCache, now: plannedAt }
+            : m.type === "cert"
+              ? { cache: certCache, now: plannedAt }
+              : undefined,
+        ),
         confirm ? probeFetchLimit(m) + (remote ? REMOTE_RECHECK_OVERHEAD : 0) : 0,
       );
       if (!ticket) {
@@ -434,6 +443,7 @@ export async function runScheduled(
           allowConfirm: () => ticket.tryConfirm(),
           ...(remote ? { remoteRecheck: remote } : {}),
           domainCache,
+          certCache,
           plannedAt,
           paceLookup,
           now: Date.now(),
@@ -477,7 +487,8 @@ export async function runScheduled(
     const ctx = await readWriteContext(
       env,
       {
-        notify: unnotified.length > 0,
+        // ...and for a certificate warning, which alerts without an incident.
+        notify: unnotified.length > 0 || results.some((r) => r.outcome.certWarning),
         incidents: [
           ...results
             .filter((r) => checkNeedsIncident(r.outcome, r.st))

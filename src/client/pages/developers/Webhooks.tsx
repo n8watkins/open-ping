@@ -11,6 +11,7 @@ const EVENTS = [
   "heartbeat_missed",
   "flapping",
   "degraded",
+  "cert_expiring",
   "maintenance_start",
   "maintenance_end",
   "incident_update",

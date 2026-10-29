@@ -19,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 /** A mistake in how the CLI was called (exit code 2, prints usage hints). */
 export class UsageError extends Error {}
 
-const MONITOR_TYPES = ["http", "heartbeat", "dns", "tcp", "domain"];
+const MONITOR_TYPES = ["http", "heartbeat", "dns", "tcp", "domain", "cert"];
 const UPDATE_STATUSES = ["investigating", "identified", "monitoring", "resolved"];
 const UPDATE_LABELS = { investigating: "Investigating", identified: "Identified", monitoring: "Monitoring", resolved: "Resolved" };
 
@@ -47,10 +47,13 @@ const monitorFlags = {
   grace: { type: "number", help: "heartbeat: extra seconds before it counts as missed" },
   hostname: { type: "string", help: "dns: name to resolve" },
   record: { type: "string", help: "dns: record type (A, AAAA, CNAME, MX, TXT)" },
-  host: { type: "string", help: "tcp: host to connect to" },
-  port: { type: "number", help: "tcp: port" },
+  host: { type: "string", help: "tcp: host to connect to; cert: host whose certificate to read" },
+  port: { type: "number", help: "tcp: port; cert: port (default 443)" },
   domain: { type: "string", help: "domain: registrable domain to watch for expiry" },
-  "warn-days": { type: "number", help: "domain: days before expiry to warn" },
+  "warn-days": {
+    type: "string",
+    help: "domain: days before expiry to warn; cert: comma-separated warning thresholds (default 30,14,7)",
+  },
   config: { type: "json", help: "Extra type-specific config as JSON, merged over the flags above" },
   ...scheduleFlags,
   public: { type: "boolean", help: "Show it on the public status page" },
@@ -441,6 +444,8 @@ function monitorTarget(m) {
       return `${c.host}:${c.port}`;
     case "domain":
       return c.domain;
+    case "cert":
+      return c.port && c.port !== 443 ? `${c.host}:${c.port}` : c.host;
     default:
       return "";
   }
@@ -586,13 +591,16 @@ export function configFromFlags(type, flags) {
   const set = (key, value) => {
     if (value !== undefined) config[key] = value;
   };
-  const wrongType = (flag, forType) => {
-    if (flag in flags && type !== forType) throw new UsageError(`--${flag} is for ${forType} monitors, not ${type}.`);
+  const wrongType = (flag, forTypes) => {
+    if (flag in flags && !forTypes.includes(type)) {
+      throw new UsageError(`--${flag} is for ${forTypes.join(" or ")} monitors, not ${type}.`);
+    }
   };
-  for (const [flag, forType] of [
+  for (const [flag, ...forTypes] of [
     ["url", "http"], ["method", "http"], ["expect-status", "http"], ["interval", "heartbeat"], ["grace", "heartbeat"],
-    ["hostname", "dns"], ["record", "dns"], ["host", "tcp"], ["port", "tcp"], ["domain", "domain"], ["warn-days", "domain"],
-  ]) wrongType(flag, forType);
+    ["hostname", "dns"], ["record", "dns"], ["host", "tcp", "cert"], ["port", "tcp", "cert"], ["domain", "domain"],
+    ["warn-days", "domain", "cert"],
+  ]) wrongType(flag, forTypes);
   set("url", flags.url);
   set("method", flags.method?.toUpperCase());
   if (flags["expect-status"] !== undefined) {
@@ -608,7 +616,14 @@ export function configFromFlags(type, flags) {
   set("host", flags.host);
   set("port", flags.port);
   set("domain", flags.domain);
-  set("warnDays", flags["warn-days"]);
+  if (flags["warn-days"] !== undefined) {
+    const days = String(flags["warn-days"]).split(",").map((d) => d.trim()).filter(Boolean).map(Number);
+    if (!days.length || days.some((d) => !Number.isInteger(d) || d < 1)) {
+      throw new UsageError("--warn-days is a whole number of days, or for cert monitors a list such as 30,14,7.");
+    }
+    if (type === "domain" && days.length > 1) throw new UsageError("--warn-days for a domain monitor is one number.");
+    config.warnDays = type === "cert" ? days : days[0];
+  }
   return { ...config, ...(flags.config ?? {}) };
 }
 

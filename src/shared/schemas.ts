@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DateTime } from "luxon";
+import { CERT_DEFAULT_WARN_DAYS } from "./cert";
 
 /**
  * Shared validation schemas (worker + client). These define the wire shape of
@@ -229,6 +230,29 @@ export const domainConfigSchema = z.object({
   timeoutMs: z.number().int().min(1000).max(30000).default(15000),
 });
 
+export const certConfigSchema = z.object({
+  // The host name whose certificate is read: sent as SNI, so it picks the
+  // certificate the server serves for that name. No scheme, path or port.
+  host: z.string().min(1).max(253).regex(domainRegex, "must be a host name such as example.com"),
+  port: z
+    .number()
+    .int()
+    .min(1)
+    .max(65535)
+    .refine((p) => p !== 25, "port 25 is blocked by the runtime")
+    .default(443),
+  // Days before expiry at which to warn: the largest starts the degraded state,
+  // and each one sends one "certificate expires soon" alert as it is crossed.
+  // Stored largest first, without repeats.
+  warnDays: z
+    .array(z.number().int().min(1).max(365))
+    .min(1)
+    .max(5)
+    .default(() => [...CERT_DEFAULT_WARN_DAYS])
+    .transform((days) => [...new Set(days)].sort((a, b) => b - a)),
+  timeoutMs: z.number().int().min(1000).max(30000).default(10000),
+});
+
 // --- Confirm before alerting ---
 /**
  * What a polled monitor does when a check fails while it was up: "retry" checks
@@ -256,7 +280,7 @@ const baseMonitorFields = {
 };
 
 /**
- * How often a polled monitor (http, dns, tcp, domain) is checked, in seconds:
+ * How often a polled monitor (http, dns, tcp, domain, cert) is checked, in seconds:
  * whole minutes from 1 to 24 hours. Only OpenPing Hosted honours it (each plan
  * sets the shortest, shared/check-interval.ts); a plain install checks every
  * polled monitor on each 12-minute cron run, whatever this says. Omitted on a
@@ -302,6 +326,11 @@ export const createMonitorSchema = z.discriminatedUnion("type", [
     ...polledMonitorFields,
     config: domainConfigSchema,
   }),
+  z.object({
+    type: z.literal("cert"),
+    ...polledMonitorFields,
+    config: certConfigSchema,
+  }),
 ]);
 
 // Inferred types
@@ -311,6 +340,7 @@ export type HeartbeatConfig = z.infer<typeof heartbeatConfigSchema>;
 export type DnsConfig = z.infer<typeof dnsConfigSchema>;
 export type TcpConfig = z.infer<typeof tcpConfigSchema>;
 export type DomainConfig = z.infer<typeof domainConfigSchema>;
+export type CertConfig = z.infer<typeof certConfigSchema>;
 export type Assertion = z.infer<typeof assertionSchema>;
 export type Schedule = z.infer<typeof scheduleSchema>;
 export type NotifyPrefs = z.infer<typeof notifySchema>;
@@ -319,7 +349,7 @@ export type CreateMonitorInput = z.infer<typeof createMonitorSchema>;
 
 /**
  * The self-hosted cron's cadence: a plain install checks every polled monitor
- * (http, dns, tcp, domain) on each 12-minute run, and it is the default
+ * (http, dns, tcp, domain, cert) on each 12-minute run, and it is the default
  * interval on OpenPing Hosted.
  */
 export const POLLED_INTERVAL_SECONDS = 720;
