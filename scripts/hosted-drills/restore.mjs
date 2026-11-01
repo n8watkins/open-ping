@@ -137,6 +137,15 @@ export async function fingerprintDatabase(ctx, database, masterKey, { keyTables 
 
 // --- The steps ------------------------------------------------------------------------
 
+/** The dump without statements on D1's own `_cf_` tables (one statement a line, as D1's dumps are). */
+export function importableDump(text) {
+  const own = /^\s*(CREATE TABLE|INSERT INTO|CREATE INDEX|CREATE UNIQUE INDEX)\s+(IF NOT EXISTS\s+)?["'`[]?_cf_/i;
+  return text
+    .split("\n")
+    .filter((line) => !own.test(line))
+    .join("\n");
+}
+
 /** Opens the tenant's escrowed key with PLATFORM_KEY, from the environment. Never logged. */
 async function openKey(ctx, escrowed, tenantId) {
   const platformKey = ctx.env[PLATFORM_KEY_ENV];
@@ -272,6 +281,9 @@ const steps = {
     // "With its escrowed key": the copy kept with the export must be the tenant's key.
     const exportKey = await openKey(ctx, { kid: exp.kid, ciphertext: exp.keyCiphertext }, ctx.state.tenant.id);
     if (exportKey !== ctx.masterKey) throw new DrillError("the key kept with the export isn't the tenant's escrowed key");
+    // What D1 keeps for itself (_cf_ tables) can't be created by a query, so the copy loaded leaves it out.
+    const importable = importableDump(text);
+    if (importable !== text) writeFileSync(file, importable, { mode: 0o600 });
     ctx.state.dumpFile = relative(ctx.root, file);
   },
 

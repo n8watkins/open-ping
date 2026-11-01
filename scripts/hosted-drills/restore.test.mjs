@@ -11,7 +11,7 @@ import { encryptValue } from "./keys.mjs";
 import { monitorSeedSql, monitorTargets } from "./seed.mjs";
 import { sealConfig } from "./keys.mjs";
 import { DrillError } from "./lib.mjs";
-import { PLATFORM_KEY_ENV, STEPS, main } from "./restore.mjs";
+import { PLATFORM_KEY_ENV, STEPS, importableDump, main } from "./restore.mjs";
 import { FakeStaging, dumpDatabase } from "./testing/fake-staging.mjs";
 
 const STAGING = {
@@ -237,6 +237,11 @@ describe("the restore drill", () => {
     expect(writes()).toEqual([]);
     expect(state.before.tables.monitors.decrypted).toBe(3);
     expect(fake.tenant("acme").provision_state).toBe("ready");
+  });
+
+  it("leaves D1's own tables out of what it loads", () => {
+    const dump = ['PRAGMA defer_foreign_keys=TRUE;', 'CREATE TABLE _cf_KV (key TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID;', 'INSERT INTO "_cf_KV" VALUES(\'a\',NULL);', 'CREATE TABLE monitors (id TEXT);', "INSERT INTO \"monitors\" VALUES('_cf_x');"].join("\n");
+    expect(importableDump(dump)).toBe(['PRAGMA defer_foreign_keys=TRUE;', 'CREATE TABLE monitors (id TEXT);', "INSERT INTO \"monitors\" VALUES('_cf_x');"].join("\n"));
   });
 
   it("is a DrillError for a missing tenant", async () => {
