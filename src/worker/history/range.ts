@@ -1,4 +1,5 @@
 import type { Env } from "../types";
+import { loggedChecks } from "./check-log";
 import {
   DAY_MS,
   RANGE_SPEC,
@@ -396,7 +397,8 @@ export interface RangeHistory {
  * seven D1 reads in parallel whatever the monitor count: monitor ids, the
  * summaries in range, the overlapping status intervals, the OK samples (24h
  * only), the hourly latencies (30d only), and the incidents overlapping the
- * range with their count.
+ * range with their count. A 24-hour view's checks are the sample rows and the
+ * passing checks its hour summaries log (history/check-log.ts).
  */
 export async function loadRangeHistory(
   env: Env,
@@ -425,14 +427,16 @@ export async function loadRangeHistory(
       : env.DB.prepare("SELECT id FROM monitors ORDER BY created_at")
     ).all<{ id: string }>(),
     env.DB.prepare(
+      // The 24-hour view's hour rows also bring their logged checks
+      // (history/check-log.ts): a passing check has no sample row.
       `SELECT monitor_id, bucket_start, checks, ok_checks, sum_latency_ms,
-              min_latency_ms, max_latency_ms
+              min_latency_ms, max_latency_ms${useSamples ? ", check_log" : ""}
          FROM summaries
         WHERE period = ? AND bucket_start >= ? AND bucket_start < ?
           ${one ? "AND monitor_id = ?" : ""}`,
     )
       .bind(...[spec.period, from, to, ...(one ? [monitorId] : [])])
-      .all<SummaryBucketRow>(),
+      .all<SummaryBucketRow & { check_log?: string | null }>(),
     env.DB.prepare(
       `SELECT monitor_id, state, started_at, ended_at
          FROM status_intervals
@@ -486,10 +490,22 @@ export async function loadRangeHistory(
   const summariesBy = groupBy(summaryRes.results ?? [], (r) => r.monitor_id);
   const intervalsBy = groupBy(intervalRes.results ?? [], (r) => r.monitor_id);
   const samplesBy = new Map<string, LatencyPoint[]>();
-  for (const s of sampleRes.results ?? []) {
-    const list = samplesBy.get(s.monitor_id) ?? [];
-    list.push({ t: Number(s.at), ms: Number(s.duration_ms) });
-    samplesBy.set(s.monitor_id, list);
+  const addPoint = (id: string, at: number, ms: number) => {
+    const list = samplesBy.get(id) ?? [];
+    list.push({ t: at, ms });
+    samplesBy.set(id, list);
+  };
+  for (const s of sampleRes.results ?? []) addPoint(s.monitor_id, Number(s.at), Number(s.duration_ms));
+  if (useSamples) {
+    let logged = false;
+    for (const [id, rows] of summariesBy) {
+      for (const c of loggedChecks(rows, from, now)) {
+        if (c.durationMs == null) continue;
+        addPoint(id, c.at, c.durationMs);
+        logged = true;
+      }
+    }
+    if (logged) for (const list of samplesBy.values()) list.sort((a, b) => a.t - b.t);
   }
   const hourlyBy = new Map<string, number[]>();
   for (const r of hourlyRes.results ?? []) {

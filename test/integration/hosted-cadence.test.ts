@@ -11,6 +11,7 @@ import { loadRangeHistory } from "../../src/worker/history/range";
 import { buildOverview } from "../../src/worker/routes/overview";
 import { createMonitorSchema } from "../../src/shared/schemas";
 import { nextScheduledCall, SCHEDULED_MAX_GAP_MS } from "../../src/shared/hosted-contract";
+import { CHECK_LOG_LENGTH_SQL } from "../../src/worker/history/check-log";
 import { rowsD1, type Rows } from "./d1-rows";
 
 /**
@@ -66,8 +67,14 @@ async function reported(cadence: Cadence): Promise<Record<string, string>> {
   );
 }
 
+/** The checks recorded for a monitor: its sample rows and the passing checks its hour summaries logged. */
 async function samplesOf(id: string): Promise<number> {
-  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM samples WHERE monitor_id = ?").bind(id).first<{ n: number }>();
+  const row = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM samples WHERE monitor_id = ?1)
+          + (SELECT COALESCE(SUM(${CHECK_LOG_LENGTH_SQL}), 0) FROM summaries WHERE monitor_id = ?1 AND period = 'hour') AS n`,
+  )
+    .bind(id)
+    .first<{ n: number }>();
   return row?.n ?? 0;
 }
 
@@ -295,16 +302,20 @@ describe("what a tenant costs in D1 rows (docs/HOSTED_PLAN.md)", () => {
     await env.DB.prepare("UPDATE monitor_state SET next_check_at = ?").bind(T0 + 36 * MINUTE).run();
     // 2 hours on 12-minute checks: the tenant is called once per 12 minutes.
     const standard = await measureCalls(T0 + 36 * MINUTE, 120, STANDARD);
-    // Measured 2026-10-29: 1-minute checks wrote 3,520 rows and read 7,368 in
-    // 24 calls (about 147 written per minute: 7.3 per check, the upkeep
-    // included); 12-minute checks wrote 1,990 and read 7,210 in 10 calls
-    // (about 199 per call). Sample deletes, a day later, add one row each.
+    // Measured 2026-10-31, with a passing check's sample kept in its hour
+    // summary and the status interval written only on a state change: 1-minute
+    // checks wrote 1,600 rows and read 6,540 in 24 calls (about 67 written per
+    // minute: 3.3 per check, the upkeep included); 12-minute checks wrote 1,190
+    // and read 7,250 in 10 calls (about 119 per call, 40 of them the day and
+    // month rollups). Before: 3,520 and 1,990 (147 and 199 per call). Clearing
+    // an hour's check log a day later adds a row per monitor and hour (a sample
+    // delete used to add one per check).
     // docs/HOSTED_PLAN.md turns these into dollars; the bounds catch a regression.
     expect(fast.calls).toBe(24);
-    expect(fast.written / fast.calls).toBeLessThan(160);
+    expect(fast.written / fast.calls).toBeLessThan(75);
     expect(fast.read / fast.calls).toBeLessThan(400);
     expect(standard.calls).toBe(10);
-    expect(standard.written / standard.calls).toBeLessThan(220);
+    expect(standard.written / standard.calls).toBeLessThan(130);
     expect(standard.read / standard.calls).toBeLessThan(900);
   }, 120_000);
 });

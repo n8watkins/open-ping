@@ -48,6 +48,13 @@ import { buildCertExpiringPayload } from "../notifications/payload";
  * alerts for the cooldown, the alert channels) are one shared batch before it,
  * made only when some check may open or resolve an incident.
  *
+ * D1 bills every row written, index entries included, so a passing check that
+ * changes nothing writes only what it must: its state, and its count in the
+ * hour summary, which also keeps it for the 24-hour views
+ * (history/check-log.ts). A sample row is written only for a check with more
+ * to say ({@link needsSampleRow}), and the status interval only on a state
+ * change (db/intervals.ts).
+ *
  * Each monitor's plan is a WriteGroup: its state, sample and incident change
  * land together or not at all, so the state's incident pointer always matches
  * the incidents table; the alert lands only once the incident did; and the
@@ -425,6 +432,28 @@ export interface PlannedWrite {
   nextCheckAt?: number;
 }
 
+/**
+ * Does this check need a samples row of its own, or can its hour summary keep
+ * it (history/check-log.ts)? Only a passing check that is counted in uptime,
+ * keeps the state the monitor was in, and carries nothing a log entry can't
+ * hold: no error, no assertion or confirmation detail, no retry. Its
+ * type-specific details (DNS records, a domain's expiry) are the monitor's
+ * latest, kept on monitor_state.last_meta. PURE.
+ */
+export function needsSampleRow(outcome: CheckOutcome, prevState: MonitorState): boolean {
+  const counted = outcome.state !== "warming_up" && outcome.state !== "cant_check";
+  return (
+    !counted ||
+    !outcome.ok ||
+    outcome.state !== prevState ||
+    outcome.warmup ||
+    outcome.retryRecovered ||
+    outcome.error != null ||
+    !!outcome.assertionFailures?.length ||
+    outcome.confirmation != null
+  );
+}
+
 /** Plan an HTTP/DNS/TCP/domain/cert check outcome: state, sample, incident, interval, rollup. */
 export async function planCheckResult(
   env: Env,
@@ -488,7 +517,8 @@ export async function planCheckResult(
          last_duration_ms = ?, last_status_code = ?, last_error = ?,
          consecutive_failures = ?, consecutive_successes = ?, next_check_at = ?,
          warmup = ?, ${withIncident ? "active_incident_id = ?, is_flapping = ?," : ""}
-         domain_cache = COALESCE(?, domain_cache), cert_cache = COALESCE(?, cert_cache), updated_at = ?
+         domain_cache = COALESCE(?, domain_cache), cert_cache = COALESCE(?, cert_cache), last_meta = ?,
+         updated_at = ?
        WHERE monitor_id = ?`,
     ).bind(
       outcome.state,
@@ -507,6 +537,8 @@ export async function planCheckResult(
       outcome.domainCache ? JSON.stringify(outcome.domainCache) : null,
       // A certificate check's new cached read; NULL keeps the stored one.
       outcome.certCache ? JSON.stringify(outcome.certCache) : null,
+      // This check's details, shown on the monitor page when it has no sample row.
+      lastMeta,
       now,
       monitor.id,
     );
@@ -528,18 +560,22 @@ export async function planCheckResult(
     if (outcome.confirmedFrom) sampleMeta.confirmedFrom = outcome.confirmedFrom;
   }
 
-  const sample = sampleStatement(env, monitor.id, {
-    at: now,
-    ok: outcome.ok,
-    state: outcome.state,
-    durationMs: outcome.durationMs,
-    statusCode: outcome.statusCode,
-    error: outcome.error,
-    attempts: outcome.attempts,
-    warmup: outcome.warmup,
-    retryRecovered: outcome.retryRecovered,
-    meta: Object.keys(sampleMeta).length ? sampleMeta : undefined,
-  });
+  const lastMeta = Object.keys(sampleMeta).length ? JSON.stringify(sampleMeta) : null;
+  const ownRow = needsSampleRow(outcome, prevState);
+  const sample = ownRow
+    ? sampleStatement(env, monitor.id, {
+        at: now,
+        ok: outcome.ok,
+        state: outcome.state,
+        durationMs: outcome.durationMs,
+        statusCode: outcome.statusCode,
+        error: outcome.error,
+        attempts: outcome.attempts,
+        warmup: outcome.warmup,
+        retryRecovered: outcome.retryRecovered,
+        meta: Object.keys(sampleMeta).length ? sampleMeta : undefined,
+      })
+    : null;
   // Warm-up cycles are excluded from uptime accounting (like scheduled-off):
   // they neither count as a successful check nor as downtime. So is a
   // certificate that can't be read from here: it says nothing either way.
@@ -555,6 +591,16 @@ export async function planCheckResult(
           // `suspended` is a down-family outage (DOWNTIME_STATES), so it accrues a
           // full interval of downtime exactly like `down`.
           downSeconds: DOWNTIME_STATES.has(outcome.state) ? monitor.intervalSeconds : 0,
+          ...(ownRow
+            ? {}
+            : {
+                log: {
+                  at: now,
+                  state: outcome.state,
+                  durationMs: outcome.durationMs ?? null,
+                  statusCode: outcome.statusCode ?? null,
+                },
+              }),
         };
 
   const label = `check ${monitor.id}`;
@@ -889,22 +935,20 @@ export async function planHeartbeat(
   // recovery from a *received* failing beat - exit_status != 0 - is genuinely
   // one interval later, so it still credits a full interval.)
   const recoveringFromMissed = ok && cur?.state === "down" && cur?.last_error === "heartbeat_missed";
+  const meta = {
+    ...(payload.message ? { message: payload.message } : {}),
+    ...(payload.runId ? { runId: payload.runId } : {}),
+    ...(payload.metrics ? { metrics: payload.metrics } : {}),
+  };
+  // A passing beat that keeps the state and says nothing more is kept in its
+  // hour summary (history/check-log.ts); any other beat writes a sample row.
+  const ownRow = suppressed || !ok || stateChanged || Object.keys(meta).length > 0;
   const label = `beat ${monitor.id}`;
   const group = await assembleGroup(env, label, {
     state: stateStmt,
-    sample: sampleStatement(env, monitor.id, {
-      at: now,
-      ok,
-      state,
-      durationMs: payload.durationMs,
-      error,
-      attempts: 1,
-      meta: {
-        ...(payload.message ? { message: payload.message } : {}),
-        ...(payload.runId ? { runId: payload.runId } : {}),
-        ...(payload.metrics ? { metrics: payload.metrics } : {}),
-      },
-    }),
+    sample: ownRow
+      ? sampleStatement(env, monitor.id, { at: now, ok, state, durationMs: payload.durationMs, error, attempts: 1, meta })
+      : null,
     incident,
     extras: [
       unit(
@@ -922,6 +966,9 @@ export async function planHeartbeat(
                 durationMs: payload.durationMs,
                 monitoredSeconds: recoveringFromMissed ? 0 : monitor.intervalSeconds,
                 downSeconds: ok ? 0 : monitor.intervalSeconds,
+                ...(ownRow
+                  ? {}
+                  : { log: { at: now, state, durationMs: payload.durationMs ?? null, statusCode: null } }),
               }),
             ],
       ),

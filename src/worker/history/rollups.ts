@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import type { LabeledStatement } from "../lib/batch";
+import { APPEND_CHECK_LOG_SQL, checkLogEntry, type LoggedCheck } from "./check-log";
 
 /**
  * Historical compaction (PRD §17). Check results land as recent `samples` and
@@ -8,6 +9,10 @@ import type { LabeledStatement } from "../lib/batch";
  * are read from the `retention` setting (and reported by routes/diagnostics):
  *
  *   samples (sampleHours) → hourly (hourlyDays) → daily (dailyDays) → monthly (forever)
+ *
+ * A passing check that changed nothing has no sample row: its hour summary
+ * keeps it in `check_log` (history/check-log.ts), cleared after the same
+ * sampleHours.
  *
  * A derived bucket is recomputed only while ALL of its source rows are still
  * retained; once its sources age past their horizon the bucket is "sealed" at
@@ -133,6 +138,8 @@ export interface CheckSampleTotals {
   retryRecovered?: boolean;
   monitoredSeconds: number;
   downSeconds: number;
+  /** A check kept in the hour's check log instead of a sample row (history/check-log.ts). */
+  log?: LoggedCheck;
 }
 
 /** The hour-bucket upsert for one check, as a statement, so a caller can batch it. */
@@ -146,8 +153,8 @@ export function checkSampleStatement(env: Env, monitorId: string, s: CheckSample
     `INSERT INTO summaries
        (id, monitor_id, period, bucket_start, checks, ok_checks, fail_checks,
         retry_recoveries, sum_latency_ms, min_latency_ms, max_latency_ms,
-        monitored_seconds, down_seconds)
-     VALUES (?, ?, 'hour', ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+        monitored_seconds, down_seconds, check_log)
+     VALUES (?, ?, 'hour', ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(monitor_id, period, bucket_start) DO UPDATE SET
        checks = checks + 1,
        ok_checks = ok_checks + excluded.ok_checks,
@@ -163,7 +170,8 @@ export function checkSampleStatement(env: Env, monitorId: string, s: CheckSample
          ELSE MAX(COALESCE(max_latency_ms, excluded.max_latency_ms), excluded.max_latency_ms)
        END,
        monitored_seconds = monitored_seconds + excluded.monitored_seconds,
-       down_seconds = down_seconds + excluded.down_seconds`,
+       down_seconds = down_seconds + excluded.down_seconds,
+       ${APPEND_CHECK_LOG_SQL}`,
   )
     .bind(
       id,
@@ -177,6 +185,7 @@ export function checkSampleStatement(env: Env, monitorId: string, s: CheckSample
       latency, // max_latency_ms: any responding check
       s.monitoredSeconds,
       s.downSeconds,
+      s.log ? checkLogEntry(bucket, s.log) : null,
     );
 }
 
@@ -225,7 +234,8 @@ export function resolveRetention(stored: Partial<RetentionConfig> | null | undef
  *
  *  1. Recompute DAY summaries from their constituent HOUR rows.
  *  2. Recompute MONTH summaries from their constituent DAY rows.
- *  3. Prune expired tiers per the retention horizons: samples > 24h, hour > 64d,
+ *  3. Prune expired tiers per the retention horizons: samples > 24h (and the
+ *     hour summaries' check logs once their whole hour is), hour > 64d,
  *     day > 400d by default (overridable via the `retention` setting). Months
  *     are kept forever. Closed status intervals and scheduler-run diagnostics
  *     past the daily horizon go too (open intervals are always kept), and
@@ -262,7 +272,7 @@ export function compactionStatements(
       stmt: env.DB.prepare(
         `INSERT INTO summaries (id, monitor_id, period, bucket_start, ${TOTALS_COLUMNS})
          SELECT monitor_id || ':day:' || day_start, monitor_id, 'day', day_start, ${SUM_TOTALS}
-           FROM (SELECT *, bucket_start - (bucket_start % ${DAY_MS}) AS day_start
+           FROM (SELECT monitor_id, ${TOTALS_COLUMNS}, bucket_start - (bucket_start % ${DAY_MS}) AS day_start
                    FROM summaries WHERE ${KNOWN_MONITORS} AND period = 'hour' AND bucket_start >= ?2)
           WHERE day_start >= ?1
           GROUP BY monitor_id, day_start
@@ -274,7 +284,7 @@ export function compactionStatements(
       stmt: env.DB.prepare(
         `INSERT INTO summaries (id, monitor_id, period, bucket_start, ${TOTALS_COLUMNS})
          SELECT monitor_id || ':month:' || month_start, monitor_id, 'month', month_start, ${SUM_TOTALS}
-           FROM (SELECT *,
+           FROM (SELECT monitor_id, ${TOTALS_COLUMNS},
                         CAST(strftime('%s', bucket_start / 1000, 'unixepoch', 'start of month') AS INTEGER) * 1000
                           AS month_start
                    FROM summaries WHERE ${KNOWN_MONITORS} AND period = 'day' AND bucket_start >= ?2)
@@ -282,6 +292,16 @@ export function compactionStatements(
           GROUP BY monitor_id, month_start
          ${UPSERT_TOTALS}`,
       ).bind(now - dailyMs, window.months),
+    },
+    {
+      // An hour's logged checks go once all of them are past the sample
+      // horizon; each hour's log is cleared once (a row written per hour).
+      label: "check log prune",
+      stmt: env.DB.prepare(
+        `UPDATE summaries SET check_log = NULL
+          WHERE ${KNOWN_MONITORS} AND period = 'hour' AND bucket_start >= ? AND bucket_start < ?
+            AND check_log IS NOT NULL`,
+      ).bind(window.logs, now - sampleMs - HOUR_MS),
     },
     {
       label: "sample prune",
@@ -325,19 +345,32 @@ export function compactionStatements(
  * The oldest hour row (`days`) and day row (`months`) a pass reads, from when
  * the previous pass ran: the start of the day and month it ran in, or of the
  * day before now when that is earlier, and never before the oldest bucket the
- * pass may still recompute (older ones are sealed). PURE.
+ * pass may still recompute (older ones are sealed). `logs` is the oldest hour
+ * whose check log the pass may still have to clear: the hour before the last
+ * one the previous pass cleared, or a day before the newest it clears when no
+ * previous pass is known (reading every hour row for logs no build before
+ * migration 0027 wrote would cost a full table read; an older log, if a long
+ * streak of failed passes left one, goes with its hour row). PURE.
  */
 export function compactionWindow(
   now: number,
   retention: RetentionConfig,
   since: number | null,
-): { days: number; months: number } {
+): { days: number; months: number; logs: number } {
   const hourlyFloor = now - retention.hourlyDays * DAY_MS;
   const dailyFloor = now - retention.dailyDays * DAY_MS;
-  if (since === null || !Number.isFinite(since)) return { days: hourlyFloor, months: dailyFloor };
+  const sampleMs = retention.sampleHours * HOUR_MS;
+  if (since === null || !Number.isFinite(since)) {
+    return {
+      days: hourlyFloor,
+      months: dailyFloor,
+      logs: Math.max(hourlyFloor, bucketStart("hour", now - sampleMs - DAY_MS)),
+    };
+  }
   const from = Math.min(since, now - DAY_MS);
   return {
     days: Math.max(hourlyFloor, bucketStart("day", from)),
     months: Math.max(dailyFloor, bucketStart("month", from)),
+    logs: Math.max(hourlyFloor, bucketStart("hour", since - sampleMs) - 2 * HOUR_MS),
   };
 }
