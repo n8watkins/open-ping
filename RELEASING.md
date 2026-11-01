@@ -157,6 +157,7 @@ Each customer's OpenPing on OpenPing Hosted migrates its own database, and durin
 Self-hosted installs get the same guarantee when they deploy an older version.
 `scripts/check-migrations.test.mjs` fails `npm test` for a migration after 0020 that drops, renames, or adds a `NOT NULL` column without a default.
 Removing something takes two releases: stop using it in one, and drop it in a later one once no running version reads it, as a deliberate exception made in that check.
+A rollback to a version older than a change in how data is written can still show that data differently until the older version has written its own again; [docs/UPGRADE.md](docs/UPGRADE.md#rolling-back-past-migration-0027-to-v0180-or-earlier) describes the one case so far (migration 0027, the check log).
 
 ## Baselines and backfills
 
