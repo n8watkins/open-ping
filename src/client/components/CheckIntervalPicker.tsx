@@ -4,10 +4,11 @@ import {
   everyLabel,
   intervalLabel,
   intervalReasonDetail,
+  planMinimumSeconds,
   type IntervalReason,
 } from "../../shared/check-interval";
 import { STANDARD_CHECK_MINUTES, upgradeUrlFor } from "../../shared/hosted-contract";
-import type { FastUsage, PlanState } from "../lib/plan-limits";
+import { usageLabel, type FastUsage, type PlanState } from "../lib/plan-limits";
 import { cn } from "../lib/cn";
 
 /** How often the saved monitor is really checked, as the server reports it (effectiveIntervalSeconds, intervalReason). */
@@ -67,11 +68,12 @@ export function CheckIntervalPicker({
   // The saved interval, still chosen: what the server says it runs at.
   const saved = storedEffective && value === stored && storedEffective.intervalSeconds === value * 60 ? storedEffective : null;
   const sentence = saved
-    ? (intervalReasonDetail(saved.intervalSeconds, saved.effectiveSeconds, saved.reason) ?? `Checked ${everyLabel(value)}.`)
+    ? (intervalReasonDetail(saved.intervalSeconds, saved.effectiveSeconds, saved.reason, planMinimumSeconds(min)) ??
+      `Checked ${everyLabel(value)}.`)
     : value < min
       ? `Set to ${everyLabel(value)}, so checked ${everyLabel(effective)} on your plan, and ${everyLabel(value)} again once your plan allows it.`
       : slowed
-        ? (intervalReasonDetail(value * 60, effective * 60, "fast_monitor_limit") ?? "")
+        ? (intervalReasonDetail(value * 60, effective * 60, "fast_monitor_limit", planMinimumSeconds(min)) ?? "")
         : `Checked ${everyLabel(value)}.`;
 
   return (
@@ -120,8 +122,8 @@ export function CheckIntervalPicker({
       {fast && (
         <p className="mt-2 text-xs text-ink-muted">
           <span className="font-medium text-ink tabular-nums">
-            {used} of {fast.allowed} fast {fast.allowed === 1 ? "monitor" : "monitors"}
-            {used > fast.allowed ? ", over your plan" : " used"}
+            {usageLabel(used, fast.allowed, "fast monitor", "fast monitors")}
+            {used > fast.allowed ? "" : " used"}
           </span>
           <span className="text-ink-faint"> · checked more often than every {STANDARD_CHECK_MINUTES} minutes</span>
         </p>

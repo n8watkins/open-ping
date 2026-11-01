@@ -26,7 +26,8 @@ import {
   formatShortDateTime,
 } from "../lib/format";
 import { STATE_META, type MonitorState } from "../../shared/states";
-import { checkedEveryText, intervalReasonDetail, type IntervalReason } from "../../shared/check-interval";
+import { checkedEveryText, intervalReasonDetail, planMinimumSeconds, type IntervalReason } from "../../shared/check-interval";
+import { usePlan } from "../lib/plan-limits";
 import { monitorTypeLabel, type MonitorType } from "../lib/types";
 import { StatusPill } from "../components/ui/StatusPill";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
@@ -199,6 +200,8 @@ export default function MonitorDetail() {
   const navigate = useNavigate();
   const location = useLocation();
   const { csrf } = useBootstrap();
+  // Hosted: the plan's shortest interval, for why a monitor runs slower.
+  const plan = usePlan();
 
   const { data, loading, error, reload } = useFetch<DetailResponse>(
     id ? `/api/monitors/${id}/detail` : null,
@@ -305,6 +308,7 @@ export default function MonitorDetail() {
     monitor.intervalSeconds,
     monitor.effectiveIntervalSeconds,
     monitor.intervalReason,
+    plan ? planMinimumSeconds(plan.limits.minIntervalMinutes) : undefined,
   );
 
   // Per-type target fields (config is an untyped blob; read each defensively).

@@ -112,6 +112,12 @@ describe("saying how often a monitor is really checked", () => {
     expect(intervalReasonDetail(60, 720, "fast_monitor_limit")).toBe(
       "Set to every minute, but older monitors use all of your plan's fast checks, so it runs every 12 minutes until one of them is slowed down or removed, or your plan allows more.",
     );
+    // Over the fast allowance and under a 5-minute plan's shortest: it never goes back to every minute.
+    expect(intervalReasonDetail(60, 720, "fast_monitor_limit", 300)).toBe(
+      "Set to every minute, but older monitors use all of your plan's fast checks, so it runs every 12 minutes until one of them is slowed down or removed, or your plan allows more. Then it runs every 5 minutes, your plan's fastest.",
+    );
+    expect(intervalReasonDetail(120, 720, "fast_monitor_limit", 60)).not.toContain("Then it runs");
+    expect(intervalReasonDetail(300, 720, "fast_monitor_limit", 300)).not.toContain("Then it runs");
     expect(intervalReasonDetail(3600, 720, "install_schedule")).toBe(
       "Set to every hour, but this install checks every monitor on its 12-minute schedule.",
     );
