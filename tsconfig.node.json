@@ -20,6 +20,7 @@
     "platform/vitest.config.ts",
     "scripts/bundle-module.ts",
     "src/static-headers.test.ts",
+    "src/cookie-scope.test.ts",
     "src/pwa-files.test.ts",
     "src/sw.test.ts"
   ]

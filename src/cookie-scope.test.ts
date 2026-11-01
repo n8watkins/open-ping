@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
  * source, so a new cookie with a Domain fails here before review.
  */
 
-const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 function sources(dir: string): string[] {
   const out: string[] = [];
