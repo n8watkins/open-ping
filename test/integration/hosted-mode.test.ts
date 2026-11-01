@@ -5,7 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import worker from "../../src/worker/index";
 import { s256 } from "../../src/worker/routes/app-signin";
 import type { Env } from "../../src/worker/types";
-import { expiredAuthCleanupStatements } from "../../src/worker/lib/sessions";
+import { HOSTED_SESSION_COOKIE as HOSTED_SESSION, expiredAuthCleanupStatements } from "../../src/worker/lib/sessions";
 import {
   HANDOFF_NONCE_RETENTION_SECONDS,
   PLAN_LIMITS,
@@ -216,13 +216,13 @@ describe("a plain install (HOSTED_MODE unset)", () => {
     const res = await browser.fetch(handoffPath(await token()));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(SHELL);
-    expect(browser.cookies.has("op_session")).toBe(false);
+    expect(browser.cookies.has(HOSTED_SESSION)).toBe(false);
     expect(await nonceCount()).toBe(0);
   });
 
   it("serves /login as the app, signed out or not", async () => {
     const browser = plainBrowser();
-    browser.cookies.set("op_signed_out", "1");
+    browser.cookies.set("__Host-op_signed_out", "1");
     const res = await browser.fetch("/login");
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(SHELL);
@@ -304,7 +304,7 @@ describe("the sign-in hand-off", () => {
     expect(res.headers.get("location")).toBe("/");
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(browser.cookies.has("op_session")).toBe(true);
+    expect(browser.cookies.has(HOSTED_SESSION)).toBe(true);
 
     const me = await browser.me();
     expect(me).toMatchObject({
@@ -375,7 +375,7 @@ describe("the sign-in hand-off", () => {
     const unaudited = hostedBrowser();
     const refused = await unaudited.fetch(handoffPath(await token({ role: "support" })));
     expect(refused.status).toBe(503);
-    expect(unaudited.cookies.has("op_session")).toBe(false);
+    expect(unaudited.cookies.has(HOSTED_SESSION)).toBe(false);
 
     // A customer's sign-in doesn't wait on the audit log.
     const customer = hostedBrowser();
@@ -415,7 +415,7 @@ describe("the sign-in hand-off", () => {
       const html = await res.text();
       expect(html).toContain("This sign-in link has expired");
       expect(html).toContain(`href="${URLS.signIn}"`);
-      expect(browser.cookies.has("op_session")).toBe(false);
+      expect(browser.cookies.has(HOSTED_SESSION)).toBe(false);
     }
     // Nothing unsigned or refused reaches the nonce table.
     expect(await nonceCount()).toBe(before);
@@ -431,7 +431,7 @@ describe("the sign-in hand-off", () => {
       const res = await browser.fetch(handoffPath(t));
       expect(res.status).toBe(400);
       expect(await res.text()).toContain("This sign-in link has expired");
-      if (!before.authenticated) expect(browser.cookies.has("op_session")).toBe(false);
+      if (!before.authenticated) expect(browser.cookies.has(HOSTED_SESSION)).toBe(false);
     }
     expect(audits).toHaveLength(1);
   });
@@ -459,16 +459,16 @@ describe("the sign-in hand-off", () => {
     const res = await browser.fetch(handoffPath(await token()), { target: hostedEnv({ HANDOFF_PUBLIC_KEY: undefined }) });
     expect(res.status).toBe(503);
     expect(await res.text()).toContain(`href="${URLS.signIn}"`);
-    expect(browser.cookies.has("op_session")).toBe(false);
+    expect(browser.cookies.has(HOSTED_SESSION)).toBe(false);
   });
 
   it("replaces a session the browser already had", async () => {
     const browser = hostedBrowser();
     expect((await browser.fetch(handoffPath(await token()))).status).toBe(302);
-    const firstCookie = browser.cookies.get("op_session");
+    const firstCookie = browser.cookies.get(HOSTED_SESSION);
     const sessionsBefore = (await env.DB.prepare("SELECT COUNT(*) AS n FROM sessions").first<{ n: number }>())!.n;
     expect((await browser.fetch(handoffPath(await token()))).status).toBe(302);
-    expect(browser.cookies.get("op_session")).not.toBe(firstCookie);
+    expect(browser.cookies.get(HOSTED_SESSION)).not.toBe(firstCookie);
     const sessionsAfter = (await env.DB.prepare("SELECT COUNT(*) AS n FROM sessions").first<{ n: number }>())!.n;
     expect(sessionsAfter).toBe(sessionsBefore);
   });
@@ -503,7 +503,7 @@ describe("signing out in hosted mode", () => {
 
   it("is unchanged on a plain install", async () => {
     const browser = plainBrowser();
-    browser.cookies.set("op_session", "not-a-session");
+    browser.cookies.set(HOSTED_SESSION, "not-a-session");
     const out = await browser.fetch("/api/auth/logout", { method: "POST", headers: { "x-csrf-token": "x" } });
     expect(out.status).toBe(401);
   });

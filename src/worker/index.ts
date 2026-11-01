@@ -17,6 +17,7 @@ import { assetLinks } from "./lib/android-app-links";
 import { forgetSchemaCheck, isSchemaError } from "./lib/migrate";
 import { reportUsageAfterChange } from "./lib/plan-limits";
 import { hostedGate, hostedSchemaGate, refuseWhenHosted, signOutRedirect } from "./lib/hosted";
+import { starterFetch } from "./lib/hosted-starter";
 import { HANDOFF_PATH, INTERNAL_PATH_PREFIX } from "../shared/hosted-contract";
 import { homePage, hostedSignupUrl, withLandingHead } from "./lib/home-page";
 import {
@@ -246,8 +247,13 @@ function siteOrigin(appUrl: string | undefined, requestUrl: string): string {
 // The per-region re-checkers for second-region confirmation (checks/region.ts).
 export { RegionProbe } from "./region-probe";
 
+// Starter mode (lib/hosted-starter.ts) verifies the platform's signed calls
+// and builds the props a dispatcher would pass; everything else goes straight
+// to the app.
+const fetchHandler = starterFetch((request, env, ctx) => app.fetch(request, env, ctx));
+
 export default {
-  fetch: app.fetch,
+  fetch: fetchHandler,
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(runScheduled(controller, env));
   },

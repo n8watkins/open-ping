@@ -385,7 +385,7 @@ How OpenPing does each step (`src/worker/routes/hosted-auth.ts`):
 Signing out ends the tenant's session and redirects to `props.tenant.urls.signOut`.
 That page (`GET /sign-out` on the platform) ends nothing by itself: signing out of the platform is a POST only, so no link or image on another site can sign anyone out.
 When the browser still has a platform session, the page offers one tap to end it too, and a link to stay signed in; without one, it just says the customer is signed out.
-`POST /api/auth/logout` and `/api/auth/logout-all` answer `{ ok: true, signOutUrl }` in hosted mode and leave a two-minute `op_signed_out` cookie (path `/login`), so the app's usual next step, loading `/login`, is redirected once to `signOutUrl`.
+`POST /api/auth/logout` and `/api/auth/logout-all` answer `{ ok: true, signOutUrl }` in hosted mode and leave a two-minute `__Host-op_signed_out` cookie, so the app's usual next step, loading `/login`, is redirected once to `signOutUrl`.
 
 ### Testing and local development
 
@@ -513,7 +513,8 @@ A thrown error, a timeout or an answer that doesn't verify mean the call itself 
 In starter mode visitors reach the user Worker directly, not through the platform, so it builds the props of a public request itself:
 
 - `tenant` is the latest `TenantInfoAnswer` from `/__tenant/v1/info`, kept at most 30 seconds (`STARTER_INFO_CACHE_MS`, the same time the platform keeps a tenant row in dispatch mode), so a suspension or a plan change reaches it as fast in both modes.
-  When the platform can't be reached, it keeps using its last answer for up to 10 minutes (`STARTER_INFO_STALE_MS`), and after that answers 503 `hosted_unavailable`, as it would in dispatch mode with the platform down.
+  An answer older than that is still served at once while one refresh per isolate runs in the background, so no visitor waits on a slow or unreachable platform when there is an answer to serve; a failed refresh backs off (5 seconds, doubling to a minute).
+  When the platform can't be reached, it keeps using its last answer for up to 10 minutes (`STARTER_INFO_STALE_MS`), and after that answers 503 `hosted_unavailable`, as it would in dispatch mode with the platform down, at once while a failed call is backing off.
 - `invocation` is `"public"`, `callId` is a new random id, and `platform` is the HTTPS client.
 - A tenant that is `suspended` answers what the platform answers for it in dispatch mode, a page saying it is paused with a link to `urls.account`, for every public request.
 - A tenant the platform says isn't ready answers 503 `hosted_unavailable`.

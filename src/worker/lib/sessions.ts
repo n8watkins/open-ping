@@ -3,6 +3,7 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv, Env, SessionRow } from "../types";
 import { randomToken, sha256hex } from "./ids";
 import type { LabeledStatement } from "./batch";
+import { isHostedMode } from "../../shared/hosted-contract";
 
 /**
  * Session management (PRD §13): secure HTTP-only cookies, SameSite protection,
@@ -13,6 +14,26 @@ import type { LabeledStatement } from "./batch";
  */
 
 export const SESSION_COOKIE = "op_session";
+/**
+ * The session cookie in hosted mode. Hosted customers can share a parent
+ * domain (`<slug>.openping.n8builds.dev`) with each other, the platform and
+ * the owner's other sites, any of which could set a cookie for that parent.
+ * A `__Host-` cookie can only be set by this exact host, Secure, on Path=/
+ * and without a Domain, so nothing on a sibling or parent host can plant or
+ * shadow it (docs/hosted/CONTRACT.md, section 10; platform/README.md).
+ * A plain install keeps its name, so nobody is signed out by an update.
+ */
+export const HOSTED_SESSION_COOKIE = "__Host-op_session";
+
+/** The session cookie's name for this install: HOSTED_SESSION_COOKIE in hosted mode. */
+export function sessionCookieName(env: Pick<Env, "HOSTED_MODE">): string {
+  return isHostedMode(env.HOSTED_MODE) ? HOSTED_SESSION_COOKIE : SESSION_COOKIE;
+}
+
+/** Clears the session cookie (host-only, Secure, Path=/). */
+export function clearSessionCookie(c: Ctx): void {
+  deleteCookie(c, sessionCookieName(c.env), { path: "/", secure: true });
+}
 export const CSRF_HEADER = "x-csrf-token";
 
 const DEFAULT_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
@@ -54,7 +75,7 @@ export async function createSession(
     )
     .run();
 
-  setCookie(c, SESSION_COOKIE, token, {
+  setCookie(c, sessionCookieName(c.env), token, {
     httpOnly: true,
     secure: true,
     sameSite: "Lax",
@@ -67,7 +88,7 @@ export async function createSession(
 
 /** Resolve the current session from the cookie, or null. Expired rows are purged. */
 export async function getSession(c: Ctx): Promise<SessionRow | null> {
-  const token = getCookie(c, SESSION_COOKIE);
+  const token = getCookie(c, sessionCookieName(c.env));
   if (!token) return null;
   const id = await sha256hex(token);
   const row = await c.env.DB.prepare(`SELECT * FROM sessions WHERE id = ?`)
@@ -95,15 +116,15 @@ export async function touchSession(env: Env, row: SessionRow): Promise<void> {
  * a sign-in that is about to set a new one (rotation).
  */
 export async function endCurrentSession(c: Ctx): Promise<void> {
-  const token = getCookie(c, SESSION_COOKIE);
+  const token = getCookie(c, sessionCookieName(c.env));
   if (token) await destroySessionById(c.env, await sha256hex(token));
 }
 
 /** Destroy the caller's session and clear the cookie. */
 export async function destroySession(c: Ctx): Promise<void> {
-  const token = getCookie(c, SESSION_COOKIE);
+  const token = getCookie(c, sessionCookieName(c.env));
   if (token) await destroySessionById(c.env, await sha256hex(token));
-  deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  clearSessionCookie(c);
 }
 
 async function destroySessionById(env: Env, id: string): Promise<void> {

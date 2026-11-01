@@ -191,7 +191,9 @@ export const refuseWhenHosted: MiddlewareHandler<AppEnv> = async (c, next) => {
  * short-lived marker, and GET /login (signOutRedirect) sends a browser that
  * carries it on to the platform instead of showing the sign-in page.
  */
-const SIGNED_OUT_COOKIE = "op_signed_out";
+// Host-only (`__Host-`, so Path=/), like every hosted cookie: nothing on a
+// sibling or parent host can set it (lib/sessions.ts, HOSTED_SESSION_COOKIE).
+const SIGNED_OUT_COOKIE = "__Host-op_signed_out";
 const SIGNED_OUT_TTL_SECONDS = 120;
 
 /** After ending a session in hosted mode: mark the browser and return the platform's sign-out URL. */
@@ -202,7 +204,7 @@ export function markSignedOut(c: Ctx): string | null {
     httpOnly: true,
     secure: true,
     sameSite: "Lax",
-    path: "/login",
+    path: "/",
     maxAge: SIGNED_OUT_TTL_SECONDS,
   });
   return props.tenant.urls.signOut;
@@ -212,7 +214,7 @@ export function markSignedOut(c: Ctx): string | null {
 export const signOutRedirect: MiddlewareHandler<AppEnv> = async (c, next) => {
   const props = hostedProps(c);
   if (!props || !getCookie(c, SIGNED_OUT_COOKIE)) return next();
-  deleteCookie(c, SIGNED_OUT_COOKIE, { path: "/login", secure: true });
+  deleteCookie(c, SIGNED_OUT_COOKIE, { path: "/", secure: true });
   // The Android app stays on its own sign-in screen: the platform's pages
   // open in the phone's browser, not in the app (docs/ANDROID.md).
   if (isAppUserAgent(c.req.header("user-agent"))) return next();
