@@ -135,7 +135,7 @@ describe("the report", () => {
     const text = renderReport(r);
     expect(text).toMatch(/^# Load test report: PASS/);
     expect(text).toContain("| No missed scheduler runs | 0 | 0 | pass |");
-    expect(text).not.toContain("—");
+    expect(text).not.toContain("\u2014");
   });
 
   it("fails on a missed run, naming the tenant", () => {

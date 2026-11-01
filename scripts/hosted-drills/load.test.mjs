@@ -148,7 +148,7 @@ describe("the load test", () => {
     const text = logs.join("\n");
     expect(text).toContain("200 tenants");
     for (const what of ["# seed", "# run", "# cleanup", "wrangler deploy", "/__health", "graphql", "wrangler delete"]) expect(text).toContain(what);
-    expect(text).not.toContain("—");
+    expect(text).not.toContain("\u2014");
   });
 });
 
