@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.20.0 - 2026-10-31
+
+### Fixed
+
+- The reason a monitor runs slower than its setting now opens by tap or keyboard in the Monitors list, the wording respects the plan's fastest interval, and over-plan counts read correctly.
+
 ## 0.19.0 - 2026-10-31
 
 ### Fixed
