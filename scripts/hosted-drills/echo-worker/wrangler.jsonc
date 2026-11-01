@@ -1,0 +1,11 @@
+{
+  // The load test's echo Worker (index.js). Deployed to the staging account
+  // by `npm run hosted-load -- seed`, on its workers.dev address, and deleted
+  // by `npm run hosted-load -- cleanup`. It has no bindings and stores nothing.
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "openping-loadtest-echo-staging",
+  "main": "index.js",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": true,
+  "observability": { "enabled": false }
+}

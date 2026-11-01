@@ -2,6 +2,8 @@ node_modules
 dist/
 # The OpenPing Hosted tenant bundle (scripts/tenant-release.mjs).
 .tenant-bundle/
+# The Hosted launch drills' state, reports and downloads (scripts/hosted-drills/).
+.hosted-drills/
 .wrangler/
 .dev.vars
 .dev.vars.*
