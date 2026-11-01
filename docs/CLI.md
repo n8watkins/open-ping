@@ -62,8 +62,8 @@ API failures exit with code 1 and print the HTTP status and any validation messa
 | Command | What it does |
 | --- | --- |
 | `op status` | Every monitor's state, last check, latency and 24h uptime, open incidents and the last scheduler run. |
-| `op monitors list [--type T]` | Monitors with id, type, schedule and target. |
-| `op monitors get <id>` | One monitor's configuration (credentials are never shown), state and uptime. |
+| `op monitors list [--type T]` | Monitors with id, type, schedule, how often each is really checked, and target. |
+| `op monitors get <id>` | One monitor's configuration (credentials are never shown), how often it is really checked, state and uptime. |
 | `op monitors create ...` | Creates a monitor; see below. |
 | `op monitors update <id> ...` | Changes only the flags you pass. |
 | `op monitors delete <id> --yes` | Deletes a monitor and all of its history. |
