@@ -59,8 +59,14 @@ So the app signs in the way [RFC 8252](https://www.rfc-editor.org/rfc/rfc8252) a
    The pending sign-in is a `__Host-` cookie, so no sibling subdomain (another Hosted customer) can plant one.
 2. The person signs in there with whatever the install offers: a passkey (always with user verification), GitHub (asked to pick the account, `prompt=select_account`), an email link, or the OpenPing Hosted platform (asked to sign in again, `reauth=1`).
    This is always a fresh sign-in, even when the browser is signed in already: `/finish` takes only a session made after step 1.
-3. `/auth/app/finish` shows "Open the OpenPing app".
-   Its button opens `dev.n8builds.openping:/signed-in?code=...&state=...&origin=...`; the code works once, for 2 minutes.
+3. `/auth/app/finish` shows "Open the OpenPing app"; the code works once, for 2 minutes.
+   The button is always an Android intent URL restricted to the app's package:
+   `intent:/signed-in?code=...&state=...&origin=...#Intent;scheme=dev.n8builds.openping;package=dev.n8builds.openping;S.browser_fallback_url=...;end`.
+   Android delivers it only to the installed app whose id is `dev.n8builds.openping`, not to another app that claims the same scheme, and the app receives exactly `dev.n8builds.openping:/signed-in?code=...&state=...&origin=...`.
+   The form `intent:/signed-in` (no `//`) is deliberate: Android's `Intent.parseUri` puts the scheme back in front of what follows `intent:`, which gives that exact URI; `intent://signed-in` would make `signed-in` a host, which the app refuses.
+   When no app with that id is on the phone, the browser opens `/auth/app/get-app` instead, which says how to get the app (the code isn't in that address and expires unused).
+   The plain `dev.n8builds.openping:` link is never handed out, whatever the browser's user agent says: an attacker's app can open its Custom Tab in a browser of its choosing, and Chrome's "Desktop site" mode drops "Android" from it.
+   Chrome, its Custom Tabs, the Chromium browsers (Samsung Internet, Edge, Brave, ...) and Firefox open intent URLs; in a browser that doesn't, the button does nothing, and the page says to make Chrome or Firefox the default browser and sign in again.
    A tap is needed, so a page someone else opened can't sign a phone in unseen.
 4. The app checks the state and the origin against what it saved, and posts the code and the verifier to `/auth/app/exchange` from its web view, which then has its own session.
    `/exchange` refuses another site's form (an `Origin` other than the install's, or `Sec-Fetch-Site` cross-site or same-site), so no page can sign a browser in to someone else's session.
@@ -72,7 +78,27 @@ If the browser was signed in only for the app, that browser session ends at step
 A Hosted support session can't be moved to the app.
 The server side is [`src/worker/routes/app-signin.ts`](../src/worker/routes/app-signin.ts); the app side is `AppSignIn.java`.
 
-This needs nothing on the install, so it works for every self-hosted install on any domain.
+This needs nothing on the install, so it works for every self-hosted install on any domain: the intent names the app by its package, not by a domain, so there is no `assetlinks.json` to serve and no App Link to verify.
+Verified App Links were considered and left out: an app can only verify the domains fixed in its manifest, a browser keeps a link to the page's own host in the browser, and Android 8 to 11 verify all of an app's domains or none, so they would cover fewer installs and fail in more ways than the intent, which already keeps apps claiming the scheme out.
+
+The intent link needs no new app build: the app has always taken `dev.n8builds.openping:/signed-in` from the browser, and that is the URI the intent delivers, so a debug APK installed before this change signs in the same way.
+
+`/finish` doesn't refuse a cross-site or same-site `Sec-Fetch-Site`: the browser reports the whole redirect chain, so GitHub's sign-in (through github.com) reaches `/finish` cross-site and the Hosted hand-off (through the platform's `app.` address) same-site, and refusing them would refuse real sign-ins.
+What keeps another site from using `/finish` is the `__Host-` pending cookie that only `/start`, opened by the app itself, sets.
+
+**Checking it on a phone.**
+The tests can't run a real browser handing an intent to an app, so check these by hand with each new release of the hand-off (the owner does the first round with the sideloaded debug build):
+
+| Browser | App installed | Expected |
+| --- | --- | --- |
+| Chrome as default browser (the Custom Tab) | yes | Open the OpenPing app opens the app, signed in |
+| Chrome as default browser | no (uninstall the app after tapping Sign in) | "The OpenPing app isn't on this phone" page |
+| Samsung Internet as default browser (its Custom Tab) | yes / no | as Chrome |
+| Firefox as default browser | yes / no | as Chrome |
+| Chrome with "Desktop site" on | yes | the app opens, as above |
+| A ChromeOS device with Android apps (ARC) | yes | the Android app opens, signed in |
+
+Also check that the "The OpenPing app signed in" email arrives and the session shows under Settings > Sign-in & security.
 
 **Passkeys inside the app (optional).**
 Android's WebView supports WebAuthn through Credential Manager (`WebSettingsCompat.setWebAuthenticationSupport(..., WEB_AUTHENTICATION_SUPPORT_FOR_APP)`, androidx.webkit 1.12 and later), and the app turns it on.
@@ -116,11 +142,15 @@ Email, chat and webhook alerts work in every case.
 
 What the design protects against is above; this is what remains, and why it is accepted:
 
-- **A malicious app on the phone** that claims the same `dev.n8builds.openping:` scheme could start the sign-in itself, with its own verifier, and be handed the code if the person signs in and taps "Open the OpenPing app" for it.
-  Android lets any app claim a custom scheme, and RFC 8252 accepts this risk for native apps.
-  What stands in its way: the fresh sign-in the person has to do, the tap, the "The OpenPing app signed in" email, and the session list in Settings.
-  A verified App Link (an https callback the system gives only to the signed app) would close it, but an app can only verify the domains in its own manifest, fixed at build time, so it can't cover every self-hosted install.
-  It is the better callback for installs on the owner's domains (openping.n8builds.dev and Hosted) once `ANDROID_APP_LINKS` is set there; that is a follow-up.
+- **An app installed as `dev.n8builds.openping` in place of the real one.**
+  The intent trusts the package id, which only one app on a phone can have; a phone whose "OpenPing" came from somewhere untrusted is not something the sign-in can fix.
+  A store build is signed by Google Play's app signing key, and a debug APK by its run's throwaway key, so Android refuses to install one over the other.
+- **An attacker's app running the whole sign-in in its own web view**, instead of a Custom Tab.
+  It doesn't need the code at all: whatever the person signs in to inside that app's web view, the app can read.
+  What stands in its way: a passkey works in a web view only for an app the install's `assetlinks.json` names, so it fails there; an email link opens in the phone's mail app and browser, not in the attacker's web view, so its pending sign-in never finishes; GitHub (and a Hosted sign-in code) would need the person to type their credentials into the attacker's app, as with any phishing app.
+  Then the fresh sign-in, the "The OpenPing app signed in" email and the session list in Settings.
+- **Another app claiming the scheme** no longer gets a code: the finish page only hands out the intent for the app's package, never the plain scheme link, which any app could claim (RFC 8252 accepts that risk; this design doesn't need to).
+- **A forged callback** sent to the app by another app or a web page (the app's activity is exported) is ignored: the app takes only the state and the install it saved when it started the sign-in, and a code is useless without the verifier.
 - **Debug builds** (the CI artifact) allow `chrome://inspect` of the app's web view over USB, which shows the open install's pages and cookies to whoever has the unlocked phone and a cable; release builds don't.
 - **CI artifacts from pull requests**, including ones from forks, can be downloaded by anyone with read access to the repository; install only builds from this repository's own branches.
 - **The shared Firebase key**: see Push notifications above.
@@ -222,12 +252,14 @@ Migration `0025_session_via.sql` adds `sessions.via` (`app` for the app's sessio
 
 - Worker: `test/integration/app-signin.test.ts` (the browser sign-in end to end, with a Custom Tab and a web view as two cookie jars: a start from a web page refused, a fresh sign-in required even when signed in, a planted cookie ignored, a cross-site exchange refused, the notice email, the session listed and signed out), the Hosted variant in `test/integration/hosted-mode.test.ts` (`reauth=1`, a stale hand-off refused), `test/integration/android-push.test.ts` (registering, an incident reaching the phone, a test send, an uninstalled app, refreshes that keep a phone off or removed, a rotated token, the cap of 20, removal by the app) and `src/worker/notifications/push/fcm.test.ts`, all against a fake FCM and token endpoint (`test/support/fake-fcm.ts`) that checks the JWT's signature and claims.
   No test calls Google.
-- App: Vitest for the screens' address and route logic, JUnit for `Origins`, `NavigationPolicy` and `Pkce` (in CI).
+- The intent link: `src/shared/native-app.test.ts` (built so Android's `Intent.parseUri` gives back exactly the callback, only for the app's package, with the fallback page) and `test/integration/app-signin.test.ts` (the finish page's intent for every browser, including ones without "Chrome", "Firefox" or "Android" in their user agent, never the plain link; the fallback page with no code). On a phone: the device check list under Signing in.
+- App: Vitest for the screens' address and route logic, JUnit for `Origins`, `NavigationPolicy`, `Pkce` and `SignInCallback` (the callback the intent delivers, and the shapes it refuses), in CI.
 
 ## Troubleshooting
 
 - **"That OpenPing needs an update"**: the install is older than the app's sign-in; update it ([UPGRADE.md](./UPGRADE.md)).
 - **Sign-in comes back with "didn't start in this app"**: the sign-in took longer than 20 minutes, or another app's link was opened; tap Sign in again.
+- **"The OpenPing app isn't on this phone"** after tapping Open the OpenPing app: the browser found no app with the id `dev.n8builds.openping`; install it (or reinstall it), then tap Sign in in the app again.
 - **"Start signing in from the app"**: the sign-in page was opened from a link, not by the app; open the app and tap Sign in there.
 - **"Update Android System WebView"**: update it in Google Play (it updates on its own on most phones), then open OpenPing again.
 - **"Turn on for this phone" is greyed out**: the install has no `FCM_SERVICE_ACCOUNT`.
