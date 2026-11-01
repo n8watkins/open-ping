@@ -31,6 +31,10 @@ Keep `app.openping.n8builds.dev` as a redirect to `app.<domain>`.
 **How the code keeps it open:** the platform reads the domain from one var, `HOSTED_DOMAIN` in `platform/wrangler.jsonc`, which holds a placeholder (`openping-hosted.invalid`) until the domain exists.
 Nothing else names the domain.
 
+**Starting cheaper, built 2026-10-31:** `HOSTED_DOMAIN` can also be a subdomain of the owner's zone (`openping.n8builds.dev`) with `TENANT_ADDRESSES` `custom_domains`: one Workers Custom Domain per customer, with its own certificate at no cost, so the $10 a month Advanced Certificate Manager isn't needed.
+It lasts to about 85 to 90 customers (100 Custom Domains a zone, the owner's own included), and with starter mode it also runs on Workers Paid alone ([platform/README.md](../../platform/README.md#addresses-under-a-subdomain), [HOSTED_PLAN.md](../HOSTED_PLAN.md#starting-cheaper-starter-mode-on-workers-paid-alone)).
+The recommendation stands for launch at scale; starting this way and moving before about 80 customers is the owner's call.
+
 **Owner input needed:** the domain name, bought and added to Cloudflare.
 
 ## D3: customer sign-in
