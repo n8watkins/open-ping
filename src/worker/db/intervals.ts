@@ -4,15 +4,22 @@ import type { MonitorState } from "../../shared/states";
 
 /**
  * Evolving status intervals (PRD §17). A run of unchanged status is stored as a
- * single, growing `status_intervals` row (ended_at IS NULL while open). Each
- * check extends the open interval in place; a *new* interval only begins on a
- * state change (or a schedule/maintenance boundary, which surfaces as a state
- * change here). This keeps history compact: one row per contiguous state, with
- * rolled-up check/latency aggregates, instead of one row per sample.
+ * single `status_intervals` row (ended_at IS NULL while open); a *new* interval
+ * only begins on a state change (or a schedule/maintenance boundary, which
+ * surfaces as a state change here). This keeps history compact: one row per
+ * contiguous state, instead of one row per sample.
  *
- * Timestamps are epoch milliseconds. Latency is only aggregated when a finite
+ * A check that keeps the state writes nothing here: D1 bills every row
+ * written, and extending the open row on every check cost a row per check
+ * (docs/HOSTED_PLAN.md, "Cost per customer, measured"). The per-check counts
+ * live in the hourly summaries (history/rollups.ts), which every uptime,
+ * response-time and check-count figure is read from; the interval's own
+ * `checks`, `ok_checks` and latency columns hold only the check that opened
+ * it, and nothing reads them (older builds kept them current).
+ *
+ * Timestamps are epoch milliseconds. Latency is only recorded when a finite
  * `latencyMs` is supplied - states like `scheduled_off` or a missed heartbeat
- * carry no measured latency and must not pollute min/sum/max.
+ * carry no measured latency.
  */
 
 /** Latency + check aggregates carried on a status interval row. */
@@ -32,21 +39,6 @@ const ZERO_AGG: LatencyAgg = {
   minLatencyMs: null,
   maxLatencyMs: null,
 };
-
-/**
- * Pure decision: given the currently-open interval (or null) and the incoming
- * state, what should happen?
- *   - no open interval        → "open"   (insert a fresh open interval)
- *   - open, same state        → "extend" (fold the sample into the open row)
- *   - open, different state   → "split"  (close the old, open a new one)
- */
-export function decideIntervalAction(
-  current: { state: MonitorState } | null,
-  incomingState: MonitorState,
-): "open" | "extend" | "split" {
-  if (current == null) return "open";
-  return current.state === incomingState ? "extend" : "split";
-}
 
 /**
  * Pure merge of one sample's outcome into existing aggregates. Latency stats are
@@ -77,15 +69,17 @@ export function mergeLatency(
  * The interval update for one check/state observation, as statements a caller
  * can batch with its other writes (they must run in this order, in one batch):
  *
- *  1. extend: fold the sample into the open interval when its state matches;
- *  2. close: end an open interval whose state differs (a state change);
- *  3. open: start a fresh interval, seeded with this sample, when none is open
- *     any more. Its reason is `opts.reason`, else "state_change" when step 2
+ *  1. close: end an open interval whose state differs (a state change);
+ *  2. open: start a fresh interval, seeded with this sample, when none is open
+ *     any more. Its reason is `opts.reason`, else "state_change" when step 1
  *     just closed one, else none (the monitor's first interval).
  *
- * The SQL does what decideIntervalAction and mergeLatency describe without
- * reading the row first, so a check's interval costs no round trip of its own.
- * Latency is folded in only when `latencyMs` is a finite number.
+ * The SQL decides without reading the row first, so a check's interval costs
+ * no round trip of its own, and while the state holds both statements match
+ * nothing and write nothing. Sending them on every check (rather than only
+ * when the caller saw the state change) keeps the timeline self-repairing: a
+ * state change whose interval write failed is caught up by the next check.
+ * Latency is recorded only when `latencyMs` is a finite number.
  *
  * With `onlyIf`, each statement applies only while monitor_state holds that
  * state with that updated_at, i.e. only when the guarded state write it
@@ -105,7 +99,7 @@ export function intervalStatements(
 ): D1PreparedStatement[] {
   const g = opts.onlyIf;
   // The guard's placeholders follow each statement's own (?1 is the monitor in
-  // the first two, ?2 in the insert).
+  // the first, ?2 in the insert).
   const guard = (monitorParam: number, first: number) =>
     g
       ? ` AND EXISTS (SELECT 1 FROM monitor_state WHERE monitor_id = ?${monitorParam}
@@ -113,20 +107,8 @@ export function intervalStatements(
       : "";
   const guardBinds = g ? [g.state, g.updatedAt] : [];
   const l = typeof opts.latencyMs === "number" && Number.isFinite(opts.latencyMs) ? opts.latencyMs : null;
-  const ok = opts.ok ? 1 : 0;
   const first = mergeLatency(ZERO_AGG, { ...(l != null ? { latencyMs: l } : {}), ok: opts.ok ?? false });
   return [
-    env.DB.prepare(
-      `UPDATE status_intervals
-          SET checks = checks + 1,
-              ok_checks = ok_checks + ?3,
-              sum_latency_ms = sum_latency_ms + COALESCE(?4, 0),
-              min_latency_ms = CASE WHEN ?4 IS NULL THEN min_latency_ms
-                                    ELSE MIN(COALESCE(min_latency_ms, ?4), ?4) END,
-              max_latency_ms = CASE WHEN ?4 IS NULL THEN max_latency_ms
-                                    ELSE MAX(COALESCE(max_latency_ms, ?4), ?4) END
-        WHERE monitor_id = ?1 AND ended_at IS NULL AND state = ?2${guard(1, 5)}`,
-    ).bind(monitorId, state, ok, l, ...guardBinds),
     env.DB.prepare(
       `UPDATE status_intervals SET ended_at = ?3
         WHERE monitor_id = ?1 AND ended_at IS NULL AND state <> ?2${guard(1, 4)}`,

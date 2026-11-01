@@ -178,7 +178,8 @@ describe("D1 round trips per scheduler run", () => {
     expect(open?.n).toBe(n);
 
     // The status timeline, kept without reading it first (db/intervals.ts):
-    // one interval per state, extended in place while the state holds.
+    // one interval per state, written only when the state changes (its
+    // counts are the opening check's; the hourly summaries hold the rest).
     const timeline = await env.DB.prepare(
       `SELECT state, checks, ok_checks, reason, ended_at IS NULL AS open FROM status_intervals
         WHERE monitor_id = ? AND started_at >= ? ORDER BY started_at`,
@@ -187,7 +188,7 @@ describe("D1 round trips per scheduler run", () => {
       .all<{ state: string; checks: number; ok_checks: number; reason: string | null; open: number }>();
     expect(timeline.results).toEqual([
       // The first interval has no reason; the warm-up check passed, so it is up.
-      expect.objectContaining({ state: "up", checks: 2, ok_checks: 2, reason: null, open: 0 }),
+      expect.objectContaining({ state: "up", checks: 1, ok_checks: 1, reason: null, open: 0 }),
       expect.objectContaining({ state: "down", checks: 1, ok_checks: 0, reason: "state_change", open: 0 }),
       expect.objectContaining({ state: "up", checks: 1, ok_checks: 1, reason: "state_change", open: 1 }),
     ]);
@@ -263,7 +264,9 @@ describe("one failing write in a run's batch", () => {
 
   it("still records every other monitor's check, and the broken one's state", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    await reset(3, "up");
+    // Recovering, so each check has a sample row (a passing check that changes
+    // nothing has none: its hour summary logs it, history/check-log.ts).
+    await reset(3, "down");
     const [a, broken, c] = ids;
     await breakWrites("samples", broken!);
     const since = Date.now();
