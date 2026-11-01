@@ -30,6 +30,7 @@ import { log } from "../log";
 import { mailProblem } from "../mail";
 import { provisioningSettings } from "../provisioning-env";
 import { MINUTE_MS } from "./metrics";
+import { SIGNUP_HEADROOM, nearCap } from "../addresses";
 
 /** Where the platform serves it, on app.<domain> only. */
 export const PLATFORM_HEALTH_ROUTE = "/__health";
@@ -101,6 +102,9 @@ export const LAST_RUN_SQL = "SELECT MAX(minute) AS minute FROM scheduler_minutes
 export const ACTIVE_RELEASE_SQL = `SELECT id, kind, version, state, batch, updated_at FROM releases INDEXED BY idx_releases_active
   WHERE dry_run = 0 AND state IN ('canary', 'rolling', 'paused')`;
 
+/** The Cloudflare limits the platform counts (src/addresses.ts): one tiny row each. */
+export const CAPACITY_SQL = "SELECT resource, used, cap FROM platform_capacity";
+
 export type HeartbeatName = "cron" | "enqueue";
 
 /** The cron's (or the enqueue's) "I ran": one row rewritten, by primary key. */
@@ -124,13 +128,15 @@ export interface PlatformState {
   /** The start of the newest minute with a recorded run (epoch ms). */
   lastRunAt: number | null;
   release: { id: string; kind: string; version: string; state: string; batch: number; updatedAt: number } | null;
+  /** The counted Cloudflare limits: Custom Domains on the zone, Workers on the account (empty until first counted). */
+  capacity: { resource: string; used: number; cap: number }[];
 }
 
 const minOf = (a: number | null, b: number | null) => (a === null ? b : b === null ? a : Math.min(a, b));
 
 /** One D1 batch; every statement reads by primary key or over a partial index of the rows in trouble. */
 export async function readPlatformState(db: D1Database, now: number): Promise<PlatformState> {
-  const [beats, oldest, oldestNew, overdue, failing, lastRun, release] = await db.batch<Record<string, unknown>>([
+  const [beats, oldest, oldestNew, overdue, failing, lastRun, release, capacity] = await db.batch<Record<string, unknown>>([
     db.prepare(HEARTBEATS_SQL),
     db.prepare(OLDEST_DUE_SQL),
     db.prepare(OLDEST_NEW_SQL),
@@ -138,6 +144,7 @@ export async function readPlatformState(db: D1Database, now: number): Promise<Pl
     db.prepare(FAILING_SQL).bind(FAILING_STREAK),
     db.prepare(LAST_RUN_SQL),
     db.prepare(ACTIVE_RELEASE_SQL),
+    db.prepare(CAPACITY_SQL),
   ]);
   const beat = (name: string) => (beats!.results as { name: string; at: number; detail: string | null }[]).find((b) => b.name === name);
   const enqueueBeat = beat("enqueue");
@@ -160,6 +167,7 @@ export async function readPlatformState(db: D1Database, now: number): Promise<Pl
     failing: num((failing!.results[0] as { n?: unknown } | undefined)?.n) ?? 0,
     lastRunAt: lastMinute === null ? null : lastMinute * MINUTE_MS,
     release: r ? { id: r.id, kind: r.kind, version: r.version, state: r.state, batch: r.batch, updatedAt: r.updated_at } : null,
+    capacity: (capacity!.results as { resource: string; used: number; cap: number }[]).map((c) => ({ resource: c.resource, used: c.used, cap: c.cap })),
   };
 }
 
@@ -174,6 +182,8 @@ export interface HealthChecks {
   scheduler: { ok: boolean | null; oldestOverdueSeconds: number | null; overdueTenants: number | null; lastRunAt: string | null };
   tenants: { ok: boolean | null; failing: number | null; threshold: number };
   release: { ok: boolean | null; inProgress: boolean | null; kind: string | null; state: string | null; version: string | null; batch: number | null };
+  /** Room left under Cloudflare's per-zone and per-account caps; null while nothing is counted (wildcard addresses). */
+  capacity: { ok: boolean | null; customDomains: { used: number; cap: number } | null; workers: { used: number; cap: number } | null };
   config: { ok: boolean; mail: boolean; billing: boolean; provisioning: boolean };
 }
 
@@ -219,6 +229,7 @@ export function healthReport(state: PlatformState | null, config: HealthChecks["
       scheduler: { ok: null, oldestOverdueSeconds: null, overdueTenants: null, lastRunAt: null },
       tenants: { ok: null, failing: null, threshold: FAILING_DEGRADED },
       release: { ok: null, inProgress: null, kind: null, state: null, version: null, batch: null },
+      capacity: { ok: null, customDomains: null, workers: null },
       config,
     };
   } else {
@@ -243,6 +254,17 @@ export function healthReport(state: PlatformState | null, config: HealthChecks["
     const releaseName = state.release ? `${state.release.kind === "rollback" ? "rollback to" : "rollout of"} ${state.release.version}` : "";
     if (state.release?.state === "paused") problems.push(`The ${releaseName} is paused and needs the owner.`);
     else if (releaseStuck) problems.push(`The ${releaseName} hasn't moved in ${minutesText(now - state.release!.updatedAt)}.`);
+    const counted = (resource: string) => {
+      const row = state.capacity.find((c) => c.resource === resource);
+      return row ? { used: row.used, cap: row.cap } : null;
+    };
+    const customDomains = counted("custom_domains");
+    const workers = counted("workers");
+    const near = [
+      customDomains && nearCap(customDomains.used, customDomains.cap) ? `${customDomains.used} of ${customDomains.cap} Custom Domains are used on the zone` : null,
+      workers && nearCap(workers.used, workers.cap) ? `${workers.used} of ${workers.cap} Workers are used on the account` : null,
+    ].filter((p): p is string => p !== null);
+    for (const text of near) problems.push(`${text}; new sign-ups stop ${SIGNUP_HEADROOM} short of the limit.`);
     checks = {
       database: { ok: true },
       cron: { ok: cronOk, lastTickAt: iso(state.cronAt), ageSeconds: ageSeconds(now, state.cronAt) },
@@ -263,6 +285,7 @@ export function healthReport(state: PlatformState | null, config: HealthChecks["
         version: state.release?.version ?? null,
         batch: state.release?.batch ?? null,
       },
+      capacity: { ok: customDomains || workers ? near.length === 0 : null, customDomains, workers },
       config,
     };
   }

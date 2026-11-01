@@ -532,3 +532,75 @@ describe("the provisioning queue", () => {
     expect(held.retries).toEqual([{ id, delaySeconds: 60 }]);
   });
 });
+
+describe("addresses as Custom Domains (src/addresses.ts)", () => {
+  const ZONE = "fedcba9876543210fedcba9876543210";
+  function domainWorld(): World {
+    const w = world();
+    w.deps.config = { ...w.deps.config, addresses: { kind: "custom_domains", zoneId: ZONE, dispatchService: "openping-platform" } };
+    return w;
+  }
+  const domainId = async (id: string) =>
+    (await env.PLATFORM_DB.prepare("SELECT custom_domain_id FROM tenants WHERE id = ?").bind(id).first<{ custom_domain_id: string | null }>())?.custom_domain_id ?? null;
+
+  it("attaches the tenant's hostname to the platform Worker during the upload step, and detaches it first on removal", async () => {
+    const w = domainWorld();
+    const id = await signUp(w, "cdco");
+    expect(await runProvisioning(w.deps, id, { force: true })).toEqual({ kind: "ready", tenantId: id });
+    const domain = w.api.customDomainAt(`cdco.${DOMAIN}`)!;
+    expect(domain).toMatchObject({ service: "openping-platform", zoneId: ZONE });
+    expect(await domainId(id)).toBe(domain.id);
+
+    expect(await removeTenant(w.deps, id)).toEqual({ kind: "removed", tenantId: id });
+    expect(w.api.customDomainAt(`cdco.${DOMAIN}`)).toBeUndefined();
+    const ops = w.api.calls.map((c) => c.op);
+    expect(ops.lastIndexOf("detachCustomDomain")).toBeLessThan(ops.lastIndexOf("deleteScript"));
+  });
+
+  it("keeps the domain an attach made when its answer was lost, instead of failing on it", async () => {
+    const w = domainWorld();
+    const id = await signUp(w, "lostcdco");
+    w.api.failNext("attachCustomDomain", { when: "after", status: 503 });
+    expect(await runProvisioning(w.deps, id, { force: true })).toMatchObject({ kind: "retry", state: "db_created" });
+    w.clock.now += 60_000;
+    expect(await runProvisioning(w.deps, id)).toEqual({ kind: "ready", tenantId: id });
+    expect([...w.api.customDomains.values()].filter((d) => d.hostname === `lostcdco.${DOMAIN}`)).toHaveLength(1);
+  });
+
+  it("never takes a hostname the owner already uses: a DNS record or another Worker's Custom Domain pauses the tenant", async () => {
+    for (const [slug, setup] of [
+      ["shadowco", (w: World) => w.api.addDnsRecord(ZONE, `shadowco.${DOMAIN}`)],
+      [
+        "ownedcdco",
+        (w: World) => w.api.customDomains.set("owners", { id: "owners", hostname: `ownedcdco.${DOMAIN}`, service: "portfolio-site", zoneId: ZONE }),
+      ],
+    ] as const) {
+      const w = domainWorld();
+      const id = await signUp(w, slug);
+      setup(w);
+      const outcome = await runProvisioning(w.deps, id, { force: true });
+      expect(outcome, slug).toMatchObject({ kind: "paused", state: "db_created" });
+      expect(w.api.count("attachCustomDomain"), slug).toBe(0);
+      expect(await auditActions(id)).toContain("tenant.provision_paused");
+    }
+  });
+
+  it("never adopts a Custom Domain it didn't attach for this tenant, even one routed to the platform Worker", async () => {
+    const w = domainWorld();
+    const id = await signUp(w, "adoptco");
+    // Someone (the owner by hand, or a stale mapping) already routes the hostname to the platform.
+    w.api.customDomains.set("handmade", { id: "handmade", hostname: `adoptco.${DOMAIN}`, service: "openping-platform", zoneId: ZONE });
+    expect(await runProvisioning(w.deps, id, { force: true })).toMatchObject({ kind: "paused", state: "db_created" });
+    expect(await domainId(id)).toBeNull();
+    // And removing the tenant leaves that mapping alone.
+    await removeTenant(w.deps, id);
+    expect(w.api.customDomains.has("handmade")).toBe(true);
+  });
+
+  it("pauses the tenant for the owner when the zone is out of Custom Domains", async () => {
+    const w = domainWorld();
+    w.api.customDomainLimit = 0;
+    const id = await signUp(w, "limitco");
+    expect(await runProvisioning(w.deps, id, { force: true })).toMatchObject({ kind: "paused", error: expect.stringContaining("limit") });
+  });
+});

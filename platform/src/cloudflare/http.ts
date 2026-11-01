@@ -14,7 +14,9 @@ import {
   type AssetUploadSession,
   type CloudflareApi,
   type CloudflareErrorDetail,
+  type CustomDomainInfo,
   type D1DatabaseInfo,
+  type DnsRecordInfo,
   type D1ExportStatus,
   type UploadedScript,
   type WorkerModule,
@@ -40,6 +42,13 @@ interface Envelope<T> {
   success?: boolean;
   errors?: CloudflareErrorDetail[];
   result?: T;
+}
+
+interface DomainResult {
+  id?: string;
+  hostname?: string;
+  service?: string;
+  zone_id?: string;
 }
 
 interface D1Result {
@@ -217,6 +226,75 @@ export class HttpCloudflareApi implements CloudflareApi {
     );
     const result = HttpCloudflareApi.result(op, status, body);
     return { id: result.id ?? scriptName, etag: result.etag ?? null, hasAssets: result.has_assets === true };
+  }
+
+  async attachCustomDomain(input: { hostname: string; service: string; zoneId: string }): Promise<CustomDomainInfo> {
+    const op = "domains.attach";
+    const { status, body } = await this.call<DomainResult>(op, this.account("/workers/domains"), {
+      method: "PUT",
+      json: { hostname: input.hostname, service: input.service, zone_id: input.zoneId },
+    });
+    return HttpCloudflareApi.domain(op, status, HttpCloudflareApi.result(op, status, body));
+  }
+
+  async findCustomDomain(zoneId: string, hostname: string): Promise<CustomDomainInfo | null> {
+    const op = "domains.list";
+    const url = `${this.account("/workers/domains")}?zone_id=${encodeURIComponent(zoneId)}&hostname=${encodeURIComponent(hostname)}`;
+    const { status, body } = await this.call<DomainResult[]>(op, url, { method: "GET" });
+    const list = HttpCloudflareApi.result(op, status, body);
+    const match = Array.isArray(list) ? list.find((d) => d.hostname?.toLowerCase() === hostname.toLowerCase()) : undefined;
+    return match ? HttpCloudflareApi.domain(op, status, match) : null;
+  }
+
+  /**
+   * The API reference (checked 2026-10-31) documents no page parameter and
+   * says the call "lists all Worker domains", but its example answer carries
+   * a paged result_info (per_page 20, total_count, total_pages). So: the
+   * total_count when there is one, otherwise every page counted with the
+   * v4 API's usual `page` parameter, never more than 50 pages. The hourly
+   * count corrects any drift, and the attach itself is the last word on the
+   * limit (src/addresses.ts).
+   */
+  async countCustomDomains(zoneId: string): Promise<number> {
+    const op = "domains.count";
+    const base = `${this.account("/workers/domains")}?zone_id=${encodeURIComponent(zoneId)}`;
+    let counted = 0;
+    for (let page = 1; page <= 50; page++) {
+      const { status, body } = await this.call<DomainResult[]>(op, page === 1 ? base : `${base}&page=${page}`, { method: "GET" });
+      const list = HttpCloudflareApi.result(op, status, body);
+      const info = (body as { result_info?: { total_count?: unknown; total_pages?: unknown } } | null)?.result_info;
+      const total = info?.total_count;
+      if (typeof total === "number" && Number.isSafeInteger(total)) return Math.max(total, counted + (Array.isArray(list) ? list.length : 0));
+      counted += Array.isArray(list) ? list.length : 0;
+      const pages = info?.total_pages;
+      if (!(typeof pages === "number" && page < pages) || !Array.isArray(list) || list.length === 0) break;
+    }
+    return counted;
+  }
+
+  async detachCustomDomain(id: string): Promise<boolean> {
+    const { status } = await this.call(
+      "domains.detach",
+      this.account(`/workers/domains/${encodeURIComponent(id)}`),
+      { method: "DELETE" },
+      (s) => (s >= 200 && s < 300) || s === 404,
+    );
+    return status !== 404;
+  }
+
+  async findDnsRecords(zoneId: string, name: string): Promise<DnsRecordInfo[]> {
+    const op = "dns.list";
+    const url = `${CLOUDFLARE_API_BASE}/zones/${encodeURIComponent(zoneId)}/dns_records?name.exact=${encodeURIComponent(name)}&per_page=100`;
+    const { status, body } = await this.call<{ id?: string; type?: string; name?: string }[]>(op, url, { method: "GET" });
+    const list = HttpCloudflareApi.result(op, status, body);
+    return (Array.isArray(list) ? list : [])
+      .filter((r) => typeof r.name === "string" && r.name.toLowerCase() === name.toLowerCase())
+      .map((r) => ({ id: String(r.id ?? ""), type: String(r.type ?? ""), name: r.name! }));
+  }
+
+  private static domain(op: string, status: number, d: DomainResult): CustomDomainInfo {
+    if (typeof d.id !== "string" || typeof d.hostname !== "string" || typeof d.service !== "string") throw new CloudflareApiError(op, status);
+    return { id: d.id, hostname: d.hostname, service: d.service, zoneId: String(d.zone_id ?? "") };
   }
 
   async getScriptMigrationTag(namespace: string, scriptName: string): Promise<string | null> {

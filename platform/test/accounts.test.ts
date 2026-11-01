@@ -19,6 +19,7 @@ import { LEGAL_DOCUMENTS, TERMS_VERSION } from "../src/legal/documents";
 import { applyEmailChange } from "../src/auth/email-change";
 import { FakeMailer } from "./fake-mailer";
 import type { ProvisioningDeps } from "../src/provisioning";
+import { CAPACITY_FULL_MESSAGE, type AddressConfig } from "../src/addresses";
 import { FakeCloudflareApi } from "./fake-cloudflare";
 import { FakeDispatcher } from "./fake-dispatcher";
 import { fakeOpenPing } from "./fake-openping";
@@ -73,6 +74,10 @@ api.onScriptChange = (name, script) => {
   else dispatcher.remove(name);
 };
 
+/** Addresses as Custom Domains (src/addresses.ts) for the tests that set it; wildcard otherwise. */
+let addresses: AddressConfig | undefined;
+const ZONE = "0123456789abcdef0123456789abcdef";
+
 function provisioningDeps(): ProvisioningDeps {
   return {
     db: env.PLATFORM_DB,
@@ -80,7 +85,7 @@ function provisioningDeps(): ProvisioningDeps {
     bundles: new StaticBundleSource(BUNDLE),
     dispatcher,
     capability: () => noopPlatform,
-    config: { hostedDomain: DOMAIN, namespace: "ns", platformKey: generateMasterKey(), handoffPublicKey: keys.publicKey },
+    config: { hostedDomain: DOMAIN, namespace: "ns", platformKey: generateMasterKey(), handoffPublicKey: keys.publicKey, addresses },
   };
 }
 
@@ -97,7 +102,13 @@ const githubFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return new Response("not found", { status: 404 });
 }) as typeof fetch;
 
+/** A fixed clock for the tests whose limits count in fixed windows; the real clock otherwise. */
+let fixedNow: number | null = null;
+/** The middle of the current fixed window of `ms`, so a test's hits can't straddle two windows. */
+const midWindow = (ms: number) => Math.floor(Date.now() / ms) * ms + ms / 2;
+
 const deps: AccountDeps = {
+  now: () => fixedNow ?? Date.now(),
   mailer: () => outbox,
   provisioning: () => ({ ok: true, deps: provisioningDeps() }),
   fetch: githubFetch,
@@ -179,6 +190,8 @@ beforeEach(async () => {
   outbox = new Outbox();
   signUps = "open";
   provisionQueue = undefined;
+  addresses = undefined;
+  fixedNow = null;
   await env.PLATFORM_DB.prepare("DELETE FROM rate_limits").run();
   github = { user: { id: 4242, login: "octo" }, emails: [{ email: "octo@example.com", primary: true, verified: true }], calls: [], verifiers: [] };
 });
@@ -339,6 +352,7 @@ describe("the email code", () => {
     expect(await (await browser.fetch("/sign-in/email", { form: { email: "not-an-email" } })).text()).toContain("Enter an email address");
     expect(await (await browser.fetch("/sign-in/email", { form: { email: "x@mailinator.com" } })).text()).toContain("permanent email");
     const email = newEmail();
+    fixedNow = midWindow(3_600_000);
     for (let i = 0; i < 5; i++) expect((await new Browser().fetch("/sign-in/email", { form: { email } })).status).toBe(200);
     expect((await new Browser().fetch("/sign-in/email", { form: { email } })).status).toBe(429);
     expect(outbox.sent.filter((m) => m.to === email)).toHaveLength(5);
@@ -579,6 +593,8 @@ describe("review fixes", () => {
     expect(ipSubject("2001:db8::")).toBe("2001:db8:0:0::/64");
     expect(ipSubject("198.51.100.7")).toBe("198.51.100.7");
     expect(ipSubject(null)).toBe("unknown");
+    // The limit counts in fixed hours: in the middle of one, so the 21 sends can't straddle two.
+    fixedNow = midWindow(3_600_000);
     for (let i = 0; i < 20; i++) await new Browser(`2001:db8:5:6::${(i + 1).toString(16)}`).fetch("/sign-in/email", { form: { email: newEmail() } });
     expect((await new Browser("2001:db8:5:6:ffff::9").fetch("/sign-in/email", { form: { email: newEmail() } })).status).toBe(429);
     expect((await new Browser("2001:db8:5:7::1").fetch("/sign-in/email", { form: { email: newEmail() } })).status).toBe(200);
@@ -586,6 +602,7 @@ describe("review fixes", () => {
 
   it("caps wrong codes per address per day across sign-ins, then only the link works", async () => {
     const email = newEmail();
+    fixedNow = midWindow(86_400_000);
     const loginOf = async (b: Browser) => /name="login" value="([^"]+)"/.exec(await (await b.fetch("/sign-in/email", { form: { email } })).text())![1]!;
     const wrongFor = (code: string) => (code === "000000" ? "111111" : "000000");
     // Two sign-ins, five wrong codes each.
@@ -672,6 +689,7 @@ describe("review fixes", () => {
 
   it("limits passkey sign-in starts in their own bucket", async () => {
     const browser = new Browser();
+    fixedNow = midWindow(600_000);
     for (let i = 0; i < 60; i++) expect((await browser.fetch("/sign-in/passkey/options", { json: {} })).status).toBe(200);
     expect((await browser.fetch("/sign-in/passkey/options", { json: {} })).status).toBe(429);
     expect(await key("signin-passkey:ip")).toBe(0);
@@ -934,3 +952,57 @@ describe("a stale session", () => {
 async function accountEmailIs(id: string, email: string): Promise<boolean> {
   return (await count("SELECT COUNT(*) AS n FROM accounts WHERE id = ? AND email = ?", id, email)) === 1;
 }
+
+describe("signing up with addresses as Custom Domains (a subdomain of the owner's zone)", () => {
+  beforeEach(async () => {
+    addresses = { kind: "custom_domains", zoneId: ZONE, dispatchService: "openping-platform" };
+    await env.PLATFORM_DB.prepare("DELETE FROM platform_capacity").run();
+  });
+
+  async function signedIn(): Promise<Browser> {
+    const browser = new Browser();
+    await browser.fetch("/sign-in/email", { form: { email: newEmail(), mode: "sign-up" } });
+    const res = await browser.signInWithCode(outbox.last().to);
+    expect(res.status).toBe(303);
+    return browser;
+  }
+
+  it("gives the new OpenPing its own Custom Domain on the platform Worker, and counts it", async () => {
+    const browser = await signedIn();
+    expect((await browser.fetch("/start", { form: { slug: "domain-co" } })).status).toBe(303);
+    const tenant = await env.PLATFORM_DB.prepare("SELECT provision_state, custom_domain_id FROM tenants WHERE slug = 'domain-co'").first<{ provision_state: string; custom_domain_id: string }>();
+    expect(tenant!.provision_state).toBe("ready");
+    const domain = api.customDomainAt(`domain-co.${DOMAIN}`);
+    expect(domain).toMatchObject({ id: tenant!.custom_domain_id, service: "openping-platform", zoneId: ZONE });
+    const capacity = await env.PLATFORM_DB.prepare("SELECT used, cap FROM platform_capacity WHERE resource = 'custom_domains'").first<{ used: number; cap: number }>();
+    expect(capacity!.cap).toBe(100);
+    expect(capacity!.used).toBe([...api.customDomains.values()].filter((d) => d.zoneId === ZONE).length);
+  });
+
+  it("refuses an address that is already one of the owner's hostnames", async () => {
+    api.addDnsRecord(ZONE, `blog-co.${DOMAIN}`);
+    const browser = await signedIn();
+    const res = await browser.fetch("/start", { form: { slug: "blog-co" } });
+    expect(res.status).toBe(400);
+    expect(await textOf(res)).toContain("That name is already taken.");
+    expect(await count("SELECT COUNT(*) AS n FROM tenants WHERE slug = 'blog-co'")).toBe(0);
+  });
+
+  it("stops sign-ups clearly short of the zone's 100 Custom Domains, and records why for the owner", async () => {
+    // The owner's own sites count too: the zone is at 95 already.
+    await env.PLATFORM_DB.prepare("INSERT INTO platform_capacity (resource, used, cap, checked_at) VALUES ('custom_domains', 94, 100, ?)").bind(Date.now()).run();
+    const browser = await signedIn();
+    const res = await browser.fetch("/start", { form: { slug: "full-co" } });
+    expect(res.status).toBe(503);
+    expect(await textOf(res)).toContain(CAPACITY_FULL_MESSAGE);
+    expect(await count("SELECT COUNT(*) AS n FROM tenants WHERE slug = 'full-co'")).toBe(0);
+    expect(await count("SELECT COUNT(*) AS n FROM audit_events WHERE action = 'capacity.signup_refused'")).toBeGreaterThan(0);
+  });
+
+  it("counts again from Cloudflare when its count is more than an hour old", async () => {
+    await env.PLATFORM_DB.prepare("INSERT INTO platform_capacity (resource, used, cap, checked_at) VALUES ('custom_domains', 99, 100, 0)").run();
+    const browser = await signedIn();
+    expect((await browser.fetch("/start", { form: { slug: "fresh-co" } })).status).toBe(303);
+    expect(api.count("countCustomDomains")).toBeGreaterThan(0);
+  });
+});

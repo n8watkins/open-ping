@@ -61,7 +61,8 @@ import type { PlatformEnv } from "./env";
 import { handoffUrl, mintHandoffToken } from "./handoff";
 import { requestAppOrigin, requestTenantOrigin } from "./hosts";
 import { PLATFORM_REPLY_TO, type Mailer } from "./mail";
-import { requestTenant, runProvisioning } from "./provisioning";
+import { addressDeps, requestTenant, runProvisioning } from "./provisioning";
+import { CAPACITY_FULL_MESSAGE, capacityForSignUp, checkAddress, refreshCapacity } from "./addresses";
 import type { ProvisioningSetup } from "./provisioning-env";
 import { enqueueProvisioning } from "./provisioning-queue";
 import { SLUG_MESSAGES, checkSlugAvailability } from "./slugs";
@@ -916,6 +917,19 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
       c.get("now"),
     );
     if (limited) return startPage({ domain: c.env.HOSTED_DOMAIN, slug, error: tooMany(), status: 429 });
+    const setup = deps.provisioning(c.env, c.executionCtx as ExecutionContext);
+    if (setup.ok) {
+      // Room for one more address (100 Custom Domains a zone), and an address
+      // that isn't already one of the owner's hostnames (src/addresses.ts).
+      const address = addressDeps(setup.deps, c.get("now"));
+      const capacity = await capacityForSignUp(address, refreshCapacity);
+      if (!capacity.ok) {
+        await audit(db, { accountId: session.account.id, actor: "system", action: "capacity.signup_refused", detail: { resource: capacity.resource, used: capacity.used, cap: capacity.cap }, now: c.get("now") });
+        return startPage({ domain: c.env.HOSTED_DOMAIN, slug, error: CAPACITY_FULL_MESSAGE, status: 503 });
+      }
+      const free = await checkAddress(address, availability.slug);
+      if (!free.ok && free.reason === "taken") return startPage({ domain: c.env.HOSTED_DOMAIN, slug, error: SLUG_MESSAGES.taken, status: 400 });
+    }
     let result: Awaited<ReturnType<typeof requestTenant>>;
     try {
       result = await requestTenant(db, { accountId: session.account.id, slug, now: c.get("now") });
@@ -932,7 +946,6 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     await audit(db, { accountId: session.account.id, tenantId: result.tenantId, actor: "customer", action: "tenant.requested", detail: { slug: result.slug }, now: c.get("now") });
     // Provisioning runs from the queue, where a run gets minutes instead of
     // waitUntil's 30 seconds; if neither is possible now, the cron picks it up.
-    const setup = deps.provisioning(c.env, c.executionCtx as ExecutionContext);
     if (c.env.PROVISION_QUEUE) {
       await enqueueProvisioning(c.env.PROVISION_QUEUE, result.tenantId);
     } else if (setup.ok) {
