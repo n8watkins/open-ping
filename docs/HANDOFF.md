@@ -1,6 +1,7 @@
 # OpenPing handoff
 
 This document is the current zero-context handoff for continuing work on OpenPing.
+For the current project status and the owner to-do list, see [STATUS.md](./STATUS.md).
 
 Last updated: 2026-10-28.
 

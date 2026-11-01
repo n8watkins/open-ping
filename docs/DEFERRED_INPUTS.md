@@ -3,7 +3,8 @@
 This is the owner's to-do list: things that need a person, a decision, a device or an account, not code.
 It intentionally contains no secret values.
 When you finish an item, tick it here (or tell the agent, who will).
-Last reviewed: 2026-10-31.
+Last reviewed: 2026-11-01.
+The overview and the order to tackle these in: [STATUS.md](./STATUS.md).
 
 ## To do
 
@@ -12,7 +13,7 @@ Last reviewed: 2026-10-31.
 - [x] A fresh `MASTER_KEY` was set on 2026-10-28 (key id `641eb0c9`), because no copy of the original existed.
   The only values the old key protected were the Web Push signing key (no devices were subscribed) and four copies of already-sent alerts; they were deleted, and the three monitors' settings were re-encrypted under the new key.
 - [x] Saved in your password manager (2026-10-28).
-- [ ] Delete `openping-MASTER_KEY.txt` from your Windows Downloads folder.
+- [x] Deleted `openping-MASTER_KEY.txt` from your Windows Downloads folder (2026-11-01).
 
 Why: Cloudflare never shows a secret again after it is set, so your password manager holds the only readable copy.
 You need it to restore a database backup onto a new install, or if the Worker's secret is ever lost; without it, the encrypted values in a backup can't be read.
