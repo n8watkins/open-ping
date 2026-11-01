@@ -34,7 +34,7 @@ OpenPing's footprint has three parts:
    many monitors as fit its plan's per-run budget (about 24 on Free, up to 200 on
    Paid; see below), most overdue first, with the rest deferred to the next tick.
 3. **D1 reads/writes.** Each run does light database work.
-   It reads which monitors are due and their state, then writes samples, state updates, interval and summary rollups, and any queued notifications.
+   It reads which monitors are due and their state, then writes state updates, the hourly summaries, a sample for each check with more to say than its numbers (a failure or a state change), the status timeline when a state changes, and any queued notifications.
    The rows written grow with the number of checks, but the round trips don't: every check's writes go out together in one batch.
 
 There's also occasional traffic from you loading the dashboard and from visitors
@@ -168,7 +168,14 @@ Now a run recomputes only the days and months that may have changed since the la
 A run can finish while its rollups failed, so a streak of failed passes, however long, is made up by the next pass that lands.
 The first run on this build has no such run to start from, so it recomputes everything once, which also repairs anything an older build left stale: on the same install that pass read about 66,000 rows and wrote 7.
 The same run reads about 2,600 rows and writes 7.
-A passing check writes about 7 rows of its own (its state, sample, hour summary and status interval, with their indexes), and its sample is deleted a day later.
+
+A passing check that changes nothing writes 3 rows of its own: its state (with its next-check index entry) and its count in its hour summary, which also keeps its time, response time and status code for the 24-hour views (`src/worker/history/check-log.ts`).
+Until 2026-10-31 it wrote about 7: a sample row (3 rows with its two indexes), the same state and hour summary, and the open status interval, and the sample's delete a day later cost one more.
+A failing check, one that changes the state, a warm-up and a blip a re-check cleared still keep a full sample row, and the status timeline is written only when the state changes, so every chart, percentile and list of recent checks shows the same checks as before.
+Measured in `test/integration/hosted-cadence.test.ts` with 20 monitors on the 12-minute cron, a run writes about 119 rows (it was 199): about 60 for the checks, 40 for the day and month rollups (each monitor's current day and month, rewritten on every run), and the rest for the first check of each hour, the lease and the run record.
+The upkeep also clears each hour's logged checks once they are a day old, a row for each monitor and hour, where every sample used to be deleted on its own.
+That is about 15,000 rows written a day for 20 monitors (it was about 26,000), well inside Free's 100,000.
+The all-monitors views (the history, the Overview, the Monitors list and the uptime figures) read only the rows in their range: on an install with 20 monitors and two months of history, from about 700 rows (24 hours) to 14,000 (30 days, whose percentiles read every hour), where each used to read the whole summaries table, about 30,000.
 
 ### Telling OpenPing your plan
 
