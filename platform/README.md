@@ -148,6 +148,7 @@ Nothing here has been created in a Cloudflare account yet; see [Owner setup](#ow
 | `src/bundle.ts` | The tenant bundle (one OpenPing release), its R2 layout, and `R2BundleSource`: versions, `releases/current`, each version's migrations |
 | `src/releases/` | The release runner: `runner.ts` (requests, canary, batches, rollback), `checks.ts` (the additive check), `env.ts` |
 | `../scripts/tenant-release.mjs` | The command line: build and upload the bundle, ask for a rollout, a rollback or a change, show the status |
+| `../scripts/hosted-drills/` | The launch drills against staging: `npm run hosted-load` (200 tenants for an hour) and `npm run hosted-restore-drill` (a tenant's database deleted and restored from its export); the runbook is [LAUNCH_DRILLS.md](../docs/hosted/LAUNCH_DRILLS.md) |
 | `test/` | workerd tests; `FakeDispatcher` (the dispatch namespace), `FakeCloudflareApi` (the Cloudflare API), `FakeMailer` (the outbox), `FakeR2Bucket` (the buckets) and `fakeOpenPing` (a tenant answering the internal paths) |
 
 The contract types come from [`../src/shared/hosted-contract.ts`](../src/shared/hosted-contract.ts), shared with OpenPing.
@@ -204,6 +205,7 @@ CPU is 22 ms a run against the two plans' 90 million included CPU ms; the platfo
 These are on top of the $30 a month of fixed plan fees, and leave out each tenant's own D1 work in its own database, which the [Hosted plan's cost model](../docs/HOSTED_PLAN.md) covers.
 At the margin a tenant with 12-minute work costs the scheduler about 2.5 cents a month, and one with 1-minute work about 30 cents (D1 writes 22, queue 5, requests and CPU 3), against the $1 a month the add-on brings in; a 1-minute plan whose monitors are slower costs what its work needs, since `nextDueAt` sets the cadence.
 The levers, if 1-minute checks sell well: drop the start write and rely on the tenant's own lease (a fifth of the D1 writes), or carry several tenants per message (queue operations fall with the number per message), both measured in the wave 4 load test first.
+The load test that measures them, and the CPU assumption above, is `npm run hosted-load` ([LAUNCH_DRILLS.md](../docs/hosted/LAUNCH_DRILLS.md#4-the-load-test)).
 
 ## Observability costs
 
