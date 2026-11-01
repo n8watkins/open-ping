@@ -346,9 +346,14 @@ describe("the sign-in hand-off", () => {
     // The platform signs the customer in and hands the browser back.
     const handoff = await browser.fetch(handoffPath(await token()));
     expect(handoff.headers.get("location")).toBe("/auth/app/finish");
-    const finish = await browser.fetch("/auth/app/finish");
+    const finish = await browser.fetch("/auth/app/finish", {
+      headers: { "user-agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36" },
+    });
     expect(finish.status).toBe(200);
-    expect(await finish.text()).toContain("Open the OpenPing app");
+    const html = (await finish.text()).replace(/&amp;/g, "&");
+    expect(html).toContain("Open the OpenPing app");
+    // The intent only the app's package takes, with this customer's own page for a phone without the app.
+    expect(html).toMatch(/href="intent:\/signed-in\?code=[^"]+&origin=https%3A%2F%2Fopenping\.test#Intent;scheme=dev\.n8builds\.openping;package=dev\.n8builds\.openping;S\.browser_fallback_url=https%3A%2F%2Fopenping\.test%2Fauth%2Fapp%2Fget-app;end"/);
 
     // A hand-off from before the app asked doesn't count as that fresh sign-in.
     const stale = hostedBrowser();
