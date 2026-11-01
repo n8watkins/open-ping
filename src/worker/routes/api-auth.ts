@@ -1,7 +1,6 @@
 import { Hono } from "hono";
-import { deleteCookie } from "hono/cookie";
 import type { AppEnv } from "../types";
-import { getSession, destroySession, listSessions, revokeAllSessions, revokeSession, SESSION_COOKIE } from "../lib/sessions";
+import { clearSessionCookie, getSession, destroySession, listSessions, revokeAllSessions, revokeSession } from "../lib/sessions";
 import { getAdminGithubLogin, getAdminEmail } from "../lib/admin";
 import { getSetting } from "../db/settings";
 import { timingSafeEqual } from "../lib/timing";
@@ -130,7 +129,7 @@ apiAuth.post("/logout-all", async (c) => {
     return c.json(SUPPORT_RESTRICTED, 403);
   }
   await revokeAllSessions(c.env);
-  deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  clearSessionCookie(c);
   const signOutUrl = markSignedOut(c);
   return c.json(signOutUrl ? { ok: true, signOutUrl } : { ok: true });
 });
@@ -155,7 +154,7 @@ apiAuth.delete("/sessions/:id", requireAuth, async (c) => {
   }
   const id = c.req.param("id");
   if (!/^[0-9a-f]{64}$/.test(id) || !(await revokeSession(c.env, id))) return c.json({ error: "not_found" }, 404);
-  if (session?.id === id) deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  if (session?.id === id) clearSessionCookie(c);
   return c.json({ ok: true });
 });
 

@@ -385,7 +385,7 @@ How OpenPing does each step (`src/worker/routes/hosted-auth.ts`):
 Signing out ends the tenant's session and redirects to `props.tenant.urls.signOut`.
 That page (`GET /sign-out` on the platform) ends nothing by itself: signing out of the platform is a POST only, so no link or image on another site can sign anyone out.
 When the browser still has a platform session, the page offers one tap to end it too, and a link to stay signed in; without one, it just says the customer is signed out.
-`POST /api/auth/logout` and `/api/auth/logout-all` answer `{ ok: true, signOutUrl }` in hosted mode and leave a two-minute `op_signed_out` cookie (path `/login`), so the app's usual next step, loading `/login`, is redirected once to `signOutUrl`.
+`POST /api/auth/logout` and `/api/auth/logout-all` answer `{ ok: true, signOutUrl }` in hosted mode and leave a two-minute `__Host-op_signed_out` cookie, so the app's usual next step, loading `/login`, is redirected once to `signOutUrl`.
 
 ### Testing and local development
 

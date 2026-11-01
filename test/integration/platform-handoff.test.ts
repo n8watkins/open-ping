@@ -76,8 +76,12 @@ describe("a hand-off minted by the platform", () => {
     const res = await visit(url);
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/");
-    const session = res.headers.getSetCookie().find((c) => c.startsWith("op_session="));
+    const session = res.headers.getSetCookie().find((c) => c.startsWith("__Host-op_session="));
     expect(session).toBeTruthy();
+    // Host-only on a shared parent domain: Secure, Path=/ and never a Domain.
+    expect(session).toMatch(/; Path=\/(;|$)/);
+    expect(session).toMatch(/; Secure/);
+    expect(session).not.toMatch(/domain=/i);
 
     const me = await (await visit(`${ORIGIN}/api/auth/me`, session!.split(";")[0])).json<Record<string, unknown>>();
     expect(me).toMatchObject({ authenticated: true, identity: "owner@acme.test", identityKind: "hosted" });

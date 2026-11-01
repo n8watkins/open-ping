@@ -3,6 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
 import type { AppEnv, Env } from "../types";
 import { appOrigin } from "./app-origin";
+import { isHostedMode } from "../../shared/hosted-contract";
 import { randomToken, sha256hex } from "./ids";
 import { timingSafeEqual } from "./timing";
 import { getAdminEmail, getAdminGithubLogin } from "./admin";
@@ -42,6 +43,16 @@ import { ensureSetupTokenSpendRecorded } from "../db/setup";
 export const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const CHALLENGE_COOKIE = "op_passkey";
 const COOKIE_PATH = "/api";
+/**
+ * Hosted mode: host-only and Path=/, which a `__Host-` name requires, so no
+ * sibling or parent host can plant a challenge (lib/sessions.ts,
+ * HOSTED_SESSION_COOKIE).
+ */
+const HOSTED_CHALLENGE_COOKIE = "__Host-op_passkey";
+
+function challengeCookie(env: Pick<Env, "HOSTED_MODE">): { name: string; path: string } {
+  return isHostedMode(env.HOSTED_MODE) ? { name: HOSTED_CHALLENGE_COOKIE, path: "/" } : { name: CHALLENGE_COOKIE, path: COOKIE_PATH };
+}
 const RP_NAME = "OpenPing";
 
 type Ctx = Context<AppEnv>;
@@ -127,11 +138,12 @@ export async function issueChallenge(
   )
     .bind(await sha256hex(challenge), `passkey_${purpose}`, JSON.stringify(data), now, now + CHALLENGE_TTL_MS)
     .run();
-  setCookie(c, CHALLENGE_COOKIE, challenge, {
+  const cookie = challengeCookie(c.env);
+  setCookie(c, cookie.name, challenge, {
     httpOnly: true,
     secure: true,
     sameSite: "Strict",
-    path: COOKIE_PATH,
+    path: cookie.path,
     maxAge: CHALLENGE_TTL_MS / 1000,
   });
   return challenge;
@@ -146,8 +158,9 @@ export async function consumeChallenge(
   purpose: "register" | "login",
   clientDataJSON: string,
 ): Promise<{ challenge: string; data: ChallengeData }> {
-  const cookie = getCookie(c, CHALLENGE_COOKIE);
-  deleteCookie(c, CHALLENGE_COOKIE, { path: COOKIE_PATH, secure: true });
+  const where = challengeCookie(c.env);
+  const cookie = getCookie(c, where.name);
+  deleteCookie(c, where.name, { path: where.path, secure: true });
 
   let challenge: string;
   try {
