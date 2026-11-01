@@ -11,6 +11,7 @@ export default defineConfig([
   globalIgnores([
     "dist/",
     ".tenant-bundle/",
+    ".hosted-drills/",
     ".wrangler/",
     "coverage/",
     "worker-configuration.d.ts",
@@ -44,7 +45,7 @@ export default defineConfig([
   {
     // The Workers (OpenPing's and the Hosted platform's), and the service
     // worker the browser installs.
-    files: ["src/worker/**/*.ts", "platform/src/**/*.ts", "platform/test/**/*.ts", "public/**/*.js", "scripts/region-probe/*.mjs"],
+    files: ["src/worker/**/*.ts", "platform/src/**/*.ts", "platform/test/**/*.ts", "public/**/*.js", "scripts/region-probe/*.mjs", "scripts/hosted-drills/echo-worker/*.js"],
     languageOptions: { globals: globals.serviceworker },
   },
   {
