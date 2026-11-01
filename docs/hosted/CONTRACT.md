@@ -2,6 +2,7 @@
 
 Status: contract version 1, 2026-10-28 (build plan item C0); fast monitors and packs added 2026-10-29 (decision D13), additively.
 This is the agreement between the platform Worker (`platform/`) and a customer's OpenPing running as a user Worker in the dispatch namespace.
+Starter mode, where each customer's OpenPing is an ordinary Worker instead, keeps the same agreement and changes only how the two reach each other ([section 10](#10-starter-mode-ordinary-workers-and-signed-calls)).
 The TypeScript types, constants and pure helpers are in [`src/shared/hosted-contract.ts`](../../src/shared/hosted-contract.ts); both sides import them, and neither side keeps its own copy.
 A change to this contract is its own pull request, which both lanes rebase on ([build plan, section 8](../HOSTED_BUILD_PLAN.md#8-how-the-agents-work-without-stepping-on-each-other)).
 `HOSTED_CONTRACT_VERSION` goes up only for a change an older bundle can't understand.
@@ -17,6 +18,7 @@ A change to this contract is its own pull request, which both lanes rebase on ([
 7. [The sign-in hand-off](#7-the-sign-in-hand-off)
 8. [Error codes](#8-error-codes)
 9. [What is deliberately not in the contract](#9-what-is-deliberately-not-in-the-contract)
+10. [Starter mode: ordinary Workers and signed calls](#10-starter-mode-ordinary-workers-and-signed-calls)
 
 ## 1. Names
 
@@ -421,3 +423,108 @@ The constants are in `HOSTED_ERRORS`.
 - Dispatch limits (`cpuMs`, `subRequests` per call): the platform sets them per invocation and plan; the user Worker just runs inside them.
 - The platform database: the user Worker never sees it.
 - Provisioning states (`requested` to `ready`): the platform never dispatches to a tenant that isn't ready.
+
+## 10. Starter mode: ordinary Workers and signed calls
+
+Status: added 2026-10-31, additively; `HOSTED_CONTRACT_VERSION` stays 1.
+
+Starter mode runs Hosted on Workers Paid alone, without Workers for Platforms: each customer's OpenPing is an ordinary Worker on the account, named `t-<tenant id>` as before, reached through its own Workers Custom Domain `<slug>.<hosted domain>`.
+Everything in sections 1 to 9 still holds, with one difference: there is no dispatch namespace, so nothing gives the user Worker props, and the platform can't hand it an RPC stub.
+Instead the two call each other over HTTPS, and every call is signed with a secret only that one tenant and the platform know.
+The user Worker turns each call that verifies into exactly the `TenantProps` the dispatcher would have passed, and runs the same code from there, so the hosted gate, the internal paths, the plan limits and the hand-off are one code path in both modes.
+The types, constants and the signing helpers are in the "Starter mode" part of [`src/shared/hosted-contract.ts`](../../src/shared/hosted-contract.ts).
+
+### What the platform sets
+
+On top of section 2's vars and `MASTER_KEY`, a starter mode user Worker gets (`STARTER_ENV`):
+
+| Name | Kind | Value |
+| --- | --- | --- |
+| `HOSTED_TRANSPORT` | var | `"https"`; anything else or none means dispatch mode (`hostedTransport`) |
+| `PLATFORM_URL` | var | the platform's origin, `https://app.<hosted domain>` |
+| `PLATFORM_CALL_SECRET` | secret | 32 random bytes, base64url (`generatePlatformCallSecret`) |
+
+The platform makes a new `PLATFORM_CALL_SECRET` for each tenant, keeps it encrypted with `PLATFORM_KEY` (like the escrowed `MASTER_KEY`, decision D4), and sets it on that tenant's Worker only.
+No two tenants share one, so a tenant can sign only as itself, and a leak of one tenant's secret lets nobody act as any other tenant.
+The secret is never logged, never in a var, and never leaves the platform's database except as that one Worker's secret.
+
+### The keys
+
+`deriveCallKeys(secret)` derives two HMAC-SHA256 keys with HKDF-SHA256 (salt `openping/platform-call-secret/v1`, info the direction): one signs calls from the platform to the tenant (`platform-to-tenant`), the other calls from the tenant to the platform (`tenant-to-platform`).
+An answer is signed with the key of the other direction.
+So a signature made one way never verifies the other way: a tenant can't take a call it made, or an answer it got, and present it to itself as a platform call.
+
+### A signed call
+
+A call carries these headers (`SIGNED_CALL_HEADERS`), all starting with `x-openping-` like `INTERNAL_HEADER`:
+
+| Header | Value |
+| --- | --- |
+| `x-openping-tenant` | the tenant id the call is for (platform to tenant) or from (tenant to platform) |
+| `x-openping-timestamp` | epoch milliseconds, decimal |
+| `x-openping-nonce` | 16 random bytes, base64url (22 characters), new for every call |
+| `x-openping-props` | platform to tenant only: base64url of the JSON `SignedCallProps`, which is `TenantProps` without `platform` |
+| `x-openping-platform` | platform to tenant only: the call id, as in section 6 |
+| `x-openping-signature` | `v1=` and base64url of the HMAC over `canonicalRequest` |
+
+`canonicalRequest` is these fields, one per line: the label `openping-signed-call-v1`, the direction, the tenant id, the method, the host, the path with its query, the timestamp, the nonce, the SHA-256 of the body in hex, the props header and the call id header (`-` when absent).
+So the signature covers everything the receiver acts on: who it is for, what it asks, its body, and the props that become the tenant's plan, limits and status.
+
+The receiver (`verifySignedRequest`) refuses, in this order, so that nothing costly happens for a call that fails a cheap check:
+
+1. no signature header: `unsigned`, a public request;
+2. a header missing or not in its format, props on a tenant's call or none on a platform's: `malformed`;
+3. a timestamp more than 30 seconds (`SIGNED_CALL_MAX_SKEW_MS`) ahead of or behind its clock: `not_yet_valid` or `expired`;
+4. a body over 256 KiB (`SIGNED_CALL_MAX_BODY_BYTES`): `body_too_large`, without reading the rest;
+5. a tenant it holds no key for: `wrong_tenant` (a user Worker holds only its own; the platform only those of tenants it has);
+6. an HMAC that doesn't match: `bad_signature`;
+7. props that aren't `isTenantProps` for this tenant, aren't `invocation: "platform"`, or whose `callId` isn't the call id header: `bad_props`;
+8. a nonce it has seen before: `replayed`.
+
+Replay is the receiver's own check, as for hand-off tokens (section 7): only after the signature verifies, it inserts the nonce with an INSERT that fails on a duplicate, and keeps it 65 seconds past the timestamp (`SIGNED_CALL_NONCE_RETENTION_MS`), longer than any window the call could be accepted in.
+A user Worker keeps them in its `used_platform_call_nonces` table; the platform in its own database.
+
+The answer to a verified call is signed too (`signResponse`), over the label `openping-signed-response-v1`, the answer's direction, the tenant id, the call's nonce, the status and the SHA-256 of the body.
+The caller checks it with `verifySignedResponse` and treats an answer that doesn't verify (for another call, from another tenant, changed on the way, or not signed at all) as no answer.
+
+### Platform to tenant
+
+The platform calls `https://<slug>.<hosted domain>/__platform/scheduled` and `/__platform/health` exactly as in section 6, signed, with `SignedCallProps` whose `invocation` is `"platform"`.
+A Worker on a Custom Domain can be fetched from another Worker on the same zone, which a Worker on a route can't, so this is also why starter mode tenants use Custom Domains.
+The user Worker verifies the call, records the nonce, and then runs it with `ctx.props` set to those props and `platform` set to its own HTTPS client for the capability (below), so `isPlatformCall` and everything after it is unchanged.
+
+### Tenant to platform
+
+The capability of section 4 becomes four signed POSTs to the platform (`TENANT_CALL_PATHS`), each with a JSON body:
+
+| Path | Body | Answer |
+| --- | --- | --- |
+| `/__tenant/v1/info` | `{}` | `TenantInfoAnswer`: `{ contract: 1, tenant: TenantInfo }`; 409 `tenant_not_ready` while it is being provisioned or removed |
+| `/__tenant/v1/send-email` | `HostedEmail` | `SendEmailResult` |
+| `/__tenant/v1/report-usage` | `UsageCounts` | `{ ok: true }` |
+| `/__tenant/v1/audit` | `HostedAuditEvent` | `{ ok: true }` |
+
+The platform identifies the tenant from the signature alone: the tenant id header picks the key, and the method then runs for that tenant exactly as `props.platform`'s does, with the same caps and rules.
+A tenant call that doesn't verify gets 404 `not_found`, unsigned, as any unknown path would.
+A thrown error, a timeout or an answer that doesn't verify mean the call itself failed, as a failed RPC does in dispatch mode, so `sendEmail` callers treat it like `email_unavailable`.
+
+### Public requests
+
+In starter mode visitors reach the user Worker directly, not through the platform, so it builds the props of a public request itself:
+
+- `tenant` is the latest `TenantInfoAnswer` from `/__tenant/v1/info`, kept at most 30 seconds (`STARTER_INFO_CACHE_MS`, the same time the platform keeps a tenant row in dispatch mode), so a suspension or a plan change reaches it as fast in both modes.
+  When the platform can't be reached, it keeps using its last answer for up to 10 minutes (`STARTER_INFO_STALE_MS`), and after that answers 503 `hosted_unavailable`, as it would in dispatch mode with the platform down.
+- `invocation` is `"public"`, `callId` is a new random id, and `platform` is the HTTPS client.
+- A tenant that is `suspended` answers what the platform answers for it in dispatch mode, a page saying it is paused with a link to `urls.account`, for every public request.
+- A tenant the platform says isn't ready answers 503 `hosted_unavailable`.
+
+Public traffic can never present itself as the platform:
+
+- A request with `x-openping-signature` must verify completely, nonce included, or it is handled as public.
+- A public request has every `x-openping-` header removed before anything reads it, the same as the dispatch platform does (section 6).
+- So a visitor's `/__platform/...` gets 404 `not_found` whatever it sends, and nothing it sends becomes props.
+
+### What stays the same
+
+Names, hosted mode, the plans and limits, the internal paths and their answers, self-migration, the hand-off and the error codes are as in sections 1 to 8, and one bundle serves both modes: the mode is the `HOSTED_TRANSPORT` var, not a different build.
+A tenant can move from starter mode to dispatch mode by being uploaded into the dispatch namespace without the two starter vars and the secret, and having its address pointed at the dispatch Worker; nothing in its database changes.

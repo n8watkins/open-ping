@@ -869,3 +869,472 @@ export async function verifyHandoffToken(
   if (error) return { ok: false, error };
   return { ok: true, claims: parsed.claims };
 }
+
+// ---------------------------------------------------------------------------
+// Starter mode: ordinary Workers, called over HTTPS with signed requests
+// ---------------------------------------------------------------------------
+
+/**
+ * How the platform and a customer's OpenPing reach each other
+ * (docs/hosted/CONTRACT.md, section 10).
+ *
+ * - "dispatch": the user Worker lives in the dispatch namespace; the platform
+ *   calls it with props through the namespace binding, and `props.platform`
+ *   is an RPC stub. This is the default and needs Workers for Platforms.
+ * - "https" (starter mode): the user Worker is an ordinary Worker on the
+ *   account (`t-<tenant id>`, reached through its own Custom Domain). There
+ *   are no props from the runtime, so every call between the two is HTTPS,
+ *   signed with a secret only this tenant and the platform know, and the
+ *   user Worker builds the very same TenantProps from what verifies.
+ */
+export const TENANT_TRANSPORTS = ["dispatch", "https"] as const;
+export type TenantTransport = (typeof TENANT_TRANSPORTS)[number];
+
+/** The plain vars and the secret the platform adds to a starter mode user Worker. */
+export const STARTER_ENV = {
+  /** "https" turns starter mode on (with HOSTED_MODE "1"). Absent or anything else: dispatch. */
+  transport: "HOSTED_TRANSPORT",
+  /** The platform's origin, `https://app.<hosted domain>`, for the tenant's calls back. */
+  platformUrl: "PLATFORM_URL",
+  /** Secret: this tenant's own PLATFORM_CALL_SECRET (generatePlatformCallSecret). Never shared between tenants. */
+  callSecret: "PLATFORM_CALL_SECRET",
+} as const;
+
+/** The value of HOSTED_TRANSPORT that turns starter mode on. */
+export const STARTER_TRANSPORT_ON = "https";
+
+/** The transport a user Worker's HOSTED_TRANSPORT var selects. Strict: only exactly "https" is starter mode. */
+export function hostedTransport(value: unknown): TenantTransport {
+  return value === STARTER_TRANSPORT_ON ? "https" : "dispatch";
+}
+
+/**
+ * The platform's endpoints a starter mode tenant calls, on `app.<domain>`.
+ * Each is a POST with a JSON body, signed tenant-to-platform, and answered
+ * with a JSON body signed platform-to-tenant (signResponse).
+ */
+export const TENANT_CALL_PATH_PREFIX = "/__tenant/v1/";
+export const TENANT_CALL_PATHS = {
+  /** Body `{}`; answers TenantInfoAnswer, or 409 `tenant_not_ready` while provisioning or removing. */
+  info: "/__tenant/v1/info",
+  /** Body HostedEmail; answers SendEmailResult. */
+  sendEmail: "/__tenant/v1/send-email",
+  /** Body UsageCounts; answers `{ ok: true }`. */
+  reportUsage: "/__tenant/v1/report-usage",
+  /** Body HostedAuditEvent; answers `{ ok: true }`. */
+  audit: "/__tenant/v1/audit",
+} as const;
+
+/** The `error` of a 409 from TENANT_CALL_PATHS.info: the tenant is being provisioned or removed. */
+export const TENANT_NOT_READY_ERROR = "tenant_not_ready";
+
+export function isTenantCallPath(pathname: string): boolean {
+  return pathname === TENANT_CALL_PATH_PREFIX.slice(0, -1) || pathname.startsWith(TENANT_CALL_PATH_PREFIX);
+}
+
+/** The answer of TENANT_CALL_PATHS.info: who the tenant is right now, as props would say. */
+export interface TenantInfoAnswer {
+  contract: typeof HOSTED_CONTRACT_VERSION;
+  tenant: TenantInfo;
+}
+
+/**
+ * How long a starter mode tenant may keep a TenantInfoAnswer for its public
+ * requests: the platform's own cache of a tenant row (TENANT_CACHE_MS), so a
+ * suspension or a plan change reaches a tenant as fast in both modes.
+ */
+export const STARTER_INFO_CACHE_MS = 30_000;
+/**
+ * How long a tenant may keep serving its last answer when the platform can't
+ * be reached. Past this, public requests answer 503 `hosted_unavailable`,
+ * exactly as they would in dispatch mode with the platform down.
+ */
+export const STARTER_INFO_STALE_MS = 10 * 60_000;
+
+/** The headers of a signed call. All start with INTERNAL_HEADER_PREFIX, so a dispatch platform strips them from public traffic too. */
+export const SIGNED_CALL_HEADERS = {
+  /** `v1=<base64url of the 32-byte HMAC-SHA256>`. */
+  signature: "x-openping-signature",
+  /** Epoch milliseconds, decimal. */
+  timestamp: "x-openping-timestamp",
+  /** 16 random bytes, base64url (22 characters), new for every call. */
+  nonce: "x-openping-nonce",
+  /** The tenant id the call is for (platform-to-tenant) or from (tenant-to-platform). */
+  tenant: "x-openping-tenant",
+  /** Platform-to-tenant only: base64url of the JSON SignedCallProps. */
+  props: "x-openping-props",
+} as const;
+
+/** A signed call is accepted this long either side of its timestamp. */
+export const SIGNED_CALL_MAX_SKEW_MS = 30_000;
+/** How long the receiver must remember a nonce: past the end of every window it could be accepted in. */
+export const SIGNED_CALL_NONCE_RETENTION_MS = 2 * SIGNED_CALL_MAX_SKEW_MS + 5_000;
+/** The largest body a signed call may carry; anything longer is refused before it is read in full. */
+export const SIGNED_CALL_MAX_BODY_BYTES = 256 * 1024;
+/** The largest x-openping-props header. */
+export const SIGNED_CALL_MAX_PROPS_LENGTH = 8 * 1024;
+
+/** Which way a call goes. Each has its own key, so a signature can't be reflected back to the side that made it. */
+export const SIGNED_DIRECTIONS = ["platform-to-tenant", "tenant-to-platform"] as const;
+export type SignedDirection = (typeof SIGNED_DIRECTIONS)[number];
+
+/**
+ * What a platform-to-tenant call carries in x-openping-props: TenantProps
+ * without the capability, which in starter mode is the tenant's own HTTPS
+ * client (and can't travel in a header). `invocation` is always "platform":
+ * public traffic never passes through the platform in starter mode.
+ */
+export type SignedCallProps = Omit<TenantProps, "platform">;
+
+export const SIGNED_CALL_ERRORS = [
+  /** No signature header at all: a public request. */
+  "unsigned",
+  /** A header missing or not in its format. */
+  "malformed",
+  "bad_signature",
+  /** Signed for, or by, another tenant. */
+  "wrong_tenant",
+  "expired",
+  "not_yet_valid",
+  "body_too_large",
+  /** x-openping-props doesn't describe this tenant in this contract version. */
+  "bad_props",
+  /** The nonce was seen before (the receiver's nonce store says so). */
+  "replayed",
+] as const;
+export type SignedCallError = (typeof SIGNED_CALL_ERRORS)[number];
+
+const CALL_SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const SIGNATURE_PREFIX = "v1=";
+const CANONICAL_REQUEST_LABEL = "openping-signed-call-v1";
+const CANONICAL_RESPONSE_LABEL = "openping-signed-response-v1";
+const HKDF_SALT = "openping/platform-call-secret/v1";
+
+/** A new PLATFORM_CALL_SECRET: 32 random bytes, base64url (43 characters). One per tenant, never reused. */
+export function generatePlatformCallSecret(): string {
+  return base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+export function isPlatformCallSecret(value: unknown): value is string {
+  return typeof value === "string" && CALL_SECRET_PATTERN.test(value);
+}
+
+/** The two HMAC-SHA256 keys a tenant's secret gives, one per direction (HKDF-SHA256, RFC 5869). */
+export interface CallKeys {
+  platformToTenant: CryptoKey;
+  tenantToPlatform: CryptoKey;
+}
+
+export async function deriveCallKeys(secret: string): Promise<CallKeys> {
+  const raw = isPlatformCallSecret(secret) ? base64urlDecode(secret) : null;
+  if (!raw || raw.length !== 32) throw new Error("PLATFORM_CALL_SECRET must be 32 bytes of base64url");
+  const base = await crypto.subtle.importKey("raw", raw, "HKDF", false, ["deriveKey"]);
+  const derive = (direction: SignedDirection) =>
+    crypto.subtle.deriveKey(
+      { name: "HKDF", hash: "SHA-256", salt: new TextEncoder().encode(HKDF_SALT), info: new TextEncoder().encode(direction) },
+      base,
+      { name: "HMAC", hash: "SHA-256", length: 256 },
+      false,
+      ["sign", "verify"],
+    );
+  const [platformToTenant, tenantToPlatform] = await Promise.all([derive("platform-to-tenant"), derive("tenant-to-platform")]);
+  return { platformToTenant, tenantToPlatform };
+}
+
+/** The key that signs (and verifies) calls going `direction`. */
+export function keyFor(keys: CallKeys, direction: SignedDirection): CryptoKey {
+  return direction === "platform-to-tenant" ? keys.platformToTenant : keys.tenantToPlatform;
+}
+
+/** The other direction: what the answer to a call going `direction` is signed with. */
+export function reverseDirection(direction: SignedDirection): SignedDirection {
+  return direction === "platform-to-tenant" ? "tenant-to-platform" : "platform-to-tenant";
+}
+
+async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The exact text a request signature covers, one field per line: the label,
+ * the direction, the tenant id, the method, the host, the path and query,
+ * the timestamp, the nonce, the SHA-256 of the body (hex), and the props and
+ * call id headers ("-" when absent). Everything the receiver acts on is in it.
+ */
+export function canonicalRequest(input: {
+  direction: SignedDirection;
+  tenantId: string;
+  method: string;
+  url: string;
+  timestamp: string;
+  nonce: string;
+  bodySha256: string;
+  props: string | null;
+  callId: string | null;
+}): string {
+  const url = new URL(input.url);
+  return [
+    CANONICAL_REQUEST_LABEL,
+    input.direction,
+    input.tenantId,
+    input.method.toUpperCase(),
+    url.host.toLowerCase(),
+    `${url.pathname}${url.search}`,
+    input.timestamp,
+    input.nonce,
+    input.bodySha256,
+    input.props ?? "-",
+    input.callId ?? "-",
+  ].join("\n");
+}
+
+async function hmac(key: CryptoKey, text: string): Promise<string> {
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(text));
+  return `${SIGNATURE_PREFIX}${base64urlEncode(new Uint8Array(signature))}`;
+}
+
+/** Constant-time check of a `v1=` signature header against `text`. */
+async function hmacMatches(key: CryptoKey, text: string, header: string | null): Promise<boolean> {
+  if (!header || !header.startsWith(SIGNATURE_PREFIX)) return false;
+  const mac = base64urlDecode(header.slice(SIGNATURE_PREFIX.length));
+  if (!mac || mac.length !== 32) return false;
+  try {
+    return await crypto.subtle.verify("HMAC", key, mac, new TextEncoder().encode(text));
+  } catch {
+    return false;
+  }
+}
+
+/** Encodes props for x-openping-props (platform side). */
+export function encodeSignedCallProps(props: SignedCallProps): string {
+  return base64urlEncode(new TextEncoder().encode(JSON.stringify(props)));
+}
+
+/** Decodes and checks x-openping-props for `tenantId`; null when it isn't well-formed props of this contract for that tenant. */
+export function decodeSignedCallProps(header: string, tenantId: string): SignedCallProps | null {
+  if (header.length > SIGNED_CALL_MAX_PROPS_LENGTH) return null;
+  const bytes = base64urlDecode(header);
+  if (!bytes) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  // isTenantProps checks everything but the capability, which never travels.
+  const candidate = { ...(value as Record<string, unknown>), platform: {} };
+  if (!isTenantProps(candidate, tenantId) || candidate.invocation !== "platform") return null;
+  const { platform: _platform, ...props } = candidate;
+  return props as SignedCallProps;
+}
+
+/** Reads a body up to `max` bytes; null when it is longer. */
+async function readBounded(body: ReadableStream<Uint8Array> | null, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
+  if (!body) return new Uint8Array(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
+}
+
+/**
+ * Signs a call (either side): a new Request with the same method, URL and
+ * body and the signed-call headers set. Any x-openping-* header `init`
+ * carries other than INTERNAL_HEADER is dropped first, so only what is
+ * signed travels.
+ */
+export async function signRequest(
+  input: { method: string; url: string; body?: string; headers?: HeadersInit },
+  sign: {
+    direction: SignedDirection;
+    tenantId: string;
+    keys: CallKeys;
+    now: number;
+    nonce?: string;
+    /** Platform-to-tenant: the props this call carries (callId goes in INTERNAL_HEADER too). */
+    props?: SignedCallProps;
+  },
+): Promise<Request> {
+  const headers = new Headers(input.headers);
+  for (const name of [...headers.keys()]) {
+    if (name.startsWith(INTERNAL_HEADER_PREFIX) && name !== INTERNAL_HEADER) headers.delete(name);
+  }
+  const body = new Uint8Array(new TextEncoder().encode(input.body ?? ""));
+  if (body.byteLength > SIGNED_CALL_MAX_BODY_BYTES) throw new Error("signed call body is too large");
+  const timestamp = String(Math.floor(sign.now));
+  const nonce = sign.nonce ?? newHandoffNonce();
+  const props = sign.props ? encodeSignedCallProps(sign.props) : null;
+  if (props && props.length > SIGNED_CALL_MAX_PROPS_LENGTH) throw new Error("signed call props are too large");
+  const callId = sign.props ? sign.props.callId : headers.get(INTERNAL_HEADER);
+  if (sign.props) headers.set(INTERNAL_HEADER, sign.props.callId);
+  const text = canonicalRequest({
+    direction: sign.direction,
+    tenantId: sign.tenantId,
+    method: input.method,
+    url: input.url,
+    timestamp,
+    nonce,
+    bodySha256: await sha256Hex(body),
+    props,
+    callId,
+  });
+  headers.set(SIGNED_CALL_HEADERS.tenant, sign.tenantId);
+  headers.set(SIGNED_CALL_HEADERS.timestamp, timestamp);
+  headers.set(SIGNED_CALL_HEADERS.nonce, nonce);
+  if (props) headers.set(SIGNED_CALL_HEADERS.props, props);
+  headers.set(SIGNED_CALL_HEADERS.signature, await hmac(keyFor(sign.keys, sign.direction), text));
+  const method = input.method.toUpperCase();
+  return new Request(input.url, { method, headers, body: method === "GET" || method === "HEAD" ? undefined : body });
+}
+
+export type SignedCallVerification =
+  | {
+      ok: true;
+      tenantId: string;
+      nonce: string;
+      /** When the receiver may forget the nonce (epoch ms). */
+      nonceExpiresAt: number;
+      /** Platform-to-tenant: the props the call carries. */
+      props: SignedCallProps | null;
+      /** The same request, with its body buffered so it can still be read. */
+      request: Request;
+    }
+  | { ok: false; error: SignedCallError; /** The request with its body, when it could be read, for handling as public. */ request: Request | null };
+
+/** True when a request carries the signature header, so it must verify or be treated as public. */
+export function hasSignedCallHeaders(headers: Headers): boolean {
+  return headers.has(SIGNED_CALL_HEADERS.signature);
+}
+
+const TIMESTAMP_PATTERN = /^\d{1,16}$/;
+const CALL_NONCE_PATTERN = /^[A-Za-z0-9_-]{22}$/;
+
+/**
+ * Verifies a signed call (either side): the headers' format, the timestamp
+ * within SIGNED_CALL_MAX_SKEW_MS of `now`, the body within
+ * SIGNED_CALL_MAX_BODY_BYTES, the HMAC over canonicalRequest with the key
+ * for `direction`, and, platform-to-tenant, the props for this tenant.
+ * `keysFor` answers the tenant's keys (the tenant: its own, only for its own
+ * id; the platform: looked up by the claimed id), or null for an unknown
+ * tenant. Cheap checks first: no key is looked up and no body is read for a
+ * call that is malformed or outside its window.
+ *
+ * Replay is the caller's job, as for hand-off tokens: after this succeeds,
+ * record `nonce` with an INSERT that fails on a duplicate, keep it until
+ * `nonceExpiresAt`, and refuse the call as "replayed" when it was there.
+ */
+export async function verifySignedRequest(
+  request: Request,
+  expect: {
+    direction: SignedDirection;
+    now: number;
+    keysFor: (tenantId: string) => Promise<CallKeys | null>;
+  },
+): Promise<SignedCallVerification> {
+  const h = request.headers;
+  const signature = h.get(SIGNED_CALL_HEADERS.signature);
+  if (!signature) return { ok: false, error: "unsigned", request };
+  const tenantId = h.get(SIGNED_CALL_HEADERS.tenant);
+  const timestamp = h.get(SIGNED_CALL_HEADERS.timestamp);
+  const nonce = h.get(SIGNED_CALL_HEADERS.nonce);
+  const propsHeader = h.get(SIGNED_CALL_HEADERS.props);
+  if (!isTenantId(tenantId) || !timestamp || !TIMESTAMP_PATTERN.test(timestamp) || !nonce || !CALL_NONCE_PATTERN.test(nonce)) {
+    return { ok: false, error: "malformed", request };
+  }
+  const toTenant = expect.direction === "platform-to-tenant";
+  // Props travel platform-to-tenant only, and always there.
+  if (toTenant !== (propsHeader !== null)) return { ok: false, error: "malformed", request };
+  const at = Number(timestamp);
+  if (at > expect.now + SIGNED_CALL_MAX_SKEW_MS) return { ok: false, error: "not_yet_valid", request };
+  if (at < expect.now - SIGNED_CALL_MAX_SKEW_MS) return { ok: false, error: "expired", request };
+  const declared = Number(h.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > SIGNED_CALL_MAX_BODY_BYTES) return { ok: false, error: "body_too_large", request: null };
+  const body = await readBounded(request.body, SIGNED_CALL_MAX_BODY_BYTES);
+  if (!body) return { ok: false, error: "body_too_large", request: null };
+  const method = request.method.toUpperCase();
+  const bufferedHeaders = new Headers(h);
+  bufferedHeaders.delete("content-length");
+  const buffered = new Request(request.url, {
+    method,
+    headers: bufferedHeaders,
+    body: method === "GET" || method === "HEAD" ? undefined : body,
+  });
+  const keys = await expect.keysFor(tenantId);
+  if (!keys) return { ok: false, error: "wrong_tenant", request: buffered };
+  const text = canonicalRequest({
+    direction: expect.direction,
+    tenantId,
+    method,
+    url: request.url,
+    timestamp,
+    nonce,
+    bodySha256: await sha256Hex(body),
+    props: propsHeader,
+    callId: h.get(INTERNAL_HEADER),
+  });
+  if (!(await hmacMatches(keyFor(keys, expect.direction), text, signature))) return { ok: false, error: "bad_signature", request: buffered };
+  let props: SignedCallProps | null = null;
+  if (propsHeader !== null) {
+    props = decodeSignedCallProps(propsHeader, tenantId);
+    if (!props || props.callId !== h.get(INTERNAL_HEADER)) return { ok: false, error: "bad_props", request: buffered };
+  }
+  return { ok: true, tenantId, nonce, nonceExpiresAt: at + SIGNED_CALL_NONCE_RETENTION_MS, props, request: buffered };
+}
+
+/** The text an answer's signature covers: bound to the call's nonce, so an answer can't be replayed onto another call. */
+export function canonicalResponse(input: { direction: SignedDirection; tenantId: string; requestNonce: string; status: number; bodySha256: string }): string {
+  return [CANONICAL_RESPONSE_LABEL, input.direction, input.tenantId, input.requestNonce, String(input.status), input.bodySha256].join("\n");
+}
+
+/**
+ * Signs the answer to a verified call, with the key of the opposite
+ * direction (the platform answers a tenant's call platform-to-tenant).
+ */
+export async function signResponse(
+  answer: { status: number; body: string; headers?: HeadersInit },
+  sign: { requestDirection: SignedDirection; tenantId: string; requestNonce: string; keys: CallKeys },
+): Promise<Response> {
+  const direction = reverseDirection(sign.requestDirection);
+  const bytes = new Uint8Array(new TextEncoder().encode(answer.body));
+  const headers = new Headers(answer.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  headers.set("cache-control", "no-store");
+  const text = canonicalResponse({ direction, tenantId: sign.tenantId, requestNonce: sign.requestNonce, status: answer.status, bodySha256: await sha256Hex(bytes) });
+  headers.set(SIGNED_CALL_HEADERS.signature, await hmac(keyFor(sign.keys, direction), text));
+  return new Response(bytes, { status: answer.status, headers });
+}
+
+/**
+ * Checks the answer to a call this side signed, and reads its body (at most
+ * SIGNED_CALL_MAX_BODY_BYTES). Null when the answer isn't signed by the
+ * other side for this call: the caller treats that as no answer.
+ */
+export async function verifySignedResponse(
+  response: Response,
+  expect: { requestDirection: SignedDirection; tenantId: string; requestNonce: string; keys: CallKeys },
+): Promise<{ status: number; text: string } | null> {
+  const direction = reverseDirection(expect.requestDirection);
+  const body = await readBounded(response.body, SIGNED_CALL_MAX_BODY_BYTES);
+  if (!body) return null;
+  const text = canonicalResponse({ direction, tenantId: expect.tenantId, requestNonce: expect.requestNonce, status: response.status, bodySha256: await sha256Hex(body) });
+  if (!(await hmacMatches(keyFor(expect.keys, direction), text, response.headers.get(SIGNED_CALL_HEADERS.signature)))) return null;
+  return { status: response.status, text: new TextDecoder().decode(body) };
+}
