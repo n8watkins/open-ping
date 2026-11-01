@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Activity, CalendarClock, Eye, MoreHorizontal, Pause, Pencil, Play, Trash2 } from "lucide-react";
+import { Activity, CalendarClock, Eye, Info, MoreHorizontal, Pause, Pencil, Play, Trash2 } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { monitorTypeLabel, type MonitorSummary } from "../../lib/types";
 import { formatMs, formatPct, formatRelativeTime } from "../../lib/format";
@@ -8,7 +8,8 @@ import { UptimeBar } from "../ui/UptimeBar";
 import { STATE_META, type MonitorState } from "../../../shared/states";
 import type { Schedule } from "../../../shared/schemas";
 import { everyShort, scheduleLabel, scheduleTitle } from "./schedule-label";
-import { checkedEveryText, intervalReasonDetail } from "../../../shared/check-interval";
+import { checkedEveryText, intervalReasonDetail, planMinimumSeconds } from "../../../shared/check-interval";
+import { usePlan } from "../../lib/plan-limits";
 
 export type MonitorAction = "pause" | "resume" | "delete";
 
@@ -130,21 +131,50 @@ function ScheduleCell({ schedule }: { schedule: Schedule | undefined }) {
 }
 
 /**
- * How often a polled monitor is really checked, under its schedule. In amber,
- * with the reason, when that isn't its setting (a plan's limits, or an
- * install of your own's 12-minute schedule).
+ * How often a polled monitor is really checked, under its schedule. When that
+ * isn't its setting (a plan's limits, or an install of your own's 12-minute
+ * schedule) it is amber, and a disclosure that a tap, a click or the keyboard
+ * opens says why (nothing here is hover-only). Escape closes it.
  */
 function IntervalCell({ monitor }: { monitor: MonitorSummary }) {
+  const plan = usePlan();
   if (monitor.type === "heartbeat") return null;
-  const differs = monitor.intervalReason !== "set";
-  const title = differs
-    ? `${checkedEveryText(monitor.effectiveIntervalSeconds, monitor.intervalReason)}. ${intervalReasonDetail(monitor.intervalSeconds, monitor.effectiveIntervalSeconds, monitor.intervalReason)}`
-    : checkedEveryText(monitor.effectiveIntervalSeconds, monitor.intervalReason);
+  const summary = checkedEveryText(monitor.effectiveIntervalSeconds, monitor.intervalReason);
+  if (monitor.intervalReason === "set") {
+    return (
+      <span className="block truncate text-[11px] text-ink-faint tabular-nums" title={summary}>
+        {everyShort(monitor.effectiveIntervalSeconds)}
+      </span>
+    );
+  }
+  const detail = intervalReasonDetail(
+    monitor.intervalSeconds,
+    monitor.effectiveIntervalSeconds,
+    monitor.intervalReason,
+    plan ? planMinimumSeconds(plan.limits.minIntervalMinutes) : undefined,
+  );
   return (
-    <span className={cn("block truncate text-[11px] tabular-nums", differs ? "text-degraded" : "text-ink-faint")} title={title}>
-      {everyShort(monitor.effectiveIntervalSeconds)}
-      {differs && <span className="sr-only"> ({title})</span>}
-    </span>
+    <details
+      className="group/interval min-w-0 basis-full xl:relative xl:basis-auto"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !event.currentTarget.open) return;
+        event.currentTarget.open = false;
+        event.currentTarget.querySelector("summary")?.focus();
+      }}
+    >
+      <summary
+        aria-label={`${summary}. Why?`}
+        className="-mx-1 -my-1.5 inline-flex cursor-pointer list-none items-center gap-1 rounded px-1 py-1.5 text-[11px] text-degraded tabular-nums hover:underline focus-visible:outline-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden"
+      >
+        {everyShort(monitor.effectiveIntervalSeconds)}
+        <Info className="size-3 shrink-0" aria-hidden />
+      </summary>
+      {/* In the card's flow on a phone (its own line, so opening it moves nothing above), a popover under the cell on a desktop. */}
+      <div className="mt-2 rounded-lg border border-line bg-surface p-3 text-xs text-ink-muted xl:absolute xl:top-full xl:right-0 xl:z-30 xl:mt-1 xl:w-64 xl:shadow-xl">
+        <p className="font-medium text-ink">{summary}</p>
+        {detail && <p className="mt-1">{detail}</p>}
+      </div>
+    </details>
   );
 }
 
@@ -326,12 +356,12 @@ export function MonitorRow({
         <span className="hidden lg:block">
           <LastIncidentCell monitor={monitor} stats={stats} />
         </span>
-        <span className="hidden min-w-0 xl:block">
+        <div className="hidden min-w-0 xl:block">
           <ScheduleCell schedule={schedule} />
-          <span className="mt-1 block pl-5">
+          <div className="mt-1 pl-5">
             <IntervalCell monitor={monitor} />
-          </span>
-        </span>
+          </div>
+        </div>
         <ActionsMenu monitor={monitor} busy={busy} onAction={onAction} />
       </div>
 
