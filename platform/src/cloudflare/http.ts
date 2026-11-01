@@ -246,14 +246,30 @@ export class HttpCloudflareApi implements CloudflareApi {
     return match ? HttpCloudflareApi.domain(op, status, match) : null;
   }
 
+  /**
+   * The API reference (checked 2026-10-31) documents no page parameter and
+   * says the call "lists all Worker domains", but its example answer carries
+   * a paged result_info (per_page 20, total_count, total_pages). So: the
+   * total_count when there is one, otherwise every page counted with the
+   * v4 API's usual `page` parameter, never more than 50 pages. The hourly
+   * count corrects any drift, and the attach itself is the last word on the
+   * limit (src/addresses.ts).
+   */
   async countCustomDomains(zoneId: string): Promise<number> {
     const op = "domains.count";
-    const url = `${this.account("/workers/domains")}?zone_id=${encodeURIComponent(zoneId)}`;
-    const { status, body } = await this.call<DomainResult[]>(op, url, { method: "GET" });
-    const list = HttpCloudflareApi.result(op, status, body);
-    // The list is paged (20 a page by default); its result_info says the whole count.
-    const total = (body as { result_info?: { total_count?: unknown } } | null)?.result_info?.total_count;
-    return typeof total === "number" && Number.isSafeInteger(total) ? total : Array.isArray(list) ? list.length : 0;
+    const base = `${this.account("/workers/domains")}?zone_id=${encodeURIComponent(zoneId)}`;
+    let counted = 0;
+    for (let page = 1; page <= 50; page++) {
+      const { status, body } = await this.call<DomainResult[]>(op, page === 1 ? base : `${base}&page=${page}`, { method: "GET" });
+      const list = HttpCloudflareApi.result(op, status, body);
+      const info = (body as { result_info?: { total_count?: unknown; total_pages?: unknown } } | null)?.result_info;
+      const total = info?.total_count;
+      if (typeof total === "number" && Number.isSafeInteger(total)) return Math.max(total, counted + (Array.isArray(list) ? list.length : 0));
+      counted += Array.isArray(list) ? list.length : 0;
+      const pages = info?.total_pages;
+      if (!(typeof pages === "number" && page < pages) || !Array.isArray(list) || list.length === 0) break;
+    }
+    return counted;
   }
 
   async detachCustomDomain(id: string): Promise<boolean> {

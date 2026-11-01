@@ -191,24 +191,42 @@ export async function checkAddress(deps: AddressDeps, slug: string): Promise<Add
 // ---------------------------------------------------------------------------
 
 /**
- * Gives the tenant its Custom Domain, idempotently: one already attached to
- * the right Worker is kept (a retry whose answer was lost). A hostname with a
- * DNS record of its own, or attached to any other Worker, is the owner's and
- * is never taken: a PermanentError, which pauses the tenant for the owner.
- * Resolves the domain's id, or null for wildcard addresses.
+ * tenants.custom_domain_id while an attach is under way: written before the
+ * attach, so a retry whose answer was lost knows the domain it finds is its
+ * own, and nothing else is ever taken for one.
  */
-export async function ensureTenantAddress(deps: AddressDeps, tenant: Pick<TenantRecord, "id" | "slug" | "scriptName">): Promise<string | null> {
+export const ATTACH_PENDING = "pending";
+
+/**
+ * Gives the tenant its Custom Domain. An existing one at its hostname is kept
+ * only when it is this tenant's: its id is the one recorded, or an attach
+ * was under way (ATTACH_PENDING, an answer lost), and it routes to the right
+ * Worker. Anything else there (another Worker's, a mapping made by hand,
+ * even to the platform, or a DNS record of its own) is the owner's and is
+ * never taken: a PermanentError, which pauses the tenant for the owner.
+ * `recordedId` is tenants.custom_domain_id. Resolves the domain's id, or null
+ * for wildcard addresses.
+ */
+export async function ensureTenantAddress(
+  deps: AddressDeps,
+  tenant: Pick<TenantRecord, "id" | "slug" | "scriptName">,
+  recordedId: string | null,
+): Promise<string | null> {
   if (deps.addresses.kind !== "custom_domains") return null;
   const { zoneId } = deps.addresses;
   const hostname = tenantHostname(tenant.slug, deps.hostedDomain);
   const service = addressService(deps.addresses, tenant);
   const existing = await deps.api.findCustomDomain(zoneId, hostname);
   if (existing) {
-    if (existing.service !== service) throw new PermanentError(`${hostname} is already attached to the Worker ${existing.service}`);
+    const ours = existing.id === recordedId || recordedId === ATTACH_PENDING;
+    if (!ours) throw new PermanentError(`${hostname} already has a Custom Domain (to the Worker ${existing.service}) that this tenant didn't make; it is never taken over`);
+    if (existing.service !== service) throw new PermanentError(`${hostname} is attached to the Worker ${existing.service}, not ${service}`);
     return existing.id;
   }
   const records = await deps.api.findDnsRecords(zoneId, hostname);
   if (records.length) throw new PermanentError(`${hostname} already has a DNS record (${records.map((r) => r.type).join(", ")}); it is never taken over`);
+  // The intent first: if the attach's answer is lost, the retry knows the domain is ours.
+  await deps.db.prepare("UPDATE tenants SET custom_domain_id = ? WHERE id = ?").bind(ATTACH_PENDING, tenant.id).run();
   const domain = await deps.api.attachCustomDomain({ hostname, service, zoneId });
   await bumpCapacity(deps.db, "custom_domains", 1);
   log.info("address.attached", { tenant: tenant.id, hostname, service });
@@ -216,9 +234,10 @@ export async function ensureTenantAddress(deps: AddressDeps, tenant: Pick<Tenant
 }
 
 /**
- * Takes the tenant's Custom Domain away: by its recorded id, or found by its
- * hostname when the id was never recorded (an attach whose answer was lost).
- * Only a domain routed to this tenant's Worker is ever detached.
+ * Takes the tenant's Custom Domain away: by its recorded id, or, when an
+ * attach was under way (ATTACH_PENDING), the one at its hostname routed to
+ * its Worker. A tenant that never recorded one detaches nothing, so a
+ * mapping it didn't make is never touched.
  */
 export async function removeTenantAddress(
   deps: AddressDeps,
@@ -228,8 +247,9 @@ export async function removeTenantAddress(
   if (deps.addresses.kind !== "custom_domains") return;
   const hostname = tenantHostname(tenant.slug, deps.hostedDomain);
   const service = addressService(deps.addresses, tenant);
-  let id = recordedId;
-  if (!id) {
+  if (!recordedId) return;
+  let id: string | null = recordedId;
+  if (id === ATTACH_PENDING) {
     const found = await deps.api.findCustomDomain(deps.addresses.zoneId, hostname);
     id = found && found.service === service ? found.id : null;
   }

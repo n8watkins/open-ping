@@ -379,6 +379,17 @@ describe("HttpCloudflareApi Custom Domains and DNS (src/addresses.ts)", () => {
     expect(await api.countCustomDomains(ZONE)).toBe(87);
   });
 
+  it("counts every page when the answer is paged without a total count", async () => {
+    const pages: string[] = [];
+    const { api } = recorder((req) => {
+      const page = Number(new URL(req.url).searchParams.get("page") ?? "1");
+      pages.push(String(page));
+      return Response.json({ success: true, errors: [], result: page < 3 ? [domain, domain] : [domain], result_info: { page, per_page: 2, total_pages: 3 } });
+    });
+    expect(await api.countCustomDomains(ZONE)).toBe(5);
+    expect(pages).toEqual(["1", "2", "3"]);
+  });
+
   it("detaches by id, treating 404 as already gone", async () => {
     const { seen, api } = recorder(() => ok(null));
     expect(await api.detachCustomDomain("dom_1")).toBe(true);

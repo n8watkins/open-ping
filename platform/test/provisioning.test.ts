@@ -585,6 +585,18 @@ describe("addresses as Custom Domains (src/addresses.ts)", () => {
     }
   });
 
+  it("never adopts a Custom Domain it didn't attach for this tenant, even one routed to the platform Worker", async () => {
+    const w = domainWorld();
+    const id = await signUp(w, "adoptco");
+    // Someone (the owner by hand, or a stale mapping) already routes the hostname to the platform.
+    w.api.customDomains.set("handmade", { id: "handmade", hostname: `adoptco.${DOMAIN}`, service: "openping-platform", zoneId: ZONE });
+    expect(await runProvisioning(w.deps, id, { force: true })).toMatchObject({ kind: "paused", state: "db_created" });
+    expect(await domainId(id)).toBeNull();
+    // And removing the tenant leaves that mapping alone.
+    await removeTenant(w.deps, id);
+    expect(w.api.customDomains.has("handmade")).toBe(true);
+  });
+
   it("pauses the tenant for the owner when the zone is out of Custom Domains", async () => {
     const w = domainWorld();
     w.api.customDomainLimit = 0;

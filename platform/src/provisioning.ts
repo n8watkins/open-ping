@@ -374,7 +374,7 @@ const stepUpload: Step = async (deps, t, run, now) => {
   });
   // Its address, once there is a Worker for it to reach: the platform's
   // calls in the next steps, and visitors after them, come in through it.
-  const customDomainId = await ensureTenantAddress(addressDeps(deps, now), t.record);
+  const customDomainId = await ensureTenantAddress(addressDeps(deps, now), t.record, t.customDomainId);
   await advance(deps.db, run, "db_created", "uploaded", now, {
     version: bundle.version,
     do_migration_tag: bundle.migrations.at(-1)?.tag ?? null,
