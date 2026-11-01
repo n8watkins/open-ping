@@ -107,13 +107,14 @@ async function stateOf(id: string) {
     .first<{ state: string; active_incident_id: string | null; last_error: string | null }>();
 }
 
+/** The latest check as the monitor page lists it (a sample row, or a check its hour summary logged). */
 async function latestSample(id: string) {
-  const row = await env.DB.prepare(
-    "SELECT ok, state, error, duration_ms, meta FROM samples WHERE monitor_id = ? ORDER BY at DESC, rowid DESC LIMIT 1",
-  )
-    .bind(id)
-    .first<{ ok: number; state: string; error: string | null; duration_ms: number | null; meta: string | null }>();
-  return row ? { ...row, meta: row.meta ? (JSON.parse(row.meta) as Record<string, unknown>) : null } : null;
+  const res = await apiRequest(`/api/monitors/${id}/detail`);
+  const body = await res.json<{
+    recentSamples: { ok: number; state: string; error: string | null; durationMs: number | null; meta?: Record<string, unknown> }[];
+  }>();
+  const last = body.recentSamples.at(-1);
+  return last ? { ok: last.ok, state: last.state, error: last.error, duration_ms: last.durationMs, meta: last.meta ?? null } : null;
 }
 
 async function outbox(id: string) {

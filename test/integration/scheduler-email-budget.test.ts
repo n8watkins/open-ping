@@ -72,9 +72,11 @@ describe("the weekly summary and the run's D1 budget", () => {
   it("is skipped, not sent past the limit, when a failing batch's retries spent its room, and goes out next run", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     await makeWeeklyDue();
-    await env.DB.prepare("UPDATE monitor_state SET state = 'up', next_check_at = 0").run();
-    // Every sample insert fails: the run's batch fails and each monitor's
-    // writes are retried in parts, as far as the budget lets them.
+    // Recovering, so every check writes a sample row (a passing check that
+    // changes nothing is logged in its hour summary instead), and every sample
+    // insert fails: the run's batch fails and each monitor's writes are
+    // retried in parts, as far as the budget lets them.
+    await env.DB.prepare("UPDATE monitor_state SET state = 'down', next_check_at = 0").run();
     await env.DB.prepare(
       `CREATE TRIGGER broken_samples BEFORE INSERT ON samples
          BEGIN SELECT RAISE(ABORT, 'broken for this test'); END`,

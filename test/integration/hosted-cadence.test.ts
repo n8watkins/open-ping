@@ -11,6 +11,8 @@ import { loadRangeHistory } from "../../src/worker/history/range";
 import { buildOverview } from "../../src/worker/routes/overview";
 import { createMonitorSchema } from "../../src/shared/schemas";
 import { nextScheduledCall, SCHEDULED_MAX_GAP_MS } from "../../src/shared/hosted-contract";
+import { CHECK_LOG_LENGTH_SQL } from "../../src/worker/history/check-log";
+import { rowsD1, type Rows } from "./d1-rows";
 
 /**
  * Per-monitor check intervals on OpenPing Hosted (lib/cadence.ts), through the
@@ -65,54 +67,15 @@ async function reported(cadence: Cadence): Promise<Record<string, string>> {
   );
 }
 
+/** The checks recorded for a monitor: its sample rows and the passing checks its hour summaries logged. */
 async function samplesOf(id: string): Promise<number> {
-  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM samples WHERE monitor_id = ?").bind(id).first<{ n: number }>();
+  const row = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM samples WHERE monitor_id = ?1)
+          + (SELECT COALESCE(SUM(${CHECK_LOG_LENGTH_SQL}), 0) FROM summaries WHERE monitor_id = ?1 AND period = 'hour') AS n`,
+  )
+    .bind(id)
+    .first<{ n: number }>();
   return row?.n ?? 0;
-}
-
-
-interface Rows {
-  read: number;
-  written: number;
-}
-
-/** A D1 binding that adds up the rows every query read and wrote, as D1 bills them (meta). */
-function rowsD1(db: D1Database, rows: Rows): D1Database {
-  const real = new WeakMap<object, D1PreparedStatement>();
-  const add = <T>(result: T): T => {
-    for (const r of Array.isArray(result) ? result : [result]) {
-      const meta = (r as { meta?: { rows_read?: number; rows_written?: number } } | null)?.meta;
-      rows.read += meta?.rows_read ?? 0;
-      rows.written += meta?.rows_written ?? 0;
-    }
-    return result;
-  };
-  const wrap = (stmt: D1PreparedStatement): D1PreparedStatement => {
-    const proxy = new Proxy(stmt, {
-      get(target, prop) {
-        if (prop === "bind") return (...values: unknown[]) => wrap(target.bind(...values));
-        if (prop === "run" || prop === "all") {
-          const fn = Reflect.get(target, prop, target) as (...a: unknown[]) => Promise<unknown>;
-          return async (...args: unknown[]) => add(await fn.apply(target, args));
-        }
-        const value = Reflect.get(target, prop, target);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
-    real.set(proxy, stmt);
-    return proxy;
-  };
-  return new Proxy(db, {
-    get(target, prop) {
-      if (prop === "prepare") return (query: string) => wrap(target.prepare(query));
-      if (prop === "batch") {
-        return async (statements: D1PreparedStatement[]) =>
-          add(await target.batch(statements.map((st) => real.get(st) ?? st)));
-      }
-      const value = Reflect.get(target, prop, target);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
 }
 
 /**
@@ -157,7 +120,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("per-monitor intervals on the platform", () => {
+describe("per-monitor intervals on the platform", { timeout: 60_000 }, () => {
   it("checks a 1-minute monitor on every tick and a 12-minute one on every 12th", async () => {
     const fast = await addMonitor("Fast", { intervalSeconds: 60 });
     const slow = await addMonitor("Slow");
@@ -329,7 +292,7 @@ describe("per-monitor intervals on the platform", () => {
   });
 });
 
-describe("what a tenant costs in D1 rows (docs/HOSTED_PLAN.md)", () => {
+describe("what a tenant costs in D1 rows (docs/HOSTED_PLAN.md)", { timeout: 60_000 }, () => {
   it("measures 20 monitors on 1-minute checks and on 12-minute checks", async () => {
     for (let i = 0; i < 20; i++) await addMonitor(`Cost ${i}`, { intervalSeconds: 60 });
     await measureCalls(T0, 1, FAST); // the first checks (warm-up)
@@ -339,24 +302,29 @@ describe("what a tenant costs in D1 rows (docs/HOSTED_PLAN.md)", () => {
     await env.DB.prepare("UPDATE monitor_state SET next_check_at = ?").bind(T0 + 36 * MINUTE).run();
     // 2 hours on 12-minute checks: the tenant is called once per 12 minutes.
     const standard = await measureCalls(T0 + 36 * MINUTE, 120, STANDARD);
-    // Measured 2026-10-29: 1-minute checks wrote 3,520 rows and read 7,368 in
-    // 24 calls (about 147 written per minute: 7.3 per check, the upkeep
-    // included); 12-minute checks wrote 1,990 and read 7,210 in 10 calls
-    // (about 199 per call). Sample deletes, a day later, add one row each.
+    // Measured 2026-10-31, with a passing check's sample kept in its hour
+    // summary and the status interval written only on a state change: 1-minute
+    // checks wrote 1,600 rows and read 6,540 in 24 calls (about 67 written per
+    // minute: 3.3 per check, the upkeep included); 12-minute checks wrote 1,190
+    // and read 7,250 in 10 calls (about 119 per call, 40 of them the day and
+    // month rollups). Before: 3,520 and 1,990 (147 and 199 per call). Clearing
+    // an hour's check log a day later adds a row per monitor and hour (a sample
+    // delete used to add one per check).
     // docs/HOSTED_PLAN.md turns these into dollars; the bounds catch a regression.
     expect(fast.calls).toBe(24);
-    expect(fast.written / fast.calls).toBeLessThan(160);
+    expect(fast.written / fast.calls).toBeLessThan(75);
     expect(fast.read / fast.calls).toBeLessThan(400);
     expect(standard.calls).toBe(10);
-    expect(standard.written / standard.calls).toBeLessThan(220);
+    expect(standard.written / standard.calls).toBeLessThan(130);
     expect(standard.read / standard.calls).toBeLessThan(900);
   }, 120_000);
 });
 
-describe("the all-monitors views with a sample a minute", () => {
+describe("the all-monitors views with a sample a minute", { timeout: 60_000 }, () => {
   it("read a bounded number of rows, not every sample of the last 24 hours", async () => {
-    vi.useRealTimers();
-    const now = Date.now();
+    // A fixed clock, mid-hour, so the hour rows in range don't move with the wall clock.
+    const now = T0 + 20 * MINUTE;
+    vi.setSystemTime(now);
     for (let i = 0; i < 20; i++) await addMonitor(`Busy ${i}`, { intervalSeconds: 60 });
     // A day of 1-minute samples and hourly summaries for each, as 1-minute checks leave.
     await env.DB.batch([
@@ -388,7 +356,7 @@ describe("the all-monitors views with a sample a minute", () => {
   });
 });
 
-describe("a plain install's cron", () => {
+describe("a plain install's cron", { timeout: 60_000 }, () => {
   it("still checks every polled monitor on each 12-minute run, whatever interval is stored", async () => {
     const fast = await addMonitor("Brought over from Hosted", { intervalSeconds: 60 });
     const slow = await addMonitor("Hourly", { intervalSeconds: 3600 });

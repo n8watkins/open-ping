@@ -25,6 +25,8 @@ import {
 } from "../history/metrics";
 import { redactConfig } from "../lib/secret-config";
 import { downtimeBreakdown, loadRangeHistory } from "../history/range";
+import { loggedChecks, mergeChecks, type ListedCheck } from "../history/check-log";
+import { bucketStart, sampleHorizon } from "../history/rollups";
 import { parseTimeRange, type MonitorHistoryResponse } from "../../shared/time-range";
 import { computeListStats } from "../history/list-stats";
 import type { MonitorRecord } from "../db/monitors";
@@ -343,12 +345,12 @@ monitors.get("/:id/detail", async (c) => {
   const stateRow = await c.env.DB.prepare(
     `SELECT state, state_since, last_checked_at, last_success_at, last_duration_ms,
             last_status_code, last_error, consecutive_failures, consecutive_successes,
-            next_check_at, active_incident_id, is_flapping, cert_cache
+            next_check_at, active_incident_id, is_flapping, cert_cache, last_meta
      FROM monitor_state WHERE monitor_id = ?`,
   )
     .bind(id)
-    .first<Record<string, unknown> & { cert_cache: string | null }>();
-  const { cert_cache: certCacheRaw = null, ...state } = stateRow ?? {};
+    .first<Record<string, unknown> & { cert_cache: string | null; last_meta: string | null }>();
+  const { cert_cache: certCacheRaw = null, last_meta: lastMeta = null, ...state } = stateRow ?? {};
 
   const [d1, d7, d30, d90, d365] = await Promise.all([
     computeUptime(c.env, id, now - DAY, now),
@@ -382,25 +384,44 @@ monitors.get("/:id/detail", async (c) => {
     ).map(([key, days]) => [key, downtimeBreakdown(spans, now - days * DAY, now)]),
   );
 
-  const latency = await c.env.DB.prepare(
-    `SELECT AVG(duration_ms) AS avg, MIN(duration_ms) AS min, MAX(duration_ms) AS max
-     FROM samples WHERE monitor_id = ? AND ok = 1 AND duration_ms IS NOT NULL AND at >= ?`,
-  )
-    .bind(id, now - DAY)
-    .first<{ avg: number | null; min: number | null; max: number | null }>();
-
-  const samplesRes = await c.env.DB.prepare(
-    `SELECT at, ok, state, duration_ms AS durationMs, status_code AS statusCode, error, meta
-     FROM samples WHERE monitor_id = ? AND at >= ? ORDER BY at`,
-  )
-    .bind(id, now - DAY)
-    .all<Record<string, unknown> & { meta: string | null }>();
-  // Only the latest sample carries its type-specific meta (resolved DNS records,
-  // domain expiry), which the page shows next to the target.
-  const samples = (samplesRes.results ?? []).map(({ meta, ...sample }, i, all) => {
-    if (i !== all.length - 1 || !meta) return sample;
+  // The last 24 hours' checks (no older than the sample retention): the sample
+  // rows, and the passing checks their hour summaries logged instead
+  // (history/check-log.ts).
+  const checksFrom = Math.max(now - DAY, await sampleHorizon(c.env, now));
+  const [samplesRes, hoursRes] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT at, ok, state, duration_ms AS durationMs, status_code AS statusCode, error, meta
+       FROM samples WHERE monitor_id = ? AND at >= ? ORDER BY at`,
+    )
+      .bind(id, checksFrom)
+      .all<ListedCheck>(),
+    c.env.DB.prepare(
+      `SELECT bucket_start, check_log FROM summaries
+        WHERE monitor_id = ? AND period = 'hour' AND bucket_start >= ? AND check_log IS NOT NULL`,
+    )
+      .bind(id, bucketStart("hour", checksFrom))
+      .all<{ bucket_start: number; check_log: string | null }>(),
+  ]);
+  const checks = mergeChecks(
+    samplesRes.results ?? [],
+    loggedChecks(hoursRes.results ?? [], checksFrom, Number.POSITIVE_INFINITY),
+  );
+  const timed = checks.flatMap((s) => (s.ok && s.durationMs != null ? [Number(s.durationMs)] : []));
+  const latency = timed.length
+    ? {
+        avg: timed.reduce((a, b) => a + b, 0) / timed.length,
+        min: Math.min(...timed),
+        max: Math.max(...timed),
+      }
+    : null;
+  // Only the latest check carries its type-specific meta (resolved DNS records,
+  // domain expiry), which the page shows next to the target: a sample row's
+  // own, or for a logged check the monitor's latest.
+  const samples = checks.map(({ meta, logged, ...sample }, i, all) => {
+    const raw = logged ? lastMeta : meta;
+    if (i !== all.length - 1 || !raw) return sample;
     try {
-      return { ...sample, meta: JSON.parse(meta) as unknown };
+      return { ...sample, meta: JSON.parse(raw) as unknown };
     } catch {
       return sample;
     }

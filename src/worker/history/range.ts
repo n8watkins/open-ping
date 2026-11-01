@@ -1,4 +1,6 @@
 import type { Env } from "../types";
+import { loggedChecks } from "./check-log";
+import { sampleHorizon } from "./rollups";
 import {
   DAY_MS,
   RANGE_SPEC,
@@ -396,7 +398,8 @@ export interface RangeHistory {
  * seven D1 reads in parallel whatever the monitor count: monitor ids, the
  * summaries in range, the overlapping status intervals, the OK samples (24h
  * only), the hourly latencies (30d only), and the incidents overlapping the
- * range with their count.
+ * range with their count. A 24-hour view's checks are the sample rows and the
+ * passing checks its hour summaries log (history/check-log.ts).
  */
 export async function loadRangeHistory(
   env: Env,
@@ -415,52 +418,60 @@ export async function loadRangeHistory(
   // minute leaves 1,440 a day, so with one of those the view takes hourly
   // averages instead, 24 rows a monitor. One monitor's view always has its
   // checks (they are its chart's points).
-  const useSamples = range === "24h" && (one || !(await hasFastMonitors(env)));
+  const [fast, horizon] =
+    range === "24h" ? await Promise.all([one ? false : hasFastMonitors(env), sampleHorizon(env, now)]) : [true, from];
+  const useSamples = range === "24h" && (one || !fast);
+  // The checks start no earlier than the sample retention (sampleHorizon).
+  const checksFrom = Math.max(from, horizon);
   const hourlyLatency =
     !useSamples && (range === "24h" || (spec.period === "day" && spec.buckets * DAY_MS <= HOURLY_LATENCY_MAX_MS));
 
+  // Every history row belongs to a monitor; naming them lets SQLite reach the
+  // rows in range through the (monitor_id, ...) indexes instead of reading the
+  // whole table (D1 bills every row read: about 30,000 a view on an install
+  // with two months of history and 20 monitors).
+  const scope = one ? "monitor_id = ?" : "monitor_id IN (SELECT id FROM monitors)";
+  const scopeBinds = one ? [monitorId] : [];
   const [idsRes, summaryRes, intervalRes, sampleRes, hourlyRes, incidentRes, countRow] = await Promise.all([
     (one
       ? env.DB.prepare("SELECT id FROM monitors WHERE id = ?").bind(monitorId)
       : env.DB.prepare("SELECT id FROM monitors ORDER BY created_at")
     ).all<{ id: string }>(),
     env.DB.prepare(
+      // The 24-hour view's hour rows also bring their logged checks
+      // (history/check-log.ts): a passing check has no sample row.
       `SELECT monitor_id, bucket_start, checks, ok_checks, sum_latency_ms,
-              min_latency_ms, max_latency_ms
+              min_latency_ms, max_latency_ms${useSamples ? ", check_log" : ""}
          FROM summaries
-        WHERE period = ? AND bucket_start >= ? AND bucket_start < ?
-          ${one ? "AND monitor_id = ?" : ""}`,
+        WHERE ${scope} AND period = ? AND bucket_start >= ? AND bucket_start < ?`,
     )
-      .bind(...[spec.period, from, to, ...(one ? [monitorId] : [])])
-      .all<SummaryBucketRow>(),
+      .bind(...[...scopeBinds, spec.period, from, to])
+      .all<SummaryBucketRow & { check_log?: string | null }>(),
     env.DB.prepare(
       `SELECT monitor_id, state, started_at, ended_at
          FROM status_intervals
-        WHERE started_at < ? AND (ended_at IS NULL OR ended_at > ?)
-          ${one ? "AND monitor_id = ?" : ""}`,
+        WHERE ${scope} AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`,
     )
-      .bind(...[to, from, ...(one ? [monitorId] : [])])
+      .bind(...[...scopeBinds, to, from])
       .all<IntervalRow>(),
     useSamples
       ? env.DB.prepare(
           `SELECT monitor_id, at, duration_ms
              FROM samples
-            WHERE ok = 1 AND duration_ms IS NOT NULL AND at >= ? AND at <= ?
-              ${one ? "AND monitor_id = ?" : ""}
+            WHERE ${scope} AND ok = 1 AND duration_ms IS NOT NULL AND at >= ? AND at <= ?
             ORDER BY at`,
         )
-          .bind(...[from, now, ...(one ? [monitorId] : [])])
+          .bind(...[...scopeBinds, checksFrom, now])
           .all<SampleRow>()
       : Promise.resolve({ results: [] as SampleRow[] }),
     hourlyLatency
       ? env.DB.prepare(
           `SELECT monitor_id, sum_latency_ms, ok_checks
              FROM summaries
-            WHERE period = 'hour' AND bucket_start >= ? AND bucket_start < ?
-              AND ok_checks > 0 AND max_latency_ms IS NOT NULL
-              ${one ? "AND monitor_id = ?" : ""}`,
+            WHERE ${scope} AND period = 'hour' AND bucket_start >= ? AND bucket_start < ?
+              AND ok_checks > 0 AND max_latency_ms IS NOT NULL`,
         )
-          .bind(...[from, to, ...(one ? [monitorId] : [])])
+          .bind(...[...scopeBinds, from, to])
           .all<{ monitor_id: string; sum_latency_ms: number; ok_checks: number }>()
       : Promise.resolve({ results: [] as { monitor_id: string; sum_latency_ms: number; ok_checks: number }[] }),
     env.DB.prepare(
@@ -486,10 +497,22 @@ export async function loadRangeHistory(
   const summariesBy = groupBy(summaryRes.results ?? [], (r) => r.monitor_id);
   const intervalsBy = groupBy(intervalRes.results ?? [], (r) => r.monitor_id);
   const samplesBy = new Map<string, LatencyPoint[]>();
-  for (const s of sampleRes.results ?? []) {
-    const list = samplesBy.get(s.monitor_id) ?? [];
-    list.push({ t: Number(s.at), ms: Number(s.duration_ms) });
-    samplesBy.set(s.monitor_id, list);
+  const addPoint = (id: string, at: number, ms: number) => {
+    const list = samplesBy.get(id) ?? [];
+    list.push({ t: at, ms });
+    samplesBy.set(id, list);
+  };
+  for (const s of sampleRes.results ?? []) addPoint(s.monitor_id, Number(s.at), Number(s.duration_ms));
+  if (useSamples) {
+    let logged = false;
+    for (const [id, rows] of summariesBy) {
+      for (const c of loggedChecks(rows, checksFrom, now)) {
+        if (c.durationMs == null) continue;
+        addPoint(id, c.at, c.durationMs);
+        logged = true;
+      }
+    }
+    if (logged) for (const list of samplesBy.values()) list.sort((a, b) => a.t - b.t);
   }
   const hourlyBy = new Map<string, number[]>();
   for (const r of hourlyRes.results ?? []) {

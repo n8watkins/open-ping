@@ -24,6 +24,8 @@ import { loadRangeHistory } from "../history/range";
 import { CRON_CADENCE, effectiveIntervals, type Cadence } from "../lib/cadence";
 import { cadenceFor } from "../lib/monitor-intervals";
 import { hostedPlan } from "../lib/plan-limits";
+import { bucketStart } from "../history/rollups";
+import { CHECK_LOG_LENGTH_SQL, loggedChecks } from "../history/check-log";
 import { parseTimeRange, type OverviewHistoryResponse } from "../../shared/time-range";
 import {
   isWindowActiveAt,
@@ -57,6 +59,17 @@ interface IncidentStartRow {
 }
 
 const DAY = 24 * 60 * 60 * 1000;
+/** How many of each monitor's latest checks the Overview's bar shows. */
+const RECENT_CHECKS = 28;
+
+interface HourRow {
+  monitor_id: string;
+  bucket_start: number;
+  checks: number;
+  ok_checks: number;
+  /** The hour's logged checks, only for the hours the latest 28 can reach. */
+  check_log: string | null;
+}
 
 /** Human-searchable target shown only to the authenticated administrator. */
 export function monitorTarget(monitor: MonitorRecord): string | null {
@@ -236,15 +249,27 @@ export async function buildOverview(env: Env, now: number = Date.now(), cadence:
        FROM monitor_state`,
     ).all<StateRow>(),
     env.DB.prepare(
-      `SELECT monitor_id, SUM(checks) AS checks, SUM(ok_checks) AS ok_checks
-       FROM summaries
-       WHERE period = 'hour' AND bucket_start >= ? AND bucket_start <= ?
-       GROUP BY monitor_id`,
+      // Each hour of the day, for the 24-hour uptime, and the passing checks
+      // it logged (history/check-log.ts) for the hours the latest 28 checks
+      // can reach: an hour's log comes back only while the hours after it log
+      // fewer than 28, so a monitor checked every minute sends an hour or two.
+      // The partial hour 24 hours back is read for its checks only.
+      `SELECT monitor_id, bucket_start, checks, ok_checks,
+              CASE WHEN COALESCE(SUM(logged) OVER (
+                     PARTITION BY monitor_id ORDER BY bucket_start DESC
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) < ?3
+                   THEN check_log END AS check_log
+         FROM (SELECT monitor_id, bucket_start, checks, ok_checks, check_log,
+                      ${CHECK_LOG_LENGTH_SQL} AS logged
+                 FROM summaries
+                WHERE monitor_id IN (SELECT id FROM monitors)
+                  AND period = 'hour' AND bucket_start >= ?1 AND bucket_start <= ?2)`,
     )
-      .bind(since, now)
-      .all<SummaryCountRow>(),
+      .bind(bucketStart("hour", since), now, RECENT_CHECKS)
+      .all<HourRow>(),
     env.DB.prepare(
-      // Each monitor's last 28 checks of the day, reached through the
+      // Each monitor's last 28 sample rows of the day (the checks that have
+      // one; the rest are logged in the hour rows above), reached through the
       // (monitor_id, at) index: the 28th newest is found first (materialized,
       // and CROSS JOIN keeps it the outer loop), so a monitor checked every
       // minute reads under 100 rows instead of its 1,440.
@@ -291,14 +316,24 @@ export async function buildOverview(env: Env, now: number = Date.now(), cadence:
   const states = new Map<string, StateRow>(
     (stateRes.results ?? []).map((s) => [s.monitor_id, s]),
   );
-  const summaryRows = summaryRes.results ?? [];
+  const hourRows = summaryRes.results ?? [];
+  const countsByMonitor = new Map<string, SummaryCountRow>();
+  const recentRows: RecentCheckRow[] = [...(sampleRes.results ?? [])];
+  for (const row of hourRows) {
+    if (row.bucket_start >= since) {
+      const c = countsByMonitor.get(row.monitor_id) ?? { monitor_id: row.monitor_id, checks: 0, ok_checks: 0 };
+      c.checks += Number(row.checks) || 0;
+      c.ok_checks += Number(row.ok_checks) || 0;
+      countsByMonitor.set(row.monitor_id, c);
+    }
+    for (const check of loggedChecks([row], since, now)) {
+      recentRows.push({ monitor_id: row.monitor_id, at: check.at, ok: 1, state: check.state });
+    }
+  }
   const uptimeByMonitor = new Map(
-    summaryRows.map((row) => [
-      row.monitor_id,
-      computeOverallUptime([row]),
-    ]),
+    [...countsByMonitor.values()].map((row) => [row.monitor_id, computeOverallUptime([row])]),
   );
-  const recentChecksByMonitor = groupRecentChecks(sampleRes.results ?? []);
+  const recentChecksByMonitor = groupRecentChecks(recentRows, RECENT_CHECKS);
 
   const counts: Record<string, number> = {
     total: monitors.length,
@@ -358,7 +393,7 @@ export async function buildOverview(env: Env, now: number = Date.now(), cadence:
     now,
   });
   const analytics = {
-    overallUptime24h: computeOverallUptime(summaryRows),
+    overallUptime24h: computeOverallUptime([...countsByMonitor.values()]),
     ...incidentAnalytics,
   };
 

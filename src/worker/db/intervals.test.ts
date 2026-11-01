@@ -1,22 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideIntervalAction, mergeLatency } from "./intervals";
-
-describe("decideIntervalAction", () => {
-  it("opens when there is no current interval", () => {
-    expect(decideIntervalAction(null, "up")).toBe("open");
-  });
-
-  it("extends when the incoming state matches the open interval", () => {
-    expect(decideIntervalAction({ state: "up" }, "up")).toBe("extend");
-    expect(decideIntervalAction({ state: "down" }, "down")).toBe("extend");
-  });
-
-  it("splits when the incoming state differs from the open interval", () => {
-    expect(decideIntervalAction({ state: "up" }, "down")).toBe("split");
-    expect(decideIntervalAction({ state: "maintenance" }, "up")).toBe("split");
-    expect(decideIntervalAction({ state: "up" }, "scheduled_off")).toBe("split");
-  });
-});
+import { mergeLatency } from "./intervals";
 
 describe("mergeLatency", () => {
   const zero = {

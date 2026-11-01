@@ -78,6 +78,14 @@ describe("estimateUsage", () => {
     );
   });
 
+  it("estimates rows written per day as measured: 20 monitors every 12 minutes write about 15,000", () => {
+    const out = estimateUsage({ ...base, monitors: 20, intervalSeconds: 720 });
+    // 2,400 checks x 3, 20 x 24 hour summaries x 4, 120 runs x (20 x 2 + 8).
+    expect(out.dbWritesPerDayEstimate).toBe(7_200 + 1_920 + 5_760);
+    // Inside the Free plan's 100,000 rows written a day.
+    expect(out.dbWritesPerDayEstimate).toBeLessThan(100_000);
+  });
+
   it("includes a note clarifying these are estimates only", () => {
     const out = estimateUsage(base);
     expect(typeof out.note).toBe("string");

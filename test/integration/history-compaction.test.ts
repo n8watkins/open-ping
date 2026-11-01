@@ -1,11 +1,16 @@
 import { env, exports } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import "../../src/worker/index";
 import { compactionStatements, resolveRetention } from "../../src/worker/history/rollups";
 import { PLAN_BUDGETS } from "../../src/worker/lib/budget";
 import { runScheduled } from "../../src/worker/scheduler";
+import { loadRangeHistory } from "../../src/worker/history/range";
+import { buildOverview } from "../../src/worker/routes/overview";
+import { computeListStats } from "../../src/worker/history/list-stats";
+import { listMonitorUptime } from "../../src/worker/routes/monitors";
+import { rowsD1, type Rows } from "./d1-rows";
 
 // The history rollups (history/rollups.ts) recompute day and month buckets
 // from the hour rows. They must give the same totals as a full recompute while
@@ -25,56 +30,13 @@ function apiRequest(path: string, init: RequestInit = {}): Promise<Response> {
   return exports.default.fetch(`${API_ORIGIN}${path}`, { ...init, headers });
 }
 
-interface Rows {
-  read: number;
-  written: number;
-}
+/**
+ * The install's clock: fixed, mid-month and mid-hour, so no count depends on
+ * where the wall clock is in its hour, day or month.
+ */
+const NOW = Date.UTC(2026, 9, 26, 6, 20, 0);
 
-/** A D1 binding that adds up the rows every query read and wrote, as D1 bills them (meta). */
-function rowsD1(db: D1Database, rows: Rows): D1Database {
-  const real = new WeakMap<object, D1PreparedStatement>();
-  const add = <T>(result: T): T => {
-    for (const r of Array.isArray(result) ? result : [result]) {
-      const meta = (r as { meta?: { rows_read?: number; rows_written?: number } } | null)?.meta;
-      rows.read += meta?.rows_read ?? 0;
-      rows.written += meta?.rows_written ?? 0;
-    }
-    return result;
-  };
-  const wrap = (stmt: D1PreparedStatement): D1PreparedStatement => {
-    const proxy = new Proxy(stmt, {
-      get(target, prop) {
-        if (prop === "bind") return (...values: unknown[]) => wrap(target.bind(...values));
-        if (prop === "run" || prop === "all") {
-          const fn = Reflect.get(target, prop, target) as (...a: unknown[]) => Promise<unknown>;
-          return async (...args: unknown[]) => add(await fn.apply(target, args));
-        }
-        if (prop === "first" || prop === "raw") {
-          // Not billed through meta here; the scheduler uses batches and all().
-          const fn = Reflect.get(target, prop, target) as (...a: unknown[]) => Promise<unknown>;
-          return (...args: unknown[]) => fn.apply(target, args);
-        }
-        const value = Reflect.get(target, prop, target);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
-    real.set(proxy, stmt);
-    return proxy;
-  };
-  return new Proxy(db, {
-    get(target, prop) {
-      if (prop === "prepare") return (query: string) => wrap(target.prepare(query));
-      if (prop === "batch") {
-        return async (statements: D1PreparedStatement[]) =>
-          add(await target.batch(statements.map((s) => real.get(s) ?? s)));
-      }
-      const value = Reflect.get(target, prop, target);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-}
-
-const controller: ScheduledController = { cron: "*/12 * * * *", scheduledTime: Date.now(), noRetry() {} };
+const controller: ScheduledController = { cron: "*/12 * * * *", scheduledTime: NOW, noRetry() {} };
 
 /** One scheduler run, and the rows it read and wrote. */
 async function measuredRun(): Promise<Rows> {
@@ -109,6 +71,8 @@ async function seedHistory(now: number) {
 }
 
 beforeAll(async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("ok"));
   for (let i = 0; i < MONITORS; i++) {
@@ -119,15 +83,19 @@ beforeAll(async () => {
     expect(res.status).toBe(201);
   }
   vi.restoreAllMocks();
-  await seedHistory(Date.now());
-});
+  await seedHistory(NOW);
+}, 60_000);
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("history rollups", () => {
+afterAll(() => {
+  vi.useRealTimers();
+});
+
+describe("history rollups", { timeout: 60_000 }, () => {
   it("an incremental pass gives the same day and month totals as a full recompute", async () => {
     const retention = resolveRetention(null);
-    const now = Date.now();
+    const now = NOW;
     await env.DB.batch(compactionStatements(env, now, retention, null).map((s) => s.stmt));
     const full = await derived();
     expect(full.size).toBeGreaterThan(MONITORS * HISTORY_DAYS);
@@ -176,8 +144,37 @@ describe("history rollups", () => {
     expect(idle.read).toBeLessThan(5_000);
   }, 60_000);
 
+  it("the all-monitors history and the Overview read only the rows in their range", async () => {
+    const now = NOW;
+    const reads: Record<string, number> = {};
+    for (const range of ["24h", "7d", "30d", "90d"] as const) {
+      const rows = { read: 0, written: 0 };
+      await loadRangeHistory({ ...env, DB: rowsD1(env.DB, rows) }, range, now);
+      reads[range] = rows.read;
+    }
+    const measure = async (fn: (e: typeof env) => Promise<unknown>) => {
+      const rows = { read: 0, written: 0 };
+      await fn({ ...env, DB: rowsD1(env.DB, rows) });
+      return rows.read;
+    };
+    reads.overview = await measure((e) => buildOverview(e, now));
+    reads.list = await measure((e) => computeListStats(e, [], now));
+    reads.uptime = await measure((e) => listMonitorUptime(e, now));
+    // Measured 2026-10-31 on this install (20 monitors, 63 days of hour rows):
+    // 699, 3,500, 14,220 (30 days of hourly averages for the percentiles) and
+    // 141 rows; 2,264 for the Overview, 3,400 for the Monitors list's stats
+    // and 14,519 for every monitor's 24h to 90d uptime (30 days of hours).
+    // Before, each read the whole summaries table: about 30,000 rows a view
+    // (60,000 for 30 days and for the uptime windows).
+    expect(reads["24h"]).toBeLessThan(1_500);
+    expect(reads["7d"]).toBeLessThan(5_000);
+    expect(reads["30d"]).toBeLessThan(16_000);
+    expect(reads["90d"]).toBeLessThan(3_000);
+    expect(reads.overview).toBeLessThan(3_000);
+    expect(reads.list).toBeLessThan(4_000);
+    expect(reads.uptime).toBeLessThan(16_000);
+  });
   it("recomputes from the last run whose rollups landed, so a long streak of failed passes is repaired", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
     try {
       const t0 = Date.UTC(2026, 9, 20, 6, 0, 0);
       vi.setSystemTime(t0);
@@ -225,7 +222,7 @@ describe("history rollups", () => {
         .first<{ checks: number }>();
       expect(day?.checks).toBe(5);
     } finally {
-      vi.useRealTimers();
+      vi.setSystemTime(NOW);
     }
   }, 60_000);
 });

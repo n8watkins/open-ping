@@ -23,6 +23,8 @@ const CRON_INTERVAL_MINUTES = 12;
 const SECONDS_PER_DAY = 86400;
 /** Default check cadence when no monitors exist to sample a real interval. */
 const DEFAULT_INTERVAL_SECONDS = 720;
+/** Rows a run reads per monitor on a two-month-old install (estimateUsage). */
+const READS_PER_MONITOR_RUN = 130;
 /** Very rough per-row footprint used only for a ballpark DB size estimate. */
 const BYTES_PER_ROW = 256;
 
@@ -77,14 +79,25 @@ export function estimateUsage(input: {
   const checksPerMonitorPerDay = SECONDS_PER_DAY / intervalSeconds;
   const httpChecksPerDay = Math.round(monitors * checksPerMonitorPerDay);
 
-  // Rough: every check reads its current state row; each scheduled execution
-  // also reads the due-monitor set + a few config/lock rows.
+  // Rows read: each run reads every monitor and its state, and its upkeep
+  // re-reads the hour and day summaries that may have changed (up to two days
+  // and two months a monitor): about 130 rows a monitor and run on an install
+  // with two months of history (test/integration/history-compaction.test.ts),
+  // plus a few rows a check.
   const dbReadsPerDayEstimate = Math.round(
-    httpChecksPerDay + scheduledExecutionsPerDay * 4,
+    scheduledExecutionsPerDay * (monitors * READS_PER_MONITOR_RUN + 10) + httpChecksPerDay * 5,
   );
 
-  // Rough: every check writes a sample plus a state update (a small factor).
-  const dbWritesPerDayEstimate = Math.round(httpChecksPerDay * 2);
+  // Rows written, index entries included, as D1 bills them (measured in
+  // test/integration/check-write-rows.test.ts and hosted-cadence.test.ts): a
+  // passing check writes 3 (its state and its hour summary); each monitor's
+  // hour summary costs 3 more when it starts and 1 when its check log is
+  // cleared a day later; and each run's upkeep rewrites each monitor's day and
+  // month summaries, plus about 8 rows of its own (its lease and run record).
+  // Failures and state changes add their sample, incident and timeline rows.
+  const dbWritesPerDayEstimate = Math.round(
+    httpChecksPerDay * 3 + monitors * 24 * 4 + scheduledExecutionsPerDay * (monitors * 2 + 8),
+  );
 
   // Very rough ballpark; real row sizes vary with payload/error text.
   const estimatedDbBytes =

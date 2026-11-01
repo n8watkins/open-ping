@@ -6,6 +6,7 @@ import "../../src/worker/index";
 import { enqueue } from "../../src/worker/db/outbox";
 import { processOutbox } from "../../src/worker/notifications/dispatcher";
 import { runScheduled } from "../../src/worker/scheduler";
+import { parseCheckLog } from "../../src/worker/history/check-log";
 
 const API_ORIGIN = "https://openping.test";
 const API_TOKEN = "integration-api-token";
@@ -725,28 +726,20 @@ describe("authenticated monitor lifecycle", () => {
       expect(state?.last_success_at).toEqual(expect.any(Number));
       expect(state?.next_check_at).toEqual(expect.any(Number));
 
-      const sample = await env.DB.prepare(
-        `SELECT ok, state, status_code, attempts, warmup, error
-         FROM samples WHERE monitor_id = ?`,
+      // The scheduled check after the first one is a normal passing check, not
+      // a warm-up: it changed nothing, so its hour summary logs it instead of
+      // a sample row (history/check-log.ts).
+      const samples = await env.DB.prepare("SELECT COUNT(*) AS n FROM samples WHERE monitor_id = ?")
+        .bind(monitorId)
+        .first<{ n: number }>();
+      expect(samples?.n).toBe(0);
+      const hours = await env.DB.prepare(
+        "SELECT bucket_start, check_log FROM summaries WHERE monitor_id = ? AND period = 'hour' AND check_log IS NOT NULL",
       )
         .bind(monitorId)
-        .first<{
-          ok: number;
-          state: string;
-          status_code: number | null;
-          attempts: number;
-          warmup: number;
-          error: string | null;
-        }>();
-      // The scheduled check after the first one is a normal check, not a warm-up.
-      expect(sample).toEqual({
-        ok: 1,
-        state: "up",
-        status_code: 200,
-        attempts: 1,
-        warmup: 0,
-        error: null,
-      });
+        .all<{ bucket_start: number; check_log: string }>();
+      const logged = hours.results.flatMap((h) => parseCheckLog(h.bucket_start, h.check_log));
+      expect(logged).toEqual([expect.objectContaining({ state: "up", statusCode: 200 })]);
 
       const run = await env.DB.prepare(
         `SELECT ok, monitors_checked, monitors_skipped, check_failures

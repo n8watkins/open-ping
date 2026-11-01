@@ -110,13 +110,14 @@ async function stateOf(id: string) {
     .first<{ state: string; next_check_at: number; active_incident_id: string | null; last_error: string | null }>();
 }
 
+/** The latest check as the monitor page lists it (a sample row, or a check its hour summary logged). */
 async function latestSample(id: string) {
-  const row = await env.DB.prepare(
-    "SELECT ok, state, error, duration_ms, attempts, meta FROM samples WHERE monitor_id = ? ORDER BY at DESC, rowid DESC LIMIT 1",
-  )
-    .bind(id)
-    .first<{ ok: number; state: string; error: string | null; duration_ms: number | null; attempts: number; meta: string | null }>();
-  return row ? { ...row, meta: row.meta ? (JSON.parse(row.meta) as Record<string, unknown>) : null } : null;
+  const res = await apiRequest(`/api/monitors/${id}/detail`);
+  const body = await res.json<{
+    recentSamples: { ok: number; state: string; error: string | null; durationMs: number | null; meta?: Record<string, unknown> }[];
+  }>();
+  const last = body.recentSamples.at(-1);
+  return last ? { ok: last.ok, state: last.state, error: last.error, duration_ms: last.durationMs, meta: last.meta ?? null } : null;
 }
 
 async function openIncidents(id: string) {
@@ -213,7 +214,7 @@ describe("domain expiry cache", () => {
     expect(await openIncidents(id)).toHaveLength(0);
     expect(await outboxCount(id)).toBe(0);
     const sample = await latestSample(id);
-    expect(sample).toMatchObject({ ok: 1, state: "up", attempts: 1 });
+    expect(sample).toMatchObject({ ok: 1, state: "up" });
     expect(sample!.meta).toMatchObject({
       source: "cache",
       checkedAt: aged.checkedAt,

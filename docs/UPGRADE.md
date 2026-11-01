@@ -94,3 +94,14 @@ Migrations are additive, so older code generally tolerates a newer schema.
 Do not assume that a rollback reverses data transformations or restores secrets.
 Values encrypted by a release with key rotation use the `v2` ciphertext form, which earlier releases cannot read, so do not roll back below that release once it has written data.
 Use the backup procedure when data restoration is required.
+
+### Rolling back past migration 0027 (to v0.18.0 or earlier)
+
+From migration 0027 on, a passing check that changes nothing is kept in its hour summary instead of a sample row of its own (`src/worker/history/check-log.ts`).
+A build from before it reads only sample rows, so for a while after rolling back to v0.18.0 or earlier:
+
+- The Overview's bar of each monitor's last 28 checks shows only the checks that have a sample row, mostly failures and state changes, so it over-shows failures (in one probe 22 of 144 checks were visible, 7 of them down where only 1 really was).
+- The monitor page lists only those checks, and its 24-hour response time and the 24-hour chart's points and percentiles lean toward them (re-checks and recoveries).
+- The bar heals after about 28 new checks, and the monitor page and the 24-hour charts after 24 hours, as the older build writes a sample row for every check again.
+- Uptime, downtime, incidents, the 7-day to 90-day charts, status pages and the monthly report stay correct throughout: they come from the hourly and daily summaries, which every build keeps the same way.
+
