@@ -105,6 +105,16 @@ export interface Env {
   /** base64url of the raw Ed25519 public key that verifies sign-in hand-offs (hosted mode only). */
   HANDOFF_PUBLIC_KEY?: string;
   /**
+   * Starter mode (docs/hosted/CONTRACT.md, section 10): "https" when this
+   * customer's OpenPing is an ordinary Worker the platform calls over signed
+   * HTTPS instead of through a dispatch namespace (lib/hosted-starter.ts).
+   */
+  HOSTED_TRANSPORT?: string;
+  /** Starter mode: the platform's origin, https://app.<hosted domain>, for the signed calls back. */
+  PLATFORM_URL?: string;
+  /** Starter mode secret: this tenant's own key for the signed calls; never shared with another tenant. */
+  PLATFORM_CALL_SECRET?: string;
+  /**
    * Local development only: TenantInfo JSON that stands in for the platform's
    * props under `npm run dev`, where no dispatcher exists. Production builds
    * never read it (lib/hosted.ts, devTenantProps).
