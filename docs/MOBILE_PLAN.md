@@ -88,6 +88,23 @@ The full description is [ANDROID.md](./ANDROID.md); in short:
 - Found and fixed on the way: push devices got no alert unless some other channel existed (#82, v0.17.1).
 - After an independent review (2026-10-29): app sign-ins only start from the app and always need a fresh sign-in, the admin gets an email for each, Settings lists every session to sign out, exchanges refuse other sites' forms, removed or turned-off phones stay that way, notification taps can't be forged by other apps, old web views can't open installs, and removing an install signs out on the server. What remains is in ANDROID.md, "Security".
 
+## Later: a notification relay for self-hosted installs
+
+Decided 2026-10-31 as a later item; not built.
+
+**The gap:** the Android app's phone notifications go through Firebase with the owner's service-account key, so only installs that hold that key (the owner's and OpenPing Hosted) can notify the app.
+A self-hosted install can't be given the key, because anyone holding it could send notifications to every app user.
+Everything else in the app works with any install; self-hosters keep email, chat, webhook and browser push alerts.
+
+**The plan:** a small relay Worker the owner runs.
+
+- A self-hosted install registers once and gets its own relay credential; the app's device registration on that install goes through the relay, which keeps the Firebase key.
+- The install sends each alert to the relay with its credential; the relay checks that the device belongs to that install, then sends through Firebase.
+- Per-install caps (for example 100 notifications a day for self-hosters, unlimited on Hosted), revocation of a misbehaving install, and no alert content stored beyond the send.
+- Alert text passes through the relay, so the privacy policy and the app's store listing must say so, and self-hosters opt in.
+
+**Why the app stays free for every install:** it costs the owner nothing (each OpenPing does the work), a paid-only lock is pointless in open source, and a good free app makes people more likely to choose Hosted; unlimited relay notifications are the natural Hosted perk.
+
 ## Stage M3: iPhone (later, if asked)
 
 The installable web app (M1) already works on iPhone, including notifications for installed web apps on recent iOS versions.
