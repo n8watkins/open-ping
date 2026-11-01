@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.19.0 - 2026-10-31
+
+### Fixed
+
+- The monitor page, list, CLI and MCP now show how often each monitor is really checked, with the reason when that isn't its own setting (for example the 12-minute schedule of a self-hosted install, or a plan's fastest interval).
+
+### Faster
+
+- Each check now writes about 3 database rows instead of 7, and several pages read far fewer rows, so installs stay further inside Cloudflare's free limits. Charts, uptime and history are unchanged; the Samples count in Settings > System drops because passing checks no longer each get their own row.
+
 ## 0.18.0 - 2026-10-29
 
 ### New
