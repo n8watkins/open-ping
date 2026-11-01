@@ -121,6 +121,8 @@ export interface UserWorkerUpload {
   previousMigrationTag: string | null;
   /** Workers Logs' head sampling for this user Worker, 0 to 1 (TENANT_LOG_SAMPLING); 1 when absent. */
   logSampling?: number;
+  /** An ordinary Worker's per-invocation caps (starter mode); none for a dispatch namespace's. */
+  limits?: { cpu_ms: number; subrequests: number };
 }
 
 /**
@@ -178,6 +180,7 @@ export function userWorkerMetadata(input: UserWorkerUpload, assetsJwt: string): 
     assets: { jwt: assetsJwt, config: input.bundle.assetsConfig },
     ...(migrations ? { migrations } : {}),
     observability: tenantObservability(input.logSampling),
+    ...(input.limits ? { limits: input.limits } : {}),
   };
 }
 

@@ -115,6 +115,13 @@ export interface WorkerUploadMetadata {
    * `$metadata.service` set to the script name (t-<tenant id>).
    */
   observability?: WorkerObservability;
+  /**
+   * Per-invocation caps of an ordinary Worker (Wrangler's `limits`): CPU
+   * milliseconds and subrequests. A user Worker in the dispatch namespace gets
+   * its caps per call from the dispatcher instead.
+   * https://developers.cloudflare.com/workers/wrangler/configuration/#limits
+   */
+  limits?: { cpu_ms?: number; subrequests?: number };
 }
 
 export interface WorkerObservability {

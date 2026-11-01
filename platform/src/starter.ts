@@ -26,6 +26,7 @@
 
 import {
   HOSTED_CONTRACT_VERSION,
+  HOSTED_ERRORS,
   SIGNED_CALL_HEADERS,
   TENANT_CALL_PATHS,
   TENANT_NOT_READY_ERROR,
@@ -43,33 +44,60 @@ import {
 } from "../../src/shared/hosted-contract";
 import { TenantCapability, type TenantMail } from "./capability";
 import type { DispatchLimits, DispatchResult, DispatchTarget, TenantDispatcher } from "./dispatch";
-import { tenantCallSecret } from "./keys";
+import { starterCallSecrets } from "./keys";
 import { log } from "./log";
 import { TENANT_COLUMNS, tenantFromRow, tenantInfo, type TenantRecord, type TenantRow } from "./tenants";
 
-/** Keys are derived once per isolate per tenant, and forgotten after this long (a rotated secret takes effect within it). */
-export const CALL_KEYS_CACHE_MS = 5 * 60_000;
+/**
+ * A tenant's keys are kept this long per isolate. Short, because a rotation or
+ * a move to Workers for Platforms must stop the old secret being accepted
+ * everywhere soon: forgetCallKeys clears only this isolate's copy.
+ */
+export const CALL_KEYS_CACHE_MS = 30_000;
+/** An id with no keys (unknown, or not a starter tenant) is remembered this long, so forged ids cost one lookup each. */
+export const UNKNOWN_TENANT_CACHE_MS = 60_000;
 const CALL_KEYS_CACHE_MAX = 1_000;
-const keyCache = new Map<string, { keys: CallKeys; until: number }>();
+
+/** A starter tenant's keys: the current secret's, and a rotation's next one's while it waits. */
+export interface TenantCallKeys {
+  current: CallKeys;
+  next: CallKeys | null;
+}
+
+const keyCache = new Map<string, { keys: TenantCallKeys | null; until: number }>();
 
 /** Tests only. */
 export function clearCallKeyCache(): void {
   keyCache.clear();
 }
 
-/** A tenant's two call keys, from its sealed secret; null for a tenant without one (dispatch tenants, unknown ids). */
-export async function callKeysFor(db: D1Database, tenantId: string, platformKey: string, now: number = Date.now()): Promise<CallKeys | null> {
+/** True when the keys of `tenantId` are in this isolate's cache (known or known to be missing), so looking them up costs nothing. */
+export function callKeysCached(tenantId: string, now: number = Date.now()): boolean {
+  const hit = keyCache.get(tenantId);
+  return !!hit && hit.until > now;
+}
+
+/**
+ * A starter tenant's call keys, from its sealed secrets; null for anything
+ * else (an unknown id, a dispatch tenant, a tenant that moved to Workers for
+ * Platforms), cached either way.
+ */
+export async function tenantCallKeys(db: D1Database, tenantId: string, platformKey: string, now: number = Date.now()): Promise<TenantCallKeys | null> {
   const hit = keyCache.get(tenantId);
   if (hit && hit.until > now) return hit.keys;
-  const secret = await tenantCallSecret(db, tenantId, platformKey);
-  if (!secret) return null;
-  const keys = await deriveCallKeys(secret);
+  const secrets = await starterCallSecrets(db, tenantId, platformKey);
+  const keys = secrets ? { current: await deriveCallKeys(secrets.current), next: secrets.next ? await deriveCallKeys(secrets.next) : null } : null;
   if (keyCache.size >= CALL_KEYS_CACHE_MAX) keyCache.delete(keyCache.keys().next().value!);
-  keyCache.set(tenantId, { keys, until: now + CALL_KEYS_CACHE_MS });
+  keyCache.set(tenantId, { keys, until: now + (keys ? CALL_KEYS_CACHE_MS : UNKNOWN_TENANT_CACHE_MS) });
   return keys;
 }
 
-/** Forgets a tenant's cached keys (its secret changed, or it was removed). */
+/** The keys the platform signs its own calls to a starter tenant with: the current secret's. */
+export async function callKeysFor(db: D1Database, tenantId: string, platformKey: string, now: number = Date.now()): Promise<CallKeys | null> {
+  return (await tenantCallKeys(db, tenantId, platformKey, now))?.current ?? null;
+}
+
+/** Forgets a tenant's cached keys (its secret changed, it moved, or it was removed). */
 export function forgetCallKeys(tenantId: string): void {
   keyCache.delete(tenantId);
 }
@@ -146,6 +174,28 @@ export interface TenantCallDeps {
   platformKey: string | null;
   mail: TenantMail | null;
   now: number;
+  /** The caller's address, for the rate limit. */
+  clientIp?: string | null;
+  /** The TENANT_CALL_RATE_LIMIT binding, when the platform has one: caps key lookups per caller. */
+  rateLimit?: RateLimit | null;
+}
+
+/** At most one refusal line per isolate this often, with how many were left out. */
+export const REFUSAL_LOG_EVERY_MS = 10_000;
+let refusalLog = { until: 0, suppressed: 0 };
+
+/** Tests only. */
+export function resetRefusalLog(): void {
+  refusalLog = { until: 0, suppressed: 0 };
+}
+
+function logRefusal(now: number, detail: Record<string, unknown>): void {
+  if (now < refusalLog.until) {
+    refusalLog.suppressed++;
+    return;
+  }
+  log.warn("tenant_call.refused", { ...detail, suppressed: refusalLog.suppressed });
+  refusalLog = { until: now + REFUSAL_LOG_EVERY_MS, suppressed: 0 };
 }
 
 const notFound = () => Response.json({ error: "not_found" }, { status: 404, headers: { "cache-control": "no-store" } });
@@ -177,41 +227,70 @@ export async function handleTenantCall(request: Request, deps: TenantCallDeps): 
   const known = (Object.values(TENANT_CALL_PATHS) as string[]).includes(path);
   if (!known || request.method !== "POST" || !deps.platformKey) return notFound();
   const platformKey = deps.platformKey;
-  const verified = await verifySignedRequest(request, {
-    direction: "tenant-to-platform",
-    now: deps.now,
-    keysFor: (id) => callKeysFor(deps.db, id, platformKey, deps.now),
-  });
+  let found: TenantCallKeys | null = null;
+  let limited = false;
+  const lookup = async (id: string): Promise<TenantCallKeys | null> => {
+    // A lookup this isolate hasn't cached costs a database read: capped per caller.
+    if (!callKeysCached(id, deps.now) && deps.rateLimit) {
+      try {
+        const { success } = await deps.rateLimit.limit({ key: deps.clientIp ?? "unknown" });
+        if (!success) {
+          limited = true;
+          return null;
+        }
+      } catch {
+        // A rate limiter that fails never fails the call.
+      }
+    }
+    found = await tenantCallKeys(deps.db, id, platformKey, deps.now);
+    return found;
+  };
+  let verified = await verifySignedRequest(request, { direction: "tenant-to-platform", now: deps.now, keysFor: async (id) => (await lookup(id))?.current ?? null });
+  // During a rotation the tenant may already sign with the next secret.
+  const waiting = (found as TenantCallKeys | null)?.next ?? null;
+  let usedNext = false;
+  if (!verified.ok && verified.error === "bad_signature" && waiting && verified.request) {
+    verified = await verifySignedRequest(verified.request, { direction: "tenant-to-platform", now: deps.now, keysFor: async () => waiting });
+    usedNext = verified.ok;
+  }
+  if (limited) return Response.json({ error: "rate_limited" }, { status: 429, headers: { "cache-control": "no-store", "retry-after": "60" } });
   if (!verified.ok) {
-    log.warn("tenant_call.refused", { path, reason: verified.error });
+    logRefusal(deps.now, { path, reason: verified.error });
     return notFound();
   }
   const { tenantId, nonce } = verified;
   if (!(await recordTenantCallNonce(deps.db, tenantId, nonce, verified.nonceExpiresAt, deps.now))) {
-    log.warn("tenant_call.refused", { path, tenant: tenantId, reason: "replayed" });
+    logRefusal(deps.now, { path, tenant: tenantId, reason: "replayed" });
     return notFound();
   }
-  const keys = (await callKeysFor(deps.db, tenantId, platformKey, deps.now))!;
+  // Answered with the keys of the secret the call was signed with.
+  const used = found as TenantCallKeys | null;
+  const keys = usedNext && waiting ? waiting : used!.current;
   const answer = (status: number, body: unknown) =>
     signResponse({ status, body: JSON.stringify(body) }, { requestDirection: "tenant-to-platform", tenantId, requestNonce: nonce, keys });
 
+  // What dispatch mode allows: nothing for a tenant being removed; while it is
+  // set up, its platform calls' capability; once ready, everything, and while
+  // suspended only its description (so it shows the paused page) and email,
+  // which the capability itself refuses for a paused tenant.
   const tenant = await tenantById(deps.db, tenantId);
-  if (!tenant) return answer(409, { error: TENANT_NOT_READY_ERROR });
+  if (!tenant || tenant.provisionState === "deleting") return answer(409, { error: TENANT_NOT_READY_ERROR });
   let body: unknown;
   try {
     body = JSON.parse((await verified.request.text()) || "null");
   } catch {
     return answer(400, { error: "invalid_request" });
   }
-
   if (path === TENANT_CALL_PATHS.info) {
     if (tenant.provisionState !== "ready") return answer(409, { error: TENANT_NOT_READY_ERROR });
     const info: TenantInfoAnswer = { contract: HOSTED_CONTRACT_VERSION, tenant: tenantInfo(tenant, deps.hostedDomain) };
     return answer(200, info);
   }
+  if (tenant.provisionState === "requested" || tenant.provisionState === "db_created") return answer(409, { error: TENANT_NOT_READY_ERROR });
   const capability = new TenantCapability(deps.db, tenant.id, tenant.accountId, () => deps.now, deps.mail);
   try {
     if (path === TENANT_CALL_PATHS.sendEmail) return answer(200, await capability.sendEmail(body as HostedEmail));
+    if (tenant.status === "suspended") return answer(403, { error: HOSTED_ERRORS.tenantSuspended });
     if (path === TENANT_CALL_PATHS.reportUsage) await capability.reportUsage(body as UsageCounts);
     else await capability.audit(body as HostedAuditEvent);
   } catch (error) {

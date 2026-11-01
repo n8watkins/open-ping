@@ -11,21 +11,24 @@
  *      (no HOSTED_TRANSPORT, no PLATFORM_URL, no call secret);
  *   2. call its health through the namespace: it must answer ok on that
  *      version, or nothing else changes and the starter Worker keeps serving;
- *   3. record it as a dispatch tenant: from here the platform calls it
- *      through the namespace;
- *   4. point its Custom Domain at the platform Worker (custom_domains
- *      addresses), or detach it (the domain moved to a wildcard route);
- *   5. delete the old account Worker and its call secret.
+ *   3. record it as a dispatch tenant and delete its call secret, in one
+ *      batch: from here the platform calls it through the namespace, and
+ *      the starter Worker can't sign for it any more;
+ *   4. move its Custom Domain to the platform Worker in place (one update,
+ *      so the hostname never stops answering; repointTenantAddress);
+ *   5. delete the old account Worker.
  *
  * Visitors are served throughout: by the starter Worker until step 4, by
- * the dispatched one after. Running it again after a failure picks up where
+ * the dispatched one after. Between steps 3 and 4 (one API call) the starter
+ * Worker can't refresh its description, so it serves the one it has (up to
+ * 10 minutes old) and only an isolate with none answers 503. Running it again after a failure picks up where
  * it stopped: a tenant already recorded as dispatch goes straight to steps 4
  * and 5. The region probes' Durable Object storage (short-lived re-check
  * state) starts empty in the new Worker.
  */
 
 import { PLATFORM_HEALTH_PATH, type HealthResponse } from "../../src/shared/hosted-contract";
-import { tenantHostname, removeTenantAddress, ensureTenantAddress } from "./addresses";
+import { repointTenantAddress, tenantHostname } from "./addresses";
 import { callTenant } from "./dispatch";
 import { PermanentError } from "./errors";
 import { activeEscrowedKey, openEscrowedKey } from "./keys";
@@ -75,7 +78,9 @@ export async function moveTenantToDispatch(deps: ProvisioningDeps, tenantId: str
       const escrowed = await activeEscrowedKey(deps.db, record.id);
       if (!escrowed) throw new PermanentError("it has no escrowed MASTER_KEY");
       const masterKey = await openEscrowedKey(escrowed, record.id, deps.config.platformKey);
-      const bundle = await deps.bundles.current();
+      // Its own recorded version: a move changes where it runs, never what it runs.
+      if (!record.version || !deps.bundles.version) throw new PermanentError("its recorded release isn't available to upload again");
+      const bundle = await deps.bundles.version(record.version);
       // A clean script in the namespace, whatever an earlier try left there.
       await deps.api.deleteScript(deps.config.namespace, record.scriptName);
       await uploadTenant({ db: deps.db, api: deps.api, config: deps.config, tenant: asDispatch, bundle, d1Id, masterKey, previousMigrationTag: null, now });
@@ -89,27 +94,27 @@ export async function moveTenantToDispatch(deps: ProvisioningDeps, tenantId: str
       }
 
       step = "record";
-      await deps.db
-        .prepare("UPDATE tenants SET runtime = 'dispatch', version = ?, do_migration_tag = ?, do_migration_pending = NULL, updated_at = ? WHERE id = ? AND runtime = 'starter'")
-        .bind(bundle.version, bundle.migrations.at(-1)?.tag ?? null, now, record.id)
-        .run();
+      // One batch: from the moment it runs in the namespace, its secret is
+      // gone, so the starter Worker left behind can never speak for it again.
+      await deps.db.batch([
+        deps.db
+          .prepare("UPDATE tenants SET runtime = 'dispatch', version = ?, do_migration_tag = ?, do_migration_pending = NULL, updated_at = ? WHERE id = ? AND runtime = 'starter'")
+          .bind(bundle.version, bundle.migrations.at(-1)?.tag ?? null, now, record.id),
+        deps.db.prepare("DELETE FROM tenant_call_secrets WHERE tenant_id = ?").bind(record.id),
+      ]);
+      forgetCallKeys(record.id);
       forgetTenant(record.slug);
       version = bundle.version;
     }
 
     step = "address";
-    const addresses = addressDeps(deps, now);
-    // The starter Worker's own Custom Domain: by its recorded id while the
-    // tenant was still a starter one; on a second try, found by hostname,
-    // and then only if it still routes to the starter Worker.
-    await removeTenantAddress(addresses, { ...record, runtime: "starter" }, record.runtime === "starter" ? loaded.customDomainId : null);
-    const newDomainId = await ensureTenantAddress(addresses, asDispatch);
+    // The same Custom Domain, moved to the platform Worker in place, so the
+    // hostname never stops answering.
+    const newDomainId = await repointTenantAddress(addressDeps(deps, now), asDispatch, loaded.customDomainId);
     await deps.db.prepare("UPDATE tenants SET custom_domain_id = ? WHERE id = ?").bind(newDomainId, record.id).run();
 
     step = "cleanup";
     await deps.api.deleteScript(null, record.scriptName);
-    await deps.db.prepare("DELETE FROM tenant_call_secrets WHERE tenant_id = ?").bind(record.id).run();
-    forgetCallKeys(record.id);
     await audit(deps.db, record, "tenant.moved_to_dispatch", now, { version, hostname: tenantHostname(record.slug, deps.config.hostedDomain) });
     return { kind: "moved", tenantId, version };
   } catch (error) {

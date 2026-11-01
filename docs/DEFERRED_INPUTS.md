@@ -102,6 +102,11 @@ Your decisions: whether to start this way, and when to move (below).
   It lowers break-even from about 16 customers to about 3; the costs at 10, 50 and 200 customers are in [HOSTED_PLAN.md](./HOSTED_PLAN.md#starting-cheaper-starter-mode-on-workers-paid-alone).
   To switch it on (together): `TENANT_MODE` `starter`, the `dispatch_namespaces` block removed from `platform/wrangler.jsonc`, and no dispatch namespace to create.
 - **The API token** for either: the account's **Workers Scripts: Edit** and **D1: Edit**, plus on the zone **Workers Routes: Edit** (the Custom Domains) and **DNS: Read** (the check that a name isn't one of yours).
+  Cloudflare can't narrow these to Hosted's own Workers, databases and hostnames: on your current account and the `n8builds.dev` zone, the token could also change or delete openping.n8builds.dev's own Worker and database, your portfolio sites' Workers, and every Worker route and Custom Domain on `n8builds.dev`, and read all of its DNS records.
+  The platform only ever touches `t-<id>` Workers, `openping-t-<id>` databases and `<name>.openping.n8builds.dev`, but a leaked token wouldn't be so careful.
+- [ ] **Decide (you): where Hosted lives.** Either accept that wider token on your current account and zone, or give Hosted a Cloudflare account of its own (free to create; Workers Paid is then $5 on that account) and, for the addresses, a zone of its own (a dedicated domain, or a subdomain delegated to that account), so the token can reach nothing else of yours.
+  A separate account is the recommendation once real customers are on it; the code works the same either way.
+- [ ] **A WAF rate limiting rule (together), with starter mode:** on `app.<domain>/__tenant/v1/*`, about 600 requests a minute per IP, so a flood of forged calls is stopped before it reaches the platform (the platform also has its own limit, `TENANT_CALL_RATE_LIMIT`).
 - **Moving later:** turn on Workers for Platforms, create the namespace, set `TENANT_MODE` back to `dispatch`, then press "Move to Workers for Platforms" on each customer's admin page; data stays where it is and visitors are served throughout.
   Do it before about 80 customers ([platform/README.md, "Moving to Workers for Platforms"](../platform/README.md#moving-to-workers-for-platforms)).
 

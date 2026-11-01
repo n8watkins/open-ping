@@ -14,10 +14,13 @@ ALTER TABLE tenants ADD COLUMN runtime TEXT NOT NULL DEFAULT 'dispatch' CHECK (r
 -- Each starter tenant's PLATFORM_CALL_SECRET, encrypted with PLATFORM_KEY
 -- (AES-256-GCM, bound to its tenant id, like escrowed_keys), set on that
 -- tenant's Worker only. One per tenant, never shared; deleted with the tenant.
+-- While a rotation is under way the new one waits in next_ciphertext, and
+-- both are accepted until the tenant's Worker has it (rotateCallSecret).
 CREATE TABLE tenant_call_secrets (
-  tenant_id  TEXT PRIMARY KEY,
-  ciphertext TEXT NOT NULL,              -- v1:<iv>:<ciphertext>, base64url
-  created_at INTEGER NOT NULL
+  tenant_id       TEXT PRIMARY KEY,
+  ciphertext      TEXT NOT NULL,         -- v1:<iv>:<ciphertext>, base64url
+  next_ciphertext TEXT,                  -- the same form, during a rotation
+  created_at      INTEGER NOT NULL
 );
 
 -- Nonces of starter tenants' signed calls to the platform, each recorded once

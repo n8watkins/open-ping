@@ -25,7 +25,7 @@
  * Worker's Custom Domain.
  */
 
-import type { CloudflareApi } from "./cloudflare/api";
+import { CloudflareApiError, type CloudflareApi } from "./cloudflare/api";
 import { PermanentError } from "./errors";
 import { log } from "./log";
 import type { TenantRecord, TenantRuntime } from "./tenants";
@@ -272,5 +272,41 @@ export async function removeTenantAddress(
   if (await deps.api.detachCustomDomain(id)) {
     await bumpCapacity(deps.db, "custom_domains", -1);
     log.info("address.detached", { tenant: tenant.id, hostname });
+  }
+}
+
+/**
+ * Moves the tenant's own Custom Domain (its recorded id) to the Worker it now
+ * runs on, in place: one PUT of the same hostname with the new Worker, so it
+ * never stops answering. Cloudflare's reference doesn't say whether that PUT
+ * moves a hostname already attached to another Worker (Wrangler can, after
+ * asking to override it); when the API refuses, the domain is detached
+ * and attached again at once, a gap of about a second, logged as such.
+ * Resolves the domain's id now, or null for wildcard addresses.
+ */
+export async function repointTenantAddress(
+  deps: AddressDeps,
+  tenant: Pick<TenantRecord, "id" | "slug" | "scriptName" | "runtime">,
+  recordedId: string | null,
+): Promise<string | null> {
+  if (deps.addresses.kind !== "custom_domains") return null;
+  const { zoneId } = deps.addresses;
+  const hostname = tenantHostname(tenant.slug, deps.hostedDomain);
+  const service = addressService(deps.addresses, tenant);
+  const existing = await deps.api.findCustomDomain(zoneId, hostname);
+  if (!existing) return ensureTenantAddress(deps, tenant, null);
+  if (existing.id !== recordedId) throw new PermanentError(`${hostname}'s Custom Domain isn't the one recorded for this tenant; it is never taken over`);
+  if (existing.service === service) return existing.id;
+  try {
+    const moved = await deps.api.attachCustomDomain({ hostname, service, zoneId });
+    log.info("address.repointed", { tenant: tenant.id, hostname, service, inPlace: true });
+    return moved.id;
+  } catch (error) {
+    if (!(error instanceof CloudflareApiError) || error.retryable) throw error;
+    log.warn("address.repoint_fallback", { tenant: tenant.id, hostname, service, error });
+    await deps.api.detachCustomDomain(existing.id);
+    const attached = await deps.api.attachCustomDomain({ hostname, service, zoneId });
+    log.info("address.repointed", { tenant: tenant.id, hostname, service, inPlace: false });
+    return attached.id;
   }
 }

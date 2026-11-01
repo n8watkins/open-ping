@@ -92,6 +92,12 @@ export class FakeCloudflareApi implements CloudflareApi {
   readonly dnsRecords = new Map<string, DnsRecordInfo[]>();
   /** Cloudflare's limit of Custom Domains per zone. */
   customDomainLimit = 100;
+  /**
+   * Whether attaching a hostname that is already a Custom Domain of another
+   * Worker moves it to the new one in place (same id, no gap). Cloudflare's
+   * reference doesn't say; false makes it refuse, to test the fallback.
+   */
+  repointInPlace = true;
   /** Called after a script upload or delete takes effect (to register a fake user Worker). */
   onScriptChange?: (scriptName: string, script: FakeScript | null) => void;
 
@@ -298,7 +304,9 @@ export class FakeCloudflareApi implements CloudflareApi {
       if (existing) {
         // Attaching the same hostname to the same Worker again changes nothing.
         if (existing.service === input.service) return existing;
-        refuse(409, 100116, "Hostname is already attached to another Worker");
+        if (!this.repointInPlace) refuse(409, 100116, "Hostname is already attached to another Worker");
+        existing.service = input.service;
+        return existing;
       }
       if ([...this.customDomains.values()].filter((d) => d.zoneId === input.zoneId).length >= this.customDomainLimit) {
         refuse(400, 100118, "The zone has reached its limit of Custom Domains");

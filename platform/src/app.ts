@@ -104,6 +104,8 @@ function appHost(deps: AppDeps): Hono<Platform> {
       platformKey: isValidPlatformKey(c.env.PLATFORM_KEY) ? c.env.PLATFORM_KEY : null,
       mail: tenantMailFromEnv(c.env, accounts.mailer(c.env)),
       now: (deps.now ?? Date.now)(),
+      clientIp: c.req.header("cf-connecting-ip") ?? null,
+      rateLimit: c.env.TENANT_CALL_RATE_LIMIT ?? null,
     }),
   );
   // Before the account routes: /admin answers its own 404 to everyone but the owner.

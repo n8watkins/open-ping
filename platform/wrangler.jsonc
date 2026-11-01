@@ -134,6 +134,14 @@
       "name": "HEALTH_RATE_LIMIT",
       "namespace_id": "4601",
       "simple": { "limit": 60, "period": 60 }
+    },
+    // Starter tenants' calls to app.<domain>/__tenant/v1/ (src/starter.ts):
+    // per caller, only the calls whose tenant keys the isolate hasn't
+    // cached, which cost a database read; a forged tenant id is one of those.
+    {
+      "name": "TENANT_CALL_RATE_LIMIT",
+      "namespace_id": "4602",
+      "simple": { "limit": 600, "period": 60 }
     }
   ],
   // Every minute: the scheduler enqueues the due customers (src/scheduling.ts),

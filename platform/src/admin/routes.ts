@@ -27,6 +27,7 @@ import { LIMITS, hitInOrder } from "../auth/rate-limit";
 import { readSession, type Session } from "../auth/sessions";
 import { callTenant, type TenantDispatcher } from "../dispatch";
 import { moveTenantToDispatch } from "../tenant-move";
+import { rotateCallSecret } from "../tenant-upload";
 import type { PlatformEnv } from "../env";
 import { handoffUrl, mintHandoffToken } from "../handoff";
 import { appOrigin, requestTenantOrigin } from "../hosts";
@@ -120,6 +121,8 @@ const FLASH: Record<string, { message: string; tone: "ok" | "error" }> = {
   "support-off": { message: "Support sign-in isn't available: HANDOFF_SIGNING_KEY isn't set.", tone: "error" },
   moved: { message: "Moved to Workers for Platforms: the platform calls it through the namespace and its address points at the platform.", tone: "ok" },
   "move-refused": { message: "It can't be moved now: it must be a ready starter tenant, with DISPATCH_NAMESPACE set. Nothing was changed.", tone: "error" },
+  "secret-rotated": { message: "Its call secret was rotated: its Worker has the new one, and the old one is refused (by other isolates within 30 seconds).", tone: "ok" },
+  "secret-not-rotated": { message: "The rotation didn't finish; the platform's logs say why. Both secrets are accepted until it does, and rotating again replaces the waiting one.", tone: "error" },
   "move-failed": { message: "The move stopped before it finished; the audit log and the platform's logs say at which step. Moving it again picks up from there.", tone: "error" },
 };
 
@@ -357,6 +360,17 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
       const outcome = await moveTenantToDispatch(setup.deps, tenant.id);
       await ownerAudit(c, tenant, "tenant.move_requested", { result: outcome.kind, ...(outcome.kind === "failed" ? { step: outcome.step } : {}) });
       return pageOf(tenant, outcome.kind === "moved" ? "moved" : outcome.kind === "refused" ? "move-refused" : "move-failed");
+    }),
+  );
+
+  app.post(
+    "/tenants/:id/rotate-call-secret",
+    tenantAction(async (c, tenant) => {
+      const setup = deps.provisioning(c.env, c.executionCtx as ExecutionContext);
+      if (!setup.ok) return pageOf(tenant, "provisioning-off");
+      const outcome = await rotateCallSecret(setup.deps, tenant.id);
+      await ownerAudit(c, tenant, "tenant.call_secret_rotation_requested", { result: outcome.kind });
+      return pageOf(tenant, outcome.kind === "rotated" ? "secret-rotated" : "secret-not-rotated");
     }),
   );
 

@@ -153,6 +153,26 @@ export async function openCallSecret(ciphertext: string, tenantId: string, platf
   return secret;
 }
 
+/**
+ * A starter tenant's call secrets, opened: the current one and, during a
+ * rotation, the next. Null for a tenant without one, or that no longer runs
+ * in starter mode (a moved tenant's secret is never accepted).
+ */
+export async function starterCallSecrets(db: D1Database, tenantId: string, platformKey: string): Promise<{ current: string; next: string | null } | null> {
+  const row = await db
+    .prepare(
+      `SELECT s.ciphertext, s.next_ciphertext FROM tenant_call_secrets s JOIN tenants t ON t.id = s.tenant_id
+       WHERE s.tenant_id = ? AND t.runtime = 'starter'`,
+    )
+    .bind(tenantId)
+    .first<{ ciphertext: string; next_ciphertext: string | null }>();
+  if (!row) return null;
+  return {
+    current: await openCallSecret(row.ciphertext, tenantId, platformKey),
+    next: row.next_ciphertext ? await openCallSecret(row.next_ciphertext, tenantId, platformKey) : null,
+  };
+}
+
 /** The tenant's call secret, opened, or null when it has none (a dispatch tenant). */
 export async function tenantCallSecret(db: D1Database, tenantId: string, platformKey: string): Promise<string | null> {
   const row = await db.prepare("SELECT ciphertext FROM tenant_call_secrets WHERE tenant_id = ?").bind(tenantId).first<{ ciphertext: string }>();

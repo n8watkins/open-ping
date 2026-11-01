@@ -461,3 +461,146 @@ describe("moving a starter tenant to Workers for Platforms", () => {
     expect(w.api.customDomainAt(`stayco.${DOMAIN}`)).toMatchObject({ service: `t-${id}` });
   });
 });
+
+describe("the security review's cases", () => {
+  const appWith = (extra: Partial<PlatformEnv> = {}) => {
+    const app = createApp({ dispatcher: () => new FakeDispatcher(), capability: () => noopPlatform });
+    return async (request: Request) => {
+      const ctx = createExecutionContext();
+      const response = await app.fetch(request, { ...(env as unknown as PlatformEnv), HOSTED_DOMAIN: DOMAIN, PLATFORM_KEY, ...extra }, ctx);
+      await waitOnExecutionContext(ctx);
+      return response;
+    };
+  };
+  const signedCall = (path: string, body: unknown, tenantId: string, keys: CallKeys) =>
+    signRequest(
+      { method: "POST", url: `https://app.${DOMAIN}${path}`, body: JSON.stringify(body), headers: { "content-type": "application/json" } },
+      { direction: "tenant-to-platform", tenantId, keys, now: Date.now() },
+    );
+  const keysOf = (w: World, id: string) => deriveCallKeys(secretOf(w.api.scriptIn(null, `t-${id}`)!));
+  const secrets = async (id: string) =>
+    (await env.PLATFORM_DB.prepare("SELECT COUNT(*) AS n FROM tenant_call_secrets WHERE tenant_id = ?").bind(id).first<{ n: number }>())!.n;
+
+  it("refuses a tenant call from a tenant that no longer runs in starter mode, whatever secret it still holds", async () => {
+    const w = world();
+    const id = await starterTenant(w, "flippedco");
+    const keys = await keysOf(w, id);
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET runtime = 'dispatch' WHERE id = ?").bind(id).run();
+    clearCallKeyCache();
+    const response = await appWith()(await signedCall(TENANT_CALL_PATHS.info, {}, id, keys));
+    expect(response.status).toBe(404);
+  });
+
+  it("moves without the address ever going away, and closes the starter trust path even when cleanup fails", async () => {
+    const w = world();
+    const id = await starterTenant(w, "inplaceco");
+    const keys = await keysOf(w, id);
+    const before = w.api.customDomainAt(`inplaceco.${DOMAIN}`)!;
+    w.deps.config = { ...w.deps.config, namespace: "openping-tenants" };
+    // The namespace's clean slate goes through; the cleanup's delete of the starter Worker fails.
+    const original = w.api.deleteScript.bind(w.api);
+    w.api.deleteScript = (namespace, name) => (namespace === null ? Promise.reject(new Error("cleanup refused")) : original(namespace, name));
+    const outcome = await moveTenantToDispatch(w.deps, id);
+    expect(outcome).toMatchObject({ kind: "failed", step: "cleanup" });
+    // The hostname was re-pointed in place: never detached, the same domain.
+    expect(w.api.count("detachCustomDomain")).toBe(0);
+    expect(w.api.customDomainAt(`inplaceco.${DOMAIN}`)).toMatchObject({ id: before.id, service: "openping-platform" });
+    // The secret went with the flip, so the starter Worker left behind can't speak for the tenant.
+    expect(await secrets(id)).toBe(0);
+    clearCallKeyCache();
+    expect((await appWith()(await signedCall(TENANT_CALL_PATHS.info, {}, id, keys))).status).toBe(404);
+    // A second run finishes the cleanup.
+    w.api.deleteScript = original;
+    expect(await moveTenantToDispatch(w.deps, id)).toMatchObject({ kind: "moved" });
+    expect(w.api.scriptIn(null, `t-${id}`)).toBeUndefined();
+  });
+
+  it("re-points by detaching and attaching only when the API won't change a domain's Worker in place", async () => {
+    const w = world();
+    const id = await starterTenant(w, "fallbackco");
+    w.api.repointInPlace = false;
+    w.deps.config = { ...w.deps.config, namespace: "openping-tenants" };
+    expect(await moveTenantToDispatch(w.deps, id)).toMatchObject({ kind: "moved" });
+    expect(w.api.customDomainAt(`fallbackco.${DOMAIN}`)).toMatchObject({ service: "openping-platform" });
+  });
+
+  it("moves the tenant on its own recorded version, not the current release", async () => {
+    const w = world();
+    const id = await starterTenant(w, "versionco");
+    const newer = { ...BUNDLE, version: "0.19.0" };
+    w.deps.bundles = { current: async () => newer, version: async (v: string) => (v === BUNDLE.version ? BUNDLE : newer) };
+    w.deps.config = { ...w.deps.config, namespace: "openping-tenants" };
+    expect(await moveTenantToDispatch(w.deps, id)).toEqual({ kind: "moved", tenantId: id, version: BUNDLE.version });
+    expect(w.api.scriptIn("openping-tenants", `t-${id}`)!.metadata.tags).toContain(`release-${BUNDLE.version}`);
+  });
+
+  it("allows a suspended or departing tenant only what dispatch mode does", async () => {
+    const w = world();
+    const id = await starterTenant(w, "pausedco");
+    const keys = await keysOf(w, id);
+    const send = appWith();
+    const usage = { monitors: 1, statusPages: 1, channels: 0, at: Date.now() };
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET status = 'suspended' WHERE id = ?").bind(id).run();
+    clearTenantCache();
+    expect((await send(await signedCall(TENANT_CALL_PATHS.reportUsage, usage, id, keys))).status).toBe(403);
+    expect((await send(await signedCall(TENANT_CALL_PATHS.audit, { action: "session.created", actor: "customer", at: Date.now() }, id, keys))).status).toBe(403);
+    // It still learns it is paused, so it shows the paused page.
+    expect((await send(await signedCall(TENANT_CALL_PATHS.info, {}, id, keys))).status).toBe(200);
+    await env.PLATFORM_DB.prepare("UPDATE tenants SET status = 'active', provision_state = 'deleting' WHERE id = ?").bind(id).run();
+    for (const path of [TENANT_CALL_PATHS.info, TENANT_CALL_PATHS.reportUsage, TENANT_CALL_PATHS.audit, TENANT_CALL_PATHS.sendEmail]) {
+      expect((await send(await signedCall(path, path === TENANT_CALL_PATHS.reportUsage ? usage : {}, id, keys))).status, path).toBe(409);
+    }
+  });
+
+  it("costs one database read per unknown tenant id at most, rate limits the lookups per caller, and samples its logs", async () => {
+    const reads: string[] = [];
+    const db = new Proxy(env.PLATFORM_DB, {
+      get(target, prop) {
+        if (prop === "prepare") return (sql: string) => (reads.push(sql), target.prepare(sql));
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    const lines: string[] = [];
+    const { captureLogs } = await import("../src/log");
+    const restore = captureLogs((l) => lines.push(l.event));
+    try {
+      const forgedKeys = await deriveCallKeys(generatePlatformCallSecret());
+      const send = appWith({ PLATFORM_DB: db });
+      for (let i = 0; i < 20; i++) expect((await send(await signedCall(TENANT_CALL_PATHS.info, {}, "zzzzzzzzzzzzzzzz", forgedKeys))).status).toBe(404);
+      expect(reads.filter((sql) => /tenant_call_secrets|FROM tenants/.test(sql)).length).toBeLessThanOrEqual(1);
+      expect(lines.filter((e) => e === "tenant_call.refused").length).toBeLessThanOrEqual(2);
+      // With the rate limit binding refusing, no lookup happens at all.
+      reads.length = 0;
+      const limited = appWith({ PLATFORM_DB: db, TENANT_CALL_RATE_LIMIT: { limit: async () => ({ success: false }) } as RateLimit });
+      expect((await limited(await signedCall(TENANT_CALL_PATHS.info, {}, "yyyyyyyyyyyyyyyy", forgedKeys))).status).toBe(429);
+      expect(reads.filter((sql) => /tenant_call_secrets|FROM tenants/.test(sql))).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("caps a starter Worker's CPU and subrequests per invocation in its upload, as dispatch caps each call", async () => {
+    const w = world();
+    const id = await starterTenant(w, "limitsco");
+    expect(w.api.scriptIn(null, `t-${id}`)!.metadata.limits).toEqual({ cpu_ms: 15_000, subrequests: 1_000 });
+  });
+
+  it("rotates a tenant's call secret: a new one on its Worker and in the platform, the old one refused", async () => {
+    const w = world();
+    const id = await starterTenant(w, "rotateco");
+    const oldKeys = await keysOf(w, id);
+    const oldSecret = secretOf(w.api.scriptIn(null, `t-${id}`)!);
+    const { rotateCallSecret } = await import("../src/tenant-upload");
+    expect(await rotateCallSecret(w.deps, id)).toMatchObject({ kind: "rotated" });
+    const newSecret = secretOf(w.api.scriptIn(null, `t-${id}`)!);
+    expect(newSecret).not.toBe(oldSecret);
+    clearCallKeyCache();
+    const send = appWith();
+    expect((await send(await signedCall(TENANT_CALL_PATHS.info, {}, id, await deriveCallKeys(newSecret)))).status).toBe(200);
+    expect((await send(await signedCall(TENANT_CALL_PATHS.info, {}, id, oldKeys))).status).toBe(404);
+    // And the platform's calls to it use the new one.
+    const tenant = await record(id);
+    expect((await callTenant(w.deps.dispatcher, { tenant, hostedDomain: DOMAIN, platform: noopPlatform }, PLATFORM_HEALTH_PATH)).kind).toBe("response");
+  });
+});

@@ -54,6 +54,12 @@ export interface PlatformEnv {
   // --- Observability (C4, src/observability/) ---
   /** Optional rate limit binding for /__health and /healthz, per caller (platform/wrangler.jsonc, ratelimits). */
   HEALTH_RATE_LIMIT?: RateLimit;
+  /**
+   * Optional rate limit binding for starter tenants' calls (src/starter.ts):
+   * per caller, on the calls whose tenant keys this isolate hasn't cached,
+   * the ones that cost a database read (platform/wrangler.jsonc, ratelimits).
+   */
+  TENANT_CALL_RATE_LIMIT?: RateLimit;
 
   // --- Releases (C1, src/releases/) ---
   /** Var: the canary of every rollout that names none, as a slug or tenant id (the owner's own test tenant). */
