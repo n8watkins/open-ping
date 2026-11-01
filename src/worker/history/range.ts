@@ -421,6 +421,12 @@ export async function loadRangeHistory(
   const hourlyLatency =
     !useSamples && (range === "24h" || (spec.period === "day" && spec.buckets * DAY_MS <= HOURLY_LATENCY_MAX_MS));
 
+  // Every history row belongs to a monitor; naming them lets SQLite reach the
+  // rows in range through the (monitor_id, ...) indexes instead of reading the
+  // whole table (D1 bills every row read: about 30,000 a view on an install
+  // with two months of history and 20 monitors).
+  const scope = one ? "monitor_id = ?" : "monitor_id IN (SELECT id FROM monitors)";
+  const scopeBinds = one ? [monitorId] : [];
   const [idsRes, summaryRes, intervalRes, sampleRes, hourlyRes, incidentRes, countRow] = await Promise.all([
     (one
       ? env.DB.prepare("SELECT id FROM monitors WHERE id = ?").bind(monitorId)
@@ -432,39 +438,35 @@ export async function loadRangeHistory(
       `SELECT monitor_id, bucket_start, checks, ok_checks, sum_latency_ms,
               min_latency_ms, max_latency_ms${useSamples ? ", check_log" : ""}
          FROM summaries
-        WHERE period = ? AND bucket_start >= ? AND bucket_start < ?
-          ${one ? "AND monitor_id = ?" : ""}`,
+        WHERE ${scope} AND period = ? AND bucket_start >= ? AND bucket_start < ?`,
     )
-      .bind(...[spec.period, from, to, ...(one ? [monitorId] : [])])
+      .bind(...[...scopeBinds, spec.period, from, to])
       .all<SummaryBucketRow & { check_log?: string | null }>(),
     env.DB.prepare(
       `SELECT monitor_id, state, started_at, ended_at
          FROM status_intervals
-        WHERE started_at < ? AND (ended_at IS NULL OR ended_at > ?)
-          ${one ? "AND monitor_id = ?" : ""}`,
+        WHERE ${scope} AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`,
     )
-      .bind(...[to, from, ...(one ? [monitorId] : [])])
+      .bind(...[...scopeBinds, to, from])
       .all<IntervalRow>(),
     useSamples
       ? env.DB.prepare(
           `SELECT monitor_id, at, duration_ms
              FROM samples
-            WHERE ok = 1 AND duration_ms IS NOT NULL AND at >= ? AND at <= ?
-              ${one ? "AND monitor_id = ?" : ""}
+            WHERE ${scope} AND ok = 1 AND duration_ms IS NOT NULL AND at >= ? AND at <= ?
             ORDER BY at`,
         )
-          .bind(...[from, now, ...(one ? [monitorId] : [])])
+          .bind(...[...scopeBinds, from, now])
           .all<SampleRow>()
       : Promise.resolve({ results: [] as SampleRow[] }),
     hourlyLatency
       ? env.DB.prepare(
           `SELECT monitor_id, sum_latency_ms, ok_checks
              FROM summaries
-            WHERE period = 'hour' AND bucket_start >= ? AND bucket_start < ?
-              AND ok_checks > 0 AND max_latency_ms IS NOT NULL
-              ${one ? "AND monitor_id = ?" : ""}`,
+            WHERE ${scope} AND period = 'hour' AND bucket_start >= ? AND bucket_start < ?
+              AND ok_checks > 0 AND max_latency_ms IS NOT NULL`,
         )
-          .bind(...[from, to, ...(one ? [monitorId] : [])])
+          .bind(...[...scopeBinds, from, to])
           .all<{ monitor_id: string; sum_latency_ms: number; ok_checks: number }>()
       : Promise.resolve({ results: [] as { monitor_id: string; sum_latency_ms: number; ok_checks: number }[] }),
     env.DB.prepare(

@@ -6,6 +6,8 @@ import "../../src/worker/index";
 import { compactionStatements, resolveRetention } from "../../src/worker/history/rollups";
 import { PLAN_BUDGETS } from "../../src/worker/lib/budget";
 import { runScheduled } from "../../src/worker/scheduler";
+import { loadRangeHistory } from "../../src/worker/history/range";
+import { buildOverview } from "../../src/worker/routes/overview";
 import { rowsD1, type Rows } from "./d1-rows";
 
 // The history rollups (history/rollups.ts) recompute day and month buckets
@@ -128,6 +130,27 @@ describe("history rollups", () => {
     expect(idle.read).toBeLessThan(5_000);
   }, 60_000);
 
+  it("the all-monitors history and the Overview read only the rows in their range", async () => {
+    const now = Date.now();
+    const reads: Record<string, number> = {};
+    for (const range of ["24h", "7d", "30d", "90d"] as const) {
+      const rows = { read: 0, written: 0 };
+      await loadRangeHistory({ ...env, DB: rowsD1(env.DB, rows) }, range, now);
+      reads[range] = rows.read;
+    }
+    const rows = { read: 0, written: 0 };
+    await buildOverview({ ...env, DB: rowsD1(env.DB, rows) }, now);
+    reads.overview = rows.read;
+    // Measured 2026-10-31 on this install (20 monitors, 63 days of hour rows):
+    // 699, 3,500, 14,220 (30 days of hourly averages for the percentiles) and
+    // 141 rows, and 2,264 for the Overview. Before, each read the whole
+    // summaries table: about 30,000 rows a view (60,000 for 30 days).
+    expect(reads["24h"]).toBeLessThan(1_500);
+    expect(reads["7d"]).toBeLessThan(5_000);
+    expect(reads["30d"]).toBeLessThan(16_000);
+    expect(reads["90d"]).toBeLessThan(3_000);
+    expect(reads.overview).toBeLessThan(3_000);
+  });
   it("recomputes from the last run whose rollups landed, so a long streak of failed passes is repaired", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
