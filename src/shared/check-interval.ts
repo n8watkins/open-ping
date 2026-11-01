@@ -84,3 +84,65 @@ export function everyLabel(minutes: number): string {
   if (minutes === 60) return "every hour";
   return `every ${intervalLabel(minutes)}`;
 }
+
+/**
+ * Why a monitor is checked at the speed it is (effectiveIntervals in
+ * src/worker/lib/cadence.ts, the scheduler's own rule), in every monitor the
+ * API returns as `intervalReason` beside `effectiveIntervalSeconds`:
+ *
+ * - "set": at its own interval (a heartbeat always is).
+ * - "plan_minimum": slower, at the plan's shortest interval (OpenPing Hosted,
+ *   after a downgrade or a monitor brought over from a bigger plan).
+ * - "fast_monitor_limit": every 12 minutes, because more monitors are set
+ *   fast than the plan allows and older active ones keep their speed.
+ * - "install_schedule": every 12 minutes, the cron of an install of your own,
+ *   whatever is stored (a database brought over from Hosted may hold another).
+ */
+export const INTERVAL_REASONS = ["set", "plan_minimum", "fast_monitor_limit", "install_schedule"] as const;
+export type IntervalReason = (typeof INTERVAL_REASONS)[number];
+
+/** The few words in brackets after "Checked every ...", or null when it runs as set. */
+export function intervalReasonNote(reason: IntervalReason): string | null {
+  switch (reason) {
+    case "plan_minimum":
+      return "your plan's fastest";
+    case "fast_monitor_limit":
+      return "over your plan's fast monitors";
+    case "install_schedule":
+      return "this install's schedule";
+    default:
+      return null;
+  }
+}
+
+/** Whole minutes, at least one, for the labels. */
+function minutesOf(seconds: number): number {
+  return Math.max(1, Math.round(seconds / 60));
+}
+
+/**
+ * How often a polled monitor is checked, for the monitor's page and the CLI:
+ * "Checks every 12 minutes", or, when that differs from its setting,
+ * "Checked every 12 minutes (your plan's fastest)".
+ */
+export function checkedEveryText(effectiveSeconds: number, reason: IntervalReason): string {
+  const note = intervalReasonNote(reason);
+  const every = everyLabel(minutesOf(effectiveSeconds));
+  return note ? `Checked ${every} (${note})` : `Checks ${every}`;
+}
+
+/** The sentence that explains a difference, or null when the monitor runs as set. */
+export function intervalReasonDetail(storedSeconds: number, effectiveSeconds: number, reason: IntervalReason): string | null {
+  const set = everyLabel(minutesOf(storedSeconds));
+  const actual = everyLabel(minutesOf(effectiveSeconds));
+  switch (reason) {
+    case "plan_minimum":
+      return `Set to ${set}, but your plan's fastest is ${actual}. It goes back to ${set} once your plan allows it.`;
+    case "fast_monitor_limit":
+      return `Set to ${set}, but older monitors use all of your plan's fast checks, so it runs ${actual} until one of them is slowed down or removed, or your plan allows more.`;
+    case "install_schedule":
+      return `Set to ${set}, but this install checks every monitor on its ${minutesOf(effectiveSeconds)}-minute schedule.`;
+    default:
+      return null;
+  }
+}

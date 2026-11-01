@@ -6,10 +6,9 @@ import {
   type MonitorRow,
 } from "./db/monitors";
 import { isActiveAt, nextCheckAt } from "./lib/schedule";
-import { keptFastMonitorIds } from "../shared/check-interval";
 import {
   alignNextCheck,
-  checkIntervalSeconds,
+  effectiveIntervals,
   CRON_CADENCE,
   dueSlackMs,
   isUpkeepRun,
@@ -239,10 +238,12 @@ export async function runScheduled(
     // (lib/cadence.ts): 12 minutes on the cron, its own on the platform, and
     // never more fast monitors than the plan allows (active ones, then the oldest, keep their
     // speed, shared/check-interval.ts).
+    // The API reports the same numbers (effectiveIntervals), so a monitor's
+    // page says how often it really runs.
     const stored = await monitorsFromRows(env, (monitorsRes?.results ?? []) as MonitorRow[]);
-    const keptFast = cadence.fastMonitors === null ? undefined : keptFastMonitorIds(stored, cadence.fastMonitors);
+    const effective = effectiveIntervals(stored, cadence);
     const monitors = stored.map((m) => {
-      const intervalSeconds = checkIntervalSeconds(m, cadence, keptFast);
+      const intervalSeconds = effective.get(m.id)?.seconds ?? m.intervalSeconds;
       return intervalSeconds === m.intervalSeconds ? m : { ...m, intervalSeconds };
     });
     const settings = await settingsFromRows(

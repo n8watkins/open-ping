@@ -2,7 +2,6 @@ import { Hono, type Context, type Next } from "hono";
 import { z } from "zod";
 import {
   HOSTED_ERRORS,
-  fastMonitorAllowance,
   INTERNAL_HEADER,
   isPlatformCall,
   SCHEDULED_MAX_GAP_MS,
@@ -15,7 +14,7 @@ import { hostedProps } from "../lib/hosted";
 import { countingD1, type UsageCounter } from "../lib/budget";
 import { BUNDLE_VERSION, BUNDLED_SCHEMA_VERSION, ensureSchema, readSchemaState } from "../lib/migrate";
 import { runScheduled } from "../scheduler";
-import { platformCadence } from "../lib/cadence";
+import { planCadence } from "../lib/cadence";
 import { reportUsage } from "../db/usage";
 
 /**
@@ -114,7 +113,7 @@ platformRoutes.post(
       // and no more fast monitors than the plan allows.
       const { limits } = props.tenant;
       result = await runScheduled(controller, c.env, {
-        cadence: platformCadence(limits.minIntervalMinutes, fastMonitorAllowance(limits)),
+        cadence: planCadence(limits),
       });
     } catch (error) {
       // runScheduled handles everything after it holds the lease; this is its

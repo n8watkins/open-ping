@@ -57,6 +57,14 @@ function nextTick(result: RunResult, now: number): number {
   return Math.max(now + MINUTE, Math.ceil(nextScheduledCall(summary, now) / MINUTE) * MINUTE);
 }
 
+/** What the Overview (and so the Monitors list) reports for each monitor: "stored effective reason". */
+async function reported(cadence: Cadence): Promise<Record<string, string>> {
+  const { monitors } = await buildOverview(env, Date.now(), cadence);
+  return Object.fromEntries(
+    monitors.map((m) => [m.name, `${m.intervalSeconds} ${m.effectiveIntervalSeconds} ${m.intervalReason}`]),
+  );
+}
+
 async function samplesOf(id: string): Promise<number> {
   const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM samples WHERE monitor_id = ?").bind(id).first<{ n: number }>();
   return row?.n ?? 0;
@@ -189,6 +197,8 @@ describe("per-monitor intervals on the platform", () => {
     expect(await samplesOf(fast.id)).toBe(3);
     const stored = await env.DB.prepare("SELECT interval_seconds FROM monitors WHERE id = ?").bind(fast.id).first();
     expect(stored).toEqual({ interval_seconds: 60 });
+    // And the monitor's page says so, from the same rule.
+    expect(await reported(STANDARD)).toEqual({ Downgraded: "60 720 plan_minimum" });
   });
 
   it("checks no more fast monitors than the plan allows: the oldest keep their speed", async () => {
@@ -207,6 +217,14 @@ describe("per-monitor intervals on the platform", () => {
     expect(await samplesOf(slow.id)).toBe(1);
     const stored = await env.DB.prepare("SELECT COUNT(*) AS n FROM monitors WHERE interval_seconds = 60").first<{ n: number }>();
     expect(stored?.n).toBe(4);
+    // What the monitors' pages say matches what the scheduler did.
+    expect(await reported(capped)).toEqual({
+      Oldest: "60 60 set",
+      Older: "60 60 set",
+      Newer: "60 720 fast_monitor_limit",
+      Newest: "60 720 fast_monitor_limit",
+      Hourly: "3600 3600 set",
+    });
   });
 
   it("keeps one run record and does the upkeep once per 12 minutes", async () => {
@@ -390,5 +408,10 @@ describe("a plain install's cron", () => {
     expect(next!.next_check_at - (T0 + 24 * MINUTE)).toBeGreaterThanOrEqual(12 * MINUTE);
     const runs = await env.DB.prepare("SELECT COUNT(*) AS n FROM scheduler_runs").first<{ n: number }>();
     expect(runs?.n).toBe(3);
+    // The monitors' pages say every 12 minutes, and why.
+    expect(await reported(CRON_CADENCE)).toEqual({
+      "Brought over from Hosted": "60 720 install_schedule",
+      Hourly: "3600 720 install_schedule",
+    });
   });
 });

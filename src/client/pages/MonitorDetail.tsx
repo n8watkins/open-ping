@@ -26,6 +26,7 @@ import {
   formatShortDateTime,
 } from "../lib/format";
 import { STATE_META, type MonitorState } from "../../shared/states";
+import { checkedEveryText, intervalReasonDetail, type IntervalReason } from "../../shared/check-interval";
 import { monitorTypeLabel, type MonitorType } from "../lib/types";
 import { StatusPill } from "../components/ui/StatusPill";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
@@ -54,6 +55,9 @@ interface MonitorInfo {
   schedule: { mode: string } & Record<string, unknown>;
   heartbeatToken: string | null;
   intervalSeconds: number;
+  /** How often it is really checked, and why that isn't its setting (lib/monitor-intervals.ts). */
+  effectiveIntervalSeconds: number;
+  intervalReason: IntervalReason;
   graceSeconds: number | null;
   paused: boolean;
 }
@@ -295,6 +299,13 @@ export default function MonitorDetail() {
   // otherwise execute from the href (rel/target do not prevent that).
   const targetUrl = monitor.config.url ?? null;
   const safeTargetUrl = safeHttpUrl(targetUrl);
+  // Why it runs at another speed than it is set to (a plan's limits, or an
+  // install of your own's 12-minute schedule); null when it runs as set.
+  const intervalNote = intervalReasonDetail(
+    monitor.intervalSeconds,
+    monitor.effectiveIntervalSeconds,
+    monitor.intervalReason,
+  );
 
   // Per-type target fields (config is an untyped blob; read each defensively).
   const cfg = monitor.config as Record<string, unknown>;
@@ -608,9 +619,14 @@ export default function MonitorDetail() {
                 </>
               )}
             </div>
-            <span className="shrink-0 text-xs text-ink-faint">
-              Checks every {formatDuration(monitor.intervalSeconds)}
+            <span className="text-xs text-ink-faint sm:shrink-0">
+              {checkedEveryText(monitor.effectiveIntervalSeconds, monitor.intervalReason)}
             </span>
+            {intervalNote && (
+              <p className="basis-full text-xs text-ink-faint">
+                <span className="block max-w-2xl">{intervalNote}</span>
+              </p>
+            )}
           </div>
         )}
       </Card>
@@ -641,7 +657,7 @@ export default function MonitorDetail() {
             <ResponseCard
               history={history.data}
               range={range}
-              intervalSeconds={monitor.intervalSeconds}
+              intervalSeconds={monitor.effectiveIntervalSeconds}
               monitorName={monitor.name}
             />
           </div>

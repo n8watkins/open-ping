@@ -7,7 +7,8 @@ import { StatusPill } from "../ui/StatusPill";
 import { UptimeBar } from "../ui/UptimeBar";
 import { STATE_META, type MonitorState } from "../../../shared/states";
 import type { Schedule } from "../../../shared/schemas";
-import { scheduleLabel, scheduleTitle } from "./schedule-label";
+import { everyShort, scheduleLabel, scheduleTitle } from "./schedule-label";
+import { checkedEveryText, intervalReasonDetail } from "../../../shared/check-interval";
 
 export type MonitorAction = "pause" | "resume" | "delete";
 
@@ -124,6 +125,25 @@ function ScheduleCell({ schedule }: { schedule: Schedule | undefined }) {
     <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-ink-muted" title={scheduleTitle(schedule)}>
       <CalendarClock className="size-3.5 shrink-0 text-ink-faint" aria-hidden />
       <span className="truncate">{scheduleLabel(schedule)}</span>
+    </span>
+  );
+}
+
+/**
+ * How often a polled monitor is really checked, under its schedule. In amber,
+ * with the reason, when that isn't its setting (a plan's limits, or an
+ * install of your own's 12-minute schedule).
+ */
+function IntervalCell({ monitor }: { monitor: MonitorSummary }) {
+  if (monitor.type === "heartbeat") return null;
+  const differs = monitor.intervalReason !== "set";
+  const title = differs
+    ? `${checkedEveryText(monitor.effectiveIntervalSeconds, monitor.intervalReason)}. ${intervalReasonDetail(monitor.intervalSeconds, monitor.effectiveIntervalSeconds, monitor.intervalReason)}`
+    : checkedEveryText(monitor.effectiveIntervalSeconds, monitor.intervalReason);
+  return (
+    <span className={cn("block truncate text-[11px] tabular-nums", differs ? "text-degraded" : "text-ink-faint")} title={title}>
+      {everyShort(monitor.effectiveIntervalSeconds)}
+      {differs && <span className="sr-only"> ({title})</span>}
     </span>
   );
 }
@@ -308,6 +328,9 @@ export function MonitorRow({
         </span>
         <span className="hidden min-w-0 xl:block">
           <ScheduleCell schedule={schedule} />
+          <span className="mt-1 block pl-5">
+            <IntervalCell monitor={monitor} />
+          </span>
         </span>
         <ActionsMenu monitor={monitor} busy={busy} onAction={onAction} />
       </div>
@@ -322,6 +345,7 @@ export function MonitorRow({
         <div className="mt-3 flex flex-wrap items-center gap-2 pl-[1.625rem]">
           <StatusPill state={monitor.state} />
           <ScheduleCell schedule={schedule} />
+          <IntervalCell monitor={monitor} />
         </div>
         <dl className="mt-3 grid grid-cols-3 gap-3 pl-[1.625rem]">
           <div className="min-w-0">

@@ -3,6 +3,7 @@ import { newId, randomToken, sha256hex } from "../lib/ids";
 import { encryptConfig, decryptConfig, mergeSecrets } from "../lib/secret-config";
 import { MONITOR_TYPES, type MonitorType } from "../../shared/states";
 import { intervalSecondsOf } from "../../shared/schemas";
+import type { FastCandidate } from "../../shared/check-interval";
 import type {
   Assertion,
   ConfirmFailures,
@@ -165,6 +166,24 @@ export function monitorsFromRows(env: Env, rows: MonitorRow[]): Promise<MonitorR
 export async function listMonitors(env: Env): Promise<MonitorRecord[]> {
   const res = await listMonitorsStatement(env).all<MonitorRow>();
   return monitorsFromRows(env, res.results ?? []);
+}
+
+/**
+ * What effectiveIntervals needs of every monitor (lib/monitor-intervals.ts),
+ * without reading or decrypting their configs.
+ */
+export async function listIntervalCandidates(env: Env): Promise<FastCandidate[]> {
+  const res = await env.DB.prepare(
+    "SELECT id, type, interval_seconds, created_at, paused, enabled FROM monitors",
+  ).all<{ id: string; type: string; interval_seconds: number; created_at: number; paused: number; enabled: number }>();
+  return (res.results ?? []).map((r) => ({
+    id: r.id,
+    type: r.type,
+    intervalSeconds: r.interval_seconds,
+    createdAt: r.created_at,
+    paused: r.paused === 1,
+    enabled: r.enabled === 1,
+  }));
 }
 
 export async function getMonitor(

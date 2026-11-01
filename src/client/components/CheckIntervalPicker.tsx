@@ -1,8 +1,21 @@
 import { ArrowUpRight, Lock } from "lucide-react";
-import { CHECK_INTERVAL_CHOICES_MINUTES, everyLabel, intervalLabel } from "../../shared/check-interval";
+import {
+  CHECK_INTERVAL_CHOICES_MINUTES,
+  everyLabel,
+  intervalLabel,
+  intervalReasonDetail,
+  type IntervalReason,
+} from "../../shared/check-interval";
 import { STANDARD_CHECK_MINUTES, upgradeUrlFor } from "../../shared/hosted-contract";
 import type { FastUsage, PlanState } from "../lib/plan-limits";
 import { cn } from "../lib/cn";
+
+/** How often the saved monitor is really checked, as the server reports it (effectiveIntervalSeconds, intervalReason). */
+export interface StoredEffective {
+  intervalSeconds: number;
+  effectiveSeconds: number;
+  reason: IntervalReason;
+}
 
 /**
  * How often a polled monitor is checked, on OpenPing Hosted (shared/
@@ -16,6 +29,7 @@ export function CheckIntervalPicker({
   plan,
   value,
   stored,
+  storedEffective,
   fast,
   onChange,
 }: {
@@ -24,6 +38,11 @@ export function CheckIntervalPicker({
   value: number;
   /** The saved interval, in minutes, when editing: always selectable again, as the server keeps it. */
   stored?: number;
+  /**
+   * How often the saved monitor is really checked (the server's word, from the
+   * scheduler's own rule), shown while the saved interval is the one chosen.
+   */
+  storedEffective?: StoredEffective;
   /** Fast monitor usage around this monitor (lib/plan-limits.ts), on a plan with fast checks. */
   fast?: FastUsage | null;
   onChange: (minutes: number) => void;
@@ -45,6 +64,15 @@ export function CheckIntervalPicker({
   const slowed = !!fast && isFast(value) && value >= min && value === stored && !fast.kept;
   const effective = slowed ? STANDARD_CHECK_MINUTES : Math.max(value, min);
   const used = fast ? fast.others + (isFast(value) && value >= min ? 1 : 0) : 0;
+  // The saved interval, still chosen: what the server says it runs at.
+  const saved = storedEffective && value === stored && storedEffective.intervalSeconds === value * 60 ? storedEffective : null;
+  const sentence = saved
+    ? (intervalReasonDetail(saved.intervalSeconds, saved.effectiveSeconds, saved.reason) ?? `Checked ${everyLabel(value)}.`)
+    : value < min
+      ? `Set to ${everyLabel(value)}, so checked ${everyLabel(effective)} on your plan, and ${everyLabel(value)} again once your plan allows it.`
+      : slowed
+        ? (intervalReasonDetail(value * 60, effective * 60, "fast_monitor_limit") ?? "")
+        : `Checked ${everyLabel(value)}.`;
 
   return (
     <fieldset>
@@ -87,11 +115,7 @@ export function CheckIntervalPicker({
         })}
       </div>
       <p className="mt-1.5 text-xs text-ink-faint" aria-live="polite">
-        {value < min
-          ? `Set to ${everyLabel(value)}, so checked ${everyLabel(effective)} on your plan, and ${everyLabel(value)} again once your plan allows it.`
-          : slowed
-            ? `Set to ${everyLabel(value)}, but checked ${everyLabel(effective)} while your plan's ${fast!.allowed} fast monitors are all older ones.`
-            : `Checked ${everyLabel(value)}.`}
+        {sentence}
       </p>
       {fast && (
         <p className="mt-2 text-xs text-ink-muted">
@@ -111,7 +135,7 @@ export function CheckIntervalPicker({
       )}
       {fastLocked && !planLocked && (
         <UpgradeHint
-          text={`All ${fast!.allowed} fast monitors are in use. To make this one faster, set another to ${STANDARD_CHECK_MINUTES} minutes or more.`}
+          text={`${fast!.allowed === 1 ? "Your plan's fast monitor is" : `All ${fast!.allowed} fast monitors are`} in use. To make this one faster, set another to ${STANDARD_CHECK_MINUTES} minutes or more.`}
           label="Add fast monitors"
           href={upgradeUrlFor(plan.upgradeUrl, "fast_monitors")}
         />

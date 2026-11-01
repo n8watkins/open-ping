@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  checksText,
   COMMANDS,
   configFromFlags,
   firstCheckLine,
@@ -176,6 +177,31 @@ describe("run", () => {
     expect(r.stdout).toContain("mon_1");
     expect(r.stdout).toContain("https://a.test/x");
     expect(r.stdout).not.toContain("secret");
+  });
+
+  it("shows how often each monitor is really checked, and why when that isn't its setting", async () => {
+    expect(checksText({ intervalSeconds: 720, effectiveIntervalSeconds: 720, intervalReason: "set" })).toBe("every 12 minutes");
+    expect(checksText({ intervalSeconds: 60, effectiveIntervalSeconds: 720, intervalReason: "plan_minimum" })).toBe(
+      "every 12 minutes (your plan's fastest; set to every minute)",
+    );
+    expect(checksText({ intervalSeconds: 60, effectiveIntervalSeconds: 720, intervalReason: "fast_monitor_limit" })).toBe(
+      "every 12 minutes (over your plan's fast monitors; set to every minute)",
+    );
+    expect(checksText({ intervalSeconds: 3600, effectiveIntervalSeconds: 720, intervalReason: "install_schedule" })).toBe(
+      "every 12 minutes (this install's schedule; set to every hour)",
+    );
+    // An install older than effectiveIntervalSeconds: its setting.
+    expect(checksText({ intervalSeconds: 300 })).toBe("every 5 minutes");
+    expect(checksText({})).toBe("-");
+
+    const monitor = { id: "mon_1", type: "http", enabled: true, paused: false, name: "API", schedule: { mode: "always" }, config: {}, intervalSeconds: 60, effectiveIntervalSeconds: 720, intervalReason: "plan_minimum" };
+    const list = await cli(["monitors", "list"], { "GET /api/monitors": [200, { monitors: [monitor] }] });
+    expect(list.stdout).toContain("CHECKED");
+    expect(list.stdout).toContain("every 12 minutes (your plan's fastest; set to every minute)");
+    const get = await cli(["monitors", "get", "mon_1"], {
+      "GET /api/monitors/mon_1/detail": [200, { monitor, state: null, uptime: {} }],
+    });
+    expect(get.stdout).toContain("checked    every 12 minutes (your plan's fastest; set to every minute)");
   });
 
   it("prints JSON with --json", async () => {

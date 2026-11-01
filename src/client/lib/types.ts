@@ -1,4 +1,5 @@
 import type { MonitorState } from "../../shared/states";
+import type { IntervalReason } from "../../shared/check-interval";
 
 /** Every monitor kind the client can render/label. */
 export type MonitorType = "http" | "heartbeat" | "dns" | "tcp" | "domain" | "cert";
@@ -25,6 +26,9 @@ export interface MonitorSummary {
   state: MonitorState;
   paused: boolean;
   intervalSeconds: number;
+  /** How often it is really checked, and why that isn't its setting (src/worker/lib/monitor-intervals.ts). */
+  effectiveIntervalSeconds: number;
+  intervalReason: IntervalReason;
   scheduleMode: string;
   lastCheckedAt: number | null;
   lastDurationMs: number | null;
