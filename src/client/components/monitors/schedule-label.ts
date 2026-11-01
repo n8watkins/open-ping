@@ -62,3 +62,11 @@ export function scheduleTitle(schedule: Schedule | null | undefined): string {
   }
   return `Checked on a custom weekly schedule (${schedule.timezone}); off-hours never count as downtime`;
 }
+
+/** "Every 12 min", "Every min", "Every hour": how often a monitor is really checked, short enough for the list. */
+export function everyShort(seconds: number): string {
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes === 1) return "Every min";
+  if (minutes % 60 === 0) return minutes === 60 ? "Every hour" : `Every ${minutes / 60} hours`;
+  return `Every ${minutes} min`;
+}

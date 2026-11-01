@@ -11,8 +11,14 @@
  */
 
 import { POLLED_INTERVAL_SECONDS } from "../../shared/schemas";
-import { effectiveIntervalSeconds } from "../../shared/check-interval";
-import { SCHEDULED_MAX_GAP_MS } from "../../shared/hosted-contract";
+import {
+  effectiveIntervalSeconds,
+  isFastMonitor,
+  keptFastMonitorIds,
+  type FastCandidate,
+  type IntervalReason,
+} from "../../shared/check-interval";
+import { fastMonitorAllowance, SCHEDULED_MAX_GAP_MS, type PlanLimits } from "../../shared/hosted-contract";
 
 export interface Cadence {
   /** "cron": a plain install's Cron Trigger. "platform": OpenPing Hosted's scheduler. */
@@ -46,6 +52,62 @@ export const PLATFORM_TICK_MS = 60 * 1000;
  */
 export function platformCadence(minIntervalMinutes: number, fastMonitors?: number): Cadence {
   return { kind: "platform", tickMs: PLATFORM_TICK_MS, minIntervalMinutes, fastMonitors: fastMonitors ?? null };
+}
+
+/**
+ * A tenant on a plan with these limits (props.tenant.limits): what the
+ * platform's scheduled calls run with, and what the API reports the speed of
+ * each monitor from.
+ */
+export function planCadence(limits: Pick<PlanLimits, "monitors" | "minIntervalMinutes"> & { fastMonitors?: unknown }): Cadence {
+  return platformCadence(limits.minIntervalMinutes, fastMonitorAllowance(limits));
+}
+
+/** How often a monitor is really checked, and why (shared/check-interval.ts, IntervalReason). */
+export interface EffectiveInterval {
+  seconds: number;
+  reason: IntervalReason;
+}
+
+/**
+ * Every monitor's real check interval under `cadence`, by id: the scheduler
+ * checks them at these (scheduler.ts), and the API, the CLI and MCP report
+ * them, so what a monitor's page says is what happens. Needs every monitor,
+ * since which fast ones keep their speed depends on the others.
+ *
+ * A paused or disabled monitor isn't checked at all, and ranks after the
+ * active ones for a fast place; its figure is what it runs at once resumed,
+ * which can take the place back from a newer one. Only its own figure is
+ * worked out that way, so the active ones' (and the scheduler's) never change.
+ */
+export function effectiveIntervals(
+  monitors: readonly FastCandidate[],
+  cadence: Cadence,
+): Map<string, EffectiveInterval> {
+  const allowance = cadence.fastMonitors;
+  const keptFast = allowance === null ? undefined : keptFastMonitorIds(monitors, allowance);
+  const idle = (m: FastCandidate) => m.paused === true || m.enabled === false;
+  const result = new Map<string, EffectiveInterval>();
+  for (const m of monitors) {
+    const kept =
+      allowance !== null && idle(m) && isFastMonitor(m)
+        ? keptFastMonitorIds(
+            monitors.map((o) => (o.id === m.id ? { ...o, paused: false, enabled: true } : o)),
+            allowance,
+          )
+        : keptFast;
+    const seconds = checkIntervalSeconds(m, cadence, kept);
+    let reason: IntervalReason = "set";
+    if (m.type !== "heartbeat" && seconds !== m.intervalSeconds) {
+      if (cadence.kind === "cron") reason = "install_schedule";
+      else {
+        const planMinimum = effectiveIntervalSeconds(m.intervalSeconds, cadence.minIntervalMinutes ?? 12);
+        reason = seconds > planMinimum ? "fast_monitor_limit" : "plan_minimum";
+      }
+    }
+    result.set(m.id, { seconds, reason });
+  }
+  return result;
 }
 
 /**

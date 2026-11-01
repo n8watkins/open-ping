@@ -467,6 +467,35 @@ export function weekdayText(days) {
   return parts.join(",");
 }
 
+// The words src/shared/check-interval.ts uses (intervalReasonNote), for the
+// API's intervalReason: why a monitor runs slower or faster than it is set to.
+const INTERVAL_NOTES = {
+  plan_minimum: "your plan's fastest",
+  fast_monitor_limit: "over your plan's fast monitors",
+  install_schedule: "this install's schedule",
+};
+
+/** "every minute", "every 12 minutes", "every hour", "every 2 hours". */
+function everyText(seconds) {
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes === 1) return "every minute";
+  if (minutes === 60) return "every hour";
+  if (minutes % 60 === 0) return `every ${minutes / 60} hours`;
+  return `every ${minutes} minutes`;
+}
+
+/**
+ * How often a monitor is really checked (the API's effectiveIntervalSeconds),
+ * with the reason when that isn't its setting; an older install that doesn't
+ * send it: the setting.
+ */
+export function checksText(m) {
+  const seconds = m.effectiveIntervalSeconds ?? m.intervalSeconds;
+  if (!Number.isFinite(seconds)) return "-";
+  const note = INTERVAL_NOTES[m.intervalReason];
+  return note ? `${everyText(seconds)} (${note}; set to ${everyText(m.intervalSeconds)})` : everyText(seconds);
+}
+
 function scheduleText(s) {
   if (!s || s.mode === "always") return "24/7";
   if (s.mode === "business_hours") return `${weekdayText(s.weekdays)} ${s.start}-${s.end} ${s.timezone}`;
@@ -532,6 +561,7 @@ async function cmdMonitorsList({ api, out, flags }) {
       ["STATUS", (m) => (m.paused ? "paused" : m.enabled ? "on" : "off")],
       ["NAME", (m) => m.name],
       ["SCHEDULE", (m) => scheduleText(m.schedule)],
+      ["CHECKED", (m) => (m.type === "heartbeat" ? "-" : checksText(m))],
       ["TARGET", (m) => monitorTarget(m)],
     ]),
   );
@@ -546,6 +576,7 @@ async function cmdMonitorsGet({ api, out, flags, positionals: [id] }) {
   out.line(`  type       ${m.type}${m.paused ? ", paused" : ""}${m.enabled ? "" : ", disabled"}`);
   out.line(`  target     ${monitorTarget(m) || "-"}`);
   out.line(`  schedule   ${scheduleText(m.schedule)}`);
+  if (m.type !== "heartbeat") out.line(`  checked    ${checksText(m)}`);
   out.line(`  state      ${s.state ?? "unknown"} since ${fmtTime(s.state_since)}`);
   out.line(`  last check ${fmtTime(s.last_checked_at)}${s.last_duration_ms != null ? `, ${s.last_duration_ms} ms` : ""}${s.last_status_code != null ? `, HTTP ${s.last_status_code}` : ""}`);
   if (s.last_error) out.line(`  last error ${s.last_error}`);

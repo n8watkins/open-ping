@@ -19,7 +19,8 @@ import { useFetch } from "../lib/useFetch";
 import { defaultIntervalMinutes, fastUsage, monitorLimitReached, planLimitFromError, usePlan } from "../lib/plan-limits";
 import type { FastCandidate } from "../../shared/check-interval";
 import { PlanLimitNotice } from "../components/PlanLimitNotice";
-import { CheckIntervalPicker } from "../components/CheckIntervalPicker";
+import { CheckIntervalPicker, type StoredEffective } from "../components/CheckIntervalPicker";
+import { checkedEveryText, intervalReasonDetail, type IntervalReason } from "../../shared/check-interval";
 import type { PlanLimitBody } from "../../shared/hosted-contract";
 import { Card } from "../components/ui/Card";
 import { cn } from "../lib/cn";
@@ -166,6 +167,9 @@ interface LoadedMonitor {
   categoryId?: string | null;
   confirmFailures?: ConfirmFailures;
   intervalSeconds?: number;
+  /** How often it is really checked, and why that isn't its setting (src/worker/lib/monitor-intervals.ts). */
+  effectiveIntervalSeconds?: number;
+  intervalReason?: IntervalReason;
 }
 
 const HTTP_METHODS: HttpMethod[] = [
@@ -441,6 +445,8 @@ export default function MonitorEditor() {
   const fast = existing ? fastUsage(plan, existing.monitors, id ?? null) : null;
   // The saved interval when editing, which the server always lets it keep.
   const [storedInterval, setStoredInterval] = useState<number | undefined>(undefined);
+  // How often the saved monitor is really checked, as the server reports it.
+  const [storedEffective, setStoredEffective] = useState<StoredEffective | undefined>(undefined);
   // Hosted mode: how often a polled monitor is checked (a self-hosted install
   // checks every one on each 12-minute run, so it sends none).
   const checkIntervalMinutes = form.checkIntervalMinutes ?? (plan ? defaultIntervalMinutes(plan, fast) : 12);
@@ -483,6 +489,13 @@ export default function MonitorEditor() {
         const loaded = prefill(monitor);
         setForm(loaded);
         setStoredInterval(loaded.checkIntervalMinutes ?? undefined);
+        if (monitor.type !== "heartbeat" && typeof monitor.intervalSeconds === "number" && monitor.effectiveIntervalSeconds && monitor.intervalReason) {
+          setStoredEffective({
+            intervalSeconds: monitor.intervalSeconds,
+            effectiveSeconds: monitor.effectiveIntervalSeconds,
+            reason: monitor.intervalReason,
+          });
+        }
         setPreserved({ notify: monitor.notify, public: monitor.public });
       } catch (e) {
         if (!cancelled) {
@@ -1546,9 +1559,22 @@ export default function MonitorEditor() {
               plan={plan}
               value={checkIntervalMinutes}
               stored={storedInterval}
+              storedEffective={storedEffective}
               fast={fast}
               onChange={(minutes) => set("checkIntervalMinutes", minutes)}
             />
+          </FormCard>
+        )}
+
+        {/* An install of your own checks every polled monitor on its 12-minute
+            schedule; say so when this one was set to another interval (brought
+            over from OpenPing Hosted). */}
+        {!plan && form.type !== "heartbeat" && storedEffective && storedEffective.reason !== "set" && (
+          <FormCard title="Check interval" description="How often OpenPing checks this monitor.">
+            <p className="text-sm text-ink">{checkedEveryText(storedEffective.effectiveSeconds, storedEffective.reason)}</p>
+            <p className="mt-1 text-xs text-ink-faint">
+              {intervalReasonDetail(storedEffective.intervalSeconds, storedEffective.effectiveSeconds, storedEffective.reason)}
+            </p>
           </FormCard>
         )}
 

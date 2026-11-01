@@ -421,6 +421,18 @@ describe("check intervals", () => {
     const rename = await call(`/api/monitors/${id}`, { method: "PATCH", json: { name: "Still set to 1 minute" } });
     expect(rename.status).toBe(200);
     expect((await intervalOf(rename)).intervalSeconds).toBe(60);
+    // Every way the API shows it says it runs at the plan's fastest, and why.
+    const slowed = { intervalSeconds: 60, effectiveIntervalSeconds: 720, intervalReason: "plan_minimum" };
+    expect((await (await call(`/api/monitors/${id}`)).json<{ monitor: object }>()).monitor).toMatchObject(slowed);
+    expect((await (await call(`/api/monitors/${id}/detail`)).json<{ monitor: object }>()).monitor).toMatchObject(slowed);
+    expect((await (await call("/api/monitors")).json<{ monitors: object[] }>()).monitors).toEqual([expect.objectContaining(slowed)]);
+    expect((await (await call("/api/overview")).json<{ monitors: object[] }>()).monitors).toEqual([expect.objectContaining(slowed)]);
+    const got = await mcp("get_monitor", { id });
+    expect(got.content[0]!.text).toContain("Checked every 12 minutes (your plan's fastest).");
+    expect(got.structuredContent).toMatchObject({ monitor: slowed });
+    const listed = await mcp("list_monitors", {});
+    expect(listed.content[0]!.text).toContain("checked every 12 minutes (your plan's fastest)");
+    expect(listed.structuredContent).toMatchObject({ monitors: [slowed] });
     const faster = await call(`/api/monitors/${id}`, { method: "PATCH", json: { intervalSeconds: 120 } });
     expect(faster.status).toBe(402);
   });
@@ -446,7 +458,12 @@ describe("check intervals", () => {
     expect(put.status).toBe(200);
     const patch = await call(`/api/monitors/${id}`, { method: "PATCH", json: { intervalSeconds: "soon" }, hosted: false });
     expect(patch.status).toBe(200);
-    expect((await intervalOf(patch)).intervalSeconds).toBe(720);
+    expect(await intervalOf(patch)).toMatchObject({ intervalSeconds: 720, effectiveIntervalSeconds: 720, intervalReason: "set" });
+
+    // One brought over from Hosted at 1 minute: still every 12 minutes here, and the API says why.
+    await env.DB.prepare("UPDATE monitors SET interval_seconds = 60 WHERE id = ?").bind(id).run();
+    const brought = await (await call(`/api/monitors/${id}`, { hosted: false })).json<{ monitor: object }>();
+    expect(brought.monitor).toMatchObject({ intervalSeconds: 60, effectiveIntervalSeconds: 720, intervalReason: "install_schedule" });
   });
 
   describe("fast monitors", () => {
@@ -519,6 +536,22 @@ describe("check intervals", () => {
       expect(rows!.n).toBe(5);
       expect((await call(`/api/monitors/${ids[4]}`, { method: "PATCH", json: { name: "Renamed" } })).status).toBe(200);
       expect((await call(`/api/monitors/${ids[4]}`, { method: "PATCH", json: { intervalSeconds: 120 } })).status).toBe(402);
+      // The two oldest keep their speed; the API says the rest run every 12 minutes, and why.
+      const reasons = async () => {
+        const { monitors } = await (await call("/api/monitors")).json<{
+          monitors: { id: string; effectiveIntervalSeconds: number; intervalReason: string }[];
+        }>();
+        const byId = new Map(monitors.map((m) => [m.id, `${m.effectiveIntervalSeconds} ${m.intervalReason}`]));
+        return ids.map((x) => byId.get(x));
+      };
+      expect(await reasons()).toEqual(["60 set", "60 set", "720 fast_monitor_limit", "720 fast_monitor_limit", "720 fast_monitor_limit"]);
+      const one = await (await call(`/api/monitors/${ids[3]}`)).json<{ monitor: object }>();
+      expect(one.monitor).toMatchObject({ effectiveIntervalSeconds: 720, intervalReason: "fast_monitor_limit" });
+
+      // Pausing one of the two oldest gives its place to the next; the paused
+      // one reports what it runs at once resumed (its place back).
+      await call(`/api/monitors/${ids[0]}/pause`, { method: "POST" });
+      expect(await reasons()).toEqual(["60 set", "60 set", "60 set", "720 fast_monitor_limit", "720 fast_monitor_limit"]);
       expect((await create("New fast", 60)).status).toBe(402);
     });
 

@@ -11,6 +11,8 @@ function monitor(overrides: Partial<MonitorSummary>): MonitorSummary {
     state: "up",
     paused: false,
     intervalSeconds: 720,
+    effectiveIntervalSeconds: 720,
+    intervalReason: "set",
     scheduleMode: "always",
     lastCheckedAt: null,
     lastDurationMs: null,

@@ -5,8 +5,10 @@ import {
   checkIntervalSeconds,
   CRON_CADENCE,
   dueSlackMs,
+  effectiveIntervals,
   isUpkeepRun,
   nextDueAt,
+  planCadence,
   platformCadence,
   runBaseTime,
   upkeepSlot,
@@ -42,6 +44,69 @@ describe("check intervals by cadence", () => {
   it("never changes a heartbeat's interval", () => {
     expect(checkIntervalSeconds({ type: "heartbeat", intervalSeconds: 60 }, CRON_CADENCE)).toBe(60);
     expect(checkIntervalSeconds({ type: "heartbeat", intervalSeconds: 60 }, platformCadence(12))).toBe(60);
+  });
+});
+
+describe("effective intervals, and why", () => {
+  const m = (id: string, intervalSeconds: number, createdAt: number, extra: { type?: string; paused?: boolean; enabled?: boolean } = {}) => ({
+    id,
+    type: extra.type ?? "http",
+    intervalSeconds,
+    createdAt,
+    paused: extra.paused,
+    enabled: extra.enabled,
+  });
+  const plain = (map: ReturnType<typeof effectiveIntervals>) => Object.fromEntries([...map].map(([id, e]) => [id, `${e.seconds} ${e.reason}`]));
+
+  it("says when an install of your own's cron checks at another speed than is stored", () => {
+    expect(plain(effectiveIntervals([m("set", 720, 1), m("fast", 60, 2), m("hourly", 3600, 3), m("hb", 60, 4, { type: "heartbeat" })], CRON_CADENCE))).toEqual({
+      set: "720 set",
+      fast: "720 install_schedule",
+      hourly: "720 install_schedule",
+      hb: "60 set",
+    });
+  });
+
+  it("says when the plan's shortest interval slows a monitor down", () => {
+    const hosted = planCadence({ monitors: 20, minIntervalMinutes: 12, fastMonitors: 0 });
+    expect(plain(effectiveIntervals([m("fast", 60, 1), m("five", 300, 2), m("hourly", 3600, 3)], hosted))).toEqual({
+      fast: "720 plan_minimum",
+      five: "720 plan_minimum",
+      hourly: "3600 set",
+    });
+    const fivePlan = platformCadence(5, 10);
+    expect(plain(effectiveIntervals([m("fast", 60, 1)], fivePlan))).toEqual({ fast: "300 plan_minimum" });
+  });
+
+  it("says when a fast monitor is over the plan's allowance: active ones, then the oldest, keep their speed", () => {
+    const capped = planCadence({ monitors: 20, minIntervalMinutes: 1, fastMonitors: 1 });
+    expect(plain(effectiveIntervals([m("older", 60, 1), m("newer", 120, 2)], capped))).toEqual({
+      older: "60 set",
+      newer: "720 fast_monitor_limit",
+    });
+  });
+
+  it("gives a paused or disabled fast monitor the speed it would run at once resumed, without moving the others", () => {
+    const capped = platformCadence(1, 1);
+    // The older one is paused: the newer one has the fast place now, and the
+    // older one would take it back when resumed.
+    expect(plain(effectiveIntervals([m("older", 60, 1, { paused: true }), m("newer", 60, 2)], capped))).toEqual({
+      older: "60 set",
+      newer: "60 set",
+    });
+    // A paused newer one would still be over the allowance when resumed.
+    expect(plain(effectiveIntervals([m("older", 60, 1), m("newer", 60, 2, { enabled: false })], capped))).toEqual({
+      older: "60 set",
+      newer: "720 fast_monitor_limit",
+    });
+  });
+
+  it("matches checkIntervalSeconds for every active monitor, which is what the scheduler runs", () => {
+    const capped = platformCadence(1, 2);
+    const list = [m("a", 60, 4), m("b", 60, 3), m("c", 60, 2), m("d", 60, 1), m("e", 3600, 5)];
+    const effective = effectiveIntervals(list, capped);
+    const kept = new Set(["d", "c"]);
+    for (const x of list) expect(effective.get(x.id)!.seconds).toBe(checkIntervalSeconds(x, capped, kept));
   });
 });
 

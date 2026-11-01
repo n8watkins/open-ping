@@ -92,8 +92,8 @@ Read-only tools (annotated `readOnlyHint`):
 | Tool | What it returns |
 | --- | --- |
 | `get_status` | Overall state, every monitor's state, last check, latency and 24h uptime, open incidents, the last scheduler run. |
-| `list_monitors` | Every monitor with id, type, target, schedule and current state; filter by `type`. |
-| `get_monitor` | One monitor's full configuration and current state, with secrets blanked. |
+| `list_monitors` | Every monitor with id, type, target, schedule, how often it is really checked (`effectiveIntervalSeconds`, `intervalReason`) and current state; filter by `type`. |
+| `get_monitor` | One monitor's full configuration, how often it is really checked, and current state, with secrets blanked. |
 | `list_incidents` | Incidents, newest first, each with its status updates and whether it is public; filter by `status` (open, resolved, all), `monitorId`, `since`, `limit`. |
 | `get_uptime` | Uptime per monitor over 24h, 7d, 30d and 90d from the rollups; optional `monitorId`. |
 | `get_monthly_report` | One calendar month's [uptime report](./STATUS_PAGES.md#monthly-uptime-report) per monitor (uptime, downtime and monitored minutes, incidents, average response) in the install's timezone; `month` (YYYY-MM) defaults to last month. |

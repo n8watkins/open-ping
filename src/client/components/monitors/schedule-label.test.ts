@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hoursLabel, scheduleLabel, scheduleTitle, weekdaysLabel } from "./schedule-label";
+import { everyShort, hoursLabel, scheduleLabel, scheduleTitle, weekdaysLabel } from "./schedule-label";
 
 describe("scheduleLabel", () => {
   it("labels the common schedules", () => {
@@ -44,5 +44,15 @@ describe("scheduleLabel", () => {
         timezone: "America/Los_Angeles",
       }),
     ).toContain("America/Los_Angeles");
+  });
+});
+
+describe("everyShort", () => {
+  it("fits the list's schedule column", () => {
+    expect(everyShort(60)).toBe("Every min");
+    expect(everyShort(720)).toBe("Every 12 min");
+    expect(everyShort(3600)).toBe("Every hour");
+    expect(everyShort(7200)).toBe("Every 2 hours");
+    expect(everyShort(90)).toBe("Every 2 min");
   });
 });

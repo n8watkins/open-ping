@@ -21,6 +21,9 @@ import {
   type SummaryCountRow,
 } from "../history/overview-analytics";
 import { loadRangeHistory } from "../history/range";
+import { CRON_CADENCE, effectiveIntervals, type Cadence } from "../lib/cadence";
+import { cadenceFor } from "../lib/monitor-intervals";
+import { hostedPlan } from "../lib/plan-limits";
 import { parseTimeRange, type OverviewHistoryResponse } from "../../shared/time-range";
 import {
   isWindowActiveAt,
@@ -86,7 +89,7 @@ export function monitorTarget(monitor: MonitorRecord): string | null {
 overview.get("/", async (c) => {
   const now = Date.now();
   const [body, maintenance] = await Promise.all([
-    buildOverview(c.env, now),
+    buildOverview(c.env, now, cadenceFor(hostedPlan(c))),
     maintenanceOutlook(c.env, now),
   ]);
   return c.json({ ...body, maintenance });
@@ -207,7 +210,11 @@ export async function maintenanceOutlook(
  * run. Shared by GET /api/overview and the MCP `get_status` tool, so both
  * report the same numbers. About nine D1 reads, run in parallel.
  */
-export async function buildOverview(env: Env, now: number = Date.now()) {
+/**
+ * `cadence`: how this install is scheduled (lib/monitor-intervals.ts,
+ * cadenceFor), for each monitor's real check interval.
+ */
+export async function buildOverview(env: Env, now: number = Date.now(), cadence: Cadence = CRON_CADENCE) {
   const since = now - DAY;
   const [
     monitors,
@@ -307,6 +314,7 @@ export async function buildOverview(env: Env, now: number = Date.now()) {
     unknown: 0,
   };
 
+  const intervals = effectiveIntervals(monitors, cadence);
   const summaries = monitors.map((m) => {
     const st = states.get(m.id);
     const state: MonitorState = m.paused ? "paused" : (st?.state ?? "unknown");
@@ -319,6 +327,8 @@ export async function buildOverview(env: Env, now: number = Date.now()) {
       state,
       paused: m.paused,
       intervalSeconds: m.intervalSeconds,
+      effectiveIntervalSeconds: intervals.get(m.id)?.seconds ?? m.intervalSeconds,
+      intervalReason: intervals.get(m.id)?.reason ?? "set",
       scheduleMode: m.schedule.mode,
       lastCheckedAt: st?.last_checked_at ?? null,
       lastDurationMs: st?.last_duration_ms ?? null,

@@ -38,6 +38,7 @@ import {
   type HostedPlan,
   type PlanLimitRefusal,
 } from "../lib/plan-limits";
+import { cadenceFor, withInterval, withIntervals } from "../lib/monitor-intervals";
 
 /** Strip secret config fields and ingestion credentials from normal responses. */
 export function redactMonitor(m: MonitorRecord): MonitorRecord {
@@ -308,7 +309,7 @@ monitors.use("*", requireAuth);
 // response time and the latest incident, for the Monitors list (two more reads).
 monitors.get("/", async (c) => {
   const list = await listMonitors(c.env);
-  const body = { monitors: list.map(redactMonitor) };
+  const body = { monitors: withIntervals(list.map(redactMonitor), cadenceFor(hostedPlan(c))) };
   if (c.req.query("include") !== "stats") return c.json(body);
   const stats = await computeListStats(c.env, list.map((m) => m.id));
   return c.json({ ...body, stats });
@@ -318,7 +319,8 @@ monitors.post("/", async (c) => {
   const body = await c.req.json().catch(() => undefined);
   const r = await createMonitorAndCheck(c.env, body, requestWaitUntil(c), hostedPlan(c));
   if (!r.ok) return c.json(writeError(r), r.status);
-  return c.json({ monitor: presentCreatedMonitor(r.monitor), firstCheck: r.firstCheck }, 201);
+  const monitor = await withInterval(c.env, hostedPlan(c), presentCreatedMonitor(r.monitor));
+  return c.json({ monitor, firstCheck: r.firstCheck }, 201);
 });
 
 // Registered before /:id so the static path wins.
@@ -327,7 +329,7 @@ monitors.get("/uptime", async (c) => c.json(await listMonitorUptime(c.env)));
 monitors.get("/:id", async (c) => {
   const monitor = await getMonitor(c.env, c.req.param("id"));
   if (!monitor) return c.json({ error: "not_found" }, 404);
-  return c.json({ monitor: redactMonitor(monitor) });
+  return c.json({ monitor: await withInterval(c.env, hostedPlan(c), redactMonitor(monitor)) });
 });
 
 /** Rich detail: monitor + current state + uptime windows + latency + incidents. */
@@ -415,7 +417,7 @@ monitors.get("/:id/detail", async (c) => {
   const incidentMetrics = await computeIncidentMetrics(c.env, id, now);
 
   return c.json({
-    monitor: redactMonitor(monitor),
+    monitor: await withInterval(c.env, hostedPlan(c), redactMonitor(monitor)),
     state: stateRow ? state : null,
     // A certificate monitor's last read, for the Certificate panel (SANs and
     // all, which the samples leave out); null before the first read.
@@ -473,7 +475,7 @@ monitors.put("/:id", async (c) => {
   const body = await c.req.json().catch(() => undefined);
   const r = await replaceMonitor(c.env, c.req.param("id"), body, hostedPlan(c));
   if (!r.ok) return c.json(writeError(r), r.status);
-  return c.json({ monitor: redactMonitor(r.monitor) });
+  return c.json({ monitor: await withInterval(c.env, hostedPlan(c), redactMonitor(r.monitor)) });
 });
 
 /** Partial update: see {@link monitorPatchSchema}. */
@@ -481,7 +483,7 @@ monitors.patch("/:id", async (c) => {
   const body = await c.req.json().catch(() => undefined);
   const r = await patchMonitor(c.env, c.req.param("id"), body, hostedPlan(c));
   if (!r.ok) return c.json(writeError(r), r.status);
-  return c.json({ monitor: redactMonitor(r.monitor) });
+  return c.json({ monitor: await withInterval(c.env, hostedPlan(c), redactMonitor(r.monitor)) });
 });
 
 monitors.delete("/:id", async (c) => {
@@ -495,13 +497,13 @@ monitors.delete("/:id", async (c) => {
 monitors.post("/:id/pause", async (c) => {
   const monitor = await setPaused(c.env, c.req.param("id"), true);
   if (!monitor) return c.json({ error: "not_found" }, 404);
-  return c.json({ monitor: redactMonitor(monitor) });
+  return c.json({ monitor: await withInterval(c.env, hostedPlan(c), redactMonitor(monitor)) });
 });
 
 monitors.post("/:id/resume", async (c) => {
   const monitor = await setPaused(c.env, c.req.param("id"), false);
   if (!monitor) return c.json({ error: "not_found" }, 404);
-  return c.json({ monitor: redactMonitor(monitor) });
+  return c.json({ monitor: await withInterval(c.env, hostedPlan(c), redactMonitor(monitor)) });
 });
 
 monitors.post("/:id/rotate-heartbeat-token", async (c) => {

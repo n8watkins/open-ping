@@ -42,6 +42,9 @@ import { maintenanceCreateSchema } from "../routes/maintenance";
 import type { FirstCheckResult } from "../checks/first-check";
 import { patchStatusPage } from "../routes/status-pages";
 import type { HostedPlan } from "../lib/plan-limits";
+import { cadenceFor, withInterval } from "../lib/monitor-intervals";
+import { effectiveIntervals } from "../lib/cadence";
+import { checkedEveryText } from "../../shared/check-interval";
 import {
   createMonitorAndCheck,
   listMonitorUptime,
@@ -237,7 +240,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     async () => {
       const now = Date.now();
       const [overview, open, tz] = await Promise.all([
-        buildOverview(env, now),
+        buildOverview(env, now, cadenceFor(ctx.plan)),
         listIncidents(env, { status: "open", limit: "20" }),
         zone(),
       ]);
@@ -304,6 +307,8 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         zone(),
       ]);
       const byId = new Map((states.results ?? []).map((s) => [s.monitor_id, s]));
+      // How often each is really checked (the scheduler's rule), among all of them.
+      const intervals = effectiveIntervals(all, cadenceFor(ctx.plan));
       const list = all
         .filter((m) => !type || m.type === type)
         .map((m) => ({
@@ -316,13 +321,16 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
           paused: m.paused,
           schedule: scheduleSummary(m),
           intervalSeconds: m.intervalSeconds,
+          effectiveIntervalSeconds: intervals.get(m.id)?.seconds ?? m.intervalSeconds,
+          intervalReason: intervals.get(m.id)?.reason ?? "set",
           categoryId: m.categoryId,
           publicVisible: m.public.visible,
           lastCheckedAt: byId.get(m.id)?.last_checked_at ?? null,
         }));
       const text = list.length
         ? [`${list.length} monitor(s):`, ...list.map((m) =>
-            `- ${m.id} ${m.state} ${m.name} (${m.type}${m.target ? ` ${m.target}` : ""}), ${m.schedule}${m.enabled ? "" : ", disabled"}`,
+            `- ${m.id} ${m.state} ${m.name} (${m.type}${m.target ? ` ${m.target}` : ""}), ${m.schedule}${m.enabled ? "" : ", disabled"}` +
+            (m.intervalReason === "set" ? "" : `, ${checkedEveryText(m.effectiveIntervalSeconds, m.intervalReason).toLowerCase()}`),
           )].join("\n")
         : "No monitors yet. Create one with create_monitor.";
       return ok(text, { monitors: list }, tz);
@@ -352,9 +360,10 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         zone(),
       ]);
       if (!m) return fail("No monitor has that id. Call list_monitors to find it.");
-      const monitor = redactMonitorForMcp(m);
+      const monitor = await withInterval(env, ctx.plan, redactMonitorForMcp(m));
       const text = [
         `${m.name} [${m.id}] ${m.type}, ${m.paused ? "paused" : (state?.state ?? "unknown")}, ${m.enabled ? "enabled" : "disabled"}, ${scheduleSummary(m)}.`,
+        ...(m.type === "heartbeat" ? [] : [`${checkedEveryText(monitor.effectiveIntervalSeconds, monitor.intervalReason)}.`]),
         state
           ? `Last check ${iso(state.lastCheckedAt as number, tz) ?? "never"}` +
             (state.lastDurationMs != null ? `, ${state.lastDurationMs} ms` : "") +
