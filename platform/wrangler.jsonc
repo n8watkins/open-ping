@@ -49,6 +49,17 @@
     // to that customer's OpenPing. ".invalid" can never resolve, so nothing
     // routes here until the owner buys the domain and sets it.
     "HOSTED_DOMAIN": "openping-hosted.invalid",
+    // How <slug>.<HOSTED_DOMAIN> reaches a customer (src/addresses.ts).
+    // "wildcard": a dedicated domain, one *.<domain> route and Universal
+    // SSL's wildcard certificate. "custom_domains": HOSTED_DOMAIN is a
+    // subdomain of a zone the owner already has (openping.n8builds.dev), so
+    // provisioning attaches one Workers Custom Domain per customer (its own
+    // certificate at no extra cost; 100 per zone, the owner's own included).
+    // It needs CF_ZONE_ID (a var or a secret) and Zone > Workers Routes: Edit
+    // and Zone > DNS: Read on that zone in CF_API_TOKEN.
+    "TENANT_ADDRESSES": "wildcard",
+    // The Worker customers' Custom Domains route to in dispatch mode: this one.
+    "PLATFORM_WORKER_NAME": "openping-platform",
     // The dispatch namespace's name, for the Cloudflare API calls that upload
     // and delete user Workers (src/provisioning.ts); the same as the binding's.
     "DISPATCH_NAMESPACE": "openping-tenants",
@@ -196,5 +207,5 @@
   // Secrets, set later with `wrangler secret put` from the owner's machine,
   // never in this file: HANDOFF_SIGNING_KEY, RESEND_API_KEY and
   // GITHUB_CLIENT_SECRET (B2), PLATFORM_KEY, CF_ACCOUNT_ID and CF_API_TOKEN
-  // (B3), STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (B5, platform/README.md step 10).
+  // (B3), CF_ZONE_ID (custom_domains addresses), STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (B5, platform/README.md step 10).
 }

@@ -213,6 +213,37 @@ A health check costs nothing measurable: a checker once a minute is 43,200 platf
 C4 adds 86,400 heartbeat rows written a month, about one `scheduler_minutes` row per 25 runs at volume (about $3.50 a month at 2,000 tenants on 1-minute checks), and the user Workers' own log lines, the one cost that grows (about $10 to $30 a month at that size from December 1, 2026; `TENANT_LOG_SAMPLING` is the lever).
 The full table is in [OBSERVABILITY.md](../docs/hosted/OBSERVABILITY.md#8-costs).
 
+## Addresses under a subdomain
+
+`TENANT_ADDRESSES` (`src/addresses.ts`) says how `<slug>.<HOSTED_DOMAIN>` reaches a customer:
+
+- `wildcard`, the default: a dedicated domain, one `*.<domain>` route to this Worker, and Universal SSL's free wildcard certificate cover every customer, so provisioning does nothing per address.
+- `custom_domains`: `HOSTED_DOMAIN` is a subdomain of a zone the owner already has, for example `openping.n8builds.dev`, with the platform at `app.openping.n8builds.dev` and customers at `<slug>.openping.n8builds.dev`.
+  Those are two levels below the zone, which Universal SSL doesn't cover, so provisioning attaches a Workers Custom Domain for each customer (to this Worker in dispatch mode), which gets its own certificate at no extra cost, and the teardown detaches it before deleting anything else.
+
+To switch it on: set `TENANT_ADDRESSES` to `custom_domains`, put the zone's id in `CF_ZONE_ID` (a var, or a secret like `CF_ACCOUNT_ID`), add **Zone, Workers Routes, Edit** and **Zone, DNS, Read** on that zone to `CF_API_TOKEN`, and attach `app.<HOSTED_DOMAIN>` to this Worker as a Custom Domain (Workers & Pages, the Worker, Settings, Domains & Routes) instead of the two routes of step 2.
+
+What it guards against:
+
+- **The 100 Custom Domains a zone allows**, the owner's own included (`openping.n8builds.dev` itself, the portfolio sites, `app.`).
+  The cron counts them with the API every hour into `platform_capacity` (migration 0017), and each attach and detach moves the count.
+  From 85 the health check (`/__health`, `checks.capacity`) is degraded with a sentence saying how many are used, so the owner's monitor alerts well before anything stops.
+  From 95, counting the customers still being provisioned, a sign-up is refused with a plain message ("OpenPing Hosted is full for now...") and a `capacity.signup_refused` audit event, so the last few stay free for the owner's own hostnames.
+  If the API couldn't count, the attach itself refuses past the real limit, and that tenant is paused for the owner (`tenant.provision_paused`).
+- **A slug shadowing a hostname the owner uses.** Besides the reserved names (`src/slugs.ts`), a sign-up and the attach both refuse `<slug>.<HOSTED_DOMAIN>` when it already has a DNS record or another Worker's Custom Domain: the sign-up says the name is taken, and the attach pauses the tenant without touching the record.
+- **Cookies on a shared parent domain.** Every customer, the platform and the owner's other sites share `n8builds.dev`, and any of them could set a cookie for a parent domain.
+  So every cookie the platform sets is a `__Host-` cookie (Secure, Path=/, no Domain), and in hosted mode so is every cookie a customer's OpenPing sets (`__Host-op_session`, `__Host-op_passkey`, `__Host-op_signed_out`): a browser accepts a `__Host-` cookie only from that exact host, so nothing on a sibling or parent host can plant or shadow one.
+  `src/cookie-scope.test.ts` fails the build for any cookie with a Domain attribute.
+
+The trade-offs against a dedicated domain:
+
+- Past about 90 customers, the zone runs out of Custom Domains: the next step is Advanced Certificate Manager ($10 a month) for a `*.openping.n8builds.dev` certificate and a wildcard route (dispatch mode only), or a dedicated domain, which changes every customer's address once.
+  Moving early, before customers have addresses to keep, is cheapest (decision D2).
+- Customers live under the owner's personal domain: a phishing page or abuse report about one customer's status page lands on `n8builds.dev`, and the owner's other sites share its reputation (Safe Browsing, mail reputation).
+  The reserved names and the shadowing check keep a customer off the owner's own names, but not off the domain.
+- The `__Host-` cookies keep sessions safe, but a host under `n8builds.dev` that runs someone else's code could still set ordinary cookies for the whole domain, so no one else should get a hostname under it.
+- Customers' status pages and the owner's portfolio share one zone's settings (WAF, rate limits, caching rules): a rule meant for one applies to all, so zone-wide rules need a hostname condition.
+
 ## Owner setup (not done yet)
 
 None of these steps has been done.
@@ -221,6 +252,7 @@ They are needed before staging in wave 3 ([build plan, section 12](../docs/HOSTE
 
 1. **Workers Paid** ($5 a month) and **Workers for Platforms** ($25 a month) on the Cloudflare account (owner action O1).
 2. **The Hosted domain** (decision D2, owner action O2): buy it, add it to Cloudflare, then set `HOSTED_DOMAIN` and add routes for `app.<domain>/*` and `*.<domain>/*` to this Worker.
+   Or, to start without a new domain, use a subdomain of a zone the owner already has, as in [Addresses under a subdomain](#addresses-under-a-subdomain) below.
 3. **The dispatch namespace:** `wrangler dispatch-namespace create openping-tenants` (and `openping-tenants-staging` for staging).
 4. **The platform database:** `wrangler d1 create openping-platform`, then put its id in a gitignored local config (as `deploy.local.json` does for OpenPing), and apply `migrations/` with `wrangler d1 migrations apply PLATFORM_DB --remote`.
 5. **The queues:** `wrangler queues create openping-provision` (provisioning) and `wrangler queues create openping-schedule` (the scheduler, B4); this Worker consumes both (`queues.consumers` in `wrangler.jsonc`).

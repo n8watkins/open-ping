@@ -158,8 +158,25 @@ describe("the platform health check", () => {
       scheduler: { ok: true, oldestOverdueSeconds: 0, overdueTenants: 0, lastRunAt: null },
       tenants: { ok: true, failing: 0, threshold: FAILING_DEGRADED },
       release: { ok: true, inProgress: false, kind: null, state: null, version: null, batch: null },
+      capacity: { ok: null, customDomains: null, workers: null },
       config: { ok: true, mail: true, billing: true, provisioning: true },
     });
+  });
+
+  it("warns the owner as the zone's Custom Domains or the account's Workers near their limit", async () => {
+    await beats();
+    await db.prepare("INSERT INTO platform_capacity (resource, used, cap, checked_at) VALUES ('custom_domains', 84, 100, ?)").bind(T0).run();
+    try {
+      expect((await report()).checks.capacity).toEqual({ ok: true, customDomains: { used: 84, cap: 100 }, workers: null });
+      clearHealthCache();
+      await db.prepare("UPDATE platform_capacity SET used = 85").run();
+      const r = await report();
+      expect(r.ok).toBe(false);
+      expect(r.checks.capacity.ok).toBe(false);
+      expect(r.problems).toEqual(["85 of 100 Custom Domains are used on the zone; new sign-ups stop 5 short of the limit."]);
+    } finally {
+      await db.prepare("DELETE FROM platform_capacity").run();
+    }
   });
 
   it("is degraded when the database doesn't answer, and says only that", async () => {
@@ -319,7 +336,7 @@ describe("the platform health check", () => {
 
   it("stops counting at 1,000 so a disaster can't make it expensive", () => {
     const r = healthReport(
-      { cronAt: T0, enqueueAt: T0, enqueue: null, oldestDueAt: T0, overdue: COUNT_CAP, failing: COUNT_CAP, lastRunAt: null, release: null },
+      { cronAt: T0, enqueueAt: T0, enqueue: null, oldestDueAt: T0, overdue: COUNT_CAP, failing: COUNT_CAP, lastRunAt: null, release: null, capacity: [] },
       { ok: true, mail: true, billing: true, provisioning: true },
       T0,
     );
@@ -354,7 +371,7 @@ describe("GET app.<domain>/__health and /healthz", () => {
       service: "openping-platform",
       checkedAt: new Date(T0).toISOString(),
       maxAgeSeconds: 10,
-      checks: { database: true, cron: true, queue: true, scheduler: true, tenants: true, release: true, config: true },
+      checks: { database: true, cron: true, queue: true, scheduler: true, tenants: true, release: true, capacity: null, config: true },
     });
   });
 

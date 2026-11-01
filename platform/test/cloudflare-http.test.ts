@@ -349,3 +349,47 @@ describe("Durable Objects in the bundle", () => {
     ).toThrow(/another script/);
   });
 });
+
+describe("HttpCloudflareApi Custom Domains and DNS (src/addresses.ts)", () => {
+  const ZONE = "fedcba9876543210fedcba9876543210";
+  const domain = { id: "dom_1", hostname: "acme.openping.example", service: "openping-platform", zone_id: ZONE, zone_name: "example", cert_id: "c" };
+
+  it("attaches with PUT /workers/domains and the hostname, service and zone", async () => {
+    const { seen, api } = recorder(() => ok(domain));
+    expect(await api.attachCustomDomain({ hostname: domain.hostname, service: domain.service, zoneId: ZONE })).toEqual({
+      id: "dom_1",
+      hostname: domain.hostname,
+      service: domain.service,
+      zoneId: ZONE,
+    });
+    expect(seen[0]!.method).toBe("PUT");
+    expect(seen[0]!.url).toBe(`${ACC}/workers/domains`);
+    expect(await seen[0]!.request.json()).toEqual({ hostname: domain.hostname, service: domain.service, zone_id: ZONE });
+  });
+
+  it("finds a Custom Domain by its exact hostname on the zone", async () => {
+    const { seen, api } = recorder(() => ok([{ ...domain, hostname: "other.openping.example", id: "dom_0" }, domain]));
+    expect(await api.findCustomDomain(ZONE, "ACME.openping.example")).toMatchObject({ id: "dom_1" });
+    expect(seen[0]!.url).toBe(`${ACC}/workers/domains?zone_id=${ZONE}&hostname=ACME.openping.example`);
+    expect(await recorder(() => ok([])).api.findCustomDomain(ZONE, domain.hostname)).toBeNull();
+  });
+
+  it("counts the zone's Custom Domains from result_info, past the first page", async () => {
+    const { api } = recorder(() => Response.json({ success: true, errors: [], result: [domain], result_info: { total_count: 87, page: 1, per_page: 20 } }));
+    expect(await api.countCustomDomains(ZONE)).toBe(87);
+  });
+
+  it("detaches by id, treating 404 as already gone", async () => {
+    const { seen, api } = recorder(() => ok(null));
+    expect(await api.detachCustomDomain("dom_1")).toBe(true);
+    expect(seen[0]!.method).toBe("DELETE");
+    expect(seen[0]!.url).toBe(`${ACC}/workers/domains/dom_1`);
+    expect(await recorder(() => fail(404, 100114, "not found")).api.detachCustomDomain("dom_1")).toBe(false);
+  });
+
+  it("lists a zone's DNS records at exactly one name", async () => {
+    const { seen, api } = recorder(() => ok([{ id: "r1", type: "CNAME", name: "blog.openping.example" }]));
+    expect(await api.findDnsRecords(ZONE, "blog.openping.example")).toEqual([{ id: "r1", type: "CNAME", name: "blog.openping.example" }]);
+    expect(seen[0]!.url).toBe(`${CLOUDFLARE_API_BASE}/zones/${ZONE}/dns_records?name.exact=blog.openping.example&per_page=100`);
+  });
+});

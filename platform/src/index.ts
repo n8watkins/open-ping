@@ -31,7 +31,8 @@ import type { PlatformEnv } from "./env";
 import { mailerFromEnv } from "./mail";
 import { lifecycleDepsFromEnv } from "./lifecycle/env";
 import { LIFECYCLE_EVERY_MINUTES, lifecycleTick } from "./lifecycle/jobs";
-import { provisionDue } from "./provisioning";
+import { addressDeps, provisionDue } from "./provisioning";
+import { refreshCapacity } from "./addresses";
 import { handleProvisionBatch, type ProvisionMessage } from "./provisioning-queue";
 import { provisioningSetup } from "./provisioning-env";
 import { enqueueDue, handleScheduleBatch, schedulerDaysCleanup, type SchedulingDeps } from "./scheduling";
@@ -189,6 +190,16 @@ async function scheduled(controller: ScheduledController, env: PlatformEnv, ctx:
   if (!setup.ok) {
     log.warn("provision.off", { missing: setup.missing });
   } else {
+    // Hourly, beside the rest: how much of Cloudflare's caps is in use (src/addresses.ts).
+    if (hourly.length) {
+      ctx.waitUntil(
+        refreshCapacity(addressDeps(setup.deps, now))
+          .then((rows) => {
+            if (rows.length) log.info("capacity.counted", { counts: rows.map((r) => `${r.resource}:${r.used}/${r.cap}`) });
+          })
+          .catch((error) => log.warn("capacity.refresh_failed", { error })),
+      );
+    }
     const outcomes = await provisionDue(setup.deps);
     if (outcomes.length) log.info("provision.sweep", { outcomes: outcomes.map((o) => `${o.tenantId}:${o.kind}`) });
   }

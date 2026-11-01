@@ -156,7 +156,58 @@ export type D1ExportStatus =
   | { status: "complete"; bookmark: string; signedUrl: string; filename: string }
   | { status: "error"; bookmark: string | null; error: string };
 
+/** A Workers Custom Domain: a hostname on a zone routed to one Worker, with its own certificate. */
+export interface CustomDomainInfo {
+  /** Cloudflare's immutable id for the attachment, which detaching takes. */
+  id: string;
+  hostname: string;
+  /** The Worker (script name) it routes to. */
+  service: string;
+  zoneId: string;
+}
+
+/** One DNS record, as the zone's record list describes it. */
+export interface DnsRecordInfo {
+  id: string;
+  type: string;
+  name: string;
+}
+
 export interface CloudflareApi {
+  /**
+   * PUT /accounts/{account_id}/workers/domains with { hostname, service, zone_id }:
+   * routes `hostname` to the Worker `service` and makes its certificate
+   * (an advanced certificate at no extra cost, even for a hostname two levels
+   * below the zone). Needs Zone > Workers Routes: Edit on the zone.
+   * https://developers.cloudflare.com/api/resources/workers/subresources/domains/methods/update/
+   */
+  attachCustomDomain(input: { hostname: string; service: string; zoneId: string }): Promise<CustomDomainInfo>;
+
+  /**
+   * GET /accounts/{account_id}/workers/domains?zone_id=...&hostname=..., the
+   * exact hostname only. Null when nothing is attached there.
+   * https://developers.cloudflare.com/api/resources/workers/subresources/domains/methods/list/
+   */
+  findCustomDomain(zoneId: string, hostname: string): Promise<CustomDomainInfo | null>;
+
+  /** How many Custom Domains the zone has, every Worker's (the limit is 100 per zone). */
+  countCustomDomains(zoneId: string): Promise<number>;
+
+  /**
+   * DELETE /accounts/{account_id}/workers/domains/{domain_id}. Resolves false
+   * when it was already gone.
+   * https://developers.cloudflare.com/api/resources/workers/subresources/domains/methods/delete/
+   */
+  detachCustomDomain(id: string): Promise<boolean>;
+
+  /**
+   * GET /zones/{zone_id}/dns_records?name.exact=...: the zone's records at
+   * exactly `name`. Needs Zone > DNS: Read.
+   * https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/list/
+   */
+  findDnsRecords(zoneId: string, name: string): Promise<DnsRecordInfo[]>;
+
+
   /**
    * POST /accounts/{account_id}/d1/database/{database_id}/export with
    * output_format "polling": starts an export (no bookmark) or polls one

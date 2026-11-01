@@ -12,10 +12,30 @@ import { NamespaceDispatcher } from "./dispatch";
 import type { PlatformEnv } from "./env";
 import { isValidPlatformKey } from "./keys";
 import type { ProvisioningConfig, ProvisioningDeps } from "./provisioning";
+import type { AddressConfig } from "./addresses";
 import type { TenantRecord } from "./tenants";
 import { log } from "./log";
 
 export type ProvisioningSetup = { ok: true; deps: ProvisioningDeps } | { ok: false; missing: string[] };
+
+/** The platform Worker's own name, which customers' Custom Domains route to in dispatch mode (platform/wrangler.jsonc `name`). */
+export const DEFAULT_PLATFORM_WORKER = "openping-platform";
+
+/** Cloudflare zone ids are 32 hex characters. */
+const ZONE_ID_PATTERN = /^[0-9a-f]{32}$/;
+
+/**
+ * TENANT_ADDRESSES (src/addresses.ts): "wildcard" (the default) or
+ * "custom_domains", which also needs CF_ZONE_ID. Null for anything else.
+ */
+export function addressSettings(env: PlatformEnv): { ok: true; config: AddressConfig } | { ok: false; missing: string[] } {
+  const kind = env.TENANT_ADDRESSES?.trim() || "wildcard";
+  if (kind === "wildcard") return { ok: true, config: { kind: "wildcard" } };
+  if (kind !== "custom_domains") return { ok: false, missing: ["TENANT_ADDRESSES"] };
+  const zoneId = env.CF_ZONE_ID?.trim() ?? "";
+  if (!ZONE_ID_PATTERN.test(zoneId)) return { ok: false, missing: ["CF_ZONE_ID"] };
+  return { ok: true, config: { kind: "custom_domains", zoneId, dispatchService: env.PLATFORM_WORKER_NAME?.trim() || DEFAULT_PLATFORM_WORKER } };
+}
 
 /** TENANT_LOG_SAMPLING as a rate: 1 when empty, null when it isn't a number from 0 to 1. */
 export function tenantLogSampling(value: string | undefined): number | null {
@@ -36,6 +56,8 @@ export function provisioningSettings(
   if (!env.CF_API_TOKEN) missing.push("CF_API_TOKEN");
   if (!isValidPlatformKey(env.PLATFORM_KEY)) missing.push("PLATFORM_KEY");
   if (base64urlDecode(env.HANDOFF_PUBLIC_KEY?.trim() ?? "")?.length !== 32) missing.push("HANDOFF_PUBLIC_KEY");
+  const addresses = addressSettings(env);
+  if (!addresses.ok) missing.push(...addresses.missing);
   // A bad sampling rate never stops provisioning, releases or lifecycle: it falls back to logging everything, and says so.
   let sampling = tenantLogSampling(env.TENANT_LOG_SAMPLING);
   if (sampling === null) {
@@ -53,6 +75,7 @@ export function provisioningSettings(
       platformKey: env.PLATFORM_KEY!,
       handoffPublicKey: env.HANDOFF_PUBLIC_KEY!.trim(),
       tenantLogSampling: sampling,
+      addresses: addresses.ok ? addresses.config : { kind: "wildcard" },
     },
   };
 }

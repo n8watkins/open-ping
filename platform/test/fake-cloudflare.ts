@@ -14,7 +14,9 @@ import {
   type AssetUploadPart,
   type AssetUploadSession,
   type CloudflareApi,
+  type CustomDomainInfo,
   type D1DatabaseInfo,
+  type DnsRecordInfo,
   type D1ExportStatus,
   type UploadedScript,
   type WorkerModule,
@@ -30,7 +32,12 @@ export type FakeOperation =
   | "putScript"
   | "deleteScript"
   | "exportDatabase"
-  | "getScriptMigrationTag";
+  | "getScriptMigrationTag"
+  | "attachCustomDomain"
+  | "findCustomDomain"
+  | "countCustomDomains"
+  | "detachCustomDomain"
+  | "findDnsRecords";
 
 export interface FakeScript {
   namespace: string;
@@ -71,6 +78,12 @@ export class FakeCloudflareApi implements CloudflareApi {
   /** The next export ends in this error instead. */
   exportError: string | null = null;
   private readonly exports = new Map<string, { databaseId: string; polls: number; error: string | null }>();
+  /** Workers Custom Domains by id, every Worker's on every zone. */
+  readonly customDomains = new Map<string, CustomDomainInfo>();
+  /** DNS records per zone that aren't a Custom Domain's own (the owner's other hostnames). */
+  readonly dnsRecords = new Map<string, DnsRecordInfo[]>();
+  /** Cloudflare's limit of Custom Domains per zone. */
+  customDomainLimit = 100;
   /** Called after a script upload or delete takes effect (to register a fake user Worker). */
   onScriptChange?: (scriptName: string, script: FakeScript | null) => void;
 
@@ -238,6 +251,66 @@ export class FakeCloudflareApi implements CloudflareApi {
       if (job.error) return { status: "error", bookmark, error: job.error };
       if (job.polls++ < this.exportPolls - 1) return { status: "active", bookmark };
       return { status: "complete", bookmark, signedUrl: `https://fake-d1-export.invalid/${databaseId}/${bookmark}.sql`, filename: `${databaseId}.sql` };
+    });
+  }
+
+  /** Adds a DNS record the owner made by hand (another site, a mail host) at `name`. */
+  addDnsRecord(zoneId: string, name: string, type = "CNAME"): this {
+    const list = this.dnsRecords.get(zoneId) ?? [];
+    list.push({ id: this.id("dns-"), type, name });
+    this.dnsRecords.set(zoneId, list);
+    return this;
+  }
+
+  /** The Custom Domain at `hostname`, if any. */
+  customDomainAt(hostname: string): CustomDomainInfo | undefined {
+    return [...this.customDomains.values()].find((d) => d.hostname === hostname.toLowerCase());
+  }
+
+  attachCustomDomain(input: { hostname: string; service: string; zoneId: string }): Promise<CustomDomainInfo> {
+    return this.run("attachCustomDomain", [input], () => {
+      const hostname = input.hostname.toLowerCase();
+      const refuse = (status: number, code: number, message: string) => {
+        throw new CloudflareApiError("fake.attachCustomDomain", status, [{ code, message }]);
+      };
+      // A hostname with a DNS record of its own can't become a Custom Domain.
+      if ((this.dnsRecords.get(input.zoneId) ?? []).some((r) => r.name === hostname)) refuse(409, 100117, "Hostname already has an externally managed DNS record");
+      const existing = this.customDomainAt(hostname);
+      if (existing) {
+        // Attaching the same hostname to the same Worker again changes nothing.
+        if (existing.service === input.service) return existing;
+        refuse(409, 100116, "Hostname is already attached to another Worker");
+      }
+      if ([...this.customDomains.values()].filter((d) => d.zoneId === input.zoneId).length >= this.customDomainLimit) {
+        refuse(400, 100118, "The zone has reached its limit of Custom Domains");
+      }
+      const domain = { id: this.id("domain-"), hostname, service: input.service, zoneId: input.zoneId };
+      this.customDomains.set(domain.id, domain);
+      return domain;
+    });
+  }
+
+  findCustomDomain(zoneId: string, hostname: string): Promise<CustomDomainInfo | null> {
+    return this.run("findCustomDomain", [zoneId, hostname], () => {
+      const found = this.customDomainAt(hostname);
+      return found && found.zoneId === zoneId ? found : null;
+    });
+  }
+
+  countCustomDomains(zoneId: string): Promise<number> {
+    return this.run("countCustomDomains", [zoneId], () => [...this.customDomains.values()].filter((d) => d.zoneId === zoneId).length);
+  }
+
+  detachCustomDomain(id: string): Promise<boolean> {
+    return this.run("detachCustomDomain", [id], () => this.customDomains.delete(id));
+  }
+
+  findDnsRecords(zoneId: string, name: string): Promise<DnsRecordInfo[]> {
+    return this.run("findDnsRecords", [zoneId, name], () => {
+      const own = (this.dnsRecords.get(zoneId) ?? []).filter((r) => r.name === name.toLowerCase());
+      // A Custom Domain shows in the zone's records too, as Cloudflare's own.
+      const domain = this.customDomainAt(name);
+      return domain && domain.zoneId === zoneId ? [...own, { id: `cd-${domain.id}`, type: "AAAA", name: domain.hostname }] : own;
     });
   }
 

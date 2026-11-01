@@ -60,6 +60,7 @@ import { callTenant, type TenantDispatcher } from "./dispatch";
 import { PermanentError } from "./errors";
 import { ensureMasterKey } from "./keys";
 import { checkSlugAvailability, holdSlug, type SlugAvailability } from "./slugs";
+import { ensureTenantAddress, removeTenantAddress, type AddressConfig, type AddressDeps } from "./addresses";
 import { PROVISION_STATES, forgetTenant, tenantFromRow, type ProvisionState, type TenantRecord } from "./tenants";
 import { log } from "./log";
 
@@ -83,6 +84,8 @@ export interface ProvisioningConfig {
   handoffPublicKey: string;
   /** TENANT_LOG_SAMPLING: Workers Logs' head sampling rate for every user Worker, 0 to 1; 1 when absent. */
   tenantLogSampling?: number;
+  /** How customers' addresses are served (TENANT_ADDRESSES, src/addresses.ts); wildcard when absent. */
+  addresses?: AddressConfig;
 }
 
 export interface ProvisioningDeps {
@@ -184,11 +187,14 @@ interface ProvisionRow {
   provision_paused_at: number | null;
   provisioned_at: number | null;
   created_at: number;
+  custom_domain_id: string | null;
 }
 
 interface ProvisionTenant {
   record: TenantRecord;
   d1Id: string | null;
+  /** The tenant's Workers Custom Domain, once attached (custom_domains addresses). */
+  customDomainId: string | null;
   attempts: number;
   pausedAt: number | null;
   provisionedAt: number | null;
@@ -199,7 +205,7 @@ async function loadTenant(db: D1Database, tenantId: string): Promise<ProvisionTe
   const row = await db
     .prepare(
       `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, monitor_packs, fast_packs,
-              trial_ends_at, d1_id, provision_attempts, provision_next_at, provision_paused_at, provisioned_at, created_at
+              trial_ends_at, d1_id, provision_attempts, provision_next_at, provision_paused_at, provisioned_at, created_at, custom_domain_id
        FROM tenants WHERE id = ?`,
     )
     .bind(tenantId)
@@ -208,6 +214,7 @@ async function loadTenant(db: D1Database, tenantId: string): Promise<ProvisionTe
   return {
     record: tenantFromRow(row),
     d1Id: row.d1_id,
+    customDomainId: row.custom_domain_id,
     attempts: row.provision_attempts,
     pausedAt: row.provision_paused_at,
     provisionedAt: row.provisioned_at,
@@ -318,6 +325,11 @@ export class ProvisionStepError extends Error {
 
 type Step = (deps: ProvisioningDeps, t: ProvisionTenant, run: { tenantId: string; token: string }, now: number) => Promise<void>;
 
+/** What src/addresses.ts needs, from provisioning's deps. */
+export function addressDeps(deps: Pick<ProvisioningDeps, "db" | "api" | "config">, now: number): AddressDeps {
+  return { db: deps.db, api: deps.api, hostedDomain: deps.config.hostedDomain, addresses: deps.config.addresses ?? { kind: "wildcard" }, now };
+}
+
 const stepCreateDatabase: Step = async (deps, t, run, now) => {
   // The key first: nothing remote exists yet, and the upload needs it.
   await ensureMasterKey(deps.db, t.record.id, deps.config.platformKey, now);
@@ -360,9 +372,13 @@ const stepUpload: Step = async (deps, t, run, now) => {
     previousMigrationTag: null,
     logSampling: deps.config.tenantLogSampling,
   });
+  // Its address, once there is a Worker for it to reach: the platform's
+  // calls in the next steps, and visitors after them, come in through it.
+  const customDomainId = await ensureTenantAddress(addressDeps(deps, now), t.record);
   await advance(deps.db, run, "db_created", "uploaded", now, {
     version: bundle.version,
     do_migration_tag: bundle.migrations.at(-1)?.tag ?? null,
+    custom_domain_id: customDomainId,
   });
 };
 
@@ -422,6 +438,8 @@ const stepVerify: Step = async (deps, t, run, now) => {
  * repeated after a failure until it completes.
  */
 const stepTeardown: Step = async (deps, t, run, now) => {
+  // The address first, so nobody reaches a Worker that is about to go.
+  await removeTenantAddress(addressDeps(deps, now), t.record, t.customDomainId);
   await deps.api.deleteScript(deps.config.namespace, t.record.scriptName);
   // The id may never have been recorded (a create whose answer was lost), so also look it up by name.
   const d1Id = t.d1Id ?? (await deps.api.findDatabaseByName(tenantDatabaseName(t.record.id)))?.id ?? null;

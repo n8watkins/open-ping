@@ -98,6 +98,7 @@ describe("the platform database", () => {
       "export_keys",
       "lifecycle_locks",
       "lifecycle_notices",
+      "platform_capacity",
       "platform_heartbeats",
       "platform_sessions",
       "rate_limits",
