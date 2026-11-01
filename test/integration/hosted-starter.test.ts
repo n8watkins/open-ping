@@ -321,6 +321,49 @@ describe("a visitor's request", () => {
     expect((await handler(new Request(`${ORIGIN}/api/auth/status`), starterEnv(), createExecutionContext())).status).toBe(503);
   });
 
+  it("never makes a visitor wait on an unreachable platform: the stale description serves at once, refreshed in the background once", async () => {
+    let clock = Date.now();
+    const handler = starterFetch((request, e, ctx) => worker.fetch(request, e, ctx), { now: () => clock });
+    const background: Promise<unknown>[] = [];
+    const ctx = () => ({ waitUntil: (p: Promise<unknown>) => void background.push(p), passThroughOnException: () => {} }) as unknown as ExecutionContext;
+    expect((await handler(new Request(`${ORIGIN}/api/auth/status`), starterEnv(), ctx())).status).toBe(200);
+    // The platform now never answers.
+    let calls = 0;
+    vi.mocked(globalThis.fetch).mockImplementation(() => {
+      calls++;
+      return new Promise<Response>(() => {});
+    });
+    clock += 60_000;
+    const started = Date.now();
+    for (let i = 0; i < 3; i++) expect((await handler(new Request(`${ORIGIN}/api/auth/status`), starterEnv(), ctx())).status).toBe(200);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    // One refresh in flight for the isolate, in the background, not one per visitor.
+    expect(calls).toBe(1);
+    expect(background.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("backs off after a failed refresh, and without any description answers 503 at once while it does", async () => {
+    let clock = Date.now();
+    const handler = starterFetch((request, e, ctx) => worker.fetch(request, e, ctx), { now: () => clock });
+    const background: Promise<unknown>[] = [];
+    const ctx = () => ({ waitUntil: (p: Promise<unknown>) => void background.push(p), passThroughOnException: () => {} }) as unknown as ExecutionContext;
+    let calls = 0;
+    vi.mocked(globalThis.fetch).mockImplementation(async () => {
+      calls++;
+      throw new Error("network_error: down");
+    });
+    expect((await handler(new Request(`${ORIGIN}/api/auth/status`), starterEnv(), ctx())).status).toBe(503);
+    expect(calls).toBe(1);
+    // Inside the backoff: no call at all, and the answer is immediate.
+    clock += 1_000;
+    expect((await handler(new Request(`${ORIGIN}/api/auth/status`), starterEnv(), ctx())).status).toBe(503);
+    expect(calls).toBe(1);
+    // Past it, one more try.
+    clock += 60_000;
+    await handler(new Request(`${ORIGIN}/api/auth/status`), starterEnv(), ctx());
+    expect(calls).toBe(2);
+  });
+
   it("ignores an answer from the platform that isn't signed for this call", async () => {
     vi.mocked(globalThis.fetch).mockResolvedValue(Response.json({ contract: 1, tenant: tenantInfo({ plan: "hosted_fast" }) }));
     expect((await call(new Request(`${ORIGIN}/api/auth/status`))).status).toBe(503);

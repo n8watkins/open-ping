@@ -184,41 +184,87 @@ export class HttpsPlatform implements PlatformCapability {
 // ---------------------------------------------------------------------------
 
 let infoCache: { tenantId: string; tenant: TenantInfo; at: number } | null = null;
+/**
+ * This isolate's one refresh of the description at a time: when it started
+ * (a refresh that never settles stops counting after REFRESH_STUCK_MS), and
+ * the backoff after failed ones. Only these plain values are shared between
+ * requests, never a promise, since Workers ties I/O to the request that made it.
+ */
+let refresh: { since: number } | null = null;
+let backoff: { failures: number; until: number } = { failures: 0, until: 0 };
 
-/** Tests only: forget the cached description and keys. */
+/** How long the description call may take: a visitor waits on it only when there is no description at all. */
+export const INFO_CALL_TIMEOUT_MS = 5_000;
+/** The waits after failed refreshes: 5 s, then doubling, at most a minute. */
+export const INFO_BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000] as const;
+const REFRESH_STUCK_MS = INFO_CALL_TIMEOUT_MS + 5_000;
+
+/** Tests only: forget the cached description, the refresh state and the keys. */
 export function resetStarterCaches(): void {
   infoCache = null;
   keyCache = null;
+  refresh = null;
+  backoff = { failures: 0, until: 0 };
 }
 
 export type TenantDescription = { kind: "ok"; tenant: TenantInfo } | { kind: "not_ready" } | { kind: "unavailable" };
 
-/**
- * What the platform says about this tenant, at most STARTER_INFO_CACHE_MS old.
- * When the platform can't be reached, the last answer serves for up to
- * STARTER_INFO_STALE_MS; past that the tenant is unavailable, as it would be
- * in dispatch mode with the platform down. Concurrent requests with a stale
- * copy each ask: a promise from one request can't be awaited by another.
- */
-export async function describeTenant(platform: HttpsPlatform, tenantId: string, now: number): Promise<TenantDescription> {
-  const cached = infoCache?.tenantId === tenantId ? infoCache : null;
-  if (cached && now - cached.at < STARTER_INFO_CACHE_MS) return { kind: "ok", tenant: cached.tenant };
+/** One call for the description, recording what it found and the backoff. */
+async function fetchDescription(platform: HttpsPlatform, tenantId: string, now: () => number): Promise<TenantDescription> {
   try {
     const answer = await platform.info();
+    backoff = { failures: 0, until: 0 };
     if (answer === "not_ready") {
       infoCache = null;
       return { kind: "not_ready" };
     }
-    infoCache = { tenantId, tenant: answer, at: now };
+    infoCache = { tenantId, tenant: answer, at: now() };
     return { kind: "ok", tenant: answer };
   } catch (error) {
-    if (cached && now - cached.at < STARTER_INFO_STALE_MS) {
-      console.warn("[hosted starter] the platform didn't describe this tenant; using its last answer", error);
-      return { kind: "ok", tenant: cached.tenant };
-    }
+    const failures = backoff.failures + 1;
+    backoff = { failures, until: now() + INFO_BACKOFF_MS[Math.min(failures, INFO_BACKOFF_MS.length) - 1]! };
     console.error("[hosted starter] the platform didn't describe this tenant", error);
     return { kind: "unavailable" };
   }
+}
+
+/**
+ * What the platform says about this tenant (contract, section 10, "Public
+ * requests"), without ever making a visitor wait on a platform that is slow
+ * or down when there is something to serve:
+ *
+ *   - at most STARTER_INFO_CACHE_MS old: served;
+ *   - older, up to STARTER_INFO_STALE_MS: served at once, and one refresh
+ *     per isolate starts in the background (`waitUntil`), unless one is in
+ *     flight or a failed one is backing off;
+ *   - none, or too old: asked for now, unless a failed call is backing off,
+ *     when the answer is "unavailable" at once instead of another wait.
+ */
+export async function describeTenant(
+  platform: HttpsPlatform,
+  tenantId: string,
+  now: number,
+  waitUntil: (promise: Promise<unknown>) => void,
+  clock: () => number = Date.now,
+): Promise<TenantDescription> {
+  const cached = infoCache?.tenantId === tenantId ? infoCache : null;
+  const age = cached ? now - cached.at : Infinity;
+  if (cached && age < STARTER_INFO_CACHE_MS) return { kind: "ok", tenant: cached.tenant };
+  const backingOff = now < backoff.until;
+  if (cached && age < STARTER_INFO_STALE_MS) {
+    const inFlight = refresh !== null && now - refresh.since < REFRESH_STUCK_MS;
+    if (!inFlight && !backingOff) {
+      refresh = { since: now };
+      waitUntil(
+        fetchDescription(platform, tenantId, clock).finally(() => {
+          refresh = null;
+        }),
+      );
+    }
+    return { kind: "ok", tenant: cached.tenant };
+  }
+  if (backingOff) return { kind: "unavailable" };
+  return fetchDescription(platform, tenantId, clock);
 }
 
 // ---------------------------------------------------------------------------
@@ -326,6 +372,8 @@ export function starterFetch(handler: Handler, options: { now?: () => number; fe
       return unavailable();
     }
     const platform = new HttpsPlatform({ tenantId, platformUrl, keys, fetch: options.fetch, now: options.now });
+    // The description gets a shorter timeout: a visitor waits on it when there is none yet.
+    const describer = new HttpsPlatform({ tenantId, platformUrl, keys, fetch: options.fetch, now: options.now, timeoutMs: INFO_CALL_TIMEOUT_MS });
 
     let incoming = request;
     if (hasSignedCallHeaders(request.headers)) {
@@ -355,7 +403,7 @@ export function starterFetch(handler: Handler, options: { now?: () => number; fe
     if (isInternalPath(new URL(visitor.url).pathname)) {
       return Response.json({ error: HOSTED_ERRORS.notFound }, { status: 404, headers: NO_STORE });
     }
-    const description = await describeTenant(platform, tenantId, now);
+    const description = await describeTenant(describer, tenantId, now, (promise) => ctx.waitUntil(promise), options.now ?? Date.now);
     if (description.kind !== "ok") return unavailable();
     const { tenant } = description;
     if (tenant.status === "suspended") return suspendedPage(tenant.urls.account);

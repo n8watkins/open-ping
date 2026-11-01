@@ -513,7 +513,8 @@ A thrown error, a timeout or an answer that doesn't verify mean the call itself 
 In starter mode visitors reach the user Worker directly, not through the platform, so it builds the props of a public request itself:
 
 - `tenant` is the latest `TenantInfoAnswer` from `/__tenant/v1/info`, kept at most 30 seconds (`STARTER_INFO_CACHE_MS`, the same time the platform keeps a tenant row in dispatch mode), so a suspension or a plan change reaches it as fast in both modes.
-  When the platform can't be reached, it keeps using its last answer for up to 10 minutes (`STARTER_INFO_STALE_MS`), and after that answers 503 `hosted_unavailable`, as it would in dispatch mode with the platform down.
+  An answer older than that is still served at once while one refresh per isolate runs in the background, so no visitor waits on a slow or unreachable platform when there is an answer to serve; a failed refresh backs off (5 seconds, doubling to a minute).
+  When the platform can't be reached, it keeps using its last answer for up to 10 minutes (`STARTER_INFO_STALE_MS`), and after that answers 503 `hosted_unavailable`, as it would in dispatch mode with the platform down, at once while a failed call is backing off.
 - `invocation` is `"public"`, `callId` is a new random id, and `platform` is the HTTPS client.
 - A tenant that is `suspended` answers what the platform answers for it in dispatch mode, a page saying it is paused with a link to `urls.account`, for every public request.
 - A tenant the platform says isn't ready answers 503 `hosted_unavailable`.
