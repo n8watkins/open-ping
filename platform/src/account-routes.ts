@@ -63,7 +63,7 @@ import { requestAppOrigin, requestTenantOrigin } from "./hosts";
 import { PLATFORM_REPLY_TO, type Mailer } from "./mail";
 import { addressDeps, requestTenant, runProvisioning } from "./provisioning";
 import { CAPACITY_FULL_MESSAGE, capacityForSignUp, checkAddress, refreshCapacity } from "./addresses";
-import type { ProvisioningSetup } from "./provisioning-env";
+import { tenantMode, type ProvisioningSetup } from "./provisioning-env";
 import { enqueueProvisioning } from "./provisioning-queue";
 import { SLUG_MESSAGES, checkSlugAvailability } from "./slugs";
 import { tenantFromRow, type TenantRecord } from "./tenants";
@@ -932,7 +932,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     }
     let result: Awaited<ReturnType<typeof requestTenant>>;
     try {
-      result = await requestTenant(db, { accountId: session.account.id, slug, now: c.get("now") });
+      result = await requestTenant(db, { accountId: session.account.id, slug, now: c.get("now"), runtime: tenantMode(c.env) ?? "dispatch" });
     } catch (error) {
       // A second submit raced the first: one OpenPing per account (migration 0003), and it already has it.
       if (String(error).includes("UNIQUE") && String(error).includes("account_id")) return seeOther(c, "/account");

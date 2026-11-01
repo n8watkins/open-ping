@@ -17,6 +17,7 @@ import {
   type CustomDomainInfo,
   type D1DatabaseInfo,
   type DnsRecordInfo,
+  type ScriptLocation,
   type D1ExportStatus,
   type UploadedScript,
   type WorkerModule,
@@ -81,7 +82,8 @@ export class HttpCloudflareApi implements CloudflareApi {
     return `${CLOUDFLARE_API_BASE}/accounts/${this.options.accountId}${path}`;
   }
 
-  private script(namespace: string, scriptName: string, suffix = ""): string {
+  private script(namespace: ScriptLocation, scriptName: string, suffix = ""): string {
+    if (namespace === null) return this.account(`/workers/scripts/${encodeURIComponent(scriptName)}${suffix}`);
     return this.account(
       `/workers/dispatch/namespaces/${encodeURIComponent(namespace)}/scripts/${encodeURIComponent(scriptName)}${suffix}`,
     );
@@ -180,7 +182,7 @@ export class HttpCloudflareApi implements CloudflareApi {
     return { status: "active", bookmark: at };
   }
 
-  async createAssetUploadSession(namespace: string, scriptName: string, manifest: AssetManifest): Promise<AssetUploadSession> {
+  async createAssetUploadSession(namespace: ScriptLocation, scriptName: string, manifest: AssetManifest): Promise<AssetUploadSession> {
     const op = "assets.session";
     const { status, body } = await this.call<{ jwt?: string; buckets?: string[][] }>(
       op,
@@ -209,7 +211,7 @@ export class HttpCloudflareApi implements CloudflareApi {
   }
 
   async putScript(
-    namespace: string,
+    namespace: ScriptLocation,
     scriptName: string,
     metadata: WorkerUploadMetadata,
     modules: WorkerModule[],
@@ -297,7 +299,12 @@ export class HttpCloudflareApi implements CloudflareApi {
     return { id: d.id, hostname: d.hostname, service: d.service, zoneId: String(d.zone_id ?? "") };
   }
 
-  async getScriptMigrationTag(namespace: string, scriptName: string): Promise<string | null> {
+  async getScriptMigrationTag(namespace: ScriptLocation, scriptName: string): Promise<string | null> {
+    if (namespace === null) {
+      const script = (await this.accountScripts()).find((s) => s.id === scriptName);
+      if (!script) throw new CloudflareApiError("scripts.list", 404, [{ code: 10007, message: "script not found" }]);
+      return typeof script.migration_tag === "string" && script.migration_tag ? script.migration_tag : null;
+    }
     const op = "script.get";
     const { status, body } = await this.call<{ script?: { migration_tag?: string | null } }>(op, this.script(namespace, scriptName), { method: "GET" });
     const result = HttpCloudflareApi.result(op, status, body);
@@ -305,7 +312,26 @@ export class HttpCloudflareApi implements CloudflareApi {
     return typeof tag === "string" && tag ? tag : null;
   }
 
-  async deleteScript(namespace: string, scriptName: string): Promise<boolean> {
+  /** GET /workers/scripts: every Worker on the account (a few hundred at most, in one answer). */
+  private async accountScripts(): Promise<{ id?: string; migration_tag?: string | null }[]> {
+    const op = "scripts.list";
+    const { status, body } = await this.call<{ id?: string; migration_tag?: string | null }[]>(op, this.account("/workers/scripts"), { method: "GET" });
+    const list = HttpCloudflareApi.result(op, status, body);
+    return Array.isArray(list) ? list : [];
+  }
+
+  async countAccountScripts(): Promise<number> {
+    return (await this.accountScripts()).length;
+  }
+
+  async setWorkersDev(scriptName: string, enabled: boolean): Promise<void> {
+    await this.call("script.subdomain", this.script(null, scriptName, "/subdomain"), {
+      method: "POST",
+      json: { enabled, previews_enabled: enabled },
+    });
+  }
+
+  async deleteScript(namespace: ScriptLocation, scriptName: string): Promise<boolean> {
     const { status } = await this.call(
       "script.delete",
       this.script(namespace, scriptName, "?force=true"),

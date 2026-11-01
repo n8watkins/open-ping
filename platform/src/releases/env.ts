@@ -7,9 +7,9 @@
 import type { PlatformCapability } from "../../../src/shared/hosted-contract";
 import { R2BundleSource } from "../bundle";
 import { HttpCloudflareApi } from "../cloudflare/http";
-import { NamespaceDispatcher } from "../dispatch";
+
 import type { PlatformEnv } from "../env";
-import { provisioningSettings } from "../provisioning-env";
+import { provisioningSettings, tenantDispatcher } from "../provisioning-env";
 import type { TenantRecord } from "../tenants";
 import type { ReleaseDeps } from "./runner";
 
@@ -24,7 +24,7 @@ export function releaseSetup(env: PlatformEnv, capability: (tenant: TenantRecord
       db: env.PLATFORM_DB,
       api: new HttpCloudflareApi({ accountId: settings.accountId, apiToken: settings.apiToken }),
       store: new R2BundleSource(env.BUNDLES!),
-      dispatcher: new NamespaceDispatcher(env.TENANTS),
+      dispatcher: tenantDispatcher(env),
       capability,
       config: settings.config,
       defaultCanary: env.RELEASE_CANARY?.trim() || null,

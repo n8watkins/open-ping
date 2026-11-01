@@ -461,6 +461,15 @@ function actions(input: TenantPageInput): Html {
 <button class="button danger" type="submit">Remove ${t.slug}</button></form></div>`);
   }
 
+  if (t.runtime === "starter" && t.provisionState === "ready" && d.accountDeletionAt === null) {
+    cards.push(html`<div class="action"><h3>Move to Workers for Platforms</h3>
+<p>Uploads the current release into the dispatch namespace, checks its health there, then points its address at the platform and deletes its starter Worker. Its database and data stay as they are; visitors are served throughout. Workers for Platforms must be on and <code>DISPATCH_NAMESPACE</code> set.</p>
+<form method="post" action="${base}/move-to-dispatch"><button class="button" type="submit">Move ${t.slug}</button></form></div>`);
+    cards.push(html`<div class="action"><h3>Rotate its call secret</h3>
+<p>Makes it a new <code>PLATFORM_CALL_SECRET</code>, uploads its Worker again on its own version with it, then stops accepting the old one. For a suspected leak, or as routine upkeep; its data and address don't change.</p>
+<form method="post" action="${base}/rotate-call-secret"><button class="button" type="submit">Rotate the secret</button></form></div>`);
+  }
+
   if (d.accountDeletionAt !== null) {
     cards.push(html`<div class="action"><h3>Account being deleted</h3>
 <p>Asked ${secondsText(d.accountDeletionAt)}. Its OpenPing stays paused; the lifecycle jobs export it, delete it, then scrub the account.</p></div>`);

@@ -112,6 +112,8 @@ describe("the platform database", () => {
       "slug_holds",
       "stripe_events",
       "subscriptions",
+      "tenant_call_nonces",
+      "tenant_call_secrets",
       "tenant_email_usage",
       "tenant_exports",
       "tenant_usage",

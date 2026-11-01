@@ -22,11 +22,22 @@ import { appOrigin } from "./hosts";
 export const PROVISION_STATES = ["requested", "db_created", "uploaded", "migrated", "ready", "deleting"] as const;
 export type ProvisionState = (typeof PROVISION_STATES)[number];
 
+/**
+ * Where a tenant's OpenPing runs (tenants.runtime, migration 0018):
+ * "dispatch", a user Worker in the dispatch namespace called with props, or
+ * "starter", an ordinary Worker on the account called over signed HTTPS
+ * (docs/hosted/CONTRACT.md, section 10; src/starter.ts).
+ */
+export const TENANT_RUNTIMES = ["dispatch", "starter"] as const;
+export type TenantRuntime = (typeof TENANT_RUNTIMES)[number];
+
 export interface TenantRecord {
   id: string;
   accountId: string;
   slug: string;
   scriptName: string;
+  /** Where its OpenPing runs: the dispatch namespace, or an ordinary Worker (starter mode). */
+  runtime: TenantRuntime;
   /**
    * What the tenant is told and routed by: `suspended` while billing or the
    * owner says so, otherwise billing's state.
@@ -59,10 +70,12 @@ export interface TenantRow {
   monitor_packs: number | null;
   fast_packs: number | null;
   trial_ends_at: number | null;
+  /** Absent from a query that doesn't need it: then "dispatch". Every query that calls or uploads the tenant selects it. */
+  runtime?: string | null;
 }
 
 export const TENANT_COLUMNS =
-  "id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, monitor_packs, fast_packs, trial_ends_at";
+  "id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, monitor_packs, fast_packs, trial_ends_at, runtime";
 
 function oneOf<T extends string>(values: readonly T[], value: string, fallback: T): T {
   return (values as readonly string[]).includes(value) ? (value as T) : fallback;
@@ -107,6 +120,7 @@ export function tenantFromRow(row: TenantRow): TenantRecord {
     accountId: row.account_id,
     slug: row.slug,
     scriptName: row.script_name,
+    runtime: oneOf(TENANT_RUNTIMES, row.runtime ?? "dispatch", "dispatch"),
     status: row.owner_suspended_at !== null ? "suspended" : billingStatus,
     billingStatus,
     ownerSuspendedAt: row.owner_suspended_at,

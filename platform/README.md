@@ -244,6 +244,60 @@ The trade-offs against a dedicated domain:
 - The `__Host-` cookies keep sessions safe, but a host under `n8builds.dev` that runs someone else's code could still set ordinary cookies for the whole domain, so no one else should get a hostname under it.
 - Customers' status pages and the owner's portfolio share one zone's settings (WAF, rate limits, caching rules): a rule meant for one applies to all, so zone-wide rules need a hostname condition.
 
+## Starter mode
+
+`TENANT_MODE` (`src/starter.ts`, [the contract, section 10](../docs/hosted/CONTRACT.md#10-starter-mode-ordinary-workers-and-signed-calls)) says where new customers' OpenPings run:
+
+- `dispatch`, the default: user Workers in the dispatch namespace, on Workers Paid with Workers for Platforms ($5 and $25 a month).
+- `starter`: ordinary Workers `t-<tenant id>` on the account, on Workers Paid alone ($5 a month), each at its own Custom Domain with its workers.dev address turned off.
+  Cloudflare allows 500 Workers per account on Workers Paid, but one zone's 100 Custom Domains run out first, at about 85 to 90 customers ([Addresses under a subdomain](#addresses-under-a-subdomain)); costs are in [HOSTED_PLAN.md](../docs/HOSTED_PLAN.md#starting-cheaper-starter-mode-on-workers-paid-alone).
+
+Each tenant records where it runs (`tenants.runtime`, migration 0018), so one platform can serve both while tenants move.
+
+### How the two trust each other without a dispatch namespace
+
+In dispatch mode only the platform can set a user Worker's props, so nothing is signed.
+In starter mode anyone on the internet can reach a tenant's Worker, so:
+
+- **One secret per tenant.** Provisioning makes a random 32-byte `PLATFORM_CALL_SECRET` for each tenant, keeps it sealed with `PLATFORM_KEY` (`tenant_call_secrets`, bound to the tenant id like the escrowed `MASTER_KEY`), and sets it as that tenant's Worker secret only.
+  A tenant can only ever sign as itself; the secret is never in a var, a log or a request.
+- **Two keys from it.** HKDF derives one HMAC-SHA256 key for calls from the platform and another for calls to it, and every answer is signed with the other direction's key, so nothing signed one way verifies the other way.
+- **Signed calls.** A call signs its method, host, path and query, body hash, a millisecond timestamp, a fresh nonce, the tenant id, and (platform to tenant) the props and the call id.
+  The receiver refuses a timestamp more than 30 seconds off, a body over 256 KiB, a signature that doesn't match, props that aren't for it, and a nonce it has seen (recorded once, in the tenant's `used_platform_call_nonces` and the platform's `tenant_call_nonces`).
+- **Platform to tenant** (`HttpsTenantDispatcher`): the scheduler's queue consumer, provisioning, the release runner and the admin console call `https://<slug>.<domain>/__platform/...` with the same props the namespace would pass, and accept only an answer signed for that very call.
+- **Tenant to platform** (`handleTenantCall`): `sendEmail`, `reportUsage` and `audit` become signed POSTs to `app.<domain>/__tenant/v1/...`, plus `info`, which describes the tenant (plan, limits, status) for its visitors' requests; the platform identifies the tenant by the signature alone and answers signed.
+- **Visitors can't pose as the platform.** A starter tenant strips every `x-openping-` header from a request that doesn't verify completely, answers the platform's 404 for `/__platform/...`, and builds a visitor's props from the platform's description of it, kept 30 seconds (a suspension reaches it as fast as in dispatch mode); a suspended tenant shows the paused page itself.
+
+What else holds it in:
+
+- **A moved or removed tenant's secret is never accepted again.** The platform accepts a tenant's call only while it runs in starter mode, and a move deletes the secret in the same batch that records the tenant as dispatch.
+- **The same allowances as dispatch mode.** Nothing for a tenant being removed; while it is set up only the calls its platform calls need; once ready everything; while suspended only its description (so it shows the paused page) and email, which the capability itself refuses for a paused tenant.
+- **Forged ids are cheap.** A tenant's keys are kept 30 seconds per isolate and an unknown id 60, so each forged id costs one database read; lookups that miss the cache are capped per caller by the `TENANT_CALL_RATE_LIMIT` binding (600 a minute), refusals are logged at most once per 10 seconds per isolate (with how many were left out), and a WAF rule in front is an owner step (DEFERRED_INPUTS.md, section 6).
+- **Per-invocation caps.** An ordinary Worker has one set of caps for every invocation, so a starter Worker is uploaded with a platform call's (`limits`: 15,000 ms of CPU and 1,000 subrequests); dispatch sets a visitor's request's tighter caps (1,000 ms, 200) per call, which starter mode can't.
+- **Rotating a secret:** the admin console's tenant page has **Rotate its call secret** (`rotateCallSecret`, `src/tenant-upload.ts`): the new secret is stored beside the old one and both are accepted, the tenant's Worker is uploaded again on its own version with the new one, then the old one is dropped. A platform call in the moment between the upload and the swap is refused by the Worker and simply made again on the next tick; other isolates accept the old secret for up to 30 seconds more.
+
+The tests: `test/starter.test.ts` (the platform's side, with a network that verifies as a starter tenant does), `../test/integration/hosted-starter.test.ts` (the real OpenPing Worker's side) and `../src/shared/hosted-contract-starter.test.ts` (the helpers), each covering forged, tampered, replayed, expired, reflected, cross-tenant and visitor-header requests and the secrets' isolation.
+
+### Switching it on
+
+1. Workers Paid on the account; Workers for Platforms isn't needed.
+2. Addresses under a subdomain, as [above](#addresses-under-a-subdomain): `TENANT_ADDRESSES` `custom_domains`, `CF_ZONE_ID`, and `app.<HOSTED_DOMAIN>` attached to this Worker as a **Custom Domain** (not a route: a Worker on the same zone can fetch another Worker's Custom Domain, never its route, and each customer's OpenPing calls `app.<domain>`).
+3. `TENANT_MODE` set to `starter` in `wrangler.jsonc`, and the `dispatch_namespaces` block deleted from it (the TENANTS binding needs Workers for Platforms); `DISPATCH_NAMESPACE` isn't needed.
+4. `CF_API_TOKEN` with, for that one account and zone: **Account, Workers Scripts, Edit** (the customers' Workers, their secrets and their workers.dev switch), **Account, D1, Edit** (their databases and exports), **Zone, Workers Routes, Edit** (their Custom Domains) and **Zone, DNS, Read** (the check that a slug never takes over one of the owner's hostnames).
+5. Everything else in the owner setup below is the same, except steps 1 (no Workers for Platforms), 2 (as above) and 3 (no namespace).
+
+### Moving to Workers for Platforms
+
+When starter mode nears its limits, or the owner wants Workers for Platforms' 1,000 included scripts and per-call limits:
+
+1. Turn on Workers for Platforms, create the dispatch namespace, put the `dispatch_namespaces` block back in `wrangler.jsonc`, set `DISPATCH_NAMESPACE`, and deploy. Starter tenants keep working unchanged.
+2. Set `TENANT_MODE` to `dispatch`, so new sign-ups go into the namespace.
+3. For each starter tenant, the admin console's tenant page has **Move to Workers for Platforms** (`moveTenantToDispatch`, `src/tenant-move.ts`): it uploads the tenant's own recorded version into the namespace, checks its health there, records the tenant as dispatch and deletes its call secret in one batch, moves its Custom Domain to this Worker in place, then deletes the starter Worker.
+   Its database, keys and data don't move; visitors are served by the starter Worker until the address switches, and by the dispatched one after.
+   The move in place is one `PUT /workers/domains` of the same hostname with this Worker: Cloudflare's reference doesn't say that it moves a hostname attached to another Worker (Wrangler can, after asking to override it), so if the API refuses, the domain is detached and attached again at once, about a second without an address; staging should confirm which happens.
+   A move that stops partway says at which step, and running it again picks up from there.
+4. With every tenant moved, the addresses can stay as Custom Domains (up to the zone's 100), or move to a dedicated domain with a `*.<domain>` route and `TENANT_ADDRESSES` `wildcard`, which changes every customer's address once (decision D2); the Custom Domains under the old zone are then detached by hand.
+
 ## Owner setup (not done yet)
 
 None of these steps has been done.

@@ -108,12 +108,18 @@ export function workerConfigFromWrangler(config: Record<string, unknown>): Bundl
 export interface BundleSource {
   /** The bundle new tenants get: the current release. */
   current(): Promise<TenantBundle>;
+  /** One release's bundle, when the source keeps them (R2 does): a tenant re-uploaded on its own version. */
+  version?(version: string): Promise<TenantBundle>;
 }
 
 /** A source that always answers the same bundle (tests, and local experiments). */
 export class StaticBundleSource implements BundleSource {
   constructor(private readonly bundle: TenantBundle) {}
   async current(): Promise<TenantBundle> {
+    return this.bundle;
+  }
+  async version(version: string): Promise<TenantBundle> {
+    if (version !== this.bundle.version) throw new PermanentError(`tenant bundle: no release ${version}`);
     return this.bundle;
   }
 }

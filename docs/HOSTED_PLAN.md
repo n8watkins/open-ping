@@ -28,6 +28,7 @@ Every number above lives in one place in the code, and the landing page, the pla
 
 - Each hosted customer is their own isolated OpenPing (Cloudflare Workers for Platforms), so the code that already runs in your own account runs for them unchanged, and no customer can ever see another's data.
 - Fixed costs are about $25 to $45 a month: Workers Paid ($5), Workers for Platforms ($25), and email beyond Resend's free tier.
+  Starter mode starts at $5 a month, Workers Paid alone, until about 80 customers ([Starting cheaper](#starting-cheaper-starter-mode-on-workers-paid-alone)).
 - Each customer costs about 6 cents a month at 12-minute checks (5 monitors), and about 5 cents at 1-minute checks once check writes are batched (stage 2).
 - Stripe's 30 cent fee is why billing is yearly: it takes about 5% of $24, but 14% of a $3 monthly charge.
 - Break-even is about 20 to 25 customers.
@@ -125,6 +126,37 @@ A trial costs what its monitors cost to run for its length, and no Stripe fee:
 - The conversion rates are assumptions to show the range, not measurements.
 - A 30-day trial with 5 monitors costs at most about 11% of a converted customer's first year even at a poor 5% conversion, and inside the included rows it costs close to nothing.
 - The full plan as a trial is the one that can cost a large share of the first year, and it invites using the trial as a free plan.
+
+## Starting cheaper: starter mode on Workers Paid alone
+
+Built 2026-10-31 and off by default ([platform/README.md, "Starter mode"](../platform/README.md#starter-mode), [the contract, section 10](./hosted/CONTRACT.md#10-starter-mode-ordinary-workers-and-signed-calls)).
+Starter mode runs every customer as an ordinary Worker on the account, at its own Custom Domain under a subdomain the owner already has (`<slug>.openping.n8builds.dev`), so Hosted needs Workers Paid ($5 a month) and no Workers for Platforms ($25 a month) and no new domain.
+The checks, the database and every per-customer number above are the same in both modes: only how the platform and a customer's OpenPing call each other changes.
+
+**What starter mode adds per customer, measured on 2026-10-31** in local D1 (workerd), counting D1's own `rows_written`:
+
+- Each signed call's nonce is recorded once and deleted when it expires: 4 rows written a call, on the receiving side.
+- A customer on 12-minute checks gets 3,600 platform calls a month and makes about 3,600 calls back (the usage report once per 12 minutes), plus one description request per 30 seconds of each isolate that serves its visitors (at most about 86,000 a month for a status page visited all day, and a few thousand for a quiet one).
+  That is about 0.03 million rows a month for a quiet customer and at most about 0.37 million for a busy status page, against the 0.79 million a busiest customer's checks write (about 4% to 47% more rows; typical customers are near the low end).
+- On 1-minute checks it is 43,200 platform calls a month, about 0.19 million rows, against 7.2 million.
+- Requests: the tenant's calls back to the platform are about 7,000 to 90,000 more Worker requests a customer a month, inside the 10 million Workers Paid includes until well past 100 customers.
+- CPU: an HMAC-SHA256 over a few hundred bytes per call, well under a millisecond.
+
+**Cost a month on Workers Paid alone,** for the base plan (`hosted`, 12-minute checks), busiest (20 monitors, 0.82 million rows a customer with starter mode's rows) and typical (about 8 monitors, about 0.38 million), with D1's first 50 million rows written and the Queues' first million operations included (checked 2026-10-29 at developers.cloudflare.com/workers/platform/pricing):
+
+| Customers | Rows written, busiest / typical | Starter mode, busiest / typical | Workers for Platforms, busiest / typical | Revenue |
+| --- | --- | --- | --- | --- |
+| 10 | 8.2 / 3.8 million | $5 / $5 | $30 / $30 | $20 |
+| 50 | 41 / 19 million | $5 / $5 | $30 / $30 | $100 |
+| 200 | 164 / 76 million | not possible as built (see below) | $145 / $57 | $400 |
+
+- At 200 customers the rows past the allowance are about $114 (busiest) or $26 (typical), the queue operations past the first million about 50 cents, and the requests still inside the 10 million; the table's Workers for Platforms figures add its $25 to those.
+- **Starter mode stops at one zone's 100 Custom Domains,** the owner's own hostnames included: with `n8builds.dev` already holding a few, about 85 to 90 customers.
+  Sign-ups stop at 95 with a plain message, and the health check warns the owner from 85.
+  Workers Paid's 500 Workers per account would allow about 490, but the Custom Domains run out first.
+- So the plan is to start in starter mode and move to Workers for Platforms, with a dedicated domain and its wildcard route, before about 80 customers: the move is one tenant at a time from the admin console, keeps each customer's data where it is, and serves visitors throughout ([platform/README.md](../platform/README.md#moving-to-workers-for-platforms)).
+- Break-even: a typical base-plan customer brings about $1.90 a month after Stripe's fees, so starter mode's $5 is covered by 3 customers, against about 16 for the $30 of Workers Paid with Workers for Platforms.
+- Not included, as above: email beyond Resend's free tier and support time; starter mode saves the domain (about $10 to $15 a year) too.
 
 ## The stages
 

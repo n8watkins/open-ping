@@ -4,14 +4,23 @@ export interface PlatformEnv {
   HOSTED_DOMAIN: string;
   /** Accounts, tenants, billing, keys, audit (migrations/). */
   PLATFORM_DB: D1Database;
-  /** The dispatch namespace holding every customer's OpenPing. */
-  TENANTS: DispatchNamespace;
+  /** The dispatch namespace holding every customer's OpenPing; absent in starter mode, which has no Workers for Platforms. */
+  TENANTS?: DispatchNamespace;
   /** Due customers, one message each, for the scheduler's consumer (B4, src/scheduling.ts). */
   SCHEDULE_QUEUE: Queue<import("./scheduling").ScheduleMessage>;
 
   // --- Provisioning (B3, src/provisioning.ts) ---
-  /** The dispatch namespace's name, for the Cloudflare API (the binding above is TENANTS). */
+  /** The dispatch namespace's name, for the Cloudflare API (the binding above is TENANTS). Not needed in starter mode. */
   DISPATCH_NAMESPACE?: string;
+  /**
+   * Var: where new customers' OpenPings run (src/starter.ts). "dispatch" (the
+   * default): user Workers in the dispatch namespace (Workers for Platforms,
+   * $25 a month). "starter": ordinary Workers t-<id> on the account, on
+   * Workers Paid alone, called over HTTPS signed with a secret per tenant;
+   * needs TENANT_ADDRESSES "custom_domains". Each tenant keeps where it was
+   * made (tenants.runtime) until it is moved (src/tenant-move.ts).
+   */
+  TENANT_MODE?: string;
   /** Runs of provisioning, one message per tenant and retry (src/provisioning-queue.ts). */
   PROVISION_QUEUE?: Queue<import("./provisioning-queue").ProvisionMessage>;
   /** Tenant bundles written by the release runner (C1; layout in src/bundle.ts). */
@@ -45,6 +54,12 @@ export interface PlatformEnv {
   // --- Observability (C4, src/observability/) ---
   /** Optional rate limit binding for /__health and /healthz, per caller (platform/wrangler.jsonc, ratelimits). */
   HEALTH_RATE_LIMIT?: RateLimit;
+  /**
+   * Optional rate limit binding for starter tenants' calls (src/starter.ts):
+   * per caller, on the calls whose tenant keys this isolate hasn't cached,
+   * the ones that cost a database read (platform/wrangler.jsonc, ratelimits).
+   */
+  TENANT_CALL_RATE_LIMIT?: RateLimit;
 
   // --- Releases (C1, src/releases/) ---
   /** Var: the canary of every rollout that names none, as a slug or tenant id (the owner's own test tenant). */

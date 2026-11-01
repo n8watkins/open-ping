@@ -26,7 +26,6 @@ import { emailSignInCleanup } from "./auth/email-sign-in";
 import { rateLimitCleanup } from "./auth/rate-limit";
 import { sessionCleanup } from "./auth/sessions";
 import { TenantCapability, emailUsageCleanup, tenantMailFromEnv } from "./capability";
-import { NamespaceDispatcher } from "./dispatch";
 import type { PlatformEnv } from "./env";
 import { mailerFromEnv } from "./mail";
 import { lifecycleDepsFromEnv } from "./lifecycle/env";
@@ -34,7 +33,7 @@ import { LIFECYCLE_EVERY_MINUTES, lifecycleTick } from "./lifecycle/jobs";
 import { addressDeps, provisionDue } from "./provisioning";
 import { refreshCapacity } from "./addresses";
 import { handleProvisionBatch, type ProvisionMessage } from "./provisioning-queue";
-import { provisioningSetup } from "./provisioning-env";
+import { provisioningSetup, tenantDispatcher } from "./provisioning-env";
 import { enqueueDue, handleScheduleBatch, schedulerDaysCleanup, type SchedulingDeps } from "./scheduling";
 import { releaseSetup } from "./releases/env";
 import { releaseTick } from "./releases/runner";
@@ -83,7 +82,7 @@ function capabilityFor(ctx: ExecutionContext, tenant: TenantRecord): PlatformCap
 }
 
 const app = createApp({
-  dispatcher: (env) => new NamespaceDispatcher(env.TENANTS),
+  dispatcher: (env) => tenantDispatcher(env),
   capability: (_env, ctx, tenant) => capabilityFor(ctx, tenant),
   releases: (env, _ctx, capability) => releaseSetup(env, capability),
   accounts: {
@@ -95,7 +94,7 @@ const app = createApp({
 function schedulingDeps(env: PlatformEnv, ctx: ExecutionContext): SchedulingDeps {
   return {
     db: env.PLATFORM_DB,
-    dispatcher: new NamespaceDispatcher(env.TENANTS),
+    dispatcher: tenantDispatcher(env),
     capability: (tenant) => capabilityFor(ctx, tenant),
     hostedDomain: env.HOSTED_DOMAIN,
   };

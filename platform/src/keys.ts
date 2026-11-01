@@ -14,7 +14,7 @@
  * ciphertext copied onto another tenant's row doesn't decrypt.
  */
 
-import { base64urlDecode, base64urlEncode } from "../../src/shared/hosted-contract";
+import { base64urlDecode, base64urlEncode, generatePlatformCallSecret, isPlatformCallSecret } from "../../src/shared/hosted-contract";
 import { b64decode, b64encode, isValidMasterKey, keyIdFor } from "../../src/worker/lib/crypto";
 import { PermanentError } from "./errors";
 
@@ -115,4 +115,81 @@ export async function ensureMasterKey(
   const stored = await activeEscrowedKey(db, tenantId);
   if (!stored) throw new Error("escrowed key: not stored");
   return { masterKey: await openEscrowedKey(stored, tenantId, platformKey), kid: stored.kid, created: (inserted.meta.changes ?? 0) > 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Starter mode: each tenant's PLATFORM_CALL_SECRET (docs/hosted/CONTRACT.md, section 10)
+// ---------------------------------------------------------------------------
+
+const CALL_SECRET_AAD = "openping/platform-call-secret/v1";
+
+function callSecretData(tenantId: string): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(new TextEncoder().encode(`${CALL_SECRET_AAD}|${tenantId}`));
+}
+
+/** Seals a tenant's call secret for `tenant_call_secrets`: AES-256-GCM under PLATFORM_KEY, bound to the tenant id. */
+export async function sealCallSecret(secret: string, tenantId: string, platformKey: string): Promise<string> {
+  const key = await importPlatformKey(platformKey);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: callSecretData(tenantId) }, key, new TextEncoder().encode(secret));
+  return `${ESCROW_VERSION}:${base64urlEncode(iv)}:${base64urlEncode(new Uint8Array(sealed))}`;
+}
+
+/** Opens a sealed call secret. Throws for a wrong PLATFORM_KEY, another tenant's row, or tampering. */
+export async function openCallSecret(ciphertext: string, tenantId: string, platformKey: string): Promise<string> {
+  const [version, ivPart, ctPart, ...rest] = ciphertext.split(":");
+  const iv = ivPart ? base64urlDecode(ivPart) : null;
+  const ct = ctPart ? base64urlDecode(ctPart) : null;
+  if (version !== ESCROW_VERSION || rest.length || !iv || iv.length !== 12 || !ct) throw new PermanentError("call secret: unknown format");
+  const key = await importPlatformKey(platformKey);
+  let plain: ArrayBuffer;
+  try {
+    plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: callSecretData(tenantId) }, key, ct);
+  } catch {
+    throw new PermanentError("call secret: does not decrypt with this PLATFORM_KEY for this tenant");
+  }
+  const secret = new TextDecoder().decode(plain);
+  if (!isPlatformCallSecret(secret)) throw new PermanentError("call secret: not a PLATFORM_CALL_SECRET");
+  return secret;
+}
+
+/**
+ * A starter tenant's call secrets, opened: the current one and, during a
+ * rotation, the next. Null for a tenant without one, or that no longer runs
+ * in starter mode (a moved tenant's secret is never accepted).
+ */
+export async function starterCallSecrets(db: D1Database, tenantId: string, platformKey: string): Promise<{ current: string; next: string | null } | null> {
+  const row = await db
+    .prepare(
+      `SELECT s.ciphertext, s.next_ciphertext FROM tenant_call_secrets s JOIN tenants t ON t.id = s.tenant_id
+       WHERE s.tenant_id = ? AND t.runtime = 'starter'`,
+    )
+    .bind(tenantId)
+    .first<{ ciphertext: string; next_ciphertext: string | null }>();
+  if (!row) return null;
+  return {
+    current: await openCallSecret(row.ciphertext, tenantId, platformKey),
+    next: row.next_ciphertext ? await openCallSecret(row.next_ciphertext, tenantId, platformKey) : null,
+  };
+}
+
+/** The tenant's call secret, opened, or null when it has none (a dispatch tenant). */
+export async function tenantCallSecret(db: D1Database, tenantId: string, platformKey: string): Promise<string | null> {
+  const row = await db.prepare("SELECT ciphertext FROM tenant_call_secrets WHERE tenant_id = ?").bind(tenantId).first<{ ciphertext: string }>();
+  return row ? openCallSecret(row.ciphertext, tenantId, platformKey) : null;
+}
+
+/**
+ * The tenant's call secret: the stored one, or a new one stored now. Like
+ * ensureMasterKey, two runs racing here can't end with different secrets:
+ * the INSERT does nothing on a conflict and the answer is re-read.
+ */
+export async function ensureCallSecret(db: D1Database, tenantId: string, platformKey: string, now: number): Promise<string> {
+  const existing = await tenantCallSecret(db, tenantId, platformKey);
+  if (existing) return existing;
+  const sealed = await sealCallSecret(generatePlatformCallSecret(), tenantId, platformKey);
+  await db.prepare("INSERT INTO tenant_call_secrets (tenant_id, ciphertext, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING").bind(tenantId, sealed, now).run();
+  const stored = await tenantCallSecret(db, tenantId, platformKey);
+  if (!stored) throw new Error("call secret: not stored");
+  return stored;
 }

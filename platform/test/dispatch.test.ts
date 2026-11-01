@@ -28,6 +28,7 @@ const TENANT: TenantRecord = {
   accountId: "acc_dispatch",
   slug: "acme",
   scriptName: "t-abcdefgh12345678",
+  runtime: "dispatch",
   status: "active",
   billingStatus: "active",
   ownerSuspendedAt: null,
@@ -68,7 +69,7 @@ describe("NamespaceDispatcher (the real one)", () => {
     const { namespace, gets } = fakeNamespace({ [TENANT.scriptName]: () => new Response("hi") });
     const props = buildTenantProps({ tenant: TENANT, hostedDomain: DOMAIN, invocation: "public", callId: newCallId(), platform: noopPlatform });
     const result = await new NamespaceDispatcher(namespace).dispatch(
-      TENANT.scriptName,
+      TENANT,
       new Request("https://acme.openping.test/"),
       props,
       DISPATCH_LIMITS.public,
@@ -81,7 +82,7 @@ describe("NamespaceDispatcher (the real one)", () => {
   it("answers missing for a script that isn't in the namespace", async () => {
     const { namespace } = fakeNamespace({});
     const props = buildTenantProps({ tenant: TENANT, hostedDomain: DOMAIN, invocation: "public", callId: newCallId(), platform: noopPlatform });
-    const result = await new NamespaceDispatcher(namespace).dispatch("t-nope", new Request("https://x.openping.test/"), props, DISPATCH_LIMITS.public);
+    const result = await new NamespaceDispatcher(namespace).dispatch({ scriptName: "t-nope", runtime: "dispatch" }, new Request("https://x.openping.test/"), props, DISPATCH_LIMITS.public);
     expect(result).toEqual({ kind: "missing" });
   });
 
@@ -93,7 +94,7 @@ describe("NamespaceDispatcher (the real one)", () => {
     });
     const props = buildTenantProps({ tenant: TENANT, hostedDomain: DOMAIN, invocation: "public", callId: newCallId(), platform: noopPlatform });
     await expect(
-      new NamespaceDispatcher(namespace).dispatch(TENANT.scriptName, new Request("https://acme.openping.test/"), props, DISPATCH_LIMITS.public),
+      new NamespaceDispatcher(namespace).dispatch(TENANT, new Request("https://acme.openping.test/"), props, DISPATCH_LIMITS.public),
     ).rejects.toThrow("user code exploded");
   });
 });

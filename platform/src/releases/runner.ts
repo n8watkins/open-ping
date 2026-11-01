@@ -39,8 +39,6 @@
 import {
   PLATFORM_HEALTH_PATH,
   PLATFORM_SCHEDULED_PATH,
-  HOSTED_ENV,
-  HOSTED_MODE_ON,
   isTenantId,
   type HealthResponse,
   type PlatformCapability,
@@ -49,11 +47,11 @@ import {
 } from "../../../src/shared/hosted-contract";
 import { compareVersions, isBundleVersion, type TenantBundle } from "../bundle";
 import { CloudflareApiError, type CloudflareApi } from "../cloudflare/api";
-import { uploadUserWorker } from "../cloudflare/upload";
+import { scriptLocation, uploadTenant } from "../tenant-upload";
 import { callTenant, type TenantDispatcher } from "../dispatch";
 import { PermanentError } from "../errors";
 import { activeEscrowedKey, openEscrowedKey } from "../keys";
-import { describeError, tenantTags, type ProvisioningConfig } from "../provisioning";
+import { describeError, type ProvisioningConfig } from "../provisioning";
 import { tenantFromRow, type TenantRecord } from "../tenants";
 import { checkRollback, checkRollout, type ReleaseChecks } from "./checks";
 import { log } from "../log";
@@ -761,7 +759,7 @@ async function loadTenant(db: D1Database, id: string): Promise<{ record: TenantR
   const row = await db
     .prepare(
       `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides,
-              monitor_packs, fast_packs, trial_ends_at, d1_id, do_migration_tag, do_migration_pending FROM tenants WHERE id = ?`,
+              monitor_packs, fast_packs, trial_ends_at, d1_id, do_migration_tag, do_migration_pending, runtime FROM tenants WHERE id = ?`,
     )
     .bind(id)
     .first<TenantRow>();
@@ -853,33 +851,20 @@ async function updateTenant(run: Run, bundle: TenantBundle, member: MemberRow): 
         const target = bundle.migrations.at(-1)?.tag ?? loaded.doTag;
         // An earlier try may have applied the Durable Object migrations and
         // died before recording them: then Cloudflare knows the tag, not us.
-        let previousTag = loaded.doPending ? await deps.api.getScriptMigrationTag(deps.config.namespace, tenant.scriptName) : loaded.doTag;
+        const location = scriptLocation(deps.config, tenant.runtime);
+        let previousTag = loaded.doPending ? await deps.api.getScriptMigrationTag(location, tenant.scriptName) : loaded.doTag;
         if (target !== previousTag) {
           await deps.db.prepare("UPDATE tenants SET do_migration_pending = ? WHERE id = ?").bind(target, tenant.id).run();
         }
         const upload = (tag: string | null) =>
-          uploadUserWorker(deps.api, {
-            namespace: deps.config.namespace,
-            scriptName: tenant.scriptName,
-            bundle,
-            bindings: [{ type: "d1", name: "DB", database_id: loaded.d1Id! }],
-            vars: {
-              [HOSTED_ENV.mode]: HOSTED_MODE_ON,
-              [HOSTED_ENV.tenantId]: tenant.id,
-              [HOSTED_ENV.handoffPublicKey]: deps.config.handoffPublicKey,
-            },
-            secrets: { MASTER_KEY: masterKey },
-            tags: tenantTags(tenant.id, bundle.version),
-            previousMigrationTag: tag,
-            logSampling: deps.config.tenantLogSampling,
-          });
+          uploadTenant({ db: deps.db, api: deps.api, config: deps.config, tenant, bundle, d1Id: loaded.d1Id!, masterKey, previousMigrationTag: tag, now: run.now() });
         try {
           await upload(previousTag);
         } catch (error) {
           // Refused, with migrations to send: the recorded tag may be stale.
           // Ask Cloudflare which one the script is at, and send from there once.
           if (!(error instanceof CloudflareApiError) || error.retryable || bundle.migrations.length === 0) throw error;
-          const actual = await deps.api.getScriptMigrationTag(deps.config.namespace, tenant.scriptName);
+          const actual = await deps.api.getScriptMigrationTag(location, tenant.scriptName);
           if (actual === previousTag) throw error;
           previousTag = actual;
           await upload(previousTag);

@@ -41,5 +41,9 @@ export default defineConfig({
   ],
   test: {
     include: ["src/**/*.test.ts", "test/**/*.test.ts"],
+    // Several tests provision and roll out whole fleets of fake tenants
+    // through local D1: well under a second each on an idle machine, but
+    // past the default 5 seconds on a busy one, which made them flaky.
+    testTimeout: 20_000,
   },
 });

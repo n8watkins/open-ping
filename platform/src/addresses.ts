@@ -25,15 +25,17 @@
  * Worker's Custom Domain.
  */
 
-import type { CloudflareApi } from "./cloudflare/api";
+import { CloudflareApiError, type CloudflareApi } from "./cloudflare/api";
 import { PermanentError } from "./errors";
 import { log } from "./log";
-import type { TenantRecord } from "./tenants";
+import type { TenantRecord, TenantRuntime } from "./tenants";
 
 export type AddressConfig = { kind: "wildcard" } | { kind: "custom_domains"; zoneId: string; dispatchService: string };
 
 /** Cloudflare's limit of Custom Domains on one zone (Workers limits, the same on Free and Paid). */
 export const CUSTOM_DOMAINS_PER_ZONE = 100;
+/** Cloudflare's limit of Workers on one account on Workers Paid; past it needs Workers for Platforms. Starter mode counts it. */
+export const WORKERS_PER_ACCOUNT = 500;
 /** Sign-ups stop this many short of a cap, so a burst of sign-ups and the owner's own new hostnames still fit. */
 export const SIGNUP_HEADROOM = 5;
 /** The health check warns the owner this many short of a cap: time to plan the move before sign-ups stop. */
@@ -48,9 +50,9 @@ export function tenantHostname(slug: string, hostedDomain: string): string {
   return `${slug}.${hostedDomain.trim().toLowerCase().replace(/\.$/, "")}`;
 }
 
-/** The Worker a tenant's Custom Domain routes to: the platform's (dispatch), or in starter mode its own (PR 4). */
-export function addressService(config: Extract<AddressConfig, { kind: "custom_domains" }>, _tenant: Pick<TenantRecord, "scriptName">): string {
-  return config.dispatchService;
+/** The Worker a tenant's Custom Domain routes to: the platform's, which dispatches it, or in starter mode its own. */
+export function addressService(config: Extract<AddressConfig, { kind: "custom_domains" }>, tenant: Pick<TenantRecord, "scriptName" | "runtime">): string {
+  return tenant.runtime === "starter" ? tenant.scriptName : config.dispatchService;
 }
 
 export interface AddressDeps {
@@ -58,6 +60,8 @@ export interface AddressDeps {
   api: CloudflareApi;
   hostedDomain: string;
   addresses: AddressConfig;
+  /** Where new tenants run (TENANT_MODE): starter mode also counts the account's Workers. */
+  mode?: TenantRuntime;
   now: number;
 }
 
@@ -105,6 +109,11 @@ export async function refreshCapacity(deps: AddressDeps): Promise<CapacityRow[]>
   const rows: CapacityRow[] = [];
   const domains = await refreshAddressCapacity(deps);
   if (domains) rows.push(domains);
+  if (deps.mode === "starter") {
+    const workers: CapacityRow = { resource: "workers", used: await deps.api.countAccountScripts(), cap: WORKERS_PER_ACCOUNT, checkedAt: deps.now };
+    await capacityStatement(deps.db, workers).run();
+    rows.push(workers);
+  }
   return rows;
 }
 
@@ -115,6 +124,9 @@ export const CAPACITY_FULL_MESSAGE =
 /** Tenants that will take a Custom Domain they don't have yet: being provisioned, without one. */
 const PENDING_ADDRESSES_SQL = `SELECT COUNT(*) AS n FROM tenants
   WHERE provision_state NOT IN ('ready', 'deleting') AND custom_domain_id IS NULL`;
+/** Starter tenants that will take a Worker they don't have yet: before their upload step. */
+const PENDING_WORKERS_SQL = `SELECT COUNT(*) AS n FROM tenants
+  WHERE provision_state IN ('requested', 'db_created') AND runtime = 'starter'`;
 
 export type CapacityVerdict = { ok: true } | { ok: false; resource: CapacityResource; used: number; cap: number };
 
@@ -148,9 +160,12 @@ export async function capacityForSignUp(
     }
   }
   if (!rows.length) return { ok: true };
-  const pending = (await deps.db.prepare(PENDING_ADDRESSES_SQL).first<{ n: number }>())?.n ?? 0;
+  const pending = {
+    custom_domains: (await deps.db.prepare(PENDING_ADDRESSES_SQL).first<{ n: number }>())?.n ?? 0,
+    workers: (await deps.db.prepare(PENDING_WORKERS_SQL).first<{ n: number }>())?.n ?? 0,
+  };
   for (const row of rows) {
-    const used = row.used + (row.resource === "custom_domains" ? pending : 0);
+    const used = row.used + (pending[row.resource] ?? 0);
     if (signUpsFull(used + 1, row.cap)) {
       log.error("capacity.signups_stopped", { resource: row.resource, used, cap: row.cap });
       return { ok: false, resource: row.resource, used, cap: row.cap };
@@ -209,7 +224,7 @@ export const ATTACH_PENDING = "pending";
  */
 export async function ensureTenantAddress(
   deps: AddressDeps,
-  tenant: Pick<TenantRecord, "id" | "slug" | "scriptName">,
+  tenant: Pick<TenantRecord, "id" | "slug" | "scriptName" | "runtime">,
   recordedId: string | null,
 ): Promise<string | null> {
   if (deps.addresses.kind !== "custom_domains") return null;
@@ -241,7 +256,7 @@ export async function ensureTenantAddress(
  */
 export async function removeTenantAddress(
   deps: AddressDeps,
-  tenant: Pick<TenantRecord, "id" | "slug" | "scriptName">,
+  tenant: Pick<TenantRecord, "id" | "slug" | "scriptName" | "runtime">,
   recordedId: string | null,
 ): Promise<void> {
   if (deps.addresses.kind !== "custom_domains") return;
@@ -257,5 +272,41 @@ export async function removeTenantAddress(
   if (await deps.api.detachCustomDomain(id)) {
     await bumpCapacity(deps.db, "custom_domains", -1);
     log.info("address.detached", { tenant: tenant.id, hostname });
+  }
+}
+
+/**
+ * Moves the tenant's own Custom Domain (its recorded id) to the Worker it now
+ * runs on, in place: one PUT of the same hostname with the new Worker, so it
+ * never stops answering. Cloudflare's reference doesn't say whether that PUT
+ * moves a hostname already attached to another Worker (Wrangler can, after
+ * asking to override it); when the API refuses, the domain is detached
+ * and attached again at once, a gap of about a second, logged as such.
+ * Resolves the domain's id now, or null for wildcard addresses.
+ */
+export async function repointTenantAddress(
+  deps: AddressDeps,
+  tenant: Pick<TenantRecord, "id" | "slug" | "scriptName" | "runtime">,
+  recordedId: string | null,
+): Promise<string | null> {
+  if (deps.addresses.kind !== "custom_domains") return null;
+  const { zoneId } = deps.addresses;
+  const hostname = tenantHostname(tenant.slug, deps.hostedDomain);
+  const service = addressService(deps.addresses, tenant);
+  const existing = await deps.api.findCustomDomain(zoneId, hostname);
+  if (!existing) return ensureTenantAddress(deps, tenant, null);
+  if (existing.id !== recordedId) throw new PermanentError(`${hostname}'s Custom Domain isn't the one recorded for this tenant; it is never taken over`);
+  if (existing.service === service) return existing.id;
+  try {
+    const moved = await deps.api.attachCustomDomain({ hostname, service, zoneId });
+    log.info("address.repointed", { tenant: tenant.id, hostname, service, inPlace: true });
+    return moved.id;
+  } catch (error) {
+    if (!(error instanceof CloudflareApiError) || error.retryable) throw error;
+    log.warn("address.repoint_fallback", { tenant: tenant.id, hostname, service, error });
+    await deps.api.detachCustomDomain(existing.id);
+    const attached = await deps.api.attachCustomDomain({ hostname, service, zoneId });
+    log.info("address.repointed", { tenant: tenant.id, hostname, service, inPlace: false });
+    return attached.id;
   }
 }

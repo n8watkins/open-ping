@@ -3,7 +3,7 @@
 This is the owner's to-do list: things that need a person, a decision, a device or an account, not code.
 It intentionally contains no secret values.
 When you finish an item, tick it here (or tell the agent, who will).
-Last reviewed: 2026-10-29.
+Last reviewed: 2026-10-31.
 
 ## To do
 
@@ -63,13 +63,13 @@ The full commands are in [platform/README.md, "Owner setup"](../platform/README.
 
 **Accounts and money (you):**
 
-- [ ] Turn on Workers Paid ($5 a month) and Workers for Platforms ($25 a month) in Cloudflare.
+- [ ] Turn on Workers Paid ($5 a month) and Workers for Platforms ($25 a month) in Cloudflare (or Workers Paid alone, in starter mode, below).
   The free plan can't run Hosted: it has no Workers for Platforms, allows only 10 D1 databases (one per customer), and shares its daily request and database limits with your own install.
 - [ ] Choose the Hosted address: buy a domain (about $10 to $15 a year, recommended, decision D2), or start on `openping.n8builds.dev` subdomains (see "Starting cheaper" below).
 - [ ] Finish the Stripe account and switch on test mode.
 - [ ] In Resend, verify the Hosted domain (or `mail.<domain>`) for sending.
 - [ ] Create a GitHub OAuth app with the callback `https://app.<domain>/auth/github/callback`.
-- [ ] Create a Cloudflare API token for this one account with only "Workers Scripts: Edit" and "D1: Edit".
+- [ ] Create a Cloudflare API token for this one account with only "Workers Scripts: Edit" and "D1: Edit" (and, starting cheaper, "Workers Routes: Edit" and "DNS: Read" on the zone, below).
 
 **Cloudflare resources (together):** the dispatch namespace, the platform database and its migrations, the two queues (`openping-provision`, `openping-schedule`), the two R2 buckets (`openping-tenant-bundles` and the private `openping-tenant-exports`, with a 40-day expiry rule on `exports/`), and the routes for `app.<domain>` and `*.<domain>`.
 
@@ -87,14 +87,28 @@ The full commands are in [platform/README.md, "Owner setup"](../platform/README.
 
 **Then the agent runs:** the first tenant release, a staging soak with 5 test customers for 7 days, a load test, a restore drill and a security review, and only then `SIGN_UPS=open` and the landing page's `HOSTED_SIGNUP_URL`.
 
-**Starting cheaper (not built, your call):**
+**Starting cheaper (built 2026-10-31, off by default, your call):**
+Both options are in the code and tested against stand-ins; each is a few settings, and they can be used together.
+Your decisions: whether to start this way, and when to move (below).
 
-- A subdomain instead of a new domain: customers at `<name>.openping.n8builds.dev` and the platform at `app.openping.n8builds.dev`.
-  Cloudflare's free certificate covers only one level of subdomain, but a Workers Custom Domain gets its own certificate at no cost, up to 100 per zone, so the platform would add one per customer (a small change to provisioning).
-  Past about 100 customers it needs a $10 a month certificate add-on or the move to a real domain, which changes every customer's address.
-- Workers Paid only ($5 a month) instead of adding Workers for Platforms ($25): each customer as an ordinary Worker (up to 500 on Workers Paid).
-  This needs a different, signed way for the platform to call each customer (about 1 to 2 days of work and a security review), and moving to Workers for Platforms later.
-  It lowers break-even from about 15 to 20 customers to about 3.
+- **A subdomain instead of a new domain:** customers at `<name>.openping.n8builds.dev` and the platform at `app.openping.n8builds.dev`.
+  Cloudflare's free certificate covers only one level of subdomain, so the platform gives each customer a Workers Custom Domain, which gets its own certificate at no cost.
+  A zone takes 100 Custom Domains, your own included, so this lasts to about 85 to 90 customers: the health check warns you from 85 in use, and sign-ups stop at 95 with a plain message.
+  A name never takes over one of your hostnames (a DNS record or another Worker's Custom Domain there makes it "taken"), and every cookie is host-only, so no site under `n8builds.dev` can plant one on a customer.
+  Trade-offs: customers live under your personal domain (an abuse report about one lands on `n8builds.dev`), and moving to a dedicated domain later changes every customer's address once.
+  To switch it on (together): `HOSTED_DOMAIN` `openping.n8builds.dev`, `TENANT_ADDRESSES` `custom_domains`, `CF_ZONE_ID` (the `n8builds.dev` zone's id), and `app.openping.n8builds.dev` attached to the platform Worker as a Custom Domain.
+- **Workers Paid only ($5 a month) instead of adding Workers for Platforms ($25), "starter mode":** each customer is an ordinary Worker on your account, at its own Custom Domain, so it needs the subdomain option above.
+  The platform and each customer's OpenPing call each other over HTTPS, signed with a secret made for that one customer, so no customer can act as another and no visitor can pose as the platform.
+  It lowers break-even from about 16 customers to about 3; the costs at 10, 50 and 200 customers are in [HOSTED_PLAN.md](./HOSTED_PLAN.md#starting-cheaper-starter-mode-on-workers-paid-alone).
+  To switch it on (together): `TENANT_MODE` `starter`, the `dispatch_namespaces` block removed from `platform/wrangler.jsonc`, and no dispatch namespace to create.
+- **The API token** for either: the account's **Workers Scripts: Edit** and **D1: Edit**, plus on the zone **Workers Routes: Edit** (the Custom Domains) and **DNS: Read** (the check that a name isn't one of yours).
+  Cloudflare can't narrow these to Hosted's own Workers, databases and hostnames: on your current account and the `n8builds.dev` zone, the token could also change or delete openping.n8builds.dev's own Worker and database, your portfolio sites' Workers, and every Worker route and Custom Domain on `n8builds.dev`, and read all of its DNS records.
+  The platform only ever touches `t-<id>` Workers, `openping-t-<id>` databases and `<name>.openping.n8builds.dev`, but a leaked token wouldn't be so careful.
+- [ ] **Decide (you): where Hosted lives.** Either accept that wider token on your current account and zone, or give Hosted a Cloudflare account of its own (free to create; Workers Paid is then $5 on that account) and, for the addresses, a zone of its own (a dedicated domain, or a subdomain delegated to that account), so the token can reach nothing else of yours.
+  A separate account is the recommendation once real customers are on it; the code works the same either way.
+- [ ] **A WAF rate limiting rule (together), with starter mode:** on `app.<domain>/__tenant/v1/*`, about 600 requests a minute per IP, so a flood of forged calls is stopped before it reaches the platform (the platform also has its own limit, `TENANT_CALL_RATE_LIMIT`).
+- **Moving later:** turn on Workers for Platforms, create the namespace, set `TENANT_MODE` back to `dispatch`, then press "Move to Workers for Platforms" on each customer's admin page; data stays where it is and visitors are served throughout.
+  Do it before about 80 customers ([platform/README.md, "Moving to Workers for Platforms"](../platform/README.md#moving-to-workers-for-platforms)).
 
 ### 7. Before launch: review the Terms of Service and the Privacy Policy
 
