@@ -21,8 +21,10 @@ import org.json.JSONObject;
  *    in a Custom Tab, after saving the verifier and state here.
  * 2. The person signs in there however the install allows (passkey, GitHub,
  *    email link, OpenPing Hosted) and taps "Open the OpenPing app".
- * 3. The browser opens dev.n8builds.openping:/signed-in?code&state&origin;
- *    finish() checks the state and origin against what start() saved.
+ * 3. The browser opens dev.n8builds.openping:/signed-in?code&state&origin
+ *    (as an intent restricted to this app's package where the browser
+ *    supports intent URLs, SignInCallback.java); finish() checks the state
+ *    and origin against what start() saved.
  * 4. MainActivity posts the code and the verifier to {install}/auth/app/exchange
  *    from the web view, which then has its own session.
  */
@@ -104,7 +106,7 @@ public final class AppSignIn {
 
     /** True for the app's sign-in callback (whether or not it is valid). */
     public static boolean isCallback(Uri data) {
-        return data != null && SCHEME.equals(data.getScheme()) && CALLBACK_PATH.equals(data.getPath());
+        return data != null && SignInCallback.isCallback(data.toString());
     }
 
     /**
@@ -126,13 +128,12 @@ public final class AppSignIn {
                 prefs.edit().remove(KEY).commit();
                 return null;
             }
-            String state = data.getQueryParameter("state");
-            String code = data.getQueryParameter("code");
-            String from = Origins.normalize(data.getQueryParameter("origin"));
-            if (state == null || code == null || !state.equals(pending.getString("state"))) return null;
+            SignInCallback callback = SignInCallback.parse(data.toString());
+            if (callback == null || !callback.state.equals(pending.getString("state"))) return null;
+            String from = Origins.normalize(callback.origin);
             if (from == null || !from.equals(origin)) return null;
             prefs.edit().remove(KEY).commit();
-            return new Grant(origin, code, pending.getString("verifier"));
+            return new Grant(origin, callback.code, pending.getString("verifier"));
         } catch (JSONException e) {
             prefs.edit().remove(KEY).commit();
             return null;

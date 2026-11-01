@@ -18,6 +18,29 @@ export const ANDROID_PACKAGE = "dev.n8builds.openping";
  */
 export const APP_REDIRECT_URI = `${ANDROID_PACKAGE}:/signed-in`;
 
+/**
+ * The "Open the OpenPing app" link on the finish page, in every browser:
+ * the same `dev.n8builds.openping:/signed-in?...` callback, but as an intent
+ * restricted to the app's package, so Android hands it only to the installed
+ * app with that id, never to another app that claims the same scheme. When
+ * no app with that id is installed, the browser opens `fallbackUrl` instead.
+ *
+ * `intent:/signed-in?...#Intent;scheme=dev.n8builds.openping;package=...;end`
+ * (no `//`) is what Android's Intent.parseUri turns back into exactly
+ * `dev.n8builds.openping:/signed-in?...`, so the app sees the URI it always
+ * has, and builds from before this link take it unchanged.
+ */
+export function appIntentUrl(callbackUri: string, fallbackUrl: string): string {
+  const prefix = `${ANDROID_PACKAGE}:`;
+  if (!callbackUri.startsWith(prefix)) throw new Error("not the app's callback");
+  const rest = callbackUri.slice(prefix.length);
+  if (rest.includes("#")) throw new Error("a callback can't carry a fragment");
+  return (
+    `intent:${rest}#Intent;scheme=${ANDROID_PACKAGE};package=${ANDROID_PACKAGE};` +
+    `S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};end`
+  );
+}
+
 /** The app adds this to the web view's user agent: `OpenPingApp/<version> (Android)`. */
 export const APP_USER_AGENT_TOKEN = "OpenPingApp";
 
@@ -46,7 +69,12 @@ export const APP_SIGNIN_PATHS = {
   finish: "/auth/app/finish",
   /** POST, from the app's web view: `code` and `verifier`, form-encoded. */
   exchange: "/auth/app/exchange",
+  /** GET: where the browser goes when the intent finds no OpenPing app on the phone. */
+  getApp: "/auth/app/get-app",
 } as const;
+
+/** Where to get the app, until it is in Google Play (docs/ANDROID.md, "CI and installing a build on your phone"). */
+export const APP_INSTALL_URL = "https://github.com/n8watkins/open-ping/blob/main/docs/ANDROID.md#ci-and-installing-a-build-on-your-phone";
 
 /** A PKCE S256 challenge or a verifier's hash: 43 base64url characters (32 bytes). */
 export const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;

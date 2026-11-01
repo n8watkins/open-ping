@@ -12,8 +12,10 @@ import { getSetting } from "../db/settings";
 import { sendEmail } from "../notifications/mail";
 import { escapeHtml, renderEmailLayout, renderEmailText } from "../notifications/email-layout";
 import {
+  APP_INSTALL_URL,
   APP_REDIRECT_URI,
   APP_SIGNIN_PATHS,
+  appIntentUrl,
   APP_STATE_PATTERN,
   PKCE_CHALLENGE_PATTERN,
   PKCE_VERIFIER_PATTERN,
@@ -40,9 +42,12 @@ import {
  *    ends at `afterSignInPath`, which sends a browser with that cookie to
  *    `GET /auth/app/finish` instead of the dashboard.
  * 3. finish shows "Open the OpenPing app": its link carries a one-time code
- *    (2 minutes) to the app's own scheme. A tap is needed, so a page someone
- *    else opened can't sign a phone in unseen, and Chrome only hands a
- *    redirect to an app after one.
+ *    (2 minutes) to the app, as an Android intent URL restricted to the app's
+ *    package (appIntentUrl), so Android gives it only to the installed app
+ *    with that id, never to another app that claims the scheme. A browser
+ *    without intent URLs can't open it, and the page says what to do. A tap
+ *    is needed, so a page someone else opened can't sign a phone in unseen,
+ *    and Chrome only opens an app after one.
  * 4. The app posts the code and its verifier from the web view to
  *    `POST /auth/app/exchange`, which checks the verifier against the
  *    challenge and starts the web view's own session (`via` "app", listed and
@@ -52,11 +57,10 @@ import {
  * never leaves the OpenPing app. The browser's own session, when the sign-in
  * made one, ends at step 3: the phone ends up signed in only in the app.
  *
- * What remains (docs/ANDROID.md, "Security"): a malicious app on the phone
- * that claims the same scheme could start the flow itself, with its own
- * verifier, and be handed the code if the person signs in and taps "Open the
- * OpenPing app" for it. The fresh sign-in, the tap, the email and the session
- * list in Settings are what stand in its way.
+ * What remains (docs/ANDROID.md, "Security"): an app installed under the
+ * real package id in place of the real one, and an attacker's app running the
+ * whole sign-in in its own web view. The fresh sign-in, the tap, the email and
+ * the session list in Settings are what stand in their way.
  */
 export const appSignIn = new Hono<AppEnv>();
 
@@ -275,6 +279,13 @@ appSignIn.get("/finish", async (c) => {
   target.searchParams.set("code", code);
   target.searchParams.set("state", pending.state);
   target.searchParams.set("origin", origin);
+  // Always the intent for the app's package, never the plain scheme link
+  // another app could claim: the app only exists on Android, every sign-in
+  // starts in its Custom Tab on the phone, and a browser that can't open the
+  // intent shows nothing (the page says what to do), so this fails safe. Not
+  // chosen by user agent, which an attacker's Custom Tab browser or Chrome's
+  // "Desktop site" mode would change.
+  const href = appIntentUrl(target.toString(), `${origin}${APP_SIGNIN_PATHS.getApp}`);
   const host = new URL(origin).host;
   return c.html(
     renderPlainPage({
@@ -284,9 +295,30 @@ appSignIn.get("/finish", async (c) => {
         `You're signed in to ${host}. Open the OpenPing app on this phone to finish signing in there.`,
         "Only continue if you just tapped Sign in in the OpenPing app.",
       ],
-      action: { href: target.toString(), label: "Open the OpenPing app" },
+      action: { href, label: "Open the OpenPing app" },
       secondary: { href: "/", label: "Not now" },
-      fine: "This button works once, for 2 minutes.",
+      fine:
+        "This button works once, for 2 minutes. If nothing happens, this browser can't open apps: make Chrome or Firefox the phone's default browser, then tap Sign in in the OpenPing app again.",
+    }),
+  );
+});
+
+// --- 3b. No app to open -------------------------------------------------------
+// The intent's browser_fallback_url: the browser comes here when no app with
+// the OpenPing app's package is on this phone. The code isn't in this URL; it
+// expires unused.
+appSignIn.get("/get-app", (c) => {
+  noStore(c);
+  return c.html(
+    renderPlainPage({
+      title: "Get the OpenPing app",
+      heading: "The OpenPing app isn't on this phone",
+      body: [
+        "This sign-in was for the OpenPing app, but the phone couldn't find it. It may have been removed since you tapped Sign in.",
+        "Install the OpenPing app, open it, and tap Sign in again.",
+      ],
+      action: { href: APP_INSTALL_URL, label: "How to get the app" },
+      secondary: { href: "/", label: "Not now" },
     }),
   );
 });

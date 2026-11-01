@@ -6,7 +6,7 @@ import worker from "../../src/worker/index";
 import type { Env } from "../../src/worker/types";
 import { sha256hex } from "../../src/worker/lib/ids";
 import { s256 } from "../../src/worker/routes/app-signin";
-import { APP_REDIRECT_URI } from "../../src/shared/native-app";
+import { APP_INSTALL_URL, APP_REDIRECT_URI } from "../../src/shared/native-app";
 
 /**
  * The Android app's sign-in through the browser (routes/app-signin.ts), end
@@ -75,11 +75,27 @@ function pkce() {
   return { verifier, state };
 }
 
-/** The "Open the OpenPing app" link on the finish page. */
-function appLink(html: string): URL {
+/** The "Open the OpenPing app" button's href on the finish page, as written. */
+function appHref(html: string): string {
   const href = /<a class="button" href="([^"]+)"/.exec(html)?.[1];
   expect(href).toBeTruthy();
-  return new URL(href!.replace(/&amp;/g, "&"));
+  return href!.replace(/&amp;/g, "&");
+}
+
+/** The intent's tail: only the OpenPing app's package, and the page for a phone without it. */
+const INTENT_TAIL =
+  "#Intent;scheme=dev.n8builds.openping;package=dev.n8builds.openping;" +
+  `S.browser_fallback_url=${encodeURIComponent(`${ORIGIN}/auth/app/get-app`)};end`;
+
+/**
+ * The callback the app receives from the finish page's link: the intent URL
+ * turned back into its data URI the way Android does.
+ */
+function appLink(html: string): URL {
+  const href = appHref(html);
+  expect(href.startsWith("intent:")).toBe(true);
+  expect(href.endsWith(INTENT_TAIL)).toBe(true);
+  return new URL(`dev.n8builds.openping:${href.slice("intent:".length, -INTENT_TAIL.length)}`);
 }
 
 async function exchange(app: Browser, code: string, verifier: string): Promise<Response> {
@@ -140,6 +156,8 @@ describe("signing in to the Android app through the browser", () => {
     expect(finish.headers.get("cache-control")).toBe("no-store");
     const html = await finish.text();
     expect(html).toContain("Open the OpenPing app");
+    // An intent only the OpenPing app's package can take (a Custom Tab is Chrome).
+    expect(appHref(html)).toMatch(/^intent:\/signed-in\?code=[A-Za-z0-9_-]{43}&state=/);
     const link = appLink(html);
     expect(`${link.protocol}${link.pathname}`).toBe(APP_REDIRECT_URI);
     expect(link.searchParams.get("state")).toBe(state);
@@ -283,6 +301,37 @@ describe("signing in to the Android app through the browser", () => {
     const app = new Browser(nextIp(), APP_UA);
     await exchange(app, link.searchParams.get("code")!, verifier);
     expect((await app.me()).authenticated).toBe(false);
+  });
+
+  it("hands every browser the intent, never the plain scheme link another app could claim", async () => {
+    // A browser whose user agent says nothing of Chrome or Firefox (an attacker
+    // app can pin its Custom Tab to one), and Chrome's "Desktop site" mode
+    // (no "Android"): still only the intent for the app's package.
+    for (const userAgent of [
+      "Mozilla/5.0 (Linux; Android 14) SomeBrowser/3.1",
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "",
+    ]) {
+      const tab = new Browser(nextIp(), userAgent);
+      await start(tab);
+      await signInByEmailLink(tab);
+      const html = await (await tab.fetch("/auth/app/finish")).text();
+      const href = appHref(html);
+      expect(href.startsWith("intent:/signed-in?code="), userAgent).toBe(true);
+      expect(href.endsWith(INTENT_TAIL), userAgent).toBe(true);
+      expect(html, userAgent).not.toContain('href="dev.n8builds.openping:');
+      // What to do when the browser can't open the app.
+      expect(html).toContain("If nothing happens");
+    }
+  });
+
+  it("explains, without a code, when the phone has no OpenPing app for the intent", async () => {
+    const page = await new Browser(nextIp()).fetch("/auth/app/get-app");
+    expect(page.status).toBe(200);
+    expect(page.headers.get("cache-control")).toBe("no-store");
+    const html = await page.text();
+    expect(html).toContain("The OpenPing app isn't on this phone");
+    expect(html).toContain(`href="${APP_INSTALL_URL}"`);
   });
 
   it("checks what it is given", async () => {
