@@ -8,7 +8,9 @@
 import { base64urlDecode, type PlatformCapability } from "../../src/shared/hosted-contract";
 import { R2BundleSource } from "./bundle";
 import { HttpCloudflareApi } from "./cloudflare/http";
-import { NamespaceDispatcher } from "./dispatch";
+import { NamespaceDispatcher, type TenantDispatcher } from "./dispatch";
+import { HttpsTenantDispatcher, RuntimeDispatcher } from "./starter";
+import type { TenantRuntime } from "./tenants";
 import type { PlatformEnv } from "./env";
 import { isValidPlatformKey } from "./keys";
 import type { ProvisioningConfig, ProvisioningDeps } from "./provisioning";
@@ -37,6 +39,24 @@ export function addressSettings(env: PlatformEnv): { ok: true; config: AddressCo
   return { ok: true, config: { kind: "custom_domains", zoneId, dispatchService: env.PLATFORM_WORKER_NAME?.trim() || DEFAULT_PLATFORM_WORKER } };
 }
 
+/** TENANT_MODE: where new tenants run; "dispatch" when empty, null for anything else. */
+export function tenantMode(env: Pick<PlatformEnv, "TENANT_MODE">): TenantRuntime | null {
+  const value = env.TENANT_MODE?.trim() || "dispatch";
+  return value === "dispatch" || value === "starter" ? value : null;
+}
+
+/**
+ * The dispatcher for every call the platform makes to a tenant: the dispatch
+ * namespace for dispatch tenants (when the TENANTS binding exists), signed
+ * HTTPS for starter ones (when PLATFORM_KEY can open their secrets).
+ */
+export function tenantDispatcher(env: PlatformEnv): TenantDispatcher {
+  return new RuntimeDispatcher({
+    dispatch: env.TENANTS ? new NamespaceDispatcher(env.TENANTS) : null,
+    starter: isValidPlatformKey(env.PLATFORM_KEY) ? new HttpsTenantDispatcher({ db: env.PLATFORM_DB, platformKey: env.PLATFORM_KEY }) : null,
+  });
+}
+
 /** TENANT_LOG_SAMPLING as a rate: 1 when empty, null when it isn't a number from 0 to 1. */
 export function tenantLogSampling(value: string | undefined): number | null {
   const text = value?.trim() ?? "";
@@ -50,7 +70,10 @@ export function provisioningSettings(
   env: PlatformEnv,
 ): { ok: true; config: ProvisioningConfig; accountId: string; apiToken: string } | { ok: false; missing: string[] } {
   const missing: string[] = [];
-  if (!env.DISPATCH_NAMESPACE) missing.push("DISPATCH_NAMESPACE");
+  const mode = tenantMode(env);
+  if (mode === null) missing.push("TENANT_MODE");
+  // Starter mode needs no namespace: its tenants are ordinary Workers.
+  if (mode !== "starter" && !env.DISPATCH_NAMESPACE) missing.push("DISPATCH_NAMESPACE");
   if (!env.BUNDLES) missing.push("BUNDLES");
   if (!env.CF_ACCOUNT_ID || !/^[0-9a-f]{32}$/.test(env.CF_ACCOUNT_ID)) missing.push("CF_ACCOUNT_ID");
   if (!env.CF_API_TOKEN) missing.push("CF_API_TOKEN");
@@ -58,6 +81,8 @@ export function provisioningSettings(
   if (base64urlDecode(env.HANDOFF_PUBLIC_KEY?.trim() ?? "")?.length !== 32) missing.push("HANDOFF_PUBLIC_KEY");
   const addresses = addressSettings(env);
   if (!addresses.ok) missing.push(...addresses.missing);
+  // Each starter tenant is its own Worker, reached at its own Custom Domain.
+  else if (mode === "starter" && addresses.config.kind !== "custom_domains") missing.push("TENANT_ADDRESSES");
   // A bad sampling rate never stops provisioning, releases or lifecycle: it falls back to logging everything, and says so.
   let sampling = tenantLogSampling(env.TENANT_LOG_SAMPLING);
   if (sampling === null) {
@@ -71,7 +96,8 @@ export function provisioningSettings(
     apiToken: env.CF_API_TOKEN!,
     config: {
       hostedDomain: env.HOSTED_DOMAIN,
-      namespace: env.DISPATCH_NAMESPACE!,
+      namespace: env.DISPATCH_NAMESPACE ?? "",
+      mode: mode ?? "dispatch",
       platformKey: env.PLATFORM_KEY!,
       handoffPublicKey: env.HANDOFF_PUBLIC_KEY!.trim(),
       tenantLogSampling: sampling,
@@ -92,7 +118,7 @@ export function provisioningSetup(
       db: env.PLATFORM_DB,
       api: new HttpCloudflareApi({ accountId: settings.accountId, apiToken: settings.apiToken }),
       bundles: new R2BundleSource(env.BUNDLES!),
-      dispatcher: new NamespaceDispatcher(env.TENANTS),
+      dispatcher: tenantDispatcher(env),
       capability,
       config: settings.config,
     },

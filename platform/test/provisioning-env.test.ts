@@ -87,3 +87,36 @@ describe("TENANT_LOG_SAMPLING", () => {
     }
   });
 });
+
+describe("starter mode and addresses settings", () => {
+  const complete = async (): Promise<PlatformEnv> => ({
+    ...base,
+    BUNDLES: {} as R2Bucket,
+    CF_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+    CF_API_TOKEN: "token",
+    PLATFORM_KEY: generateMasterKey(),
+    HANDOFF_PUBLIC_KEY: (await generateHandoffKeyPair()).publicKey,
+  });
+
+  it("needs no dispatch namespace in starter mode, but Custom Domain addresses and their zone", async () => {
+    const env = { ...(await complete()), TENANT_MODE: "starter" };
+    expect(provisioningSettings(env)).toEqual({ ok: false, missing: ["TENANT_ADDRESSES"] });
+    expect(provisioningSettings({ ...env, TENANT_ADDRESSES: "custom_domains" })).toEqual({ ok: false, missing: ["CF_ZONE_ID"] });
+    const ok = provisioningSettings({ ...env, TENANT_ADDRESSES: "custom_domains", CF_ZONE_ID: "fedcba9876543210fedcba9876543210" });
+    expect(ok.ok).toBe(true);
+    if (ok.ok) {
+      expect(ok.config.mode).toBe("starter");
+      expect(ok.config.namespace).toBe("");
+      expect(ok.config.addresses).toEqual({ kind: "custom_domains", zoneId: "fedcba9876543210fedcba9876543210", dispatchService: "openping-platform" });
+    }
+  });
+
+  it("names a mode or an address kind it doesn't know", async () => {
+    const env = { ...(await complete()), DISPATCH_NAMESPACE: "ns" };
+    expect(provisioningSettings({ ...env, TENANT_MODE: "cheap" })).toEqual({ ok: false, missing: ["TENANT_MODE"] });
+    expect(provisioningSettings({ ...env, TENANT_ADDRESSES: "subdomain" })).toEqual({ ok: false, missing: ["TENANT_ADDRESSES"] });
+    const dispatch = provisioningSettings(env);
+    expect(dispatch.ok && dispatch.config.mode).toBe("dispatch");
+    expect(dispatch.ok && dispatch.config.addresses).toEqual({ kind: "wildcard" });
+  });
+});

@@ -49,6 +49,14 @@
     // to that customer's OpenPing. ".invalid" can never resolve, so nothing
     // routes here until the owner buys the domain and sets it.
     "HOSTED_DOMAIN": "openping-hosted.invalid",
+    // Where new customers' OpenPings run (src/starter.ts). "dispatch": user
+    // Workers in the dispatch namespace (Workers for Platforms). "starter":
+    // ordinary Workers t-<id> on the account (Workers Paid alone, up to about
+    // 490), each at its own Custom Domain, called over HTTPS signed with a
+    // secret per tenant; needs TENANT_ADDRESSES "custom_domains", and the
+    // dispatch_namespaces block below removed until Workers for Platforms is
+    // on (platform/README.md, "Starter mode").
+    "TENANT_MODE": "dispatch",
     // How <slug>.<HOSTED_DOMAIN> reaches a customer (src/addresses.ts).
     // "wildcard": a dedicated domain, one *.<domain> route and Universal
     // SSL's wildcard certificate. "custom_domains": HOSTED_DOMAIN is a
@@ -145,7 +153,9 @@
     }
   ],
   // One user Worker per customer, named t-<tenant id>. Workers for Platforms
-  // must be on (owner action O1) before this namespace can be created.
+  // must be on (owner action O1) before this namespace can be created. In
+  // starter mode (TENANT_MODE "starter") delete this block: the platform then
+  // runs without the TENANTS binding, and DISPATCH_NAMESPACE isn't needed.
   "dispatch_namespaces": [
     {
       "binding": "TENANTS",

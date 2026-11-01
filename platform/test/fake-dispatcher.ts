@@ -6,7 +6,7 @@
  */
 
 import type { TenantProps } from "../../src/shared/hosted-contract";
-import type { DispatchLimits, DispatchResult, TenantDispatcher } from "../src/dispatch";
+import type { DispatchLimits, DispatchResult, DispatchTarget, TenantDispatcher } from "../src/dispatch";
 
 export type FakeUserWorker = (request: Request, props: TenantProps) => Response | Promise<Response>;
 
@@ -32,11 +32,12 @@ export class FakeDispatcher implements TenantDispatcher {
   }
 
   async dispatch(
-    scriptName: string,
+    target: DispatchTarget,
     request: Request,
     props: TenantProps,
     limits: DispatchLimits,
   ): Promise<DispatchResult> {
+    const { scriptName } = target;
     this.calls.push({ scriptName, request: request.clone(), props, limits });
     const worker = this.workers.get(scriptName);
     if (!worker) return { kind: "missing" };

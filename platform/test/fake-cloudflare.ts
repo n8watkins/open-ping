@@ -37,10 +37,15 @@ export type FakeOperation =
   | "findCustomDomain"
   | "countCustomDomains"
   | "detachCustomDomain"
-  | "findDnsRecords";
+  | "findDnsRecords"
+  | "setWorkersDev"
+  | "countAccountScripts";
 
 export interface FakeScript {
-  namespace: string;
+  /** The dispatch namespace, or null for an ordinary Worker on the account. */
+  namespace: string | null;
+  /** An account Worker's workers.dev address: on until turned off, as for a new Worker. */
+  workersDev?: boolean;
   metadata: WorkerUploadMetadata;
   modules: WorkerModule[];
   /** The asset paths the script's completion token covered. */
@@ -57,6 +62,9 @@ export interface FakeFailure {
   /** "before": the call has no effect. "after": it takes effect, then the answer is lost. */
   when?: "before" | "after";
 }
+
+/** The fake's key for a script: its namespace, or "(account)" for an ordinary Worker. */
+const scriptKey = (namespace: string | null, scriptName: string) => `${namespace ?? "(account)"}/${scriptName}`;
 
 interface Session {
   scriptKey: string;
@@ -117,9 +125,12 @@ export class FakeCloudflareApi implements CloudflareApi {
     return this.calls.filter((c) => c.op === op).length;
   }
 
-  scriptIn(namespace: string, scriptName: string): FakeScript | undefined {
-    return this.scripts.get(`${namespace}/${scriptName}`);
+  scriptIn(namespace: string | null, scriptName: string): FakeScript | undefined {
+    return this.scripts.get(scriptKey(namespace, scriptName));
   }
+
+  /** Workers on the account besides the tenants' (the platform, the owner's own sites). */
+  otherAccountScripts = 0;
 
   private id(prefix: string): string {
     this.seq++;
@@ -157,17 +168,17 @@ export class FakeCloudflareApi implements CloudflareApi {
     return this.run("deleteDatabase", [id], () => this.databases.delete(id));
   }
 
-  createAssetUploadSession(namespace: string, scriptName: string, manifest: AssetManifest): Promise<AssetUploadSession> {
+  createAssetUploadSession(namespace: string | null, scriptName: string, manifest: AssetManifest): Promise<AssetUploadSession> {
     return this.run("createAssetUploadSession", [namespace, scriptName, manifest], () => {
       for (const entry of Object.values(manifest)) {
         if (!/^[0-9a-f]{32}$/.test(entry.hash)) throw new CloudflareApiError("fake.session", 400, [{ code: 1, message: "bad hash" }]);
       }
-      const scriptKey = `${namespace}/${scriptName}`;
+      const key = scriptKey(namespace, scriptName);
       const missing = [...new Set(Object.values(manifest).map((e) => e.hash))].filter((h) => !this.storedAssets.has(h));
       const completion = this.id("complete-");
       const jwt = missing.length ? this.id("upload-") : completion;
-      this.sessions.set(jwt, { scriptKey, manifest, pending: new Set(missing), completion });
-      this.completions.set(completion, { scriptKey, paths: Object.keys(manifest) });
+      this.sessions.set(jwt, { scriptKey: key, manifest, pending: new Set(missing), completion });
+      this.completions.set(completion, { scriptKey: key, paths: Object.keys(manifest) });
       const buckets: string[][] = [];
       for (let i = 0; i < missing.length; i += this.bucketSize) buckets.push(missing.slice(i, i + this.bucketSize));
       return { jwt, buckets };
@@ -188,9 +199,9 @@ export class FakeCloudflareApi implements CloudflareApi {
     });
   }
 
-  putScript(namespace: string, scriptName: string, metadata: WorkerUploadMetadata, modules: WorkerModule[]): Promise<UploadedScript> {
+  putScript(namespace: string | null, scriptName: string, metadata: WorkerUploadMetadata, modules: WorkerModule[]): Promise<UploadedScript> {
     return this.run("putScript", [namespace, scriptName, metadata, modules.map((m) => m.name)], () => {
-      const key = `${namespace}/${scriptName}`;
+      const key = scriptKey(namespace, scriptName);
       const refuse = (message: string) => {
         throw new CloudflareApiError("fake.putScript", 400, [{ code: 10021, message }]);
       };
@@ -222,16 +233,24 @@ export class FakeCloudflareApi implements CloudflareApi {
       for (const binding of metadata.bindings) {
         if (binding.type === "durable_object_namespace" && !classes.has(binding.class_name)) refuse(`no Durable Object class ${binding.class_name}`);
       }
-      const script: FakeScript = { namespace, metadata, modules, assetPaths, migrationTag, durableClasses: [...classes] };
+      const script: FakeScript = {
+        namespace,
+        metadata,
+        modules,
+        assetPaths,
+        migrationTag,
+        durableClasses: [...classes],
+        ...(namespace === null ? { workersDev: existing?.workersDev ?? true } : {}),
+      };
       this.scripts.set(key, script);
       this.onScriptChange?.(scriptName, script);
       return { id: scriptName, etag: this.id("etag-"), hasAssets: assetPaths.length > 0 };
     });
   }
 
-  getScriptMigrationTag(namespace: string, scriptName: string): Promise<string | null> {
+  getScriptMigrationTag(namespace: string | null, scriptName: string): Promise<string | null> {
     return this.run("getScriptMigrationTag", [namespace, scriptName], () => {
-      const script = this.scripts.get(`${namespace}/${scriptName}`);
+      const script = this.scripts.get(scriptKey(namespace, scriptName));
       if (!script) throw new CloudflareApiError("fake.getScript", 404, [{ code: 10007, message: "script not found" }]);
       return script.migrationTag;
     });
@@ -314,9 +333,21 @@ export class FakeCloudflareApi implements CloudflareApi {
     });
   }
 
-  deleteScript(namespace: string, scriptName: string): Promise<boolean> {
+  setWorkersDev(scriptName: string, enabled: boolean): Promise<void> {
+    return this.run("setWorkersDev", [scriptName, enabled], () => {
+      const script = this.scripts.get(scriptKey(null, scriptName));
+      if (!script) throw new CloudflareApiError("fake.setWorkersDev", 404, [{ code: 10007, message: "script not found" }]);
+      script.workersDev = enabled;
+    });
+  }
+
+  countAccountScripts(): Promise<number> {
+    return this.run("countAccountScripts", [], () => [...this.scripts.values()].filter((s) => s.namespace === null).length + this.otherAccountScripts);
+  }
+
+  deleteScript(namespace: string | null, scriptName: string): Promise<boolean> {
     return this.run("deleteScript", [namespace, scriptName], () => {
-      const existed = this.scripts.delete(`${namespace}/${scriptName}`);
+      const existed = this.scripts.delete(scriptKey(namespace, scriptName));
       if (existed) this.onScriptChange?.(scriptName, null);
       return existed;
     });

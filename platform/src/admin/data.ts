@@ -186,7 +186,7 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
   const row = await db
     .prepare(
       `SELECT t.id, t.account_id, t.slug, t.script_name, t.status, t.plan, t.provision_state, t.version, t.limit_overrides,
-              t.monitor_packs, t.fast_packs, t.trial_ends_at, t.d1_id, t.created_at, t.updated_at, t.provisioned_at, t.suspended_at, t.owner_suspended_at,
+              t.monitor_packs, t.fast_packs, t.trial_ends_at, t.d1_id, t.runtime, t.created_at, t.updated_at, t.provisioned_at, t.suspended_at, t.owner_suspended_at,
               t.owner_suspended_reason, t.provision_attempts, t.provision_error, t.provision_next_at, t.provision_paused_at,
               t.provision_lease_until, a.email, a.disabled_at, a.deletion_requested_at,
               u.monitors, u.fast_monitors, u.status_pages, u.channels, u.counted_at, u.reported_at
@@ -208,6 +208,7 @@ export async function tenantDetail(db: D1Database, tenantId: string): Promise<Te
       fast_packs: number | null;
       trial_ends_at: number | null;
       d1_id: string | null;
+      runtime: string;
       created_at: number;
       updated_at: number;
       provisioned_at: number | null;

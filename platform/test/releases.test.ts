@@ -651,7 +651,7 @@ describe("the review's cases", () => {
     const { w, ids } = await shipped();
     const original = w.dispatcher.dispatch.bind(w.dispatcher);
     w.dispatcher.dispatch = (script, req, props, limits) =>
-      script === `t-${ids.alpha}` && new URL(req.url).pathname === "/__platform/scheduled" ? new Promise(() => {}) : original(script, req, props, limits);
+      script.scriptName === `t-${ids.alpha}` && new URL(req.url).pathname === "/__platform/scheduled" ? new Promise(() => {}) : original(script, req, props, limits);
     await request(w, { action: "rollout", version: "0.15.0" });
     expect(await advanceRelease({ ...w.deps, canaryTimeoutMs: 10 })).toMatchObject({ state: "paused" });
     expect((await activeRelease(env.PLATFORM_DB))!.note).toMatch(/didn't answer within 0.01 seconds/);

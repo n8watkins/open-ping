@@ -173,6 +173,15 @@ export interface DnsRecordInfo {
   name: string;
 }
 
+/**
+ * Where a user Worker lives: the name of the dispatch namespace, or null for
+ * an ordinary Worker on the account (starter mode, docs/hosted/CONTRACT.md,
+ * section 10). The same multipart upload, assets flow and delete apply to
+ * both; only the path differs (/workers/dispatch/namespaces/{ns}/scripts/...
+ * or /workers/scripts/...).
+ */
+export type ScriptLocation = string | null;
+
 export interface CloudflareApi {
   /**
    * PUT /accounts/{account_id}/workers/domains with { hostname, service, zone_id }:
@@ -239,7 +248,7 @@ export interface CloudflareApi {
    * POST /accounts/{account_id}/workers/dispatch/namespaces/{namespace}/scripts/{script}/assets-upload-session
    * https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/static-assets/
    */
-  createAssetUploadSession(namespace: string, scriptName: string, manifest: AssetManifest): Promise<AssetUploadSession>;
+  createAssetUploadSession(namespace: ScriptLocation, scriptName: string, manifest: AssetManifest): Promise<AssetUploadSession>;
 
   /**
    * POST /accounts/{account_id}/workers/assets/upload?base64=true with the
@@ -255,22 +264,36 @@ export interface CloudflareApi {
    * A first upload is live when this resolves (synchronous uploads, 2025-02-20).
    * https://developers.cloudflare.com/api/resources/workers_for_platforms/subresources/dispatch/subresources/namespaces/subresources/scripts/methods/update/
    */
-  putScript(namespace: string, scriptName: string, metadata: WorkerUploadMetadata, modules: WorkerModule[]): Promise<UploadedScript>;
+  putScript(namespace: ScriptLocation, scriptName: string, metadata: WorkerUploadMetadata, modules: WorkerModule[]): Promise<UploadedScript>;
 
   /**
    * DELETE /accounts/{account_id}/workers/dispatch/namespaces/{namespace}/scripts/{script}?force=true.
    * Resolves false when the script was already gone.
    * https://developers.cloudflare.com/api/resources/workers_for_platforms/subresources/dispatch/subresources/namespaces/subresources/scripts/methods/delete/
    */
-  deleteScript(namespace: string, scriptName: string): Promise<boolean>;
+  deleteScript(namespace: ScriptLocation, scriptName: string): Promise<boolean>;
 
   /**
    * GET /accounts/{account_id}/workers/dispatch/namespaces/{namespace}/scripts/{script}:
    * the Durable Object migration tag most recently applied to the script
-   * (`result.script.migration_tag`), or null for none.
+   * (`result.script.migration_tag`), or null for none. For an account
+   * Worker, the same field of its entry in GET /accounts/{account_id}/workers/scripts.
    * https://developers.cloudflare.com/api/resources/workers_for_platforms/subresources/dispatch/subresources/namespaces/subresources/scripts/methods/get/
+   * https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/list/
    */
-  getScriptMigrationTag(namespace: string, scriptName: string): Promise<string | null>;
+  getScriptMigrationTag(namespace: ScriptLocation, scriptName: string): Promise<string | null>;
+
+  /**
+   * POST /accounts/{account_id}/workers/scripts/{script}/subdomain with
+   * { enabled, previews_enabled }: whether an account Worker answers on its
+   * workers.dev address. Starter mode turns it off, so a tenant is reached
+   * only at its Custom Domain.
+   * https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/subdomain/methods/create/
+   */
+  setWorkersDev(scriptName: string, enabled: boolean): Promise<void>;
+
+  /** How many Workers the account has, every one (the limit is 500 on Workers Paid). GET /accounts/{account_id}/workers/scripts. */
+  countAccountScripts(): Promise<number>;
 }
 
 /** One entry of the API's `errors` array. */

@@ -17,7 +17,10 @@ import { recipientRoutes } from "./recipients";
 import { accountExportRoutes, type AccountExportDeps } from "./lifecycle/account-export";
 import { exportDepsFromEnv } from "./lifecycle/env";
 import { adminRoutes, type AdminDeps } from "./admin/routes";
-import { HOSTED_ERRORS, isInternalPath, type PlatformCapability } from "../../src/shared/hosted-contract";
+import { HOSTED_ERRORS, TENANT_CALL_PATH_PREFIX, isInternalPath, type PlatformCapability } from "../../src/shared/hosted-contract";
+import { tenantMailFromEnv } from "./capability";
+import { isValidPlatformKey } from "./keys";
+import { handleTenantCall } from "./starter";
 import { DISPATCH_LIMITS, buildTenantProps, newCallId, publicRequest, type TenantDispatcher } from "./dispatch";
 import type { PlatformEnv } from "./env";
 import { appOrigin, classifyHost } from "./hosts";
@@ -92,6 +95,17 @@ function appHost(deps: AppDeps): Hono<Platform> {
       now: (accounts.now ?? Date.now)(),
     }),
   );
+  // Starter tenants' capability calls (src/starter.ts): signed, so no
+  // session, no Origin and no CSRF token; whatever doesn't verify is a 404.
+  app.post(`${TENANT_CALL_PATH_PREFIX}*`, (c) =>
+    handleTenantCall(c.req.raw, {
+      db: c.env.PLATFORM_DB,
+      hostedDomain: c.env.HOSTED_DOMAIN,
+      platformKey: isValidPlatformKey(c.env.PLATFORM_KEY) ? c.env.PLATFORM_KEY : null,
+      mail: tenantMailFromEnv(c.env, accounts.mailer(c.env)),
+      now: (deps.now ?? Date.now)(),
+    }),
+  );
   // Before the account routes: /admin answers its own 404 to everyone but the owner.
   app.route(
     "/admin",
@@ -135,6 +149,11 @@ async function tenantHost(
   if (!tenant || tenant.provisionState === "deleting") return tenantNotFoundPage(url.hostname, home);
   if (tenant.provisionState !== "ready") return tenantProvisioningPage();
   if (tenant.status === "suspended") return tenantSuspendedPage(hostedUrls(tenant.slug, env.HOSTED_DOMAIN).account);
+  // A starter tenant is reached at its own Custom Domain, never through here.
+  if (tenant.runtime === "starter") {
+    log.error("dispatch.starter_tenant_routed_here", { tenant: tenant.id });
+    return tenantUnavailablePage();
+  }
 
   const props = buildTenantProps({
     tenant,
@@ -145,7 +164,7 @@ async function tenantHost(
   });
 
   try {
-    const result = await deps.dispatcher(env).dispatch(tenant.scriptName, publicRequest(request), props, DISPATCH_LIMITS.public);
+    const result = await deps.dispatcher(env).dispatch(tenant, publicRequest(request), props, DISPATCH_LIMITS.public);
     if (result.kind === "missing") {
       // A ready tenant always has a script; this is a provisioning bug, not the visitor's.
       log.error("dispatch.script_missing", { tenant: tenant.id, script: tenant.scriptName });

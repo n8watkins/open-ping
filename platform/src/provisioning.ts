@@ -42,8 +42,6 @@ import { HOSTED_TRIAL_DAYS } from "../../src/shared/hosted-offer";
 import {
   PLATFORM_HEALTH_PATH,
   PLATFORM_SCHEDULED_PATH,
-  HOSTED_ENV,
-  HOSTED_MODE_ON,
   isTenantId,
   tenantDatabaseName,
   tenantScriptName,
@@ -55,13 +53,14 @@ import {
 } from "../../src/shared/hosted-contract";
 import type { BundleSource } from "./bundle";
 import { CloudflareApiError, type CloudflareApi } from "./cloudflare/api";
-import { uploadUserWorker } from "./cloudflare/upload";
 import { callTenant, type TenantDispatcher } from "./dispatch";
 import { PermanentError } from "./errors";
 import { ensureMasterKey } from "./keys";
 import { checkSlugAvailability, holdSlug, type SlugAvailability } from "./slugs";
 import { ensureTenantAddress, removeTenantAddress, type AddressConfig, type AddressDeps } from "./addresses";
-import { PROVISION_STATES, forgetTenant, tenantFromRow, type ProvisionState, type TenantRecord } from "./tenants";
+import { PROVISION_STATES, forgetTenant, tenantFromRow, type ProvisionState, type TenantRecord, type TenantRuntime } from "./tenants";
+import { scriptLocation, tenantTags, uploadTenant } from "./tenant-upload";
+import { forgetCallKeys } from "./starter";
 import { log } from "./log";
 
 /** Failures in a row before a tenant is paused for the owner. */
@@ -76,8 +75,14 @@ export const TRIAL_DAYS = HOSTED_TRIAL_DAYS;
 /** What provisioning needs from the platform's env, checked once (provisioningConfig in ./index.ts). */
 export interface ProvisioningConfig {
   hostedDomain: string;
-  /** The dispatch namespace's name (DISPATCH_NAMESPACE), for the API; the binding is TENANTS. */
+  /** The dispatch namespace's name (DISPATCH_NAMESPACE), for the API; the binding is TENANTS. Empty in starter mode. */
   namespace: string;
+  /**
+   * TENANT_MODE: where new tenants run, "dispatch" (Workers for Platforms,
+   * the default) or "starter" (ordinary Workers, signed HTTPS calls,
+   * src/starter.ts). Each tenant keeps its own (tenants.runtime).
+   */
+  mode?: TenantRuntime;
   /** PLATFORM_KEY: escrows each tenant's MASTER_KEY. */
   platformKey: string;
   /** HANDOFF_PUBLIC_KEY: every tenant's copy of the hand-off verification key. */
@@ -140,7 +145,7 @@ export type RequestTenantResult =
  */
 export async function requestTenant(
   db: D1Database,
-  input: { accountId: string; slug: string; now: number; plan?: PlanId },
+  input: { accountId: string; slug: string; now: number; plan?: PlanId; runtime?: TenantRuntime },
 ): Promise<RequestTenantResult> {
   const availability = await checkSlugAvailability(db, input.slug, input.now);
   if (!availability.ok) return availability;
@@ -148,10 +153,20 @@ export async function requestTenant(
   try {
     await db
       .prepare(
-        `INSERT INTO tenants (id, account_id, slug, script_name, status, plan, provision_state, trial_ends_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'trial', ?, 'requested', ?, ?, ?)`,
+        `INSERT INTO tenants (id, account_id, slug, script_name, status, plan, provision_state, trial_ends_at, created_at, updated_at, runtime)
+         VALUES (?, ?, ?, ?, 'trial', ?, 'requested', ?, ?, ?, ?)`,
       )
-      .bind(id, input.accountId, availability.slug, tenantScriptName(id), input.plan ?? "trial", input.now + TRIAL_DAYS * 86_400_000, input.now, input.now)
+      .bind(
+        id,
+        input.accountId,
+        availability.slug,
+        tenantScriptName(id),
+        input.plan ?? "trial",
+        input.now + TRIAL_DAYS * 86_400_000,
+        input.now,
+        input.now,
+        input.runtime ?? "dispatch",
+      )
       .run();
   } catch (error) {
     // Two sign-ups raced for the same name; the UNIQUE constraint decided.
@@ -176,6 +191,7 @@ interface ProvisionRow {
   owner_suspended_at: number | null;
   plan: string;
   provision_state: string;
+  runtime: string;
   version: string | null;
   limit_overrides: string | null;
   monitor_packs: number | null;
@@ -205,7 +221,7 @@ async function loadTenant(db: D1Database, tenantId: string): Promise<ProvisionTe
   const row = await db
     .prepare(
       `SELECT id, account_id, slug, script_name, status, owner_suspended_at, plan, provision_state, version, limit_overrides, monitor_packs, fast_packs,
-              trial_ends_at, d1_id, provision_attempts, provision_next_at, provision_paused_at, provisioned_at, created_at, custom_domain_id
+              trial_ends_at, d1_id, provision_attempts, provision_next_at, provision_paused_at, provisioned_at, created_at, custom_domain_id, runtime
        FROM tenants WHERE id = ?`,
     )
     .bind(tenantId)
@@ -327,7 +343,14 @@ type Step = (deps: ProvisioningDeps, t: ProvisionTenant, run: { tenantId: string
 
 /** What src/addresses.ts needs, from provisioning's deps. */
 export function addressDeps(deps: Pick<ProvisioningDeps, "db" | "api" | "config">, now: number): AddressDeps {
-  return { db: deps.db, api: deps.api, hostedDomain: deps.config.hostedDomain, addresses: deps.config.addresses ?? { kind: "wildcard" }, now };
+  return {
+    db: deps.db,
+    api: deps.api,
+    hostedDomain: deps.config.hostedDomain,
+    addresses: deps.config.addresses ?? { kind: "wildcard" },
+    mode: deps.config.mode,
+    now,
+  };
 }
 
 const stepCreateDatabase: Step = async (deps, t, run, now) => {
@@ -356,22 +379,8 @@ const stepUpload: Step = async (deps, t, run, now) => {
   // applied, and this upload's migrations must start from a known tag. A
   // tenant in this state has never served anyone, so nothing is lost, and
   // deleting a script that isn't there succeeds.
-  await deps.api.deleteScript(deps.config.namespace, t.record.scriptName);
-  await uploadUserWorker(deps.api, {
-    namespace: deps.config.namespace,
-    scriptName: t.record.scriptName,
-    bundle,
-    bindings: [{ type: "d1", name: "DB", database_id: t.d1Id }],
-    vars: {
-      [HOSTED_ENV.mode]: HOSTED_MODE_ON,
-      [HOSTED_ENV.tenantId]: t.record.id,
-      [HOSTED_ENV.handoffPublicKey]: deps.config.handoffPublicKey,
-    },
-    secrets: { MASTER_KEY: masterKey },
-    tags: tenantTags(t.record.id, bundle.version),
-    previousMigrationTag: null,
-    logSampling: deps.config.tenantLogSampling,
-  });
+  await deps.api.deleteScript(scriptLocation(deps.config, t.record.runtime), t.record.scriptName);
+  await uploadTenant({ db: deps.db, api: deps.api, config: deps.config, tenant: t.record, bundle, d1Id: t.d1Id, masterKey, previousMigrationTag: null, now });
   // Its address, once there is a Worker for it to reach: the platform's
   // calls in the next steps, and visitors after them, come in through it.
   const customDomainId = await ensureTenantAddress(addressDeps(deps, now), t.record, t.customDomainId);
@@ -382,10 +391,7 @@ const stepUpload: Step = async (deps, t, run, now) => {
   });
 };
 
-/** The script's tags: find every tenant's Worker, one tenant's, or one release's in the namespace. */
-export function tenantTags(tenantId: string, version: string): string[] {
-  return ["openping", `tenant-${tenantId}`, `release-${version}`];
-}
+export { tenantTags };
 
 async function platformCall<T>(deps: ProvisioningDeps, t: ProvisionTenant, path: string, body?: unknown): Promise<{ status: number; body: T | null }> {
   const result = await callTenant(
@@ -440,7 +446,7 @@ const stepVerify: Step = async (deps, t, run, now) => {
 const stepTeardown: Step = async (deps, t, run, now) => {
   // The address first, so nobody reaches a Worker that is about to go.
   await removeTenantAddress(addressDeps(deps, now), t.record, t.customDomainId);
-  await deps.api.deleteScript(deps.config.namespace, t.record.scriptName);
+  await deps.api.deleteScript(scriptLocation(deps.config, t.record.runtime), t.record.scriptName);
   // The id may never have been recorded (a create whose answer was lost), so also look it up by name.
   const d1Id = t.d1Id ?? (await deps.api.findDatabaseByName(tenantDatabaseName(t.record.id)))?.id ?? null;
   if (d1Id) await deps.api.deleteDatabase(d1Id);
@@ -448,11 +454,14 @@ const stepTeardown: Step = async (deps, t, run, now) => {
   if (t.provisionedAt !== null) await holdSlug(deps.db, t.record.slug, "deleted", now);
   await audit(deps.db, t.record, "tenant.removed", now, { slug: t.record.slug, wasReady: t.provisionedAt !== null });
   forgetTenant(t.record.slug);
+  forgetCallKeys(t.record.id);
   // One batch, all guarded by this run's lease, so a run that lost it removes nothing.
   const held = "EXISTS (SELECT 1 FROM tenants WHERE id = ?1 AND provision_lease_token = ?2)";
   await deps.db.batch([
     deps.db.prepare(`UPDATE subscriptions SET tenant_id = NULL WHERE tenant_id = ?1 AND ${held}`).bind(t.record.id, run.token),
     deps.db.prepare(`DELETE FROM escrowed_keys WHERE tenant_id = ?1 AND ${held}`).bind(t.record.id, run.token),
+    // A starter tenant's call secret goes with it: nothing can sign as it again.
+    deps.db.prepare(`DELETE FROM tenant_call_secrets WHERE tenant_id = ?1 AND ${held}`).bind(t.record.id, run.token),
     // The addresses that confirmed (or declined) this OpenPing's email are other people's; they go with it (privacy policy, section 4).
     deps.db.prepare(`DELETE FROM email_recipients WHERE tenant_id = ?1 AND ${held}`).bind(t.record.id, run.token),
     deps.db.prepare("DELETE FROM tenants WHERE id = ?1 AND provision_lease_token = ?2").bind(t.record.id, run.token),

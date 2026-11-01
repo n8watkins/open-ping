@@ -41,13 +41,17 @@ export const DISPATCH_LIMITS: Readonly<Record<Invocation, Readonly<DispatchLimit
 
 export type DispatchResult = { kind: "response"; response: Response } | { kind: "missing" };
 
+/** Which user Worker a call is for, and where it runs (a TenantRecord is one). */
+export type DispatchTarget = Pick<TenantRecord, "scriptName" | "runtime">;
+
 export interface TenantDispatcher {
   /**
-   * Sends `request` to the user Worker `scriptName` with these props and
-   * limits. Answers "missing" when no such script exists in the namespace;
-   * any other failure (the user Worker threw) rejects.
+   * Sends `request` to the tenant's user Worker with these props and limits.
+   * Answers "missing" when no such script exists in the namespace; any other
+   * failure (the user Worker threw, a starter tenant's answer didn't verify)
+   * rejects.
    */
-  dispatch(scriptName: string, request: Request, props: TenantProps, limits: DispatchLimits): Promise<DispatchResult>;
+  dispatch(target: DispatchTarget, request: Request, props: TenantProps, limits: DispatchLimits): Promise<DispatchResult>;
 }
 
 /** A call id: 32 hex characters (contract: at least 16). */
@@ -115,11 +119,12 @@ export class NamespaceDispatcher implements TenantDispatcher {
   constructor(private readonly namespace: DispatchNamespace) {}
 
   async dispatch(
-    scriptName: string,
+    target: DispatchTarget,
     request: Request,
     props: TenantProps,
     limits: DispatchLimits,
   ): Promise<DispatchResult> {
+    const { scriptName } = target;
     let worker: Fetcher;
     try {
       worker = this.namespace.get(scriptName, { props }, { limits: { ...limits } });
@@ -156,5 +161,5 @@ export async function callTenant(
   const callId = newCallId();
   const request = platformRequest(input.tenant, input.hostedDomain, path, callId, init);
   const props = buildTenantProps({ ...input, invocation: "platform", callId });
-  return dispatcher.dispatch(input.tenant.scriptName, request, props, DISPATCH_LIMITS.platform);
+  return dispatcher.dispatch(input.tenant, request, props, DISPATCH_LIMITS.platform);
 }

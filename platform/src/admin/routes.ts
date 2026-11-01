@@ -26,6 +26,7 @@ import { listPasskeys } from "../auth/passkeys";
 import { LIMITS, hitInOrder } from "../auth/rate-limit";
 import { readSession, type Session } from "../auth/sessions";
 import { callTenant, type TenantDispatcher } from "../dispatch";
+import { moveTenantToDispatch } from "../tenant-move";
 import type { PlatformEnv } from "../env";
 import { handoffUrl, mintHandoffToken } from "../handoff";
 import { appOrigin, requestTenantOrigin } from "../hosts";
@@ -117,6 +118,9 @@ const FLASH: Record<string, { message: string; tone: "ok" | "error" }> = {
   "reason-needed": { message: "Write a short reason (at least 3 characters) first.", tone: "error" },
   "not-ready": { message: "Support sign-in needs a ready OpenPing that isn't suspended.", tone: "error" },
   "support-off": { message: "Support sign-in isn't available: HANDOFF_SIGNING_KEY isn't set.", tone: "error" },
+  moved: { message: "Moved to Workers for Platforms: the platform calls it through the namespace and its address points at the platform.", tone: "ok" },
+  "move-refused": { message: "It can't be moved now: it must be a ready starter tenant, with DISPATCH_NAMESPACE set. Nothing was changed.", tone: "error" },
+  "move-failed": { message: "The move stopped before it finished; the audit log and the platform's logs say at which step. Moving it again picks up from there.", tone: "error" },
 };
 
 const LIST_FLASH: Record<string, { message: string; tone: "ok" | "error" }> = {
@@ -340,6 +344,19 @@ export function adminRoutes(deps: AdminDeps): Hono<Env> {
       await ownerAudit(c, tenant, "tenant.provision_resumed", { state: tenant.provisionState });
       await startRun(c, setup, tenant.id);
       return pageOf(tenant, "provisioning-resumed");
+    }),
+  );
+
+  // Starter mode to Workers for Platforms, one tenant at a time (src/tenant-move.ts).
+  app.post(
+    "/tenants/:id/move-to-dispatch",
+    tenantAction(async (c, tenant) => {
+      const setup = deps.provisioning(c.env, c.executionCtx as ExecutionContext);
+      if (!setup.ok) return pageOf(tenant, "provisioning-off");
+      if (tenant.runtime !== "starter") return pageOf(tenant, "move-refused");
+      const outcome = await moveTenantToDispatch(setup.deps, tenant.id);
+      await ownerAudit(c, tenant, "tenant.move_requested", { result: outcome.kind, ...(outcome.kind === "failed" ? { step: outcome.step } : {}) });
+      return pageOf(tenant, outcome.kind === "moved" ? "moved" : outcome.kind === "refused" ? "move-refused" : "move-failed");
     }),
   );
 

@@ -19,6 +19,7 @@ import type {
   AssetUploadPart,
   CloudflareApi,
   DurableObjectMigrationStep,
+  ScriptLocation,
   UploadedScript,
   WorkerBinding,
   WorkerMigrations,
@@ -80,7 +81,7 @@ export async function buildAssetManifest(
 /** Phases 1 and 2: resolves the completion token for the script upload. */
 export async function uploadAssets(
   api: CloudflareApi,
-  namespace: string,
+  namespace: ScriptLocation,
   scriptName: string,
   assets: BundleAsset[],
 ): Promise<string> {
@@ -102,7 +103,8 @@ export async function uploadAssets(
 }
 
 export interface UserWorkerUpload {
-  namespace: string;
+  /** The dispatch namespace, or null for an ordinary Worker on the account (starter mode). */
+  namespace: ScriptLocation;
   scriptName: string;
   bundle: TenantBundle;
   /** The tenant's own bindings (its D1 database), added after the assets binding. */
