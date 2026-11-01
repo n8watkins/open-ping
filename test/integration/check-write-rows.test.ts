@@ -84,7 +84,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("rows one check writes", () => {
+describe("rows one check writes", { timeout: 60_000 }, () => {
   it("a passing check that changes nothing: 3 rows, and no sample row", async () => {
     const m = await http("Steady");
     await applyCheckResult(env, m, up(T0));

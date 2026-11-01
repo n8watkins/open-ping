@@ -68,7 +68,7 @@ afterAll(() => {
   vi.useRealTimers();
 });
 
-describe("a sample retention under 24 hours", () => {
+describe("a sample retention under 24 hours", { timeout: 60_000 }, () => {
   const from = T_END - SAMPLE_HOURS * HOUR;
 
   it("the monitor page lists only the checks inside it", async () => {

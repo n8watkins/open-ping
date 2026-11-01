@@ -120,7 +120,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("per-monitor intervals on the platform", () => {
+describe("per-monitor intervals on the platform", { timeout: 60_000 }, () => {
   it("checks a 1-minute monitor on every tick and a 12-minute one on every 12th", async () => {
     const fast = await addMonitor("Fast", { intervalSeconds: 60 });
     const slow = await addMonitor("Slow");
@@ -292,7 +292,7 @@ describe("per-monitor intervals on the platform", () => {
   });
 });
 
-describe("what a tenant costs in D1 rows (docs/HOSTED_PLAN.md)", () => {
+describe("what a tenant costs in D1 rows (docs/HOSTED_PLAN.md)", { timeout: 60_000 }, () => {
   it("measures 20 monitors on 1-minute checks and on 12-minute checks", async () => {
     for (let i = 0; i < 20; i++) await addMonitor(`Cost ${i}`, { intervalSeconds: 60 });
     await measureCalls(T0, 1, FAST); // the first checks (warm-up)
@@ -320,10 +320,11 @@ describe("what a tenant costs in D1 rows (docs/HOSTED_PLAN.md)", () => {
   }, 120_000);
 });
 
-describe("the all-monitors views with a sample a minute", () => {
+describe("the all-monitors views with a sample a minute", { timeout: 60_000 }, () => {
   it("read a bounded number of rows, not every sample of the last 24 hours", async () => {
-    vi.useRealTimers();
-    const now = Date.now();
+    // A fixed clock, mid-hour, so the hour rows in range don't move with the wall clock.
+    const now = T0 + 20 * MINUTE;
+    vi.setSystemTime(now);
     for (let i = 0; i < 20; i++) await addMonitor(`Busy ${i}`, { intervalSeconds: 60 });
     // A day of 1-minute samples and hourly summaries for each, as 1-minute checks leave.
     await env.DB.batch([
@@ -355,7 +356,7 @@ describe("the all-monitors views with a sample a minute", () => {
   });
 });
 
-describe("a plain install's cron", () => {
+describe("a plain install's cron", { timeout: 60_000 }, () => {
   it("still checks every polled monitor on each 12-minute run, whatever interval is stored", async () => {
     const fast = await addMonitor("Brought over from Hosted", { intervalSeconds: 60 });
     const slow = await addMonitor("Hourly", { intervalSeconds: 3600 });

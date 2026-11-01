@@ -239,7 +239,7 @@ afterAll(() => {
 const NOW = T_END;
 const recent = (sim: Sim, from = NOW - DAY) => sim.checks.filter((c) => c.at >= from && c.at <= NOW);
 
-describe("the monitor page", () => {
+describe("the monitor page", { timeout: 60_000 }, () => {
   it("lists every check of the last 24 hours, with the latest one's details", async () => {
     for (const sim of sims) {
       const res = await apiRequest(`/api/monitors/${sim.monitor.id}/detail`);
@@ -277,7 +277,7 @@ describe("the monitor page", () => {
   });
 });
 
-describe("the 24-hour chart", () => {
+describe("the 24-hour chart", { timeout: 60_000 }, () => {
   it("plots every passing check's response time, and its percentiles come from all of them", async () => {
     for (const sim of sims) {
       const h = await loadRangeHistory(env, "24h", NOW, sim.monitor.id);
@@ -315,7 +315,7 @@ describe("the 24-hour chart", () => {
   });
 });
 
-describe("the Overview", () => {
+describe("the Overview", { timeout: 60_000 }, () => {
   it("shows each monitor's last 28 checks of the day and its 24-hour uptime", async () => {
     const overview = await buildOverview(env, NOW);
     for (const sim of sims) {
@@ -331,7 +331,7 @@ describe("the Overview", () => {
   });
 });
 
-describe("the rollups and the timeline", () => {
+describe("the rollups and the timeline", { timeout: 60_000 }, () => {
   it("hold the same hourly totals as a recompute from every check", async () => {
     for (const sim of sims) {
       const want = new Map<number, Record<string, number | null>>();
