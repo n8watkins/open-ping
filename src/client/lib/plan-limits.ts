@@ -166,7 +166,22 @@ export function planLimitMessage(limit: PlanLimitBody): string {
   return `Your plan includes ${over.allowed} ${over.allowed === 1 ? what[0] : what[1]}. The ones you have keep working; remove ${extra} or upgrade to add more.`;
 }
 
-/** "3 of 5 monitors", for a count next to a list. */
+/**
+ * "3 of 5 monitors" or "1 of 1 fast monitor", for a count next to a list; over
+ * the plan (a downgrade keeps everything), "3 fast monitors (your plan includes 1)",
+ * with the number kept on the same line as its words.
+ */
 export function usageLabel(count: number, allowed: number, one: string, many: string): string {
+  if (count > allowed) return `${count} ${count === 1 ? one : many} (your plan includes\u00a0${allowed})`;
   return `${count} of ${allowed} ${allowed === 1 ? one : many}`;
+}
+
+/**
+ * The plan line under a page title: "3 of 20 monitors, 2 of 5 fast monitors on
+ * your plan". When a count is over the plan, its own words already say so, and
+ * the line doesn't end "on your plan" after them.
+ */
+export function planUsageLine(counts: readonly { count: number; allowed: number; one: string; many: string }[]): string {
+  const text = counts.map((c) => usageLabel(c.count, c.allowed, c.one, c.many)).join(", ");
+  return counts.some((c) => c.count > c.allowed) ? text : `${text} on your plan`;
 }

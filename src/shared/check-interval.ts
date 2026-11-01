@@ -131,15 +131,28 @@ export function checkedEveryText(effectiveSeconds: number, reason: IntervalReaso
   return note ? `Checked ${every} (${note})` : `Checks ${every}`;
 }
 
-/** The sentence that explains a difference, or null when the monitor runs as set. */
-export function intervalReasonDetail(storedSeconds: number, effectiveSeconds: number, reason: IntervalReason): string | null {
+/**
+ * The sentence that explains a difference, or null when the monitor runs as
+ * set. `planMinimumSeconds` is the plan's shortest interval (Hosted): a
+ * monitor over the fast allowance and set under the plan's shortest gets
+ * that, not its setting, once a fast place frees up.
+ */
+export function intervalReasonDetail(
+  storedSeconds: number,
+  effectiveSeconds: number,
+  reason: IntervalReason,
+  planMinimumSeconds?: number,
+): string | null {
   const set = everyLabel(minutesOf(storedSeconds));
   const actual = everyLabel(minutesOf(effectiveSeconds));
   switch (reason) {
     case "plan_minimum":
       return `Set to ${set}, but your plan's fastest is ${actual}. It goes back to ${set} once your plan allows it.`;
-    case "fast_monitor_limit":
-      return `Set to ${set}, but older monitors use all of your plan's fast checks, so it runs ${actual} until one of them is slowed down or removed, or your plan allows more.`;
+    case "fast_monitor_limit": {
+      const sentence = `Set to ${set}, but older monitors use all of your plan's fast checks, so it runs ${actual} until one of them is slowed down or removed, or your plan allows more.`;
+      if (planMinimumSeconds === undefined || storedSeconds >= planMinimumSeconds) return sentence;
+      return `${sentence} Then it runs ${everyLabel(minutesOf(planMinimumSeconds))}, your plan's fastest.`;
+    }
     case "install_schedule":
       return `Set to ${set}, but this install checks every monitor on its ${minutesOf(effectiveSeconds)}-minute schedule.`;
     default:

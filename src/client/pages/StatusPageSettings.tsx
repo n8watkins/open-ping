@@ -12,7 +12,7 @@ import {
 import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
-import { statusPageLimitReached, usageLabel, usePlan } from "../lib/plan-limits";
+import { planUsageLine, statusPageLimitReached, usePlan } from "../lib/plan-limits";
 import { PlanLimitNotice } from "../components/PlanLimitNotice";
 import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -89,7 +89,7 @@ export default function StatusPageSettings() {
           </p>
           {plan && data && !atLimit && (
             <p className="mt-1 text-sm text-ink-muted tabular-nums">
-              {usageLabel(pages.length, plan.limits.statusPages, "status page", "status pages")} on your plan
+              {planUsageLine([{ count: pages.length, allowed: plan.limits.statusPages, one: "status page", many: "status pages" }])}
             </p>
           )}
         </div>
