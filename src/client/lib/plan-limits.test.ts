@@ -7,7 +7,9 @@ import {
   monitorLimitReached,
   planLimitMessage,
   planLimitTitle,
+  planUsageLine,
   statusPageLimitReached,
+  usageLabel,
   type PlanState,
 } from "./plan-limits";
 
@@ -72,5 +74,28 @@ describe("fast monitors", () => {
     const limit = { error: "plan_limit", limit: "fast_monitors", allowed: 5, requested: 6, plan: "hosted_fast", message: "x", upgradeUrl: "u" } as const;
     expect(planLimitTitle(limit)).toBe("All 5 fast monitors in use");
     expect(planLimitTitle({ ...limit, allowed: 0 })).toBe("Fast checks aren't in your plan");
+  });
+});
+
+describe("usage next to a list", () => {
+  it("counts against the plan, in the plan's own singular or plural", () => {
+    expect(usageLabel(3, 20, "monitor", "monitors")).toBe("3 of 20 monitors");
+    expect(usageLabel(1, 1, "fast monitor", "fast monitors")).toBe("1 of 1 fast monitor");
+    expect(usageLabel(0, 1, "status page", "status pages")).toBe("0 of 1 status page");
+  });
+
+  it("says so when a downgrade left more than the plan includes", () => {
+    expect(usageLabel(3, 1, "fast monitor", "fast monitors")).toBe("3 fast monitors (your plan includes\u00a01)");
+    expect(usageLabel(1, 0, "fast monitor", "fast monitors")).toBe("1 fast monitor (your plan includes\u00a00)");
+  });
+
+  it("ends the line with \"on your plan\" only when nothing is over it", () => {
+    const monitors = { count: 3, allowed: 20, one: "monitor", many: "monitors" };
+    expect(planUsageLine([monitors, { count: 2, allowed: 5, one: "fast monitor", many: "fast monitors" }])).toBe(
+      "3 of 20 monitors, 2 of 5 fast monitors on your plan",
+    );
+    expect(planUsageLine([monitors, { count: 3, allowed: 1, one: "fast monitor", many: "fast monitors" }])).toBe(
+      "3 of 20 monitors, 3 fast monitors (your plan includes\u00a01)",
+    );
   });
 });

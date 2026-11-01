@@ -20,7 +20,7 @@ import { PageTitle } from "../components/ui/PageTitle";
 import { PullToRefresh } from "../components/PullToRefresh";
 import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
-import { fastUsage, monitorLimitReached, usageLabel, usePlan } from "../lib/plan-limits";
+import { fastUsage, monitorLimitReached, planUsageLine, usePlan } from "../lib/plan-limits";
 import { PlanLimitNotice } from "../components/PlanLimitNotice";
 import type { Schedule } from "../../shared/schemas";
 import type { MonitorState } from "../../shared/states";
@@ -200,8 +200,10 @@ export default function Monitors() {
           <PageTitle>Monitors</PageTitle>
           {plan && data && !atLimit && (
             <p className="mt-1 text-sm text-ink-muted tabular-nums">
-              {usageLabel(monitors.length, plan.limits.monitors, "monitor", "monitors")}
-              {fast && `, ${usageLabel(fast.others, fast.allowed, "fast monitor", "fast monitors")}`} on your plan
+              {planUsageLine([
+                { count: monitors.length, allowed: plan.limits.monitors, one: "monitor", many: "monitors" },
+                ...(fast ? [{ count: fast.others, allowed: fast.allowed, one: "fast monitor", many: "fast monitors" }] : []),
+              ])}
             </p>
           )}
         </div>
