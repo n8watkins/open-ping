@@ -26,7 +26,7 @@ import {
 import { redactConfig } from "../lib/secret-config";
 import { downtimeBreakdown, loadRangeHistory } from "../history/range";
 import { loggedChecks, mergeChecks, type ListedCheck } from "../history/check-log";
-import { bucketStart } from "../history/rollups";
+import { bucketStart, sampleHorizon } from "../history/rollups";
 import { parseTimeRange, type MonitorHistoryResponse } from "../../shared/time-range";
 import { computeListStats } from "../history/list-stats";
 import type { MonitorRecord } from "../db/monitors";
@@ -384,26 +384,27 @@ monitors.get("/:id/detail", async (c) => {
     ).map(([key, days]) => [key, downtimeBreakdown(spans, now - days * DAY, now)]),
   );
 
-  // The last 24 hours' checks: the sample rows, and the passing checks their
-  // hour summaries logged instead (history/check-log.ts).
-  const dayAgo = now - DAY;
+  // The last 24 hours' checks (no older than the sample retention): the sample
+  // rows, and the passing checks their hour summaries logged instead
+  // (history/check-log.ts).
+  const checksFrom = Math.max(now - DAY, await sampleHorizon(c.env, now));
   const [samplesRes, hoursRes] = await Promise.all([
     c.env.DB.prepare(
       `SELECT at, ok, state, duration_ms AS durationMs, status_code AS statusCode, error, meta
        FROM samples WHERE monitor_id = ? AND at >= ? ORDER BY at`,
     )
-      .bind(id, dayAgo)
+      .bind(id, checksFrom)
       .all<ListedCheck>(),
     c.env.DB.prepare(
       `SELECT bucket_start, check_log FROM summaries
         WHERE monitor_id = ? AND period = 'hour' AND bucket_start >= ? AND check_log IS NOT NULL`,
     )
-      .bind(id, bucketStart("hour", dayAgo))
+      .bind(id, bucketStart("hour", checksFrom))
       .all<{ bucket_start: number; check_log: string | null }>(),
   ]);
   const checks = mergeChecks(
     samplesRes.results ?? [],
-    loggedChecks(hoursRes.results ?? [], dayAgo, Number.POSITIVE_INFINITY),
+    loggedChecks(hoursRes.results ?? [], checksFrom, Number.POSITIVE_INFINITY),
   );
   const timed = checks.flatMap((s) => (s.ok && s.durationMs != null ? [Number(s.durationMs)] : []));
   const latency = timed.length

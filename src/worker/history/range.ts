@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { loggedChecks } from "./check-log";
+import { sampleHorizon } from "./rollups";
 import {
   DAY_MS,
   RANGE_SPEC,
@@ -417,7 +418,11 @@ export async function loadRangeHistory(
   // minute leaves 1,440 a day, so with one of those the view takes hourly
   // averages instead, 24 rows a monitor. One monitor's view always has its
   // checks (they are its chart's points).
-  const useSamples = range === "24h" && (one || !(await hasFastMonitors(env)));
+  const [fast, horizon] =
+    range === "24h" ? await Promise.all([one ? false : hasFastMonitors(env), sampleHorizon(env, now)]) : [true, from];
+  const useSamples = range === "24h" && (one || !fast);
+  // The checks start no earlier than the sample retention (sampleHorizon).
+  const checksFrom = Math.max(from, horizon);
   const hourlyLatency =
     !useSamples && (range === "24h" || (spec.period === "day" && spec.buckets * DAY_MS <= HOURLY_LATENCY_MAX_MS));
 
@@ -456,7 +461,7 @@ export async function loadRangeHistory(
             WHERE ${scope} AND ok = 1 AND duration_ms IS NOT NULL AND at >= ? AND at <= ?
             ORDER BY at`,
         )
-          .bind(...[...scopeBinds, from, now])
+          .bind(...[...scopeBinds, checksFrom, now])
           .all<SampleRow>()
       : Promise.resolve({ results: [] as SampleRow[] }),
     hourlyLatency
@@ -501,7 +506,7 @@ export async function loadRangeHistory(
   if (useSamples) {
     let logged = false;
     for (const [id, rows] of summariesBy) {
-      for (const c of loggedChecks(rows, from, now)) {
+      for (const c of loggedChecks(rows, checksFrom, now)) {
         if (c.durationMs == null) continue;
         addPoint(id, c.at, c.durationMs);
         logged = true;

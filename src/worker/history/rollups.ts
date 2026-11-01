@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import type { LabeledStatement } from "../lib/batch";
+import { getJSON } from "../db/settings";
 import { APPEND_CHECK_LOG_SQL, checkLogEntry, type LoggedCheck } from "./check-log";
 
 /**
@@ -224,6 +225,17 @@ const OUTBOX_KEEP_DAYS = 30;
 /** The `retention` setting over the defaults (a partial or unset setting keeps the rest). */
 export function resolveRetention(stored: Partial<RetentionConfig> | null | undefined): RetentionConfig {
   return { ...DEFAULT_RETENTION, ...(stored ?? {}) };
+}
+
+/**
+ * The oldest check the 24-hour views may show: the sample retention's horizon
+ * (`retention.sampleHours`, 24 by default). Sample rows are pruned past it and
+ * an hour's logged checks are cleared only once the whole hour is, so the
+ * views start here for both to age out together.
+ */
+export async function sampleHorizon(env: Env, now: number): Promise<number> {
+  const retention = resolveRetention(await getJSON<Partial<RetentionConfig>>(env, "retention"));
+  return now - retention.sampleHours * HOUR_MS;
 }
 
 /**
