@@ -142,9 +142,11 @@ export async function computeUptimeWindows(
     const binds = windows.flatMap((w) => Array(4).fill(now - w.ms) as number[]);
     const widest = Math.max(...windows.map((w) => w.ms));
     return env.DB.prepare(
+      // Naming the monitors reaches the rows through the summaries index
+      // instead of reading the whole table (D1 bills every row read).
       `SELECT monitor_id, ${cols}
          FROM summaries
-        WHERE period = ? AND bucket_start >= ? AND bucket_start <= ?
+        WHERE monitor_id IN (SELECT id FROM monitors) AND period = ? AND bucket_start >= ? AND bucket_start <= ?
         GROUP BY monitor_id`,
     ).bind(...binds, period, now - widest, now);
   };

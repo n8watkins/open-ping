@@ -8,6 +8,8 @@ import { PLAN_BUDGETS } from "../../src/worker/lib/budget";
 import { runScheduled } from "../../src/worker/scheduler";
 import { loadRangeHistory } from "../../src/worker/history/range";
 import { buildOverview } from "../../src/worker/routes/overview";
+import { computeListStats } from "../../src/worker/history/list-stats";
+import { listMonitorUptime } from "../../src/worker/routes/monitors";
 import { rowsD1, type Rows } from "./d1-rows";
 
 // The history rollups (history/rollups.ts) recompute day and month buckets
@@ -138,18 +140,27 @@ describe("history rollups", () => {
       await loadRangeHistory({ ...env, DB: rowsD1(env.DB, rows) }, range, now);
       reads[range] = rows.read;
     }
-    const rows = { read: 0, written: 0 };
-    await buildOverview({ ...env, DB: rowsD1(env.DB, rows) }, now);
-    reads.overview = rows.read;
+    const measure = async (fn: (e: typeof env) => Promise<unknown>) => {
+      const rows = { read: 0, written: 0 };
+      await fn({ ...env, DB: rowsD1(env.DB, rows) });
+      return rows.read;
+    };
+    reads.overview = await measure((e) => buildOverview(e, now));
+    reads.list = await measure((e) => computeListStats(e, [], now));
+    reads.uptime = await measure((e) => listMonitorUptime(e, now));
     // Measured 2026-10-31 on this install (20 monitors, 63 days of hour rows):
     // 699, 3,500, 14,220 (30 days of hourly averages for the percentiles) and
-    // 141 rows, and 2,264 for the Overview. Before, each read the whole
-    // summaries table: about 30,000 rows a view (60,000 for 30 days).
+    // 141 rows; 2,264 for the Overview, 3,400 for the Monitors list's stats
+    // and 14,519 for every monitor's 24h to 90d uptime (30 days of hours).
+    // Before, each read the whole summaries table: about 30,000 rows a view
+    // (60,000 for 30 days and for the uptime windows).
     expect(reads["24h"]).toBeLessThan(1_500);
     expect(reads["7d"]).toBeLessThan(5_000);
     expect(reads["30d"]).toBeLessThan(16_000);
     expect(reads["90d"]).toBeLessThan(3_000);
     expect(reads.overview).toBeLessThan(3_000);
+    expect(reads.list).toBeLessThan(4_000);
+    expect(reads.uptime).toBeLessThan(16_000);
   });
   it("recomputes from the last run whose rollups landed, so a long streak of failed passes is repaired", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });

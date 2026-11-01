@@ -213,7 +213,7 @@ export async function gatherWeeklyStats(
         SUM(sum_latency_ms) AS sum_latency,
         SUM(retry_recoveries) AS retry_recoveries
        FROM summaries
-      WHERE period = 'hour' AND bucket_start >= ?`,
+      WHERE monitor_id IN (SELECT id FROM monitors) AND period = 'hour' AND bucket_start >= ?`,
   )
     .bind(sinceMs)
     .first<SummaryAggRow>();
@@ -231,7 +231,8 @@ export async function gatherWeeklyStats(
   const slow = await env.DB.prepare(
     `SELECT monitor_id, MAX(max_latency_ms) AS max_ms
        FROM summaries
-      WHERE period = 'hour' AND bucket_start >= ? AND max_latency_ms IS NOT NULL
+      WHERE monitor_id IN (SELECT id FROM monitors) AND period = 'hour' AND bucket_start >= ?
+        AND max_latency_ms IS NOT NULL
       GROUP BY monitor_id
       ORDER BY max_ms DESC
       LIMIT 1`,

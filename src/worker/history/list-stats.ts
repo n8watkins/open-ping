@@ -56,12 +56,16 @@ export function median(values: number[]): number | null {
     : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
-/** Every monitor's hourly summaries over the last 7 days. */
+/**
+ * Every monitor's hourly summaries over the last 7 days. Naming the monitors
+ * lets SQLite reach them through the summaries index rather than read the
+ * whole table (D1 bills every row read).
+ */
 export function hourlyRowsStatement(env: Env, now: number): D1PreparedStatement {
   return env.DB.prepare(
     `SELECT monitor_id, checks, ok_checks, monitored_seconds, down_seconds, sum_latency_ms
        FROM summaries
-      WHERE period = 'hour' AND bucket_start >= ? AND bucket_start <= ?`,
+      WHERE monitor_id IN (SELECT id FROM monitors) AND period = 'hour' AND bucket_start >= ? AND bucket_start <= ?`,
   ).bind(now - WEEK_MS, now);
 }
 
