@@ -1,6 +1,6 @@
 /**
  * Single use for the platform's signed calls in starter mode
- * (docs/hosted/CONTRACT.md, section 10; migration 0027). Called only after a
+ * (docs/hosted/CONTRACT.md, section 10; migration 0028). Called only after a
  * call's signature and timestamp have verified, so nothing unsigned ever
  * reaches the table.
  */
@@ -26,7 +26,7 @@ async function record(db: D1Database, nonce: string, expiresAt: number, now: num
 /**
  * Records `nonce` as used until `expiresAt` (epoch ms). True when this call
  * recorded it; false when it was already there (a replay). The first platform
- * call after an upload can come before the tenant has applied migration 0027
+ * call after an upload can come before the tenant has applied migration 0028
  * (it applies its migrations during that very call), so a missing table is
  * created here with the migration's own statements, and the insert tried
  * once more.

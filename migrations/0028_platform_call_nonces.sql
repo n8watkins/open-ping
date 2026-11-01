@@ -1,4 +1,4 @@
--- 0027: Nonces of the OpenPing Hosted platform's signed calls, in starter mode
+-- 0028: Nonces of the OpenPing Hosted platform's signed calls, in starter mode
 -- (docs/hosted/CONTRACT.md, section 10; src/worker/lib/hosted-starter.ts).
 --
 -- Additive: one new table, nothing existing changes. Only a starter mode
