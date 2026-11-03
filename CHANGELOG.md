@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.0 - 2026-11-02
+
+Maintenance: build tooling updates and the waitlist's privacy link
+
 ## 0.20.0 - 2026-10-31
 
 ### Fixed
