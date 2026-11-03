@@ -54,8 +54,8 @@ Done:
 ## Agent follow-ups (no owner input needed)
 
 - [ ] Cut a release and deploy, so the waitlist privacy link (#80) reaches the live site.
-- [ ] Dependabot #51 and #52: update the dev-only `minimatch` to 11.0.1 or later in `package-lock.json` and `apps/android/package-lock.json` (moderate, a denial of service in build tooling, not in the live Worker).
-- [ ] Refresh [HANDOFF.md](./HANDOFF.md): its "Current state" section still describes v0.7.0.
+- [x] Dependabot #51 and #52: update the dev-only `minimatch` to 11.0.1 or later in `package-lock.json` and `apps/android/package-lock.json` (done 2026-11-02, with `glob` 14 for the Android app).
+- [x] Refresh [HANDOFF.md](./HANDOFF.md) (2026-11-02).
 - [ ] Android, from [MOBILE_PLAN.md](./MOBILE_PLAN.md): the home-screen status widget and biometric unlock.
 - [ ] Later: the notification relay for self-hosted installs ([MOBILE_PLAN.md](./MOBILE_PLAN.md#later-a-notification-relay-for-self-hosted-installs)).
 - [ ] After the owner's section 6 setup: the Hosted staging drills, load test and restore drill ([hosted/LAUNCH_DRILLS.md](./hosted/LAUNCH_DRILLS.md)), then the 7-day soak.
