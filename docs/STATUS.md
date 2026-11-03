@@ -53,7 +53,7 @@ Done:
 
 ## Agent follow-ups (no owner input needed)
 
-- [ ] Cut a release and deploy, so the waitlist privacy link (#80) reaches the live site.
+- [x] Cut a release and deploy, so the waitlist privacy link (#80) reaches the live site (v0.21.0, 2026-11-02).
 - [x] Dependabot #51 and #52: update the dev-only `minimatch` to 11.0.1 or later in `package-lock.json` and `apps/android/package-lock.json` (done 2026-11-02, with `glob` 14 for the Android app).
 - [x] Refresh [HANDOFF.md](./HANDOFF.md) (2026-11-02).
 - [ ] Android, from [MOBILE_PLAN.md](./MOBILE_PLAN.md): the home-screen status widget and biometric unlock.
