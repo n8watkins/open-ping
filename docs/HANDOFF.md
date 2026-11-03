@@ -3,24 +3,32 @@
 This document is the current zero-context handoff for continuing work on OpenPing.
 For the current project status and the owner to-do list, see [STATUS.md](./STATUS.md).
 
-Last updated: 2026-10-28.
+Last updated: 2026-11-02.
 
-## Current state (2026-10-28): start here
+## Current state (2026-11-02): start here
 
-- **Live:** v0.7.0 on https://openping.n8builds.dev, migrations through 0015 applied, waitlist on, `HOME_PAGE` "landing".
+- **Live:** https://openping.n8builds.dev runs the latest release tag on `main` (`git describe --tags --abbrev=0`), with root migrations through 0028 applied, waitlist on and `HOME_PAGE` "landing".
   Before each deploy a D1 export goes to `../open-ping-backups/` on the owner's machine.
-- **Roadmap:** [ROADMAP.md](./ROADMAP.md) is the one staged checklist.
-  Stage 1 (solid and honest) is done except the owner's `MASTER_KEY` backup ([owner to-dos](./DEFERRED_INPUTS.md)).
-  Stage 2 (feature gaps) has Slack, Telegram and Teams alerts (#29), confirm-before-alert and first check right away (#31), incident updates, RSS/Atom feeds and the monthly report (#30), alerts when an incident update is posted ([ALERT_CHANNELS.md](./ALERT_CHANNELS.md#incident-updates)); passkey sign-in with GitHub optional (#34, [SECURITY.md](./SECURITY.md#passkeys)) and the "Deploy to Cloudflare" button (#33, owner click test pending in [DEFERRED_INPUTS.md](./DEFERRED_INPUTS.md)); next is the SSL expiry probe on a deployed test Worker, which needs the owner's go-ahead ([SSL_EXPIRY_SPIKE.md](./SSL_EXPIRY_SPIKE.md)).
-  Stage 3, the Hosted waitlist test, started 2026-10-28: about 20 sign-ups by about 2026-12-23, read from Settings (waitlist count and landing click counts).
+  D1 use is about 6,000 rows read and 1,000 written a day after the leaner writes (v0.19.0), far inside the Free plan.
+- **Status and to-dos:** [STATUS.md](./STATUS.md) is the overview, the owner's ordered to-do list and the agent follow-ups.
+  [DEFERRED_INPUTS.md](./DEFERRED_INPUTS.md) holds the step-by-step owner checklists; [ROADMAP.md](./ROADMAP.md) the staged plan.
+- **Self-hosted:** HTTP, heartbeat, DNS, TCP, domain-expiry and SSL certificate monitors, status pages, second-region confirmation before alerting ([SECOND_REGION.md](./SECOND_REGION.md)), email, chat, webhook and push alerts.
 - **Operating it:** the MCP server at `/mcp` ([MCP.md](./MCP.md)) and `scripts/op.mjs` ([CLI.md](./CLI.md)) cover status, monitors, incidents, uptime, reports, diagnostics, channels, pages and maintenance.
   In this checkout Claude Code has it registered as `openping` (local scope); the CLI reads the gitignored `.op.env`.
-- **Landing and sign-in:** the hero shows both paths (free in your own Cloudflare, Hosted at $24 a year, "Not open yet"); sign-in is "Owner sign-in" in the footer ([the landing plan](./LANDING_AND_LOGIN_PLAN.md)).
-  `HOME_PAGE` picks what signed-out visitors see at `/`: `"status"` (default, the install's own status page) or `"landing"` (only openping.n8builds.dev).
-  `HOSTED_SIGNUP_URL` (empty by default) is the launch switch for Hosted: set on the canonical install to the platform's sign-up page, the landing page swaps the waitlist for "Start a free trial" (`src/shared/hosted-offer.ts`).
+- **Hosted:** fully built in `platform/` and reviewed, not switched on ([HOSTED_PLAN.md](./HOSTED_PLAN.md), [HOSTED_BUILD_PLAN.md](./HOSTED_BUILD_PLAN.md), [decisions](./hosted/DECISIONS.md)).
+  Pricing is decision D13: $24 a year (20 monitors, 12-minute checks, 2 status pages), $24 a year for 1-minute checks on 5 monitors, +25 monitor packs at $24 and +5 fast packs at $36 a year, a 30-day 5-monitor trial with no card.
+  It can start in starter mode (each customer an ordinary Worker on Workers Paid, addresses under a subdomain, about $5 a month) or on Workers for Platforms.
+  It waits on the owner's setup (DEFERRED_INPUTS section 6), then the drills in [hosted/LAUNCH_DRILLS.md](./hosted/LAUNCH_DRILLS.md).
+- **Legal:** drafts of the Terms and the Privacy Policy in `docs/legal/`, served at `/terms` and `/privacy`; their `[TO FILL]` blanks wait on the owner (section 7).
+- **Android:** a Capacitor app in `apps/android` ([ANDROID.md](./ANDROID.md), [MOBILE_PLAN.md](./MOBILE_PLAN.md)); CI uploads a debug APK (`openping-debug-apk`).
+  Sign-in goes through the phone's browser with PKCE and returns by an intent link; push uses FCM once `FCM_SERVICE_ACCOUNT` is set.
+  Not yet tried on a real phone.
+- **Landing and sign-in:** the hero shows both paths; sign-in is "Owner sign-in" in the footer ([the landing plan](./LANDING_AND_LOGIN_PLAN.md)).
+  `HOME_PAGE` picks what signed-out visitors see at `/`: `"status"` (default) or `"landing"` (only openping.n8builds.dev).
+  `HOSTED_SIGNUP_URL` (empty by default) is the launch switch for Hosted: once set, the landing page swaps the waitlist for "Start a free trial" (`src/shared/hosted-offer.ts`).
 - **Encryption:** values are `v2:<kid>:<iv>:<ct>`; `MASTER_KEY_PREVIOUS` allows an online key change ([SECURITY.md](./SECURITY.md)).
+  A fresh `MASTER_KEY` (key id `641eb0c9`) was set on 2026-10-28 and is in the owner's password manager.
   Releases before v0.4.0 cannot read v2 values, so never roll production back below v0.4.0.
-- The paid hosted version is planned in [the Hosted plan](./HOSTED_PLAN.md): $24 a year (20 monitors, 12-minute checks, 2 status pages), plus $24 a year for 1-minute checks on 5 monitors, packs of 25 more monitors at $24 a year and of 5 more fast monitors at $36 a year, and a 30-day trial ([decision D13](./hosted/DECISIONS.md#d13-launch-pricing)); no free hosted plan.
 - Tagline: "Uptime monitoring on your own Cloudflare".
 - `v0.1.0` is a baseline tag at `5ff032c`; releases since then are cut with release-kit.
 
@@ -38,10 +46,12 @@ Plain `npm run deploy` refuses to run while `deploy.local.json` exists, and from
    Off-hours, check that https://portfolio.n8builds.dev shows the three Render apps as "Asleep"; it reads the public feed.
 5. Optional: `RESEND_API_KEY` for waitlist confirmations; `WORKERS_PLAN` "paid" if on Workers Paid.
 
+Only the main session deploys, after review; agents in worktrees never run remote wrangler commands, `deploy` or `db:migrate:prod`.
+Back up first with `npx wrangler d1 export open-ping --remote --output ../open-ping-backups/<date>.sql`, with `set -o pipefail` and a retry (Cloudflare sometimes returns auth error 10000), and check the file is not empty.
+
 ### Next
 
-1. During operating hours (weekdays 08:00 to 17:00 Los Angeles), check that the three Render monitors return to `operational` within one cron run, and that `GET /api/diagnostics` shows `d1Queries` per run.
-2. Watch the waitlist and the landing counts in Settings for 8 weeks; start stage 2 (batched writes, second-region confirmation) and stage 3 (a Workers for Platforms prototype) only when the owner says so.
+The agent follow-ups and the owner's to-do list are in [STATUS.md](./STATUS.md).
 
 The sections below describe the July pass and are still accurate for architecture, verification and conventions.
 
@@ -181,13 +191,12 @@ Commit future work on a feature branch, then run `no-mistakes axi run --intent "
    The stored `showScheduledOff` key is left in each monitor's `public` JSON and dropped on read; no migration.
    Details: [docs/BUG-public-scheduled-off.md](./BUG-public-scheduled-off.md) and [docs/STATUS_PAGES.md](./STATUS_PAGES.md#off-hours-scheduled-off).
 
-1. `MASTER_KEY` rotation is implemented (dual-key reads, `POST /api/admin/rekey`, Settings > Encryption keys) but has not been run in production; follow [the runbook](./SECURITY.md#rotating-master_key) once the owner has the current key (DEFERRED_INPUTS item 1).
+1. `MASTER_KEY` rotation is implemented (dual-key reads, `POST /api/admin/rekey`, Settings > Encryption keys) but the online rotation has not been run in production; follow [the runbook](./SECURITY.md#rotating-master_key) when it is next needed.
 
-2. Complete live delivery verification.
-   Exercise a real browser push subscription, a real push delivery and deep link, a Resend down-and-recovery sequence, a Discord delivery, and at least one real production monitor incident.
+2. Live delivery checks still open: a real Web Push or FCM delivery to a phone, and the Android sign-in on a real device (STATUS.md, owner to-do 1).
+   Discord is not needed.
 
-3. Add configured-provider integration fixtures.
-   The successful webhook path is fully automated and a real Resend test has passed, but Discord and Web Push still need configured test destinations before their live flows can be exercised.
+3. The rest of the open work is tracked in [STATUS.md](./STATUS.md).
 
 ## Inputs or authorization needed
 
@@ -215,6 +224,8 @@ Do not push or deploy unless the user authorizes that external change.
 Do not edit generated changelogs.
 Keep every full sentence on its own physical line when substantially editing long Markdown documents.
 Use `npm run db:migrate:local` for local D1 migrations and `npm run db:migrate:prod` for the production D1.
+`main` is branch-protected: "Lint, typecheck, tests, build" and "check / check" must pass, so wait for both on the PR's latest head SHA (compare full SHAs) before merging.
+Give each worktree its own `npm ci`; never symlink `node_modules` between checkouts.
 Squash-merge PRs with a subject and body you write (`gh pr merge --squash --subject "feat(x): ... (#N)" --body "..."`).
 Without `--subject` the PR title becomes the commit subject, and a title that isn't a Conventional Commit fails the commit check on `main` and drops the PR from the release notes (#30 hit this).
 Keep that subject, including the `(#N)`, at 100 characters or fewer: the commit check rejects longer headers (#37 hit this).
