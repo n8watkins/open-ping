@@ -1,0 +1,26 @@
+# release-kit (reusable): the Direct push alarm. Reports a push to a protected
+# branch that didn't come through a merged pull request, a force push, and a
+# moved or deleted release tag, as a failed run and an issue labeled
+# "release-kit: direct push". The steps live in the release-kit repo, pinned
+# below; apply.mjs updates the pin and the branches (.release.json).
+name: Direct push alarm
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  delete:
+
+permissions:
+  contents: read
+
+jobs:
+  alarm:
+    if: github.repository == 'n8watkins/open-ping' # release-kit: fork guard
+    permissions:
+      contents: read # the pushed commits and .release.json
+      pull-requests: read # which pull request each commit came from
+      issues: write # open or comment on the "release-kit: direct push" issue
+    uses: n8watkins/release-kit/.github/workflows/direct-push.yml@v2.6.0
+    with:
+      branches: "" # release-kit: branches

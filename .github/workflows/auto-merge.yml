@@ -1,0 +1,36 @@
+# release-kit: merge update pull requests once CI passes (docs/AUTO_MERGE.md in
+# release-kit). A release-kit update or a Dependabot patch or minor update
+# merges on its own, and a major update waits for a person. Where the branch
+# requires checks, GitHub's auto-merge merges it once they pass (allow auto-merge
+# on the repo: npx release-kit protect does); where it can't (a private repo on
+# GitHub Free), the merge-when-green fallback merges it once every check on it
+# has passed. workflow_run lists every workflow that runs on pull requests, so
+# the one that finishes last still triggers a look; rerun npx release-kit
+# apply . after adding one. "autoMerge": false in .release.json turns it off.
+name: Auto-merge
+
+on:
+  pull_request:
+  workflow_run:
+    workflows: ["Android app", "CI", "Commit messages", "Security scan"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  auto-merge:
+    # Only update pull requests, so other pull requests cost no runner time.
+    if: >-
+      (github.event_name == 'pull_request' && (github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref, 'release-kit/')))
+      || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+          && (github.event.workflow_run.actor.login == 'dependabot[bot]' || startsWith(github.event.workflow_run.head_branch, 'release-kit/')))
+    permissions:
+      contents: write # merge the pull request
+      pull-requests: write # turn on auto-merge
+      checks: read # merge when green: read the checks on the pull request
+      statuses: read
+    uses: n8watkins/release-kit/.github/workflows/auto-merge.yml@v2.6.0
+    with:
+      # The rollout bot's release-kit/update pull requests merge like Dependabot's.
+      bots: "dependabot[bot],release-kit-bot-n8watkins[bot]"

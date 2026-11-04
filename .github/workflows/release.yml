@@ -1,6 +1,7 @@
 # release-kit (reusable): published by pushing a vX.Y.Z tag (npm run release -- --push),
-# or by running this workflow on a tag. The steps live in the release-kit repo,
-# pinned below; apply.mjs updates the pin.
+# or by running this workflow on a tag. Safe to run again: after a failure use
+# "Re-run failed jobs", or "Run workflow" from main with the tag as input.
+# The steps live in the release-kit repo, pinned below; apply.mjs updates the pin.
 name: Release
 
 on:
@@ -8,12 +9,21 @@ on:
     tags:
       - "v[0-9]*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing vX.Y.Z tag to publish again (empty: the ref picked above)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
   release:
+    # Only the upstream repo publishes: a fork's tags and runs release nothing.
+    if: github.repository == 'n8watkins/open-ping' # release-kit: fork guard
     permissions:
       contents: write # only the kit's publish job uses it
-    uses: n8watkins/release-kit/.github/workflows/release.yml@v2.0.1
+    uses: n8watkins/release-kit/.github/workflows/release.yml@v2.6.0
+    with:
+      tag: ${{ inputs.tag || '' }}

@@ -1,4 +1,5 @@
-# release-kit (reusable): every pushed commit follows Conventional Commits.
+# release-kit (reusable): every pushed commit, and every pull request title (a
+# squash merge commits it), follows Conventional Commits.
 # The steps live in the release-kit repo, pinned below; apply.mjs updates the pin.
 name: Commit messages
 
@@ -6,6 +7,8 @@ on:
   push:
     branches: [main, master]
   pull_request:
+    # edited: a new title is checked too (a squash merge commits the title).
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch: # the release train runs it on its release commit
 
 permissions:
@@ -13,4 +16,4 @@ permissions:
 
 jobs:
   check:
-    uses: n8watkins/release-kit/.github/workflows/commits.yml@v2.0.1
+    uses: n8watkins/release-kit/.github/workflows/commits.yml@v2.6.0

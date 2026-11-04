@@ -1,4 +1,6 @@
 {
   "versionFiles": [],
-  "workflows": "package"
+  "workflows": "package",
+  "repository": "n8watkins/open-ping",
+  "visibility": "public"
 }
