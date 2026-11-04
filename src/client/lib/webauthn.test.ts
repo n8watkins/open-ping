@@ -153,7 +153,7 @@ describe("installationUrlWarning", () => {
 
   it("says the passkeys are the only way in only when nothing else remains", () => {
     expect(installationUrlWarning(base)).toBe(
-      "Your 1 passkey stops working at the new address. It is your only way to sign in, so you would need a new SETUP_TOKEN and /recover to get back in. Save anyway?",
+      "Your 1 passkey stops working at the new address. It is your only way to sign in, so you would need a new SETUP_TOKEN and /recover to get back in.",
     );
     expect(installationUrlWarning({ ...base, stranded: 2 })).toMatch(/^Your 2 passkeys stop working.* They are your only way/);
   });

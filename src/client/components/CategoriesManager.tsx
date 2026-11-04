@@ -5,6 +5,7 @@ import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { Card, CardHeader, CardTitle } from "./ui/Card";
 import { EmptyState } from "./ui/EmptyState";
+import { useReloadOnUndoSettled, useUndo } from "./ui/UndoToast";
 import { cn } from "../lib/cn";
 import type { Category } from "../lib/types";
 
@@ -54,34 +55,23 @@ export function CategoriesManager() {
   const { csrf } = useBootstrap();
   const { data, loading, error, reload } =
     useFetch<{ categories: Category[] }>("/api/categories");
-  const categories = data?.categories ?? [];
+  const { deleteLater, isPending } = useUndo();
+  useReloadOnUndoSettled(reload);
+  const categories = (data?.categories ?? []).filter((cat) => !isPending(`category:${cat.id}`));
 
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({});
   const [rowError, setRowError] = useState<string | null>(null);
 
-  async function remove(cat: Category) {
-    if (
-      !window.confirm(
-        `Delete category "${cat.name}"? Monitors in this category will be ` +
-          `un-assigned (the monitors themselves are not deleted).`,
-      )
-    )
-      return;
-    setRowBusy((m) => ({ ...m, [cat.id]: true }));
+  // Gone at once with an Undo toast; its monitors are un-assigned only once the toast closes.
+  function remove(cat: Category) {
     setRowError(null);
-    try {
-      await api(`/api/categories/${cat.id}`, {
-        method: "DELETE",
-        csrf: csrf ?? undefined,
-      });
-      await reload();
-    } catch (e) {
-      setRowError(errMessage(e, "Could not delete the category."));
-    } finally {
-      setRowBusy((m) => ({ ...m, [cat.id]: false }));
-    }
+    deleteLater({
+      keys: [`category:${cat.id}`],
+      message: `Category “${cat.name}” deleted`,
+      commit: (keepalive) => api(`/api/categories/${cat.id}`, { method: "DELETE", csrf: csrf ?? undefined, keepalive }),
+      failure: `Couldn't delete the category “${cat.name}”, so it's back. Try again.`,
+    });
   }
 
   return (
@@ -160,12 +150,11 @@ export function CategoriesManager() {
               <CategoryRow
                 key={c.id}
                 category={c}
-                busy={!!rowBusy[c.id]}
                 onEdit={() => {
                   setEditingId(c.id);
                   setAdding(false);
                 }}
-                onDelete={() => void remove(c)}
+                onDelete={() => remove(c)}
               />
             ),
           )}
@@ -181,12 +170,10 @@ export function CategoriesManager() {
 
 function CategoryRow({
   category,
-  busy,
   onEdit,
   onDelete,
 }: {
   category: Category;
-  busy: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -204,15 +191,11 @@ function CategoryRow({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <IconButton title="Edit" onClick={onEdit} disabled={busy}>
+        <IconButton title={`Edit ${category.name}`} onClick={onEdit}>
           <Pencil className="size-4" />
         </IconButton>
-        <IconButton title="Delete" onClick={onDelete} disabled={busy} danger>
-          {busy ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Trash2 className="size-4" />
-          )}
+        <IconButton title={`Delete ${category.name}`} onClick={onDelete} danger>
+          <Trash2 className="size-4" />
         </IconButton>
       </div>
     </div>

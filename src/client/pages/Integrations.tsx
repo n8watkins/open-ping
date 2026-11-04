@@ -38,6 +38,7 @@ import { hasAppBridge } from "../lib/native-app";
 import { enableAppPush } from "../lib/app-push";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
+import { useReloadOnUndoSettled, useUndo } from "../components/ui/UndoToast";
 import { PageTitle } from "../components/ui/PageTitle";
 import { formatRelativeTime } from "../lib/format";
 import { cn } from "../lib/cn";
@@ -156,7 +157,9 @@ export default function Integrations() {
     reload: reloadChannels,
   } = useFetch<{ channels: Channel[] }>("/api/channels");
 
-  const channels = chData?.channels ?? [];
+  const { deleteLater, isPending } = useUndo();
+  useReloadOnUndoSettled(reloadChannels);
+  const channels = (chData?.channels ?? []).filter((ch) => !isPending(`channel:${ch.id}`));
 
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -198,20 +201,15 @@ export default function Integrations() {
     }
   }
 
-  async function deleteChannel(ch: Channel) {
-    if (!window.confirm(`Delete channel "${ch.name ?? ch.type}"?`)) return;
-    setRowBusy((m) => ({ ...m, [ch.id]: true }));
-    try {
-      await api(`/api/channels/${ch.id}`, {
-        method: "DELETE",
-        csrf: csrf ?? undefined,
-      });
-      await reloadChannels();
-    } catch {
-      /* ignore */
-    } finally {
-      setRowBusy((m) => ({ ...m, [ch.id]: false }));
-    }
+  // Gone at once with an Undo toast; the server delete is sent when the toast closes.
+  function deleteChannel(ch: Channel) {
+    const name = ch.name ?? ch.type;
+    deleteLater({
+      keys: [`channel:${ch.id}`],
+      message: `Channel “${name}” deleted`,
+      commit: (keepalive) => api(`/api/channels/${ch.id}`, { method: "DELETE", csrf: csrf ?? undefined, keepalive }),
+      failure: `Couldn't delete the channel “${name}”, so it's back. Try again.`,
+    });
   }
 
   // Group channels by type, preserving a stable order.
@@ -319,7 +317,7 @@ export default function Integrations() {
                               setEditingId(ch.id);
                               setAdding(false);
                             }}
-                            onDelete={() => void deleteChannel(ch)}
+                            onDelete={() => deleteChannel(ch)}
                           />
                         ),
                       )}
@@ -446,7 +444,7 @@ function ChannelRow({
         <IconButton title="Edit" onClick={onEdit} disabled={busy}>
           <Pencil className="size-4" />
         </IconButton>
-        <IconButton title="Delete" onClick={onDelete} disabled={busy} danger>
+        <IconButton title={`Delete ${channel.name ?? channel.type}`} onClick={onDelete} disabled={busy} danger>
           <Trash2 className="size-4" />
         </IconButton>
       </div>
@@ -893,7 +891,9 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
   } = useFetch<{ devices: PushDevice[] }>("/api/push/devices");
 
   const publicKey = vapidData?.publicKey ?? null;
-  const devices = devData?.devices ?? [];
+  const { deleteLater, isPending } = useUndo();
+  useReloadOnUndoSettled(reloadDevices);
+  const devices = (devData?.devices ?? []).filter((d) => !isPending(`device:${d.id}`));
   const supported = isPushSupported();
   // Inside the Android app the web view has no Web Push; the app's own
   // notifications (FCM) take its place, when this install can send them.
@@ -1012,17 +1012,15 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
     }
   }
 
-  async function removeDevice(d: PushDevice) {
-    if (!window.confirm(`Remove "${deviceName(d)}"?`)) return;
-    setRowBusy((m) => ({ ...m, [d.id]: true }));
-    try {
-      await api(`/api/push/devices/${d.id}`, { method: "DELETE", csrf });
-      await reloadDevices();
-    } catch (e) {
-      setError(errMessage(e, "Could not remove device."));
-    } finally {
-      setRowBusy((m) => ({ ...m, [d.id]: false }));
-    }
+  // Gone at once with an Undo toast; the device is removed when the toast closes.
+  function removeDevice(d: PushDevice) {
+    setError(null);
+    deleteLater({
+      keys: [`device:${d.id}`],
+      message: `“${deviceName(d)}” removed`,
+      commit: (keepalive) => api(`/api/push/devices/${d.id}`, { method: "DELETE", csrf, keepalive }),
+      failure: `Couldn't remove “${deviceName(d)}”, so it's back. Try again.`,
+    });
   }
 
   return (
@@ -1185,7 +1183,7 @@ function PushDevices({ csrf }: { csrf: string | undefined }) {
                   </IconButton>
                   <IconButton
                     title="Remove"
-                    onClick={() => void removeDevice(d)}
+                    onClick={() => removeDevice(d)}
                     disabled={!!rowBusy[d.id]}
                     danger
                   >

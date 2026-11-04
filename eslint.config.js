@@ -14,6 +14,9 @@ export default defineConfig([
     ".hosted-drills/",
     ".wrangler/",
     "coverage/",
+    "e2e/.state/",
+    "test-results/",
+    "playwright-report/",
     "worker-configuration.d.ts",
     // The Android app's build output and its generated native project files.
     "apps/android/dist/",
@@ -55,7 +58,7 @@ export default defineConfig([
   },
   {
     // Node tooling: scripts and configs.
-    files: ["scripts/**/*.{mjs,ts}", "*.config.{js,ts}", "platform/*.config.ts", "apps/android/*.config.ts"],
+    files: ["scripts/**/*.{mjs,ts}", "e2e/**/*.{mjs,ts}", "*.config.{js,ts}", "platform/*.config.ts", "apps/android/*.config.ts"],
     languageOptions: { globals: globals.node },
   },
   {

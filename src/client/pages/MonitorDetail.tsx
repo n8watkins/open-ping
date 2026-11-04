@@ -45,6 +45,8 @@ import type { MonitorHistoryResponse } from "../../shared/time-range";
 import { Stat } from "../components/ui/Stat";
 import { EmptyState } from "../components/ui/EmptyState";
 import { CertificatePanel } from "../components/monitors/CertificatePanel";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { useUndo } from "../components/ui/UndoToast";
 import type { CertificateDetail } from "../components/monitors/certificate";
 
 // --- Wire shape of GET /api/monitors/:id/detail (see worker routes/monitors.ts) ---
@@ -198,6 +200,8 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
 export default function MonitorDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { deleteLater } = useUndo();
+  const [confirmRotate, setConfirmRotate] = useState(false);
   const location = useLocation();
   const { csrf } = useBootstrap();
   // Hosted: the plan's shortest interval, for why a monitor runs slower.
@@ -380,21 +384,16 @@ export default function MonitorDetail() {
     }
   }
 
-  async function onDelete() {
+  // Deleted at once in the app; the server delete waits for the Undo toast to close.
+  function onDelete() {
     if (!id) return;
-    if (!confirm(`Delete monitor "${monitor.name}"? This cannot be undone.`)) return;
-    setPending("delete");
-    setNotice(null);
-    try {
-      await api(`/api/monitors/${id}`, { method: "DELETE", csrf: csrf ?? undefined });
-      navigate("/monitors");
-    } catch (e) {
-      setNotice({
-        tone: "error",
-        text: e instanceof ApiError ? e.message : "Could not delete monitor",
-      });
-      setPending(null);
-    }
+    deleteLater({
+      keys: [`monitor:${id}`],
+      message: `“${monitor.name}” deleted`,
+      commit: (keepalive) => api(`/api/monitors/${id}`, { method: "DELETE", csrf: csrf ?? undefined, keepalive }),
+      failure: `Couldn't delete “${monitor.name}”, so it's back. Try again.`,
+    });
+    navigate("/monitors");
   }
 
   async function copyIngest() {
@@ -410,9 +409,7 @@ export default function MonitorDetail() {
 
   async function rotateIngestToken() {
     if (!id) return;
-    if (ingestUrl && !confirm("Rotate this heartbeat token? The current URL will stop working.")) {
-      return;
-    }
+    setConfirmRotate(false);
     setPending("rotate-token");
     setNotice(null);
     try {
@@ -532,7 +529,7 @@ export default function MonitorDetail() {
                 </button>
               )}
               <button
-                onClick={rotateIngestToken}
+                onClick={() => (ingestUrl ? setConfirmRotate(true) : void rotateIngestToken())}
                 disabled={pending !== null}
                 className={btn}
               >
@@ -771,6 +768,16 @@ export default function MonitorDetail() {
         total={incidentMetrics.totalIncidents}
         monitorId={monitor.id}
       />
+      <ConfirmDialog
+        open={confirmRotate}
+        title="Rotate this heartbeat token?"
+        confirmLabel="Rotate token"
+        busy={pending === "rotate-token"}
+        onConfirm={() => void rotateIngestToken()}
+        onCancel={() => setConfirmRotate(false)}
+      >
+        <p>The current heartbeat URL stops working at once. Anything that pings it must switch to the new URL, which is shown only once.</p>
+      </ConfirmDialog>
     </div>
   );
 }

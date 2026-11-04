@@ -270,5 +270,5 @@ export function installationUrlWarning(impact: InstallationUrlImpact): string {
   const fallback = ways.length
     ? `You can still sign in there with ${ways.length === 1 ? ways[0] : `${ways.slice(0, -1).join(", ")} or ${ways.at(-1)}`} and add new passkeys.`
     : `${stranded === 1 ? "It is" : "They are"} your only way to sign in, so you would need a new SETUP_TOKEN and /recover to get back in.`;
-  return `${lead} ${fallback} Save anyway?`;
+  return `${lead} ${fallback}`;
 }

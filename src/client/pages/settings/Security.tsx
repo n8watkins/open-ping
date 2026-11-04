@@ -6,6 +6,7 @@ import { useBootstrap } from "../../lib/bootstrap";
 import { useFetch } from "../../lib/useFetch";
 import { Card, CardHeader, CardTitle } from "../../components/ui/Card";
 import { PasskeysCard } from "../../components/PasskeysCard";
+import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { EncryptionCard } from "./EncryptionCard";
 import { ErrorBanner, SecondaryButton, errMessage, plural } from "./shared";
 import { sessionDevice } from "../../lib/session-device";
@@ -44,13 +45,9 @@ function SessionsCard({ csrf }: { csrf: string | undefined }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [confirming, setConfirming] = useState(false);
+
   async function signOutEverywhere() {
-    if (
-      !window.confirm(
-        "Sign out everywhere? Every browser signed in to OpenPing, this one included, is signed out. API tokens keep working.",
-      )
-    )
-      return;
     setBusy(true);
     setError(null);
     try {
@@ -93,7 +90,7 @@ function SessionsCard({ csrf }: { csrf: string | undefined }) {
               </span>
             ) : null}
           </p>
-          <SecondaryButton onClick={() => void signOutEverywhere()} disabled={busy} className="self-start sm:self-auto">
+          <SecondaryButton onClick={() => setConfirming(true)} disabled={busy} className="self-start sm:self-auto">
             <LogOut className="size-4" />
             Sign out everywhere
           </SecondaryButton>
@@ -105,6 +102,17 @@ function SessionsCard({ csrf }: { csrf: string | undefined }) {
         )}
         <SessionList csrf={csrf} />
       </Card>
+      <ConfirmDialog
+        open={confirming}
+        title="Sign out everywhere?"
+        confirmLabel="Sign out everywhere"
+        busy={busy}
+        error={error}
+        onConfirm={() => void signOutEverywhere()}
+        onCancel={() => setConfirming(false)}
+      >
+        <p>Every browser and app signed in to OpenPing, this one included, is signed out and has to sign in again. API tokens keep working.</p>
+      </ConfirmDialog>
     </section>
   );
 }
@@ -125,9 +133,10 @@ function SessionList({ csrf }: { csrf: string | undefined }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const sessions = data?.sessions ?? [];
+  const [confirming, setConfirming] = useState<SessionSummary | null>(null);
 
   async function signOut(s: SessionSummary) {
-    if (!window.confirm(`Sign out ${sessionDevice(s.userAgent, s.via)}?`)) return;
+    setConfirming(null);
     setBusy(s.id);
     setError(null);
     try {
@@ -174,7 +183,7 @@ function SessionList({ csrf }: { csrf: string | undefined }) {
               </div>
             </div>
             <SecondaryButton
-              onClick={() => void signOut(s)}
+              onClick={() => setConfirming(s)}
               disabled={busy !== null}
               className="shrink-0"
               aria-label={`Sign out ${sessionDevice(s.userAgent, s.via)}`}
@@ -184,6 +193,20 @@ function SessionList({ csrf }: { csrf: string | undefined }) {
           </li>
         ))}
       </ul>
+      <ConfirmDialog
+        open={confirming !== null}
+        title={confirming?.current ? "Sign out of this browser?" : `Sign out ${confirming ? sessionDevice(confirming.userAgent, confirming.via) : "that session"}?`}
+        confirmLabel="Sign out"
+        tone="default"
+        onConfirm={() => confirming && void signOut(confirming)}
+        onCancel={() => setConfirming(null)}
+      >
+        <p>
+          {confirming?.current
+            ? "You'll go to the sign-in page and need your passkey or sign-in link to come back."
+            : "That browser or app is signed out at once and has to sign in again to see OpenPing."}
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }
