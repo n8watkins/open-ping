@@ -22,6 +22,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts && npm run test:platform",
     "test:platform": "vitest run --config platform/vitest.config.ts",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "op": "node scripts/op.mjs",
     "tenant-release": "node scripts/tenant-release.mjs",
     "hosted-load": "node scripts/hosted-drills/load.mjs",
@@ -81,10 +82,12 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@cloudflare/vite-plugin": "^1.66.0",
     "@cloudflare/vitest-plugin": "^1.4.11",
     "@cloudflare/workers-types": "^5.20261101.1",
     "@eslint/js": "10.0.1",
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/luxon": "^3.7.6",
     "@types/node": "^22.10.5",

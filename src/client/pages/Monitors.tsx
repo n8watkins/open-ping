@@ -22,6 +22,7 @@ import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { fastUsage, monitorLimitReached, planUsageLine, usePlan } from "../lib/plan-limits";
 import { PlanLimitNotice } from "../components/PlanLimitNotice";
+import { useReloadOnUndoSettled, useUndo } from "../components/ui/UndoToast";
 import type { Schedule } from "../../shared/schemas";
 import type { MonitorState } from "../../shared/states";
 import {
@@ -68,7 +69,12 @@ export default function Monitors() {
   const [pendingAction, setPendingAction] = useState<MonitorAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const monitors = useMemo(() => data?.monitors ?? [], [data?.monitors]);
+  const { deleteLater, isPending } = useUndo();
+  // Monitors deleted with an Undo toast still open (or just now) stay out of the list.
+  const monitors = useMemo(
+    () => (data?.monitors ?? []).filter((m) => !isPending(`monitor:${m.id}`)),
+    [data?.monitors, isPending],
+  );
   const stats = useMemo(() => statsData?.stats ?? {}, [statsData?.stats]);
   const schedules = useMemo(
     () => new Map((statsData?.monitors ?? []).map((m) => [m.id, m.schedule])),
@@ -114,12 +120,24 @@ export default function Monitors() {
 
   async function runAction(action: MonitorAction, ids: string[]) {
     if (ids.length === 0 || pendingAction) return;
-    if (
-      action === "delete" &&
-      !window.confirm(
-        `Delete ${ids.length} monitor${ids.length === 1 ? "" : "s"}? This also removes their history and incidents.`,
-      )
-    ) {
+    if (action === "delete") {
+      // Gone at once with an Undo toast; the server delete is sent when the toast closes.
+      const only = ids.length === 1 ? monitors.find((m) => m.id === ids[0]) : undefined;
+      const what = only ? `“${only.name}”` : `${ids.length} monitors`;
+      setSelected(new Set());
+      setActionError(null);
+      setActionMessage(null);
+      deleteLater({
+        keys: ids.map((id) => `monitor:${id}`),
+        message: `${what} deleted`,
+        commit: async (keepalive) => {
+          const results = await Promise.allSettled(
+            ids.map((id) => api(`/api/monitors/${id}`, { method: "DELETE", csrf: csrf ?? undefined, keepalive })),
+          );
+          if (results.some((r) => r.status === "rejected")) throw new Error("delete_failed");
+        },
+        failure: `Couldn't delete ${what}. Anything not deleted is back; try again.`,
+      });
       return;
     }
 
@@ -128,8 +146,8 @@ export default function Monitors() {
     setActionMessage(null);
     const results = await Promise.allSettled(
       ids.map((id) =>
-        api(`/api/monitors/${id}${action === "delete" ? "" : `/${action}`}`, {
-          method: action === "delete" ? "DELETE" : "POST",
+        api(`/api/monitors/${id}/${action}`, {
+          method: "POST",
           csrf: csrf ?? undefined,
         }),
       ),
@@ -140,12 +158,7 @@ export default function Monitors() {
     const completed = ids.length - failedIds.length;
     setSelected(new Set(failedIds));
     if (completed > 0) {
-      const verb =
-        action === "delete"
-          ? "Deleted"
-          : action === "pause"
-            ? "Paused"
-            : "Resumed";
+      const verb = action === "pause" ? "Paused" : "Resumed";
       setActionMessage(
         `${verb} ${completed} monitor${completed === 1 ? "" : "s"}.`,
       );
@@ -173,6 +186,7 @@ export default function Monitors() {
   );
 
   const refresh = () => Promise.all([reload(), reloadStats()]);
+  useReloadOnUndoSettled(refresh);
 
   if (error && !data) {
     return (

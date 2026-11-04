@@ -35,6 +35,7 @@ import {
   type IncidentEvent,
 } from "../components/incidents/grouping";
 import { cn } from "../lib/cn";
+import { useReloadOnUndoSettled, useUndo } from "../components/ui/UndoToast";
 import {
   formatDuration,
   formatMs,
@@ -133,6 +134,8 @@ export default function Dashboard() {
   const { data, loading, error, reload } = useFetch<OverviewPayload>("/api/overview");
   const history = useFetch<OverviewHistoryResponse>(`/api/overview/history?range=${range}`);
   const refresh = () => Promise.all([reload(), history.reload()]);
+  const { isPending } = useUndo();
+  useReloadOnUndoSettled(refresh);
   // OpenPing Hosted checks each monitor on its own interval; an install of
   // your own on each 12-minute run.
   const hosted = usePlan() !== null;
@@ -152,7 +155,8 @@ export default function Dashboard() {
   }
 
   const counts = data?.counts;
-  const monitors = data?.monitors ?? [];
+  // A monitor deleted moments ago (its Undo toast may still show) is already gone here.
+  const monitors = (data?.monitors ?? []).filter((m) => !isPending(`monitor:${m.id}`));
   const channels = data?.channels ?? [];
   const h = history.data;
   // While a new range loads, the previous one stays on screen, dimmed.

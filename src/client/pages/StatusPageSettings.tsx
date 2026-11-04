@@ -16,6 +16,7 @@ import { planUsageLine, statusPageLimitReached, usePlan } from "../lib/plan-limi
 import { PlanLimitNotice } from "../components/PlanLimitNotice";
 import { Card } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
+import { useReloadOnUndoSettled, useUndo } from "../components/ui/UndoToast";
 import { CategoriesManager } from "../components/CategoriesManager";
 import type { StatusPage } from "../lib/types";
 
@@ -48,35 +49,26 @@ export default function StatusPageSettings() {
   const { csrf } = useBootstrap();
   const { data, loading, error, reload } =
     useFetch<{ statusPages: StatusPage[] }>("/api/status-pages");
-  const pages = data?.statusPages ?? [];
+  const { deleteLater, isPending } = useUndo();
+  useReloadOnUndoSettled(reload);
+  const pages = (data?.statusPages ?? []).filter((p) => !isPending(`status-page:${p.id}`));
   // Hosted mode: how many of the plan's status pages are in use (the default one counts).
   const plan = usePlan();
   const atLimit = data ? statusPageLimitReached(plan, pages.length) : null;
 
-  const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({});
   const [rowError, setRowError] = useState<string | null>(null);
 
-  async function remove(page: StatusPage) {
-    if (
-      !window.confirm(
-        `Delete status page "${page.name}"? This cannot be undone.`,
-      )
-    )
-      return;
-    setRowBusy((m) => ({ ...m, [page.id]: true }));
+  // Gone at once with an Undo toast; the page is deleted when the toast closes.
+  function remove(page: StatusPage) {
     setRowError(null);
-    try {
-      await api(`/api/status-pages/${page.id}`, {
-        method: "DELETE",
-        csrf: csrf ?? undefined,
-      });
-      await reload();
-    } catch (e) {
-      setRowError(errMessage(e, "Could not delete the status page."));
-    } finally {
-      setRowBusy((m) => ({ ...m, [page.id]: false }));
-    }
+    deleteLater({
+      keys: [`status-page:${page.id}`],
+      message: `Status page “${page.name}” deleted`,
+      commit: (keepalive) => api(`/api/status-pages/${page.id}`, { method: "DELETE", csrf: csrf ?? undefined, keepalive }),
+      failure: (e) => `Couldn't delete “${page.name}”: ${errMessage(e, "please try again")}.`,
+    });
   }
+
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -144,8 +136,7 @@ export default function StatusPageSettings() {
             <StatusPageRow
               key={p.id}
               page={p}
-              busy={!!rowBusy[p.id]}
-              onDelete={() => void remove(p)}
+              onDelete={() => remove(p)}
             />
           ))}
         </Card>
@@ -160,11 +151,9 @@ export default function StatusPageSettings() {
 
 function StatusPageRow({
   page,
-  busy,
   onDelete,
 }: {
   page: StatusPage;
-  busy: boolean;
   onDelete: () => void;
 }) {
   return (
@@ -207,16 +196,11 @@ function StatusPageRow({
           <button
             type="button"
             onClick={onDelete}
-            disabled={busy}
             title="Delete"
-            aria-label="Delete"
-            className="grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-down disabled:opacity-40"
+            aria-label={`Delete ${page.name}`}
+            className="grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-down"
           >
-            {busy ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Trash2 className="size-4" />
-            )}
+            <Trash2 className="size-4" />
           </button>
         )}
       </div>

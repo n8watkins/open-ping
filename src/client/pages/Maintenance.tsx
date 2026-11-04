@@ -4,6 +4,7 @@ import { useFetch } from "../lib/useFetch";
 import { api, ApiError } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { PageTitle } from "../components/ui/PageTitle";
+import { useReloadOnUndoSettled, useUndo } from "../components/ui/UndoToast";
 import { MaintenanceExplainer } from "../components/maintenance/Explainer";
 import { QuickPause } from "../components/maintenance/QuickPause";
 import { WindowForm } from "../components/maintenance/WindowForm";
@@ -71,7 +72,12 @@ export default function Maintenance() {
   const scopeText = (w: MaintenanceWindowItem) =>
     choiceSummary(w.scope === "monitors" && w.monitorIds?.length ? w.monitorIds : "all", monitorsById);
 
-  const windows = useMemo(() => data?.windows ?? [], [data?.windows]);
+  const { deleteLater, isPending } = useUndo();
+  useReloadOnUndoSettled(reload);
+  const windows = useMemo(
+    () => (data?.windows ?? []).filter((w) => !isPending(`maintenance:${w.id}`)),
+    [data?.windows, isPending],
+  );
 
   // Wall clock: every second while a window is active (the countdown), else
   // every 30 s so upcoming windows move to active on time.
@@ -116,13 +122,15 @@ export default function Maintenance() {
         }),
       "Could not extend the window.",
     );
+  // Gone at once with an Undo toast; the window is deleted when the toast closes.
   const remove = (w: MaintenanceWindowItem) => {
-    if (!window.confirm(`Delete "${w.title ?? "this maintenance window"}"?`)) return;
-    void act(
-      w,
-      () => api(`/api/maintenance/${w.id}`, { method: "DELETE", csrf: csrf ?? undefined }),
-      "Could not delete the window.",
-    );
+    const name = w.title ? `“${w.title}”` : "Maintenance window";
+    deleteLater({
+      keys: [`maintenance:${w.id}`],
+      message: `${name} deleted`,
+      commit: (keepalive) => api(`/api/maintenance/${w.id}`, { method: "DELETE", csrf: csrf ?? undefined, keepalive }),
+      failure: `Couldn't delete ${w.title ? name : "the maintenance window"}, so it's back. Try again.`,
+    });
   };
 
   const editing = mode.kind === "edit" ? windows.find((w) => w.id === mode.id) ?? null : null;

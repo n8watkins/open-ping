@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Fingerprint, Loader2, Plus, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
+import { ConfirmDialog } from "./ui/ConfirmDialog";
 import { useFetch } from "../lib/useFetch";
 import { formatDateTime, formatRelativeTime } from "../lib/format";
 import { hostMatchesRpId, passkeyErrorMessage, passkeysSupported, registerPasskey } from "../lib/webauthn";
@@ -74,12 +75,13 @@ export function PasskeysCard({ csrf }: { csrf: string | undefined }) {
     }
   }
 
+  // Removing a passkey can't be undone (it ends the sessions signed in with it), so it asks
+  // first in the app's own dialog.
+  const [confirming, setConfirming] = useState<Passkey | null>(null);
+
   async function remove(p: Passkey) {
     const current = p.id === data?.currentPasskeyId;
-    const msg = current
-      ? `Remove "${p.name}"? You're signed in with it, so this signs you out.`
-      : `Remove "${p.name}"? Sessions signed in with it end too.`;
-    if (!window.confirm(msg)) return;
+    setConfirming(null);
     setRemoving(p.id);
     setActionError(null);
     try {
@@ -189,7 +191,10 @@ export function PasskeysCard({ csrf }: { csrf: string | undefined }) {
                     </div>
                     <button
                       type="button"
-                      onClick={() => void remove(p)}
+                      onClick={() => {
+                        setActionError(null);
+                        setConfirming(p);
+                      }}
                       disabled={removing === p.id}
                       aria-label={`Remove ${p.name}`}
                       className="grid size-8 shrink-0 place-items-center rounded-lg text-ink-faint transition-colors hover:bg-surface-2 hover:text-down disabled:opacity-60"
@@ -257,6 +262,19 @@ export function PasskeysCard({ csrf }: { csrf: string | undefined }) {
           </div>
         ) : null}
       </Card>
+      <ConfirmDialog
+        open={confirming !== null}
+        title={`Remove “${confirming?.name ?? "passkey"}”?`}
+        confirmLabel="Remove passkey"
+        onConfirm={() => confirming && void remove(confirming)}
+        onCancel={() => setConfirming(null)}
+      >
+        <p>
+          {confirming?.id === data?.currentPasskeyId
+            ? "You're signed in with this passkey, so removing it signs you out here. It can't be undone: to use this device again, add it as a new passkey."
+            : "Sessions signed in with it end too. It can't be undone: to use it again, add it as a new passkey."}
+        </p>
+      </ConfirmDialog>
     </section>
   );
 }

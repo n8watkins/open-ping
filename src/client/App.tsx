@@ -2,6 +2,7 @@ import { Routes, Route, Outlet, Navigate, useLocation } from "react-router-dom";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 import { BootstrapProvider, useBootstrap } from "./lib/bootstrap";
+import { UndoToastProvider } from "./components/ui/UndoToast";
 import { rootView } from "./lib/home";
 import { alertsTarget, settingsTarget } from "./lib/section-routes";
 import { AppLayout } from "./components/AppLayout";
@@ -88,66 +89,68 @@ function RootIndex() {
 export default function App() {
   return (
     <BootstrapProvider>
-      <Suspense fallback={<PageFallback />}>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/setup" element={<Setup />} />
-          <Route path="/recover" element={<Recover />} />
-          <Route path="/install" element={<Install />} />
-          <Route path="/status" element={<PublicStatus />} />
-          <Route path="/status/:slug" element={<PublicStatus />} />
-          <Route path="/embed" element={<Embed />} />
+      <UndoToastProvider>
+        <Suspense fallback={<PageFallback />}>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/setup" element={<Setup />} />
+            <Route path="/recover" element={<Recover />} />
+            <Route path="/install" element={<Install />} />
+            <Route path="/status" element={<PublicStatus />} />
+            <Route path="/status/:slug" element={<PublicStatus />} />
+            <Route path="/embed" element={<Embed />} />
 
-          {/* Free public utility tools. */}
-          <Route path="/tools" element={<ToolsIndex />} />
-          <Route path="/tools/uptime-calculator" element={<UptimeCalculator />} />
-          <Route path="/tools/subnet-calculator" element={<SubnetCalculator />} />
-          <Route path="/tools/cron-tester" element={<CronTester />} />
-          <Route path="/tools/dns-lookup" element={<DnsLookup />} />
-          <Route path="/tools/mx-lookup" element={<MxLookup />} />
-          <Route path="/tools/is-it-down" element={<IsItDown />} />
+            {/* Free public utility tools. */}
+            <Route path="/tools" element={<ToolsIndex />} />
+            <Route path="/tools/uptime-calculator" element={<UptimeCalculator />} />
+            <Route path="/tools/subnet-calculator" element={<SubnetCalculator />} />
+            <Route path="/tools/cron-tester" element={<CronTester />} />
+            <Route path="/tools/dns-lookup" element={<DnsLookup />} />
+            <Route path="/tools/mx-lookup" element={<MxLookup />} />
+            <Route path="/tools/is-it-down" element={<IsItDown />} />
 
-          {/* Site root: the dashboard for admins; the HOME_PAGE choice for guests. */}
-          <Route path="/" element={<RootIndex />}>
+            {/* Site root: the dashboard for admins; the HOME_PAGE choice for guests. */}
+            <Route path="/" element={<RootIndex />}>
+              <Route element={<AppLayout />}>
+                <Route index element={<Dashboard />} />
+              </Route>
+            </Route>
+
             <Route element={<AppLayout />}>
-              <Route index element={<Dashboard />} />
+              <Route path="/monitors" element={<Monitors />} />
+              <Route path="/monitors/new" element={<MonitorEditor />} />
+              <Route path="/monitors/:id" element={<MonitorDetail />} />
+              <Route path="/monitors/:id/edit" element={<MonitorEditor />} />
+              <Route path="/incidents" element={<Incidents />} />
+              <Route path="/maintenance" element={<Maintenance />} />
+              <Route path="/alerts" element={<Integrations />} />
+              <Route path="/integrations" element={<RedirectWith target={alertsTarget} />} />
+              <Route path="/developers" element={<Developers />}>
+                <Route index element={<Navigate to="tokens" replace />} />
+                <Route path="tokens" element={<DeveloperTokens />} />
+                <Route path="mcp" element={<DeveloperMcp />} />
+                <Route path="cli" element={<DeveloperCli />} />
+                <Route path="webhooks" element={<DeveloperWebhooks />} />
+                <Route path="embeds" element={<DeveloperEmbeds />} />
+                <Route path="*" element={<Navigate to="tokens" replace />} />
+              </Route>
+              <Route path="/settings" element={<Settings />}>
+                <Route index element={<RedirectWith target={settingsTarget} />} />
+                <Route path="general" element={<GeneralSettings />} />
+                <Route path="security" element={<SecuritySettings />} />
+                <Route path="reports" element={<ReportsSettings />} />
+                <Route path="system" element={<SystemSettings />} />
+                <Route path="*" element={<Navigate to="general" replace />} />
+              </Route>
+              <Route path="/status-page" element={<StatusPageSettings />} />
+              <Route path="/status-page/new" element={<StatusPageEditor />} />
+              <Route path="/status-page/:id" element={<StatusPageEditor />} />
             </Route>
-          </Route>
 
-          <Route element={<AppLayout />}>
-            <Route path="/monitors" element={<Monitors />} />
-            <Route path="/monitors/new" element={<MonitorEditor />} />
-            <Route path="/monitors/:id" element={<MonitorDetail />} />
-            <Route path="/monitors/:id/edit" element={<MonitorEditor />} />
-            <Route path="/incidents" element={<Incidents />} />
-            <Route path="/maintenance" element={<Maintenance />} />
-            <Route path="/alerts" element={<Integrations />} />
-            <Route path="/integrations" element={<RedirectWith target={alertsTarget} />} />
-            <Route path="/developers" element={<Developers />}>
-              <Route index element={<Navigate to="tokens" replace />} />
-              <Route path="tokens" element={<DeveloperTokens />} />
-              <Route path="mcp" element={<DeveloperMcp />} />
-              <Route path="cli" element={<DeveloperCli />} />
-              <Route path="webhooks" element={<DeveloperWebhooks />} />
-              <Route path="embeds" element={<DeveloperEmbeds />} />
-              <Route path="*" element={<Navigate to="tokens" replace />} />
-            </Route>
-            <Route path="/settings" element={<Settings />}>
-              <Route index element={<RedirectWith target={settingsTarget} />} />
-              <Route path="general" element={<GeneralSettings />} />
-              <Route path="security" element={<SecuritySettings />} />
-              <Route path="reports" element={<ReportsSettings />} />
-              <Route path="system" element={<SystemSettings />} />
-              <Route path="*" element={<Navigate to="general" replace />} />
-            </Route>
-            <Route path="/status-page" element={<StatusPageSettings />} />
-            <Route path="/status-page/new" element={<StatusPageEditor />} />
-            <Route path="/status-page/:id" element={<StatusPageEditor />} />
-          </Route>
-
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </Suspense>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
+      </UndoToastProvider>
     </BootstrapProvider>
   );
 }

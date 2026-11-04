@@ -4,6 +4,7 @@ import { installationUrlImpact, installationUrlWarning, type PasskeySignIn } fro
 import { api } from "../../lib/api";
 import { useBootstrap } from "../../lib/bootstrap";
 import { Card, CardHeader, CardTitle } from "../../components/ui/Card";
+import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { HostedManagedCard } from "../../components/HostedManaged";
 import { InstallCard } from "../../components/InstallApp";
 import {
@@ -80,10 +81,18 @@ function GeneralCard({ hosted }: { hosted: boolean }) {
       (!hosted && appUrl !== (settings.app_url ?? "")) ||
       (!hosted && emailFrom !== (settings.email_from ?? "")));
 
-  async function save(e: FormEvent) {
+  // A new address that strands passkeys asks first, in the app's own dialog.
+  const [urlWarning, setUrlWarning] = useState<string | null>(null);
+
+  function save(e: FormEvent) {
     e.preventDefault();
     const impact = hosted ? null : installationUrlImpact(appUrl, settings?.app_url, passkeyData);
-    if (impact && !window.confirm(installationUrlWarning(impact))) return;
+    if (impact) setUrlWarning(installationUrlWarning(impact));
+    else void persist();
+  }
+
+  async function persist() {
+    setUrlWarning(null);
     setSaving(true);
     setSaveError(null);
     setSaved(false);
@@ -127,7 +136,7 @@ function GeneralCard({ hosted }: { hosted: boolean }) {
         ) : error && !data ? (
           <ErrorBanner>Could not load settings: {error}</ErrorBanner>
         ) : (
-          <form onSubmit={(e) => void save(e)} className="space-y-5">
+          <form onSubmit={save} className="space-y-5">
             <Field label="Timezone" hint="Used for schedules, maintenance windows and reports.">
               <select
                 name="timezone"
@@ -200,6 +209,15 @@ function GeneralCard({ hosted }: { hosted: boolean }) {
         )}
       </Card>
       <InstallCard />
+      <ConfirmDialog
+        open={urlWarning !== null}
+        title="Save the new address?"
+        confirmLabel="Save anyway"
+        onConfirm={() => void persist()}
+        onCancel={() => setUrlWarning(null)}
+      >
+        <p>{urlWarning}</p>
+      </ConfirmDialog>
     </div>
   );
 }
