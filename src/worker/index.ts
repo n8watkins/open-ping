@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/cloudflare";
 import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { bodyLimit } from "hono/body-limit";
@@ -20,6 +21,8 @@ import { hostedGate, hostedSchemaGate, refuseWhenHosted, signOutRedirect } from 
 import { starterFetch } from "./lib/hosted-starter";
 import { HANDOFF_PATH, INTERNAL_PATH_PREFIX } from "../shared/hosted-contract";
 import { homePage, hostedSignupUrl, withLandingHead } from "./lib/home-page";
+import { SENTRY_TUNNEL_PATH, sentryOptions, sentryTunnel, withErrorReportingMeta } from "./lib/error-reporting";
+import { isClientRoute } from "../shared/client-routes";
 import {
   BASE_SECURITY_HEADERS,
   cspDirectives,
@@ -39,6 +42,8 @@ app.onError((err, c) => {
   if (isSchemaError(err)) forgetSchemaCheck();
   if (err instanceof HTTPException) return err.getResponse();
   console.error(err);
+  // A no-op unless SENTRY_DSN is set (lib/error-reporting.ts).
+  Sentry.captureException(err);
   return c.text("Internal Server Error", 500);
 });
 const isViteDev = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
@@ -127,11 +132,15 @@ app.use("/api/waitlist", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payload
 app.use("/auth/app/*", bodyLimit({ maxSize: 4 * 1024, onError: payloadTooLarge }));
 app.use("/hb/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/mcp", bodyLimit({ maxSize: MCP_MAX_BODY_BYTES, onError: payloadTooLarge }));
+app.use(SENTRY_TUNNEL_PATH, bodyLimit({ maxSize: 256 * 1024, onError: payloadTooLarge }));
 app.use("/api/*", bodyLimit({ maxSize: API_BODY_LIMIT, onError: payloadTooLarge }));
 
 // JSON API (auth, monitors, incidents, settings, …). Mounted before the SPA
 // fallback so API routes never get swallowed by the asset handler.
 app.use("/api/*", reportUsageAfterChange);
+// The browser's error reports, forwarded to this install's own Sentry DSN only
+// (lib/error-reporting.ts); a 404 when no DSN is set.
+app.post(SENTRY_TUNNEL_PATH, sentryTunnel);
 app.route("/api", api);
 
 // The OpenPing Hosted sign-in hand-off (hosted mode only; passes through otherwise).
@@ -211,24 +220,23 @@ app.all("*", async (c) => {
   // route after the transformed shell loads.
   const entryUrl = new URL("/", c.req.url);
   const shell = await c.env.ASSETS.fetch(new Request(entryUrl, c.req.raw));
-  // On the canonical install `/` is the marketing page: write its title,
-  // description and link-preview tags into the shell (lib/home-page.ts).
-  if (
-    path === "/" &&
-    homePage(c.env) === "landing" &&
-    shell.ok &&
-    (shell.headers.get("content-type") ?? "").includes("text/html")
-  ) {
+  // A path the app has no page for still gets the shell, so React shows its
+  // NotFound page, but with a real 404 status (shared/client-routes.ts).
+  const status = shell.ok && !isClientRoute(path) ? 404 : shell.status;
+  const landing = path === "/" && homePage(c.env) === "landing";
+  const sentryDsn = c.env.SENTRY_DSN || undefined;
+  if (shell.ok && (landing || sentryDsn) && (shell.headers.get("content-type") ?? "").includes("text/html")) {
     const headers = new Headers(shell.headers);
     headers.delete("content-length");
     headers.delete("etag");
-    const html = withLandingHead(await shell.text(), siteOrigin(c.env.APP_URL, c.req.url), hostedSignupUrl(c.env) !== null);
-    return new Response(html, {
-      status: shell.status,
-      headers,
-    });
+    let html = await shell.text();
+    // On the canonical install `/` is the marketing page: write its title,
+    // description and link-preview tags into the shell (lib/home-page.ts).
+    if (landing) html = withLandingHead(html, siteOrigin(c.env.APP_URL, c.req.url), hostedSignupUrl(c.env) !== null);
+    html = withErrorReportingMeta(html, sentryDsn);
+    return new Response(html, { status, headers });
   }
-  return shell;
+  return status === shell.status ? shell : new Response(shell.body, { status, headers: shell.headers });
 });
 
 /** The install's public origin: APP_URL when it's a valid URL, else the request's. */
@@ -252,9 +260,22 @@ export { RegionProbe } from "./region-probe";
 // to the app.
 const fetchHandler = starterFetch((request, env, ctx) => app.fetch(request, env, ctx));
 
-export default {
+const handler = {
   fetch: fetchHandler,
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(runScheduled(controller, env));
   },
+} satisfies ExportedHandler<Env>;
+
+// With a SENTRY_DSN, Sentry wraps both handlers (lib/error-reporting.ts).
+// Without one the plain handlers run: withSentry proxies the bindings on every
+// request even when it sends nothing, and an install without a DSN should run
+// exactly as before.
+const withErrorReporting = Sentry.withSentry((env: Env) => sentryOptions(env), { ...handler });
+
+export default {
+  fetch: (request: Request, env: Env, ctx: ExecutionContext) =>
+    (env.SENTRY_DSN ? withErrorReporting : handler).fetch(request, env, ctx),
+  scheduled: (controller: ScheduledController, env: Env, ctx: ExecutionContext) =>
+    (env.SENTRY_DSN ? withErrorReporting : handler).scheduled(controller, env, ctx),
 } satisfies ExportedHandler<Env>;

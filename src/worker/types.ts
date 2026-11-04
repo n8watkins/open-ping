@@ -64,6 +64,8 @@ export interface Env {
    * which only the canonical install sets (lib/home-page.ts). A wrangler.jsonc var.
    */
   HOME_PAGE?: string;
+  /** Sentry DSN for error reports; empty in the template, so off (lib/error-reporting.ts). */
+  SENTRY_DSN?: string;
 
   /**
    * The OpenPing Hosted sign-up page, set only on the canonical install once

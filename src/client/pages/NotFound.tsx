@@ -1,18 +1,25 @@
 import { Link } from "react-router-dom";
+import { EdgePage, primaryAction, secondaryAction } from "../components/EdgePage";
 
+// Rendered for any path the app has no page for; the Worker sends it with a
+// real 404 status (src/shared/client-routes.ts).
 export default function NotFound() {
   return (
-    <div className="grid min-h-full place-items-center px-4 text-center">
-      <div>
-        <h1 className="text-5xl font-semibold tracking-tight text-ink-faint">404</h1>
-        <p className="mt-3 text-sm text-ink-muted">This page doesn't exist.</p>
-        <Link
-          to="/"
-          className="mt-6 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-medium text-canvas transition-colors hover:bg-accent-hover"
-        >
-          Back to overview
-        </Link>
-      </div>
-    </div>
+    <EdgePage
+      label="404 - page not found"
+      title="Nothing is being monitored here."
+      actions={
+        <>
+          <Link to="/" className={primaryAction}>
+            Go to the home page
+          </Link>
+          <Link to="/status" className={secondaryAction}>
+            See the status page
+          </Link>
+        </>
+      }
+    >
+      This address isn&apos;t a page in OpenPing. Your monitors and status pages are unaffected.
+    </EdgePage>
   );
 }
