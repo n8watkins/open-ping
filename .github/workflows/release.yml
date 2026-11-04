@@ -24,6 +24,6 @@ jobs:
     if: github.repository == 'n8watkins/open-ping' # release-kit: fork guard
     permissions:
       contents: write # only the kit's publish job uses it
-    uses: n8watkins/release-kit/.github/workflows/release.yml@v2.7.1
+    uses: n8watkins/release-kit/.github/workflows/release.yml@v2.8.1
     with:
       tag: ${{ inputs.tag || '' }}
