@@ -1,9 +1,26 @@
-# release-kit: a new kit release arrives as one update PR (the dev dependency and the workflow pins).
-# One multi-ecosystem group, so the npm and github-actions updates land together:
-# separate PRs would leave package.json and the workflows on different kit versions.
-# No cooldown for the kit: Dependabot's default 3-day cooldown skips the newest
-# tags, and for a git dependency it then proposes the newest older tag, even
-# one below the installed version (a downgrade).
+# release-kit: Dependabot for this repo, written by npx release-kit apply.
+#
+# Two entries per ecosystem, both for the repo root:
+#
+# 1. The kit. A new kit release arrives as one update PR (the dev dependency and
+#    the workflow pins), daily. One multi-ecosystem group, so the npm and
+#    github-actions updates land together: separate PRs would leave package.json
+#    and the workflows on different kit versions. An entry in a multi-ecosystem
+#    group updates only what its patterns name, so it covers the kit alone.
+#    No cooldown for the kit: Dependabot's default 3-day cooldown skips the newest
+#    tags, and for a git dependency it then proposes the newest older tag, even
+#    one below the installed version (a downgrade).
+# 2. Everything else, weekly: patch and minor updates in one PR per ecosystem,
+#    which the kit's auto-merge merges once CI passes, and major updates in
+#    another, which waits for a person. A cooldown (3 days, and 7 for an npm
+#    major) lets a bad release be pulled before it reaches the repo. These
+#    entries ignore the kit, which the first ones update.
+#
+# Security updates use neither allow nor groups here, so Dependabot opens one for
+# any vulnerable dependency, direct or transitive, as soon as an alert appears
+# (no cooldown). Don't add an allow list: Dependabot applies it to security
+# updates too, and a dependency it leaves out gets none ("all versions were
+# ignored").
 version: 2
 multi-ecosystem-groups:
   release-kit:
@@ -17,16 +34,46 @@ updates:
   - package-ecosystem: npm
     directory: /
     patterns: ["release-kit"]
-    allow:
-      - dependency-name: release-kit
     multi-ecosystem-group: release-kit
     cooldown:
       exclude: ["release-kit"]
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: release-kit
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+      npm-major:
+        update-types: [major]
   - package-ecosystem: github-actions
     directory: /
     patterns: ["n8watkins/release-kit*"]
-    allow:
-      - dependency-name: n8watkins/release-kit*
     multi-ecosystem-group: release-kit
     cooldown:
       exclude: ["n8watkins/release-kit*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: n8watkins/release-kit*
+    # Days per semver level are npm-only: Dependabot rejects them for github-actions.
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+      actions-major:
+        update-types: [major]

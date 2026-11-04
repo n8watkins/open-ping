@@ -30,7 +30,7 @@ jobs:
       pull-requests: write # turn on auto-merge
       checks: read # merge when green: read the checks on the pull request
       statuses: read
-    uses: n8watkins/release-kit/.github/workflows/auto-merge.yml@v2.7.0
+    uses: n8watkins/release-kit/.github/workflows/auto-merge.yml@v2.7.1
     with:
       # The rollout bot's release-kit/update pull requests merge like Dependabot's.
       bots: "dependabot[bot],release-kit-bot-n8watkins[bot]"
