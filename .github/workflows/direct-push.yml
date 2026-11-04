@@ -21,6 +21,6 @@ jobs:
       contents: read # the pushed commits and .release.json
       pull-requests: read # which pull request each commit came from
       issues: write # open or comment on the "release-kit: direct push" issue
-    uses: n8watkins/release-kit/.github/workflows/direct-push.yml@v2.7.1
+    uses: n8watkins/release-kit/.github/workflows/direct-push.yml@v2.8.0
     with:
       branches: "" # release-kit: branches
