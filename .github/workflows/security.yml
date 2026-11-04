@@ -1,0 +1,30 @@
+# release-kit (reusable): scan every lockfile against OSV.dev weekly and when one changes
+# (in a private repo weekly only, unless .release.json "security": { "onPullRequest": true }).
+# The steps live in the release-kit repo, pinned below; apply.mjs updates the pin.
+name: Security scan
+
+on:
+  schedule:
+    - cron: "0 15 * * 1"
+  pull_request:
+    paths:
+      - "**/package-lock.json"
+      - "**/pnpm-lock.yaml"
+      - "**/yarn.lock"
+      - "**/bun.lock"
+      - "**/Cargo.lock"
+      - "**/uv.lock"
+      - "**/poetry.lock"
+      - "**/requirements*.txt"
+      - "**/go.sum"
+      - "**/osv-scanner.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  osv:
+    uses: n8watkins/release-kit/.github/workflows/security.yml@v2.6.0
+    with:
+      pull-requests: auto # release-kit: security on pull requests

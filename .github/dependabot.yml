@@ -1,20 +1,32 @@
-# release-kit: a new kit release arrives as update PRs (the dev dependency and the workflow pins).
+# release-kit: a new kit release arrives as one update PR (the dev dependency and the workflow pins).
+# One multi-ecosystem group, so the npm and github-actions updates land together:
+# separate PRs would leave package.json and the workflows on different kit versions.
+# No cooldown for the kit: Dependabot's default 3-day cooldown skips the newest
+# tags, and for a git dependency it then proposes the newest older tag, even
+# one below the installed version (a downgrade).
 version: 2
+multi-ecosystem-groups:
+  release-kit:
+    schedule:
+      interval: daily
+    # On the group: Dependabot rejects commit-message on an update in a group.
+    commit-message:
+      prefix: build
+      include: scope
 updates:
   - package-ecosystem: npm
     directory: /
-    schedule:
-      interval: daily
+    patterns: ["release-kit"]
     allow:
       - dependency-name: release-kit
-    # Dependabot misorders this git dependency's tags and once proposed
-    # v2.0.0 -> v1.0.3; never offer anything older than the current major.
-    ignore:
-      - dependency-name: release-kit
-        versions: ["< 2"]
+    multi-ecosystem-group: release-kit
+    cooldown:
+      exclude: ["release-kit"]
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: daily
+    patterns: ["n8watkins/release-kit*"]
     allow:
       - dependency-name: n8watkins/release-kit*
+    multi-ecosystem-group: release-kit
+    cooldown:
+      exclude: ["n8watkins/release-kit*"]

@@ -1,0 +1,19 @@
+#!/bin/sh
+# release-kit: pre-push guard. Blocks pushing straight to, force pushing or
+# deleting the protected branches, and moving or deleting a release tag
+# (release-kit pre-push; RELEASE_KIT_ALLOW_DIRECT_PUSH=1 overrides, logged).
+kit="$(git rev-parse --show-toplevel)/node_modules/.bin/release-kit"
+if [ -x "$kit" ]; then exec "$kit" pre-push "$@"; fi
+[ "${GITHUB_ACTIONS:-}" = true ] && exit 0
+[ "${RELEASE_KIT_ALLOW_DIRECT_PUSH:-}" = 1 ] && exit 0
+blocked=
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/master) blocked="$blocked $remote_ref" ;;
+    refs/tags/v*) case "$remote_sha" in *[!0]*) blocked="$blocked $remote_ref" ;; esac ;;
+  esac
+done
+if [ -n "$blocked" ]; then
+  echo "release-kit: push blocked ($blocked): the kit isn't installed yet, so the pre-push guard can't check it. Run npm install, or push a branch and open a pull request." >&2
+  exit 1
+fi
