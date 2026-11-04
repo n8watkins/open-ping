@@ -421,7 +421,7 @@ describe("a plain install and a dispatch mode tenant", () => {
   it("never take the starter path, even with the vars and signed headers", async () => {
     const request = await platformRequest("/__platform/health");
     const plain = await call(request.clone(), { ...env, ASSETS, HOSTED_TRANSPORT: "https", PLATFORM_CALL_SECRET: SECRET } as Env);
-    expect(plain.status).toBe(200);
+    expect(plain.status).toBe(404);
     expect(await plain.text()).toBe(SHELL);
     // Dispatch mode without props: the hosted gate's 503, never the signed call.
     const dispatch = await call(request.clone(), starterEnv({ HOSTED_TRANSPORT: undefined }));

@@ -146,7 +146,7 @@ afterEach(() => {
 });
 
 describe("a plain install (HOSTED_MODE unset)", () => {
-  it("answers the internal paths as it always did, with the app shell, even with props and the header", async () => {
+  it("answers the internal paths like any unknown path, the app shell with a 404, even with props and the header", async () => {
     for (const [path, method] of [
       ["/__platform/health", "GET"],
       ["/__platform/scheduled", "POST"],
@@ -157,7 +157,7 @@ describe("a plain install (HOSTED_MODE unset)", () => {
         body: method === "POST" ? scheduledBody() : undefined,
         target: plainEnv(),
       });
-      expect(res.status, path).toBe(200);
+      expect(res.status, path).toBe(404);
       expect(await res.text(), path).toBe(SHELL);
     }
     const runs = await env.DB.prepare("SELECT COUNT(*) AS n FROM scheduler_runs").first<{ n: number }>();

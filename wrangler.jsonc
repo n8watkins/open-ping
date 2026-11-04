@@ -40,7 +40,11 @@
     // Durable Object regions, in order (docs/SECOND_REGION.md). The run asks one
     // whose data center isn't its own, so one location's network trouble
     // doesn't page you. "off" re-checks where the check ran.
-    "CONFIRM_REGIONS": "enam,weur"
+    "CONFIRM_REGIONS": "enam,weur",
+    // Leave empty to send no error reports. Set it (in deploy.local.json) to a
+    // Sentry DSN of your own to get the Worker's and the browser's errors there
+    // (src/worker/lib/error-reporting.ts).
+    "SENTRY_DSN": ""
   },
   // The per-region re-checkers behind CONFIRM_REGIONS (src/worker/region-probe.ts).
   // SQLite-backed Durable Objects are on the Workers Free plan.

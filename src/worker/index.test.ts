@@ -274,3 +274,48 @@ describe("worker fetch - SPA fallback + secureHeaders", () => {
     expect(stateInsertAttempted).toBe(false);
   });
 });
+
+describe("worker fetch - unknown paths and error reporting", () => {
+  const shellEnv = (extra: Partial<Env> = {}) =>
+    ({
+      ASSETS: {
+        fetch: async () =>
+          new Response("<!doctype html><html><head><title>spa</title></head><body></body></html>", {
+            headers: { "content-type": "text/html" },
+          }),
+      },
+      ...extra,
+    }) as unknown as Env;
+  const dsn = "https://abc123@o1.ingest.us.sentry.io/42";
+
+  it("answers a path the app has no page for with the shell and a real 404", async () => {
+    const res = await worker.fetch!(new Request("https://example.com/zz-no-such-page"), makeEnv(), ctx);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(await res.text()).toBe("<!doctype html><title>spa</title>");
+    const known = await worker.fetch!(new Request("https://example.com/monitors/7/edit"), makeEnv(), ctx);
+    expect(known.status).toBe(200);
+  });
+
+  it("puts the Sentry DSN in the shell only when SENTRY_DSN is set", async () => {
+    const off = await worker.fetch!(new Request("https://example.com/monitors"), shellEnv({ SENTRY_DSN: "" }), ctx);
+    expect(await off.text()).not.toContain("openping-sentry-dsn");
+    const on = await worker.fetch!(new Request("https://example.com/zz-no-such-page"), shellEnv({ SENTRY_DSN: dsn }), ctx);
+    expect(on.status).toBe(404);
+    expect(await on.text()).toContain(`<meta name="openping-sentry-dsn" content="${dsn}" /></head>`);
+  });
+
+  it("forwards only envelopes for this install's DSN, and is off without one", async () => {
+    const post = (env: Env, header: object) =>
+      worker.fetch!(
+        new Request("https://example.com/api/monitoring", {
+          method: "POST",
+          body: `${JSON.stringify(header)}\n{"type":"event"}\n{}`,
+        }),
+        env,
+        ctx,
+      );
+    expect((await post(shellEnv(), { dsn })).status).toBe(404);
+    expect((await post(shellEnv({ SENTRY_DSN: dsn }), { dsn: "https://x@evil.example/1" })).status).toBe(400);
+  });
+});
