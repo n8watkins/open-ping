@@ -41,7 +41,10 @@ describe("withLandingHead", () => {
     expect(html).toContain(`<meta name="description" content="${LANDING_DESCRIPTION}" />`);
     expect(html).not.toContain("OpenPing: generic.");
     expect(html).toContain('<meta property="og:url" content="https://openping.example/" />');
-    expect(html).toContain('<meta property="og:image" content="https://openping.example/landing/app-overview.webp" />');
+    expect(html).toContain('<meta property="og:image" content="https://openping.example/landing/og-image.png" />');
+    expect(html).toContain('<meta property="og:image:width" content="1200" />');
+    expect(html).toContain('<meta property="og:image:height" content="630" />');
+    expect(html).toContain('<meta name="twitter:image" content="https://openping.example/landing/og-image.png" />');
     expect(html).toContain('<link rel="canonical" href="https://openping.example/" />');
     // Tags go inside the head, once.
     expect(html.indexOf("og:title")).toBeLessThan(html.indexOf("</head>"));
