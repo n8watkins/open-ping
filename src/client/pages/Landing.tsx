@@ -20,7 +20,6 @@ import {
   Check,
   Cloud,
   Database,
-  Github,
   Globe,
   HeartPulse,
   Hourglass,
@@ -39,6 +38,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { Github } from "../components/GithubIcon";
 import { Logo } from "../components/Logo";
 import { TOOLS } from "./tools/ToolLayout";
 import { PhoneMockup } from "../components/landing/PhoneMockup";

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Github } from "lucide-react";
+import { ArrowRight } from "lucide-react";
+import { Github } from "../../components/GithubIcon";
 import { Logo } from "../../components/Logo";
 import { TOOLS, ToolCTA } from "./ToolLayout";
 

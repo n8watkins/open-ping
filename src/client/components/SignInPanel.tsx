@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, ExternalLink, Fingerprint, Github, Loader2, Mail, MailCheck } from "lucide-react";
+import { ArrowRight, ExternalLink, Fingerprint, Loader2, Mail, MailCheck } from "lucide-react";
+import { Github } from "./GithubIcon";
 import { api } from "../lib/api";
 import { useBootstrap } from "../lib/bootstrap";
 import { isLandingInstall } from "../lib/home";

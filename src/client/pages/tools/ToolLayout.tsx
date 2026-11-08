@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   ArrowRight,
   Clock,
-  Github,
   Globe,
   Mail,
   Network,
@@ -13,6 +12,7 @@ import {
   Search,
   type LucideIcon,
 } from "lucide-react";
+import { Github } from "../../components/GithubIcon";
 import { Logo } from "../../components/Logo";
 
 const GITHUB_URL = "https://github.com/n8watkins/open-ping";
