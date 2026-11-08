@@ -388,7 +388,7 @@ describe("a rollout", () => {
     const outcomes = await handleRequests(w.deps);
     expect(outcomes.map((o) => o.result)).toEqual(["Refused: a rollout needs a version.", expect.stringMatching(/^Dry run/)]);
     expect(await handleRequests(w.deps)).toEqual([]);
-    expect(() => submitRequest(env.PLATFORM_DB, { action: "rollout", version: "x y", requestedBy: "cli" }, 3)).rejects.toThrow("needs a version");
+    await expect(submitRequest(env.PLATFORM_DB, { action: "rollout", version: "x y", requestedBy: "cli" }, 3)).rejects.toThrow("needs a version");
   });
 
   it("stops at a canary that doesn't come back healthy, and touches nobody else", async () => {
