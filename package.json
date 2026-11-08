@@ -58,6 +58,9 @@
       "CONFIRM_REGIONS": {
         "description": "Leave `enam,weur`. Before a failure opens an incident, OpenPing re-checks it from one of these Cloudflare regions, away from where the first check ran, so one location's network trouble doesn't page you. `off` re-checks from the same place. [More](https://github.com/n8watkins/open-ping/blob/main/docs/SECOND_REGION.md)"
       },
+      "SENTRY_DSN": {
+        "description": "Leave empty. To get error reports from the Worker and the browser, set a Sentry DSN of your own; nothing is sent without one."
+      },
       "DB": {
         "description": "OpenPing's database: monitors, check results, incidents and settings. The deploy creates its tables."
       }
@@ -65,6 +68,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.4.0",
+    "@sentry/browser": "11.10.0",
+    "@sentry/cloudflare": "11.10.0",
     "clsx": "^2.1.1",
     "hono": "^4.13.16",
     "lucide-react": "^0.469.0",

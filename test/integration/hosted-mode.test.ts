@@ -211,10 +211,11 @@ describe("a plain install (HOSTED_MODE unset)", () => {
     expect(github.headers.get("location")).toBe(`${ORIGIN}/login?error=github_not_configured`);
   });
 
-  it("serves /auth/hosted as any other client route, and never signs in", async () => {
+  it("answers /auth/hosted with the app shell's not-found page, and never signs in", async () => {
     const browser = plainBrowser();
     const res = await browser.fetch(handoffPath(await token()));
-    expect(res.status).toBe(200);
+    // Not a page on a plain install: the shell, with a 404 (shared/client-routes.ts).
+    expect(res.status).toBe(404);
     expect(await res.text()).toBe(SHELL);
     expect(browser.cookies.has(HOSTED_SESSION)).toBe(false);
     expect(await nonceCount()).toBe(0);
