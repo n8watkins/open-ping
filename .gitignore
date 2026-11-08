@@ -29,3 +29,8 @@ worker-configuration.d.ts
 *.jks
 *.keystore
 google-services.json
+
+# Playwright (e2e/): the throwaway local database and the reports.
+e2e/.state/
+playwright-report/
+test-results/

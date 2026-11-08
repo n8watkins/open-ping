@@ -8,6 +8,7 @@ import { formatDateTime, formatRelativeTime } from "../../lib/format";
 import { curlExample, exportTokenLine } from "../../lib/dev-snippets";
 import { Card, CardHeader, CardTitle } from "../../components/ui/Card";
 import { CodeBlock } from "../../components/ui/CodeBlock";
+import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { Chip, ErrorBanner, PrimaryButton, SectionSkeleton, errMessage } from "../settings/shared";
 import { useDevelopers } from "../Developers";
@@ -60,8 +61,11 @@ export default function TokensPage() {
     }
   }
 
+  // Revoking can't be undone, so it asks first in the app's own dialog.
+  const [confirming, setConfirming] = useState<ApiToken | null>(null);
+
   async function revoke(t: ApiToken) {
-    if (!window.confirm(`Revoke "${t.name}"? Anything using it gets "unauthorized" from now on.`)) return;
+    setConfirming(null);
     setRevoking(t.id);
     setListError(null);
     try {
@@ -177,8 +181,12 @@ export default function TokensPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => void revoke(t)}
+                    onClick={() => {
+                      setListError(null);
+                      setConfirming(t);
+                    }}
                     disabled={revoking === t.id}
+                    aria-label={`Revoke ${t.name}`}
                     className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:bg-down/10 hover:text-down disabled:opacity-60"
                   >
                     {revoking === t.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
@@ -234,6 +242,15 @@ export default function TokensPage() {
           </p>
         )}
       </Card>
+      <ConfirmDialog
+        open={confirming !== null}
+        title={`Revoke “${confirming?.name ?? "token"}”?`}
+        confirmLabel="Revoke token"
+        onConfirm={() => confirming && void revoke(confirming)}
+        onCancel={() => setConfirming(null)}
+      >
+        <p>Anything using this token gets &ldquo;unauthorized&rdquo; from now on. It can&apos;t be undone: to restore access, create a new token and update those clients.</p>
+      </ConfirmDialog>
     </div>
   );
 }

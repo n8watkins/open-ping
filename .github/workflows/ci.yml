@@ -1,5 +1,5 @@
 # Checks for every pull request and every push to main: lint, typecheck, the
-# unit and workerd/D1 integration tests, and a production build.
+# unit and workerd/D1 integration tests, a production build, and browser tests.
 #
 # Commit messages are checked by commits.yml (release-kit), not here.
 #
@@ -44,3 +44,26 @@ jobs:
       - name: Integration tests (workerd + D1)
         run: npm run test:integration
       - run: npm run build
+
+  e2e:
+    # The admin app in headless Chromium against the built Worker under
+    # `wrangler dev` on a throwaway local D1 database (e2e/serve.mjs).
+    name: Browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7

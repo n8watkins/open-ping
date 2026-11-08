@@ -44,6 +44,7 @@ All scripts come from `package.json`:
 | `npm run typecheck` | `tsc -b` across project references |
 | `npm run test` | Run the Vitest suite once |
 | `npm run test:watch` | Vitest in watch mode |
+| `npm run test:e2e` | Browser tests in Chromium against the built Worker (`npm run build` first; `npx playwright install chromium` once) |
 | `npm run cf-typegen` | Regenerate Worker types from `wrangler.jsonc` |
 | `npm run db:create` | Create the `open-ping` D1 database (optional: the first deploy creates it) |
 | `npm run db:migrate:local` | Apply migrations to the local D1 database |
