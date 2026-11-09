@@ -64,10 +64,9 @@ describe("worker fetch - SPA fallback + secureHeaders", () => {
     // Nested SPA routes must load the root entry so Vite applies its HTML
     // transforms (including the React refresh preamble) during development.
     expect(assetUrl).toBe("https://example.com/");
-    expect(res.headers.get("x-frame-options")).toBe("DENY");
-    expect(res.headers.get("content-security-policy")).toContain(
-      "frame-ancestors 'none'",
-    );
+    // The public status page may be framed by n8builds.dev (FRAMABLE_PUBLIC_PATHS).
+    expect(res.headers.get("x-frame-options")).toBeNull();
+    expect(res.headers.get("content-security-policy")).toBe(widgetCsp);
   });
 
   it("still serves the app shell at /status/:slug next to the feed routes", async () => {
@@ -143,8 +142,21 @@ describe("worker fetch - SPA fallback + secureHeaders", () => {
     expect(lookalike.headers.get("content-security-policy")).toBe(pageCsp);
   });
 
-  it("gives every response the one policy, including the real files it passes through", async () => {
-    for (const path of ["/", "/index.html", "/offline", "/offline.html", "/sw.js", "/status", "/login", "/monitors/1"]) {
+  it("lets n8builds.dev frame the read-only public pages, and nothing signed in", async () => {
+    for (const path of ["/status", "/status/checkout", "/tools", "/tools/is-it-down"]) {
+      const res = await worker.fetch!(new Request(`https://example.com${path}`), makeEnv(), ctx);
+      expect(res.headers.get("x-frame-options"), path).toBeNull();
+      expect(res.headers.get("content-security-policy"), path).toBe(widgetCsp);
+    }
+    for (const path of ["/statuses", "/toolshed", "/status-page", "/status/feed.rss", "/status/checkout/feed.atom", "/install", "/setup", "/settings/general", "/api/public/status"]) {
+      const res = await worker.fetch!(new Request(`https://example.com${path}`), makeEnv(), ctx);
+      expect(res.headers.get("x-frame-options"), path).toBe("DENY");
+      expect(res.headers.get("content-security-policy"), path).toBe(pageCsp);
+    }
+  });
+
+  it("gives every other response the one policy, including the real files it passes through", async () => {
+    for (const path of ["/", "/index.html", "/offline", "/offline.html", "/sw.js", "/login", "/monitors/1"]) {
       const res = await worker.fetch!(new Request(`https://example.com${path}`), makeEnv(), ctx);
       expect(res.headers.get("content-security-policy"), path).toBe(pageCsp);
       expect(res.headers.get("x-frame-options"), path).toBe("DENY");

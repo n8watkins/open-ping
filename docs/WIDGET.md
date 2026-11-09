@@ -87,10 +87,11 @@ Hosts that don't add this listener simply use the fixed `height` they set on the
 
 ## Allowing your domain (framing / `frame-ancestors`)
 
-Every OpenPing page and API response is locked down with `X-Frame-Options: DENY` and a `Content-Security-Policy` of `frame-ancestors 'none'`, so the admin panel, login, API and the main `/status` page **cannot** be framed.
-The `/embed` route (and paths under it) is the single exception: it drops `X-Frame-Options` so the widget can be embedded cross-origin.
+Every OpenPing page and API response is locked down with `X-Frame-Options: DENY` and a `Content-Security-Policy` of `frame-ancestors 'none'`, so the admin panel, login, setup, the landing page and the API **cannot** be framed.
+The exceptions are the `/embed` widget and the read-only public pages, the status pages (`/status`, `/status/:slug`) and the free tools (`/tools/...`), and the paths under them: they drop `X-Frame-Options` so they can be embedded cross-origin.
+n8builds.dev uses this to let visitors use the live product on OpenPing's build page.
 
-By default `/embed` can be embedded from the install itself (`'self'`, which the embed builder under **Developers** uses for its live preview), from **`https://n8builds.dev`** and from its subdomains (**`https://*.n8builds.dev`**).
+By default these can be embedded from the install itself (`'self'`, which the embed builder under **Developers** uses for its live preview), from **`https://n8builds.dev`** and from its subdomains (**`https://*.n8builds.dev`**).
 A `*.` wildcard in a CSP source matches subdomains only, which is why the bare domain is listed separately.
 To embed from a different host, add its origin to the allow-list in [`src/worker/security-headers.ts`](../src/worker/security-headers.ts):
 
@@ -106,7 +107,7 @@ export const WIDGET_FRAME_ANCESTORS = ["'self'", "https://n8builds.dev", "https:
 ```
 
 Then update the matching test in `src/static-headers.test.ts` and redeploy (`npm run deploy`).
-This is scoped to `/embed` only; all other routes keep `X-Frame-Options` and `frame-ancestors 'none'`.
+This is scoped to `/embed`, `/status` and `/tools` (`FRAMABLE_PUBLIC_PATHS`); all other routes keep `X-Frame-Options` and `frame-ancestors 'none'`.
 
 > Note: only framing changes for `/embed`.
 > Its CSP is the same policy as every other page with just the `frame-ancestors` directive swapped, so `script-src 'self'` and the rest still apply.

@@ -395,7 +395,7 @@ A self-hosted install never uses this: it applies only when the platform runs Op
 
 Every page, the offline page and every API response carry one security policy, defined once in `src/worker/security-headers.ts`.
 It is a strict Content-Security-Policy (scripts from this origin and Cloudflare Web Analytics only, requests to this origin, Web Analytics and the canonical install's waitlist endpoint), `X-Frame-Options: DENY` with `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy: no-referrer` and HSTS.
-The `/embed` widget is the only framable page; it allows the install itself (`'self'`, for the embed preview under **Developers**), `https://n8builds.dev` and `https://*.n8builds.dev` ([WIDGET.md](./WIDGET.md)).
+The `/embed` widget and the read-only public pages (the status pages and the free `/tools`, not their feeds) are the only framable pages, so n8builds.dev can show the live product on OpenPing's build page; they allow the install itself (`'self'`, for the embed preview under **Developers**), `https://n8builds.dev` and `https://*.n8builds.dev` ([WIDGET.md](./WIDGET.md)).
 `assets.run_worker_first` in `wrangler.jsonc` sends every request except the hashed `/assets/*` bundles through the Worker, so no page can be served straight from static assets without the policy.
 `public/_headers` only covers those bundles, and `src/static-headers.test.ts` checks that it agrees with the Worker.
 

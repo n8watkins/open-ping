@@ -28,19 +28,37 @@ export const CF_ANALYTICS_REPORT = "https://cloudflareinsights.com";
  */
 export const CANONICAL_ORIGIN = "https://openping.n8builds.dev";
 
-/** The embeddable status widget: the one surface meant to be framed. */
+/** The embeddable status widget, meant to be framed. */
 export const WIDGET_PATH = "/embed";
 
 /**
- * Who may frame the /embed widget: the install itself (the live preview in the
- * admin's Developers page), and n8builds.dev. CSP host sources with a `*.`
+ * The read-only public pages that may be framed as well: the public status
+ * pages and the free tools, so n8builds.dev can show the live product on
+ * OpenPing's build page instead of screenshots. Nothing here is signed in,
+ * and nothing here changes anything an admin set up. The admin app, login,
+ * setup, the landing page and the API keep `frame-ancestors 'none'`.
+ */
+export const FRAMABLE_PUBLIC_PATHS = ["/status", "/tools"] as const;
+
+/**
+ * Who may frame those pages: the install itself (the widget's live preview in
+ * the admin's Developers page), and n8builds.dev. CSP host sources with a `*.`
  * wildcard match subdomains only, so the bare domain is listed on its own.
  * To embed from another host, add its origin here (docs/WIDGET.md).
  */
 export const WIDGET_FRAME_ANCESTORS = ["'self'", "https://n8builds.dev", "https://*.n8builds.dev"] as const;
 
-export function isWidgetPath(path: string): boolean {
-  return path === WIDGET_PATH || path.startsWith(`${WIDGET_PATH}/`);
+const under = (path: string, root: string) => path === root || path.startsWith(`${root}/`);
+
+/**
+ * /embed and the read-only public pages (and pages under them): the only
+ * framable responses. Files under them (the status feeds, /status/feed.rss)
+ * are not pages and keep `frame-ancestors 'none'`.
+ */
+export function isFramablePath(path: string): boolean {
+  if (under(path, WIDGET_PATH)) return true;
+  const file = /\.[a-z0-9]+$/i.test(path);
+  return !file && FRAMABLE_PUBLIC_PATHS.some((root) => under(path, root));
 }
 
 export type CspDirectives = {
@@ -84,7 +102,7 @@ export function cspDirectives({ viteDev = false }: { viteDev?: boolean } = {}): 
   };
 }
 
-/** The /embed policy: the same directives, framable by WIDGET_FRAME_ANCESTORS. */
+/** The framable pages' policy: the same directives, framable by WIDGET_FRAME_ANCESTORS. */
 export function widgetCspDirectives(options: { viteDev?: boolean } = {}): CspDirectives {
   return { ...cspDirectives(options), frameAncestors: [...WIDGET_FRAME_ANCESTORS] };
 }

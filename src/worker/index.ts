@@ -26,7 +26,7 @@ import { isClientRoute } from "../shared/client-routes";
 import {
   BASE_SECURITY_HEADERS,
   cspDirectives,
-  isWidgetPath,
+  isFramablePath,
   serializeCsp,
   STATIC_HTML_PAGES,
   widgetCspDirectives,
@@ -53,10 +53,11 @@ const isViteDev = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?
 //
 // secureHeaders() below locks every response down with `X-Frame-Options: DENY`
 // + `frame-ancestors 'none'`, which is correct for the admin panel, login, API
-// and the main status page (they must never be framed). The /embed widget is
-// the one surface designed to be iframed from an external site, so for that
-// path - and that path only - we drop X-Frame-Options and send the widget CSP,
-// which differs only in frame-ancestors (WIDGET_FRAME_ANCESTORS).
+// and the landing page (they must never be framed). The /embed widget is
+// designed to be iframed from an external site, and the read-only public pages
+// (/status and the free /tools) may be too, so n8builds.dev can show the live
+// product. For those paths - and those only - we drop X-Frame-Options and send
+// the widget CSP, which differs only in frame-ancestors (WIDGET_FRAME_ANCESTORS).
 //
 // This middleware is registered FIRST so that, by Hono's onion ordering, its
 // post-`next()` phase runs LAST - i.e. AFTER secureHeaders has written its
@@ -66,7 +67,7 @@ const widgetCsp = serializeCsp(widgetCspDirectives({ viteDev: isViteDev }));
 
 app.use("*", async (c, next) => {
   await next();
-  if (!c.res || !isWidgetPath(c.req.path)) return;
+  if (!c.res || !isFramablePath(c.req.path)) return;
   c.res.headers.delete("X-Frame-Options");
   c.res.headers.set("Content-Security-Policy", widgetCsp);
 });
