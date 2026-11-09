@@ -60,3 +60,13 @@ Done:
 - [ ] Later: the notification relay for self-hosted installs ([MOBILE_PLAN.md](./MOBILE_PLAN.md#later-a-notification-relay-for-self-hosted-installs)).
 - [ ] After the owner's section 6 setup: the Hosted staging drills, load test and restore drill ([hosted/LAUNCH_DRILLS.md](./hosted/LAUNCH_DRILLS.md)), then the 7-day soak.
 - [ ] After the owner fills the legal blanks: point the waitlist's privacy link at the Hosted domain's /privacy (`PRIVACY_NOTICE_URL` in `WaitlistForm.tsx`).
+
+## Keys
+
+Checked 2026-11-09 against the secret names on the Worker and in GitHub Actions (names only, no values).
+New values go into the owner's pass-env store and are sent with `pass-env pipe <entry> -- <command>`; never commit or paste a value.
+
+- [ ] `API_TOKEN` (the CLI and MCP connector token, `OPENPING_TOKEN` locally): needs a new value. Make it in the app, then update the CLI file and the MCP connector header.
+- [ ] Stripe webhook secret: confirm whether OpenPing uses Stripe webhooks; if it does, roll the secret in Stripe.
+- [ ] Hosted platform keys, needed only when it launches (neither Worker has them): `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `PLATFORM_KEY`, `PLATFORM_CALL_SECRET`, `HANDOFF_SIGNING_KEY`, `CF_API_TOKEN`, `VAPID_PRIVATE_KEY`, `SETUP_TOKEN`.
+- [x] `MASTER_KEY`, `GITHUB_CLIENT_SECRET`, `RESEND_API_KEY`: set on the Worker.
