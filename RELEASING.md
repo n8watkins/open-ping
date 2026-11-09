@@ -25,6 +25,7 @@ The `commit-msg` hook checks this locally, and the Commit messages workflow chec
 
 A squash merge turns the pull request into one commit whose message is the pull request's title, so the Commit messages workflow checks the title too, and checks it again when it is edited.
 Write the title like a commit subject: `feat: add dark mode`.
+GitHub adds ` (#12)` to it when it squashes, so the check counts that against the 100-character header limit.
 Put any `Release-note:` or `BREAKING CHANGE:` line in the description, and set the repo to use the title and description for squash commits (Settings, General, "Default commit message": "Pull request title and description"), or with the gh CLI:
 
 ```sh
@@ -77,8 +78,11 @@ npm run release -- --push      # check, bump, changelog, commit, tag, push
 ```
 
 - With no bump given it picks one: major for a breaking change, minor for a feature, otherwise patch.
+- Below 1.0 (a `0.y.z` version) a breaking change is a minor bump instead: 0.13.0 goes to 0.14.0.
 - Force one with `npm run release -- minor` (or `patch`, `major`, or an exact `1.4.0`).
-- It bumps `package.json`, `package-lock.json` and any file listed in `.release.json` `versionFiles` (a path, or `{ "path": "...", "pattern": "..." }` with one capture group for the version), adds a section to `CHANGELOG.md`, commits `chore(release): vX.Y.Z` and tags it.
+- Going from `0.y.z` to 1.0.0 is a decision, never a side effect: `npm run release -- --stable` cuts 1.0.0, and `major` or a `1.x` version is refused without `--stable`.
+  `"stable": true` in `.release.json` does the same for every release, the train's included, so a breaking change then bumps major.
+- It bumps `package.json`, `package-lock.json` and any file listed in `.release.json` `versionFiles` (a path, or `{ "path": "...", "pattern": "..." }` with one capture group for the version), adds a section to `CHANGELOG.md` and an entry to `releases.json` (the same notes as data; `"releases": { "feed": true }` adds an Atom feed, `releases.xml`), commits `chore(release): vX.Y.Z` and tags it.
 - With `--push` it first makes sure `main` isn't behind `origin/main` and runs `npm run release:check` (skip that with `--no-check`), so a tag is only pushed for a commit that passes. If the push is rejected, the release commit and tag are undone.
   On a branch that takes changes only through pull requests, it releases through one instead (see [Protecting the branch and the tags](#protecting-the-branch-and-the-tags)).
 - Releases are cut from `main` or `master`; a repo that ships from another long-lived branch lists it in `.release.json` `branches` (for example `["master", "release/1.x"]`).
@@ -93,7 +97,7 @@ Pushing the tag runs `.github/workflows/release.yml`:
 1. The tag must be a plain `vX.Y.Z` and match every version file.
 2. The repo's checks, `npm run release:check`, must pass.
 3. `npm run release:artifacts`, if defined, writes shippable files into `release-artifacts/`; they get SHA-256 checksums.
-4. The GitHub Release is created with the generated notes and the files, and the uploaded files are re-downloaded and checked.
+4. The GitHub Release is created with the generated notes and the files (`releases.json`, and `releases.xml` with the feed on, among them), and the uploaded files are re-downloaded and checked.
 
 If a Release run fails after the tag is pushed (a flaky check, an outage), fix the cause and retry; the workflow is safe to run again:
 
@@ -182,10 +186,12 @@ There protect sets up the free safeguards instead, and says what GitHub still le
 
 - `npm run release -- --baseline` tags the version this repo is already at, without a GitHub Release, so the first real release lists only new work.
 - `npm run release -- --baseline <commit> --publish` tags a past milestone with the version its `package.json` had, and publishes it.
+- `npx release-kit backfill` adds release tags from before the kit wrote `releases.json` to it, from their commits: a dry run that prints the plan, `--write` to write the file, `--edit-releases` to fill in GitHub Release notes that are empty or only GitHub's generated list.
+  Commits that aren't Conventional Commits are counted as `unattributed`, never guessed at, and baseline tags are skipped.
 
 ## When to release
 
 - Release when something worth telling a user about has landed: a feature, a fix they would notice, or a batch of either.
 - With the release train on, that happens on its schedule without anyone remembering to; release by hand when something shouldn't wait.
-- Before 1.0, minor versions carry features and patch versions carry fixes.
-- Version 1.0.0 means "ready for people who aren't me".
+- Before 1.0, minor versions carry features and breaking changes, and patch versions carry fixes.
+- Version 1.0.0 means "ready for people who aren't me": cut it with `npm run release -- --stable`.
