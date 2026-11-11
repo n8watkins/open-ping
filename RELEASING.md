@@ -154,7 +154,7 @@ It writes two GitHub rulesets:
 The required checks are, in order: `--checks "CI result,check / check"`, `"protect": { "checks": [...] }` in `.release.json`, the ones the ruleset already requires (a rerun keeps them), or else the GitHub Actions checks that passed on the latest merged pull request.
 That last way leaves out workflows that run on only some pull requests (a `paths` filter, like the security scan's, or auto-merge), and in a workflow with a `CI result` job (see CI lanes) only that job is required, since it stands for the others.
 
-When it requires checks, protect also allows auto-merge on the repo, so `.github/workflows/auto-merge.yml` can merge release-kit updates and Dependabot patch and minor updates once those checks pass; a major update waits for a person.
+When it requires checks, protect also allows auto-merge on the repo, so `.github/workflows/auto-merge.yml` can merge release-kit updates and Dependabot patch and minor updates once those checks pass; a major update waits for a person, and so does a minor update of a dependency below 1.0.0 (labeled `needs-review: 0.x minor`), since SemVer lets a 0.x minor break.
 The required checks should cover all of CI: GitHub's auto-merge waits for nothing else.
 
 Nobody bypasses the branch rules, admins included, so a coding agent signed in as an admin can't push to `main` either.
