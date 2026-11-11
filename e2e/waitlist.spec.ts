@@ -17,11 +17,11 @@ const stateDir = path.join(path.dirname(fileURLToPath(import.meta.url)), ".state
 let seq = 0;
 const unique = () => `visitor-${Date.now().toString(36)}${(seq += 1)}@example.com`;
 
-const ANSI = new RegExp("\\u001b\\[[0-9;]*m", "g");
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 
 /**
  * Waits for the email to `to`, and returns its text and the links in it. Wrangler's local email
- * binding prints where it saved each message's text, in a file named after the recipient.
+ * binding prints each message's recipient and where it saved its text.
  */
 async function emailTo(to: string) {
   let body = "";
@@ -29,7 +29,8 @@ async function emailTo(to: string) {
     .poll(
       () => {
         const log = readFileSync(E2E_SERVER_LOG, "utf8").replace(ANSI, "");
-        const file = [...log.matchAll(/^Text: (\S+)$/gm)].map((m) => m[1]!).findLast((f) => path.basename(f) === `${to}.txt`);
+        const block = [...log.matchAll(/^To: (\S+)\n(?:.*\n)*?Text: (\S+)$/gm)].findLast((m) => m[1] === to);
+        const file = block?.[2];
         return (body = file && existsSync(file) ? readFileSync(file, "utf8") : "");
       },
       { timeout: 15_000 },
@@ -46,7 +47,20 @@ function database(): DatabaseSync {
   return new DatabaseSync(path.join(dir, file));
 }
 
+/**
+ * Every request here comes from one address, and the form allows five sign-ups a minute per
+ * address, so each sign-up presents as its own visitor (Cloudflare sets this header in production).
+ */
+let visitors = 0;
+const visitor = () => ({ "cf-connecting-ip": `10.9.${Math.floor((visitors += 1) / 250)}.${visitors % 250}` });
+
+async function asNewVisitor(page: Page) {
+  const headers = visitor();
+  await page.route(`${base}/api/waitlist`, (route) => route.continue({ headers: { ...route.request().headers(), ...headers } }));
+}
+
 async function join(page: Page, email: string) {
+  await asNewVisitor(page);
   await page.goto("/");
   const form = page.locator("form", { has: page.getByLabel("Email address") }).first();
   await form.scrollIntoViewIfNeeded();
@@ -136,16 +150,17 @@ test("a sign-up the human check refuses is turned away and stores nothing", asyn
   const email = unique();
 
   // Straight to the API, with no token and with a made-up one.
-  const none = await request.post("/api/waitlist", { data: { email } });
+  const none = await request.post("/api/waitlist", { data: { email }, headers: visitor() });
   expect(none.status()).toBe(400);
   expect(await none.json()).toEqual({ error: "turnstile_failed" });
 
   // Through the form, with the token stripped on its way out.
-  await page.route("**/api/waitlist", async (route) => {
+  const headers = visitor();
+  await page.route(`${base}/api/waitlist`, async (route) => {
     if (route.request().method() !== "POST") return route.continue();
     const body = JSON.parse(route.request().postData() ?? "{}") as Record<string, unknown>;
     delete body.turnstile;
-    await route.continue({ postData: JSON.stringify(body) });
+    await route.continue({ postData: JSON.stringify(body), headers: { ...route.request().headers(), ...headers } });
   });
   await page.goto("/");
   const form = page.locator("form", { has: page.getByLabel("Email address") }).first();
@@ -165,6 +180,7 @@ test("the settings report counts confirmed people and shows unconfirmed ones apa
   const waiting = unique();
   const joined = await page.request.post("/api/waitlist", {
     data: { email: waiting, turnstile: "XXXX.DUMMY.TOKEN.XXXX" },
+    headers: visitor(),
   });
   expect(joined.status()).toBe(200);
   await emailTo(waiting);

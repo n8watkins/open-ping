@@ -29,11 +29,9 @@ export function renderConfirmEmail(origin: string, links: { confirm: string; lea
     preheader: "Confirm your address to join the OpenPing Hosted waitlist.",
     adaptive: true,
     bodyHtml:
-      paragraph("Someone, hopefully you, asked to join the waitlist for OpenPing Hosted. Confirm, and I will email you once, when Hosted opens, with early pricing. Nothing else: no newsletter.") +
-      `<p class="op-muted" style="margin:16px 0 0;font-family:${FONT};font-size:12px;line-height:1.6;color:#5f6f87;word-break:break-all;">Or open ${escapeHtml(confirm)}</p>` +
-      `<p class="op-muted" style="margin:16px 0 0;font-family:${FONT};font-size:13px;line-height:1.6;color:#5f6f87;">Not you? Ignore this email. Nothing changes unless you confirm, and an unconfirmed request is deleted after ${PENDING_DAYS} days.</p>`,
+      paragraph("Someone, hopefully you, asked to join the waitlist for OpenPing Hosted. Confirm, and I will email you once, when Hosted opens, with early pricing. Nothing else: no newsletter."),
     button: { label: "Confirm my spot", url: confirm },
-    footerHtml: `Changed your mind? <a href="${escapeHtml(leave)}" style="color:inherit;text-decoration:underline;">Leave the waitlist</a> at any time, in one click.`,
+    footerHtml: `Not you? Ignore this email. Nothing changes unless you confirm, and an unconfirmed request is deleted after ${PENDING_DAYS} days.<br><span style="word-break:break-all;">Button not working? Open ${escapeHtml(confirm)}</span><br>Changed your mind? <a href="${escapeHtml(leave)}" style="color:inherit;text-decoration:underline;">Leave the waitlist</a> at any time, in one click.`,
   });
   const text = renderEmailText({
     heading: "One click to join the waitlist",
