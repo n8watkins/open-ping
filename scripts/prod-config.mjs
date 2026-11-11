@@ -9,7 +9,8 @@ import { pathToFileURL } from "node:url";
 //
 // deploy.local.json:
 //   { "database_id": "<uuid from `wrangler d1 create`>",
-//     "vars": { "WAITLIST_ENABLED": "true", "HOME_PAGE": "landing" } }
+//     "vars": { "WAITLIST_ENABLED": "true", "HOME_PAGE": "landing" },
+//     "services": [ ... ], "send_email": [ ... ] }   (optional: replace those bindings)
 
 export const OVERRIDES_PATH = "deploy.local.json";
 export const OUTPUT_PATH = ".wrangler.prod.jsonc";
@@ -88,8 +89,17 @@ export function buildProdConfig(template, overrides) {
     // A public template must never carry one account's id; it goes in here.
     throw new Error(`wrangler.jsonc: remove the D1 database_id; put it in ${OVERRIDES_PATH}`);
   }
+  // A deployment may also swap bindings: the canonical install sends through the
+  // shared mailroom service binding instead of the template's EMAIL binding.
+  const bindings = {};
+  for (const key of ["services", "send_email"]) {
+    if (overrides[key] === undefined) continue;
+    if (!Array.isArray(overrides[key])) throw new Error(`${OVERRIDES_PATH}: "${key}" must be an array`);
+    bindings[key] = overrides[key];
+  }
   return {
     ...template,
+    ...bindings,
     vars: { ...template.vars, ...vars },
     d1_databases: dbs.map((db) => (db.binding === "DB" ? { ...db, database_id: id } : db)),
   };

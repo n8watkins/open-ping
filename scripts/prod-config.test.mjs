@@ -45,6 +45,15 @@ describe("buildProdConfig", () => {
     expect(config.main).toBe(template.main);
   });
 
+  it("lets a deployment swap the EMAIL binding for a service binding", () => {
+    const services = [{ binding: "MAILROOM", service: "mailroom", entrypoint: "Mailroom", props: { app: "openping" } }];
+    const config = buildProdConfig(template, { database_id: ID, services, send_email: [] });
+    expect(config.services).toEqual(services);
+    expect(config.send_email).toEqual([]);
+    expect(buildProdConfig(template, { database_id: ID }).send_email).toEqual(template.send_email);
+    expect(() => buildProdConfig(template, { database_id: ID, services: {} })).toThrow(/services/);
+  });
+
   it("keeps the template's vars when no overrides are given", () => {
     expect(buildProdConfig(template, { database_id: ID }).vars).toEqual(template.vars);
   });

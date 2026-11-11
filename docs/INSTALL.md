@@ -233,6 +233,9 @@ Or bring your own Resend key (its free tier works): set `RESEND_API_KEY` and the
 Optional: set your own `RESEND_API_KEY` to send through Resend instead of Cloudflare Email.
 Without `EMAIL_TRANSPORT`, Cloudflare is used whenever the `EMAIL` binding exists, and Resend only when the binding is removed.
 
+A `MAILROOM` service binding (a shared sending Worker, as the canonical install uses) wins over both: every email goes through its `send()` and its own caps apply as well as `EMAIL_DAILY_CAP`.
+You do not need it.
+
 ## 6. Deploy
 
 ```bash
