@@ -7,7 +7,7 @@ import { isAllowedEmail } from "../lib/admin";
 import { createSession } from "../lib/sessions";
 import { getSetting } from "../db/settings";
 import { appOrigin } from "../lib/app-origin";
-import { sendEmail } from "../notifications/mail";
+import { defaultFrom, sendEmail } from "../notifications/mail";
 import { hitRateLimit } from "../db/rate-limit";
 import { afterSignInPath } from "./app-signin";
 import {
@@ -34,7 +34,6 @@ type Ctx = Context<AppEnv>;
 
 const TOKEN_TTL_MS = 1000 * 60 * 15; // 15 minutes
 const COOLDOWN_MS = 1000 * 60; // 60s between sends to one address
-const DEFAULT_FROM = "OpenPing <onboarding@resend.dev>";
 const SUBJECT = "Your OpenPing sign-in link";
 const MAGIC_PER_IP_LIMIT = 10;
 const MAGIC_GLOBAL_LIMIT = 200;
@@ -161,7 +160,7 @@ magicApi.post("/request", async (c) => {
 
       const base = await baseUrl(c);
       const link = `${base}/auth/magic/verify?token=${raw}`;
-      const from = (await getSetting(c.env, "email_from")) || DEFAULT_FROM;
+      const from = (await getSetting(c.env, "email_from")) || defaultFrom(c.env);
       const { html, text } = magicEmailBody(link);
       // Ignore the result: a not-configured / failed send must not leak either.
       await sendEmail(c.env, { from, to: email, subject: SUBJECT, html, text, category: "signin" });

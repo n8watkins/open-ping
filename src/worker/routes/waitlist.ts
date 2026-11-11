@@ -5,7 +5,7 @@ import { requireAuth } from "../middleware/auth";
 import { hitRateLimit } from "../db/rate-limit";
 import { getSetting } from "../db/settings";
 import { newId } from "../lib/ids";
-import { emailConfigured, sendEmail } from "../notifications/mail";
+import { defaultFrom, emailConfigured, sendEmail } from "../notifications/mail";
 
 /**
  * The OpenPing Hosted waitlist, mounted at /api/waitlist (docs/HOSTED_PLAN.md,
@@ -30,7 +30,6 @@ export const WAITLIST_GLOBAL_LIMIT = 60;
 /** Latest entries returned to the admin view; the CSV has them all. */
 const ADMIN_LIST_LIMIT = 50;
 
-const DEFAULT_FROM = "OpenPing <onboarding@resend.dev>";
 
 /**
  * The sign-up body. `website` is the honeypot: hidden from people, so only a
@@ -92,7 +91,7 @@ waitlist.post("/", async (c) => {
   // response so a slow mail provider can't delay it, and its result is ignored.
   if (inserted && emailConfigured(c.env)) {
     const send = async () => {
-      const from = (await getSetting(c.env, "email_from")) || DEFAULT_FROM;
+      const from = (await getSetting(c.env, "email_from")) || defaultFrom(c.env);
       await sendEmail(c.env, {
         from,
         category: "waitlist",

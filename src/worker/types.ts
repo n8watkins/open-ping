@@ -31,6 +31,15 @@ export interface Env {
 
   RESEND_API_KEY?: string;
 
+  /** Cloudflare Email Service: the `send_email` binding (wrangler.jsonc). */
+  EMAIL?: import("./notifications/mail").EmailBinding;
+  /** "cloudflare" or "resend"; unset picks Cloudflare when the EMAIL binding exists, else Resend when RESEND_API_KEY is set. */
+  EMAIL_TRANSPORT?: string;
+  /** The From address used when the `email_from` setting is empty. */
+  DEFAULT_EMAIL_FROM?: string;
+  /** Emails this install may send per UTC day (default 150). */
+  EMAIL_DAILY_CAP?: string;
+
   /** Allowlisted administrator identities (bootstrap). */
   ADMIN_GITHUB_LOGIN?: string;
   ADMIN_EMAIL?: string;

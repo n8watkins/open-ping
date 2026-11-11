@@ -45,7 +45,7 @@ When the build finishes:
 2. Sign in with the passkey and add your monitors ([step 8](#8-first-run-complete-setup-then-add-monitors)).
 3. Optional: to also sign in with GitHub, create a GitHub OAuth app as in [step 3](#3-optional-create-a-github-oauth-app), with your new address.
    Add its Client ID and Client Secret to the Worker: in the Cloudflare dashboard, open **Workers & Pages**, your Worker, **Settings**, **Variables and Secrets**, then **Add**, choose type **Secret**, and save `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
-   Any optional secret from [step 5](#5-set-your-worker-secrets), such as `RESEND_API_KEY` for email, is added the same way.
+   Any optional secret from [step 5](#5-set-your-worker-secrets), such as `ADMIN_EMAIL`, is added the same way.
 
 Good to know:
 
@@ -137,7 +137,7 @@ Before setup can finish you need **at least one** way in: a passkey created in t
 - **`ADMIN_GITHUB_LOGIN`** - your GitHub **login (username)**, e.g. `octocat`
   (not your display name or email). Pairs with the GitHub OAuth app above.
 - **`ADMIN_EMAIL`** - your email address. Enables **email magic-link** sign-in
-  as an alternative or backup. This path also requires `RESEND_API_KEY` (step 5)
+  as an alternative or backup. This path also needs email set up (see "Email" below)
   so OpenPing can actually send the link.
 
 A common, robust setup is a passkey for everyday sign-in plus GitHub or an email magic link as a fallback.
@@ -186,7 +186,7 @@ You'll be prompted to paste the value. Here's every secret OpenPing recognizes:
 | `ADMIN_EMAIL` | Optional | Your email for magic-link sign-in, which can instead be saved in the setup wizard. Needed only for email sign-in. |
 | `GITHUB_CLIENT_ID` | For GitHub sign-in | Client ID from the OAuth app (step 3). |
 | `GITHUB_CLIENT_SECRET` | For GitHub sign-in | Client secret from the OAuth app (step 3). |
-| `RESEND_API_KEY` | For email / magic links | API key from [Resend](https://resend.com). Required for email notifications and email magic-link sign-in. |
+| `RESEND_API_KEY` | Optional | Optional: set your own `RESEND_API_KEY` to send through [Resend](https://resend.com) instead of Cloudflare Email. Without it, email goes through Cloudflare Email Service (see "Email" below). |
 | `API_TOKEN` | Optional | Admin token for the CLI / automation. When set, `Authorization: Bearer <API_TOKEN>` is treated as full admin. Generate with `openssl rand -base64 32`. See [`CLI.md`](./CLI.md). |
 | `VAPID_PUBLIC_KEY` | Optional | Web Push public key. You can instead generate VAPID keys in-app under **Integrations**. |
 | `VAPID_PRIVATE_KEY` | Optional | Web Push private key. |
@@ -194,7 +194,7 @@ You'll be prompted to paste the value. Here's every secret OpenPing recognizes:
 
 **The minimum Worker secrets for first-run setup:** a valid `MASTER_KEY` and a high-entropy `SETUP_TOKEN`.
 The wizard can save `APP_URL` in D1 and creates your passkey.
-GitHub sign-in additionally requires `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, while email sign-in requires `RESEND_API_KEY`.
+GitHub sign-in additionally requires `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, while email sign-in requires email set up (see "Email" below).
 
 For example:
 
@@ -208,6 +208,7 @@ npx wrangler secret put GITHUB_CLIENT_ID
 npx wrangler secret put GITHUB_CLIENT_SECRET
 # optional, for email sign-in and email alerts:
 npx wrangler secret put ADMIN_EMAIL
+# optional, to send through your own Resend account instead of Cloudflare Email:
 npx wrangler secret put RESEND_API_KEY
 ```
 
@@ -217,6 +218,20 @@ npx wrangler secret put RESEND_API_KEY
 > The separate `wrangler versions secret put` workflow creates an undeployed version and does require an explicit versions deployment.
 
 ---
+
+### Email
+
+Use Cloudflare Email Service (recommended if you're on Workers Paid; it's built in, with no key) or bring your own Resend key (its free tier works: set `RESEND_API_KEY`).
+OpenPing sends alerts, reports and sign-in links through [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) by default.
+It needs the Workers Paid plan and a domain onboarded for sending: run `npx wrangler email sending enable your-domain.com`, or onboard it in the dashboard.
+The `send_email` binding named `EMAIL` is already in `wrangler.jsonc`, so there is no API key.
+Set the sender under **Settings** (`email_from`, for example `OpenPing <alerts@your-domain.com>`), or set the `DEFAULT_EMAIL_FROM` variable.
+The address must be on the onboarded domain.
+`EMAIL_DAILY_CAP` (default 150) limits sends per UTC day; extra ones wait for the next day.
+
+Or bring your own Resend key (its free tier works): set `RESEND_API_KEY` and the `EMAIL_TRANSPORT` variable to `resend`.
+Optional: set your own `RESEND_API_KEY` to send through Resend instead of Cloudflare Email.
+Without `EMAIL_TRANSPORT`, Cloudflare is used whenever the `EMAIL` binding exists, and Resend only when the binding is removed.
 
 ## 6. Deploy
 
@@ -389,12 +404,11 @@ hits:
 - **"Not authorized" after a successful GitHub login.** The administrator GitHub login saved in the wizard or overridden by `ADMIN_GITHUB_LOGIN` must match your GitHub **login/username** exactly, not your display name or email.
 - **Setup reports that `MASTER_KEY` is required, or the dashboard warns that encryption is disabled.**
   Configure a valid base64-encoded 32-byte `MASTER_KEY` secret (step 4).
-- **Magic-link / notification emails don't arrive.** Make sure `RESEND_API_KEY`
-  is set and your Resend **sending domain/sender is verified**. For quick
-  testing without verifying a domain, Resend lets you send from
-  `onboarding@resend.dev` **to your own account email** - useful to confirm the
-  pipeline before you set up a real sender.
-- **Changed a secret but nothing changed.** Confirm you used `wrangler secret put`, which updates the deployed Worker directly, and not `wrangler versions secret put`, which creates an undeployed version.
+- **Magic-link / notification emails don't arrive.** Check that your sending domain
+  is onboarded for Cloudflare Email Service and that the sender (`email_from` or
+  `DEFAULT_EMAIL_FROM`) is on it. If you chose Resend with your own `RESEND_API_KEY`,
+  make sure its sending domain is verified; Resend only lets `onboarding@resend.dev`
+  send to your own account email.
 - **Setup reports `app_url_required`.** Enter the public origin in the wizard or set `APP_URL`; it must be an HTTPS origin with no path, query, fragment, or embedded credentials.
 
 ---

@@ -62,6 +62,15 @@
       "SENTRY_DSN": {
         "description": "Leave empty. To get error reports from the Worker and the browser, set a Sentry DSN of your own; nothing is sent without one."
       },
+      "EMAIL_TRANSPORT": {
+        "description": "Leave empty to send email through Cloudflare Email Service when the EMAIL binding exists. Set it to resend to send through your own Resend account (RESEND_API_KEY) instead."
+      },
+      "DEFAULT_EMAIL_FROM": {
+        "description": "Optional. The From address for email when the email_from setting is empty, for example OpenPing <alerts@your-domain.com>. It must be on a domain onboarded for sending."
+      },
+      "EMAIL_DAILY_CAP": {
+        "description": "Emails this install may send per UTC day (default 150). Extra ones wait for the next day."
+      },
       "DB": {
         "description": "OpenPing's database: monitors, check results, incidents and settings. The deploy creates its tables."
       }

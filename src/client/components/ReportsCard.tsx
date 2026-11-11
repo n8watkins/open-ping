@@ -212,7 +212,7 @@ export function ReportsCard({
             <span className="block text-xs text-ink-faint">
               Sent on the 1st, from 09:00 in the install&apos;s timezone, to{" "}
               {hosted ? "your account email" : "the admin email"}. A report that can&apos;t go out
-              then is retried hourly.{hosted ? "" : " Needs RESEND_API_KEY."}
+              then is retried hourly.{hosted ? "" : " Needs email set up."}
             </span>
           </span>
           {saving && <Loader2 className="size-4 animate-spin text-ink-faint" />}
