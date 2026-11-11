@@ -53,7 +53,7 @@ export class TenantPlatform
   implements PlatformCapability
 {
   private capability(): TenantCapability {
-    // The platform's own Resend key, in the platform only: the tenant gets a
+    // The platform's MAILROOM binding, in the platform only: the tenant gets a
     // stub that can ask for one email at a time, capped per day.
     const mail = tenantMailFromEnv(this.env, mailerFromEnv(this.env));
     return new TenantCapability(this.env.PLATFORM_DB, this.ctx.props.tenantId, this.ctx.props.accountId, Date.now, mail);

@@ -313,7 +313,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     const started = await createEmailSignIn(c.env.PLATFORM_DB, { email, nextPath: next, now: c.get("now") });
     const link = `${origin(c)}/sign-in/link?token=${encodeURIComponent(started.token)}`;
     const message = signInEmail({ code: started.code, link, newAccount: !existing });
-    const sent = await mailer.send({ to: email, ...message, category: "signin", replyTo: PLATFORM_REPLY_TO });
+    const sent = await mailer.send({ to: email, ...message, category: "signin", stream: "signin", replyTo: PLATFORM_REPLY_TO });
     if (!sent.ok) {
       log.error("signin.email_not_sent", { error: sent.error });
       return page("We couldn't send the email just now. Please try again in a minute.", 502);
@@ -723,7 +723,7 @@ export function accountRoutes(deps: AccountDeps): Hono<Env> {
     c.executionCtx.waitUntil(
       (async () => {
         if (await findAccountByEmail(db, email)) return;
-        const sent = await mailer.send({ to: email, ...emailChangeCodeEmail({ code: started.code, link }), category: "email_change", replyTo: PLATFORM_REPLY_TO });
+        const sent = await mailer.send({ to: email, ...emailChangeCodeEmail({ code: started.code, link }), category: "email_change", stream: "signin", replyTo: PLATFORM_REPLY_TO });
         if (!sent.ok) log.error("account.email_change_not_sent", { error: sent.error });
       })().catch((error: unknown) => log.error("account.email_change_not_sent", { error })),
     );

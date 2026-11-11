@@ -157,7 +157,7 @@ async function runJobs(deps: LifecycleDeps): Promise<LifecycleReport> {
       category: kind,
       tenantId: t.tenantId,
       replyTo: PLATFORM_REPLY_TO,
-      // A retaken claim whose first send did go out is one email at Resend.
+      // A retaken claim whose first send did go out is still one email (mailroom's key).
       idempotencyKey: `lifecycle-${t.tenantId}-${kind}-${cycle}`,
     });
     if (!result.ok) {
