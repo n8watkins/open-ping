@@ -40,6 +40,7 @@ export default function Developers() {
       title="Developers"
       description="Reach OpenPing from code: the API, AI clients over MCP, the CLI, webhooks and embeds."
       label="Developers sections"
+      phoneMenu
       items={ITEMS}
     >
       <Outlet context={{ fresh, setFresh, origin } satisfies DevelopersContext} />
