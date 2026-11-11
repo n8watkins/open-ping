@@ -1,4 +1,4 @@
--- 0030: Each HTTP monitor's site icon (favicon), fetched by the Worker.
+-- 0031: Each HTTP monitor's site icon (favicon), fetched by the Worker.
 -- lib/favicon.ts reads it from the monitored site (the page's <link rel=icon>,
 -- else /favicon.ico) when the monitor is first listed, when its address changes
 -- and at most once a week after, and keeps the small image here (at most 16 KB,
