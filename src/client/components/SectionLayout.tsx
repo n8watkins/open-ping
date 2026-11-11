@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useRef, type ReactNode } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "../lib/cn";
 import { PageTitle } from "./ui/PageTitle";
@@ -22,8 +22,11 @@ export function SectionLayout({
   description,
   items,
   label,
+  phoneMenu = false,
   children,
 }: {
+  /** On phones, show a dropdown of every sub-page instead of the scrolling tab row. */
+  phoneMenu?: boolean;
   title: string;
   description: ReactNode;
   items: SectionNavItem[];
@@ -33,6 +36,8 @@ export function SectionLayout({
   children?: ReactNode;
 }) {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const current = items.find((i) => pathname === i.to || pathname.startsWith(`${i.to}/`));
   const tabsRef = useRef<HTMLElement>(null);
   // Keep the phone tab for the current sub-page in view (it may start off-screen).
   useEffect(() => {
@@ -47,7 +52,30 @@ export function SectionLayout({
       <PageTitle description={description}>{title}</PageTitle>
 
       {/* Phones and tablets: one row of tabs that scrolls sideways on its own. */}
-      <nav ref={tabsRef} aria-label={label} className="-mx-4 mt-5 overflow-x-auto px-4 [scrollbar-width:none] lg:hidden">
+      {phoneMenu && (
+        <nav aria-label={label} className="mt-5 lg:hidden">
+          <label htmlFor="section-menu" className="sr-only">
+            {label}
+          </label>
+          <select
+            id="section-menu"
+            value={current?.to ?? ""}
+            onChange={(e) => navigate(e.target.value)}
+            className="input font-medium"
+          >
+            {items.map((item) => (
+              <option key={item.to} value={item.to}>
+                {item.label} - {item.hint}
+              </option>
+            ))}
+          </select>
+        </nav>
+      )}
+      <nav
+        ref={tabsRef}
+        aria-label={label}
+        className={cn("-mx-4 mt-5 overflow-x-auto px-4 [scrollbar-width:none] lg:hidden", phoneMenu && "hidden")}
+      >
         <ul className="flex w-max gap-1.5 pb-1">
           {items.map((item) => {
             const Icon = item.icon;

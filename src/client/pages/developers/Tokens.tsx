@@ -193,27 +193,31 @@ export default function TokensPage() {
           </div>
 
           <fieldset>
-            <legend className="mb-1.5 text-xs font-medium text-ink-muted">Access</legend>
-            <div className="flex flex-wrap gap-2" role="group" aria-label="Presets">
+            <legend className="mb-2 text-sm font-semibold text-ink">Access</legend>
+            <label htmlFor="token-preset" className="mb-1.5 block text-xs font-medium text-ink-muted">
+              Preset
+            </label>
+            <select
+              id="token-preset"
+              value={preset ?? "custom"}
+              onChange={(e) => {
+                const p = SCOPE_PRESETS.find((x) => x.id === e.target.value);
+                if (p) setScopes(new Set(p.scopes));
+              }}
+              className="input sm:max-w-sm"
+            >
               {SCOPE_PRESETS.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  title={p.hint}
-                  aria-pressed={preset === p.id}
-                  onClick={() => setScopes(new Set(p.scopes))}
-                  className={cn(
-                    "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                    preset === p.id
-                      ? "border-accent/50 bg-accent-soft text-ink"
-                      : "border-line text-ink-muted hover:border-accent/40 hover:text-ink",
-                  )}
-                >
+                <option key={p.id} value={p.id}>
                   {p.label}
-                </button>
+                </option>
               ))}
-            </div>
-            <ul className="mt-3 space-y-2">
+              {preset === null && <option value="custom">Custom</option>}
+            </select>
+            <p className="mt-1.5 text-xs text-ink-faint">
+              {SCOPE_PRESETS.find((p) => p.id === preset)?.hint ?? "Your own mix of scopes"}. Adjust the scopes below and
+              the preset follows.
+            </p>
+            <ul className="mt-4 space-y-2" aria-label="Scopes">
               {SCOPES.map((s) => {
                 const implied = isAdmin && s !== "admin";
                 return (
