@@ -197,7 +197,7 @@ function ResourceRow({
   onToggle: (r: Resource, a: Action, on: boolean) => void;
 }) {
   return (
-    <li className="flex flex-col gap-2.5 py-3 pr-3 pl-3.5 sm:flex-row sm:pr-3.5 sm:pl-10 sm:items-center sm:gap-4">
+    <li className="flex flex-col gap-2.5 py-3 pr-3.5 pl-[2.375rem] sm:flex-row sm:pl-10 sm:items-center sm:gap-4">
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-ink">{r.label}</p>
         <p className="text-xs text-ink-muted">{r.description}</p>
@@ -205,7 +205,7 @@ function ResourceRow({
       <div
         role="group"
         aria-label={`${r.label} actions`}
-        className="flex shrink-0 flex-wrap gap-1 sm:grid sm:grid-cols-4"
+        className="flex shrink-0 flex-wrap gap-1 sm:grid sm:grid-cols-2"
       >
         {ACTIONS.map((a) => {
           if (!r.actions.includes(a)) return <span key={a} aria-hidden className="hidden w-[4.75rem] sm:block" />;
@@ -217,7 +217,7 @@ function ResourceRow({
               key={a}
               title={locked ? `Included with ${ACTION_LABEL[locked]}` : r.grants[a]}
               className={cn(
-                "flex cursor-pointer items-center gap-1.5 rounded-md border px-1.5 py-1.5 sm:min-w-[4.75rem] sm:px-2 text-xs font-medium transition-colors select-none",
+                "flex cursor-pointer items-center gap-1.5 min-w-[4.75rem] rounded-md border px-2 py-1.5 text-xs font-medium transition-colors select-none",
                 checked
                   ? "border-accent/50 bg-accent-soft/50 text-ink"
                   : "border-line bg-surface text-ink-muted hover:border-ink-faint/60",

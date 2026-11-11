@@ -49,8 +49,8 @@ describe("route scope table", () => {
     expect(routeAccess("GET", "/api/api-tokens/self")).toBe("token");
     expect(routeAccess("GET", "/api/incidents/export.csv")).toBe("incidents:read");
     expect(routeAccess("POST", "/api/monitors/mon_1/pause")).toBe("monitors:edit");
-    expect(routeAccess("POST", "/api/monitors/mon_1/test")).toBe("monitors:test");
-    expect(routeAccess("DELETE", "/api/monitors/mon_1")).toBe("monitors:delete");
+    expect(routeAccess("POST", "/api/monitors/mon_1/test")).toBe("monitors:edit");
+    expect(routeAccess("DELETE", "/api/monitors/mon_1")).toBe("monitors:edit");
     expect(routeAccess("DELETE", "/api/api-tokens/tok_1")).toBe("session");
   });
 
@@ -61,8 +61,11 @@ describe("route scope table", () => {
       expect(PERMISSIONS as readonly string[], key).toContain(access);
       used.add(access);
     }
-    // maintenance:delete is checked by the delete handler (routes/maintenance.ts) on top of maintenance:edit.
-    expect(PERMISSIONS.filter((p) => !used.has(p))).toEqual(["maintenance:delete"]);
+    expect(PERMISSIONS.filter((p) => !used.has(p))).toEqual([]);
+  });
+
+  it("offers only Read and Edit, or Read only, on every resource", () => {
+    for (const p of PERMISSIONS) expect(p).toMatch(/:(read|edit)$/);
   });
 
   it("knows nothing about an unmapped route (requireScope then demands admin)", () => {
@@ -90,20 +93,20 @@ describe("scopes", () => {
   it("parse, normalize and imply", () => {
     expect(parseScopes("monitors:edit bogus")).toEqual(["monitors:read", "monitors:edit"]);
     expect(parseScopes(null)).toEqual([]);
-    expect(normalizeScopes(["incidents:read", "monitors:test", "monitors:test"])).toEqual([
+    expect(normalizeScopes(["incidents:read", "monitors:edit", "monitors:edit"])).toEqual([
       "monitors:read",
-      "monitors:test",
+      "monitors:edit",
       "incidents:read",
     ]);
     expect(normalizeScopes(["monitors:read", "admin"])).toEqual(["admin"]);
-    // Heartbeat URLs have no read to imply.
-    expect(normalizeScopes(["heartbeats:edit"])).toEqual(["heartbeats:edit"]);
-    expect(hasScope(["admin"], "maintenance:delete")).toBe(true);
+    // Removed ids from the draft (and anything else unknown) are dropped.
+    expect(normalizeScopes(["monitors:delete"])).toEqual([]);
+    expect(hasScope(["admin"], "maintenance:edit")).toBe(true);
     expect(hasScope(["monitors:read"], "monitors:edit")).toBe(false);
   });
 
   it("expand the older scope words to the same access", () => {
-    expect(parseScopes("monitors:write")).toEqual(["monitors:read", "monitors:edit", "monitors:test"]);
+    expect(parseScopes("monitors:write")).toEqual(["monitors:read", "monitors:edit"]);
     expect(parseScopes("incidents:write")).toEqual(["incidents:read", "incidents:edit"]);
     expect(parseScopes("maintenance:write")).toEqual(["maintenance:read", "maintenance:edit"]);
     expect(parseScopes("read")).toEqual([...LEGACY_SCOPES.read].sort((a, b) => SCOPES.indexOf(a) - SCOPES.indexOf(b)));
@@ -116,7 +119,7 @@ describe("scopes", () => {
 
   it("make an unknown MCP tool admin only", () => {
     expect(toolScope("list_monitors")).toBe("monitors:read");
-    expect(toolScope("delete_monitor")).toBe("monitors:delete");
+    expect(toolScope("delete_monitor")).toBe("monitors:edit");
     expect(toolScope("something_new")).toBe("admin");
     expect(toolScope("constructor")).toBe("admin");
   });

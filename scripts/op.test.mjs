@@ -298,18 +298,18 @@ describe("run", () => {
         403,
         {
           error: "insufficient_scope",
-          required: "monitors:delete",
-          scopes: ["monitors:read", "monitors:edit", "incidents:read"],
+          required: "monitors:edit",
+          scopes: ["monitors:read", "incidents:read"],
           message: "...",
         },
       ],
     });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain(
-      "DELETE /api/monitors/mon_1 failed: HTTP 403 insufficient_scope - this token lacks the monitors:delete permission.",
+      "DELETE /api/monitors/mon_1 failed: HTTP 403 insufficient_scope - this token lacks the monitors:edit permission.",
     );
     expect(r.stderr).toContain(
-      "It has: monitors: read, edit; incidents: read. Create a token with monitors:delete under Developers > API tokens",
+      "It has: monitors: read; incidents: read. Create a token with monitors:edit under Developers > API tokens",
     );
     expect(r.stderr).toContain("op token whoami");
   });

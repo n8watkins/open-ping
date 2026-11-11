@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
-import { callerHasScope, insufficientScope, requireAuth } from "../middleware/auth";
+import { requireAuth } from "../middleware/auth";
 import {
   createMaintenanceWindow,
   deleteMaintenanceWindow,
@@ -149,11 +149,6 @@ maintenance.delete("/:id", async (c) => {
   const id = c.req.param("id");
   const existing = await getMaintenanceWindow(c.env, id);
   if (!existing) return c.json({ error: "not_found" }, 404);
-  // maintenance:edit may cancel a window that has not started; deleting one
-  // that has (and so its record) needs maintenance:delete.
-  if (existing.startsAt <= Date.now() && !callerHasScope(c, "maintenance:delete")) {
-    return insufficientScope(c, "maintenance:delete", "only windows that have not started can be deleted with maintenance:edit");
-  }
   await deleteMaintenanceWindow(c.env, id);
   return c.json({ ok: true });
 });

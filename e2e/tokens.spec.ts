@@ -22,16 +22,16 @@ test("starts with nothing ticked; Edit ticks Read; the token gets exactly what i
   await expect(page.getByText("Nothing yet. Tick at least one permission above.")).toBeVisible();
 
   const monitoring = page.getByRole("button", { name: "Monitoring", exact: true });
-  await expect(monitoring).toHaveAccessibleDescription("0 of 8 granted");
+  await expect(monitoring).toHaveAccessibleDescription("0 of 5 granted");
   await expect(monitoring).toHaveAttribute("aria-expanded", "false");
   await monitoring.click();
   await page.getByRole("checkbox", { name: "Monitors: Edit" }).check();
   // Edit includes Read, shown ticked and locked.
   await expect(page.getByRole("checkbox", { name: "Monitors: Read (included with Edit)" })).toBeChecked();
   await expect(page.getByRole("checkbox", { name: "Monitors: Read (included with Edit)" })).toBeDisabled();
-  await expect(monitoring).toHaveAccessibleDescription("2 of 8 granted");
+  await expect(monitoring).toHaveAccessibleDescription("2 of 5 granted");
   const summary = page.getByRole("region", { name: "What this token can do" });
-  await expect(summary).toContainText("Add, change, pause and resume monitors");
+  await expect(summary).toContainText("Add, change, pause, resume, test and delete monitors");
   await expect(summary).toContainText("See monitors, their settings and their current status");
   await expect(summary).toContainText("Everything else is refused.");
 
@@ -69,19 +69,19 @@ test("Bulk select ticks visible boxes; search narrows the list; a long access li
   await page.getByRole("button", { name: "Bulk select" }).click();
   await page.getByRole("menuitem", { name: /Monitoring sync/ }).click();
   await expect(page.getByRole("menu")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Monitoring", exact: true })).toHaveAccessibleDescription("5 of 8 granted");
-  await expect(page.getByRole("region", { name: "What this token can do" })).toContainText("Run a monitor's check on demand");
+  await expect(page.getByRole("button", { name: "Monitoring", exact: true })).toHaveAccessibleDescription("4 of 5 granted");
+  await expect(page.getByRole("region", { name: "What this token can do" })).toContainText("Add, change, pause, resume, test and delete monitors");
 
   await page.getByRole("searchbox", { name: "Search permissions" }).fill("alert");
   await expect(page.getByRole("checkbox", { name: "Alert channels: Read" })).toBeChecked();
-  await expect(page.getByRole("checkbox", { name: "Alert channels: Test" })).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Alert channels: Edit" })).not.toBeChecked();
   await expect(page.getByRole("checkbox", { name: /^Monitors:/ })).toHaveCount(0);
   await page.getByRole("searchbox", { name: "Search permissions" }).fill("");
 
   await page.getByLabel("Name").fill(name);
   await page.getByRole("button", { name: "Create token" }).click();
   const row = page.getByRole("listitem").filter({ hasText: name });
-  await expect(row).toContainText("Monitors: edit, test");
+  await expect(row).toContainText("Monitors: edit");
   await row.getByRole("button", { name: /more permissions/ }).click();
   await expect(row).toContainText("Diagnostics: read");
   await expect(row.getByRole("button", { name: "Show less" })).toBeVisible();

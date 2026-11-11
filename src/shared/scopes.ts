@@ -12,14 +12,10 @@
  * when a token is read, so they can do exactly what they could before.
  */
 
-export const ACTIONS = ["read", "edit", "test", "delete"] as const;
+/** Every resource offers Read and Edit, or Read only. Edit covers changing, testing and deleting. */
+export const ACTIONS = ["read", "edit"] as const;
 export type Action = (typeof ACTIONS)[number];
-export const ACTION_LABEL: Record<Action, string> = {
-  read: "Read",
-  edit: "Edit",
-  test: "Test",
-  delete: "Delete",
-};
+export const ACTION_LABEL: Record<Action, string> = { read: "Read", edit: "Edit" };
 
 interface ResourceDef {
   id: string;
@@ -46,9 +42,7 @@ export const PERMISSION_CATEGORIES = [
         description: "The sites, APIs, ports and heartbeats OpenPing checks.",
         actions: {
           read: "See monitors, their settings and their current status",
-          edit: "Add, change, pause and resume monitors",
-          test: "Run a monitor's check on demand",
-          delete: "Delete monitors and their history",
+          edit: "Add, change, pause, resume, test and delete monitors, and replace a heartbeat's secret URL",
         },
       },
       {
@@ -56,14 +50,6 @@ export const PERMISSION_CATEGORIES = [
         label: "Uptime and checks",
         description: "The overview, uptime percentages and the result of every check.",
         actions: { read: "See the overview, uptime and check history" },
-      },
-      {
-        id: "heartbeats",
-        label: "Heartbeat URLs",
-        description: "The secret URL a cron job or script pings to say it ran.",
-        actions: {
-          edit: "Replace a heartbeat's secret URL, so the old one stops working",
-        },
       },
       {
         id: "categories",
@@ -95,8 +81,7 @@ export const PERMISSION_CATEGORIES = [
         description: "Planned downtime that pauses alerts.",
         actions: {
           read: "See maintenance windows",
-          edit: "Schedule, change and end windows, and cancel ones that have not started",
-          delete: "Delete windows that have already started, removing them from history",
+          edit: "Schedule, change, end and delete maintenance windows",
         },
       },
     ],
@@ -126,8 +111,7 @@ export const PERMISSION_CATEGORIES = [
         description: "Email, Slack, Discord, webhooks and the other places alerts go.",
         actions: {
           read: "See alert channels (never their secrets)",
-          edit: "Add, change and delete alert channels",
-          test: "Send a test alert through a channel",
+          edit: "Add, change, test and delete alert channels",
         },
       },
       {
@@ -136,8 +120,7 @@ export const PERMISSION_CATEGORIES = [
         description: "Phones that get push alerts, and the keys that sign them.",
         actions: {
           read: "See registered phones and how push is set up",
-          edit: "Register, turn on or off and remove phones, and set up push keys",
-          test: "Send a test push to a phone",
+          edit: "Register, turn on or off, test and remove phones, and set up push keys",
         },
       },
     ],
@@ -255,36 +238,18 @@ export function permission(resource: ResourceId, action: Action): Permission | n
   return (PERMISSIONS as readonly string[]).includes(p) ? (p as Permission) : null;
 }
 
-/**
- * Implications beyond "any action implies read": deleting a maintenance window
- * that has started goes through the same route as cancelling an upcoming one,
- * which needs edit.
- */
-const EXTRA_IMPLIES: Partial<Record<Permission, readonly Permission[]>> = {
-  "maintenance:delete": ["maintenance:edit"],
-};
-
-/** What `p` implies on its own resource: its read (when there is one) and any EXTRA_IMPLIES, transitively. */
+/** What `p` implies: Edit includes Read of the same resource. */
 export function implies(p: Permission): Permission[] {
-  const out = new Set<Permission>();
-  const visit = (q: Permission) => {
-    const [resource, action] = q.split(":") as [ResourceId, Action];
-    const read = action === "read" ? null : permission(resource, "read");
-    for (const r of [...(read ? [read] : []), ...(EXTRA_IMPLIES[q] ?? [])]) {
-      if (!out.has(r)) {
-        out.add(r);
-        visit(r);
-      }
-    }
-  };
-  visit(p);
-  return [...out];
+  const [resource, action] = p.split(":") as [ResourceId, Action];
+  const read = action === "read" ? null : permission(resource, "read");
+  return read ? [read] : [];
 }
 
 /**
  * The scopes tokens stored before resource:action pairs existed (#121), and
- * the pairs each stands for: exactly what it allowed then, plus read of the
- * same resource for a write scope. None of these words is a new permission id
+ * the pairs each stands for: what it allowed then, plus read of the same
+ * resource for a write scope (monitors:write also gains delete and heartbeat
+ * URL rotation, which monitors:edit now covers). None of these words is a new permission id
  * (admin aside, which means the same in both), so an older OpenPing after a
  * rollback reads a new token's pairs as unknown and refuses it.
  */
@@ -300,7 +265,7 @@ export const LEGACY_SCOPES: Record<"read" | "monitors:write" | "incidents:write"
     "reports:read",
     "diagnostics:read",
   ],
-  "monitors:write": ["monitors:read", "monitors:edit", "monitors:test"],
+  "monitors:write": ["monitors:read", "monitors:edit"],
   "incidents:write": ["incidents:read", "incidents:edit"],
   "maintenance:write": ["maintenance:read", "maintenance:edit"],
 };
@@ -323,7 +288,7 @@ export function normalizeScopes(input: string | readonly string[] | null | undef
   return SCOPES.filter((s) => out.has(s));
 }
 
-/** One resource's granted actions, for summaries ("Monitors: edit, test"). */
+/** One resource's granted actions, for summaries ("Monitors: edit"). */
 export interface GrantedResource {
   resource: Resource;
   actions: Action[];
@@ -338,7 +303,7 @@ export function grantedResources(scopes: readonly Scope[]): GrantedResource[] {
   })).filter((g) => g.actions.length > 0);
 }
 
-/** "edit, test" for a resource: the strongest actions, leaving out the read that edit implies. */
+/** "edit" or "read" for a resource: the strongest action, leaving out the read that edit implies. */
 export function shortActions(actions: readonly Action[]): string {
   const beyondRead = actions.filter((a) => a !== "read");
   return (beyondRead.length ? beyondRead : actions).map((a) => ACTION_LABEL[a].toLowerCase()).join(", ");

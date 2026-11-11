@@ -57,9 +57,9 @@ export const ROUTE_SCOPES: Record<string, RouteAccess> = {
   "PATCH /api/monitors/:id": "monitors:edit",
   "POST /api/monitors/:id/pause": "monitors:edit",
   "POST /api/monitors/:id/resume": "monitors:edit",
-  "POST /api/monitors/:id/test": "monitors:test",
-  "DELETE /api/monitors/:id": "monitors:delete",
-  "POST /api/monitors/:id/rotate-heartbeat-token": "heartbeats:edit",
+  "POST /api/monitors/:id/test": "monitors:edit",
+  "DELETE /api/monitors/:id": "monitors:edit",
+  "POST /api/monitors/:id/rotate-heartbeat-token": "monitors:edit",
 
   // Categories
   "GET /api/categories": "categories:read",
@@ -78,8 +78,7 @@ export const ROUTE_SCOPES: Record<string, RouteAccess> = {
   "PATCH /api/incidents/:id/updates/:updateId": "incidents:edit",
   "DELETE /api/incidents/:id/updates/:updateId": "incidents:edit",
 
-  // Maintenance: deleting a window that has started also needs
-  // maintenance:delete (checked in routes/maintenance.ts)
+  // Maintenance windows
   "GET /api/maintenance": "maintenance:read",
   "GET /api/maintenance/:id": "maintenance:read",
   "POST /api/maintenance": "maintenance:edit",
@@ -101,7 +100,7 @@ export const ROUTE_SCOPES: Record<string, RouteAccess> = {
   "POST /api/channels": "channels:edit",
   "PUT /api/channels/:id": "channels:edit",
   "DELETE /api/channels/:id": "channels:edit",
-  "POST /api/channels/:id/test": "channels:test",
+  "POST /api/channels/:id/test": "channels:edit",
 
   // Phone push
   "GET /api/push/vapid-public-key": "push:read",
@@ -114,7 +113,7 @@ export const ROUTE_SCOPES: Record<string, RouteAccess> = {
   "POST /api/push/devices/:id/disable": "push:edit",
   "POST /api/push/devices/:id/enable": "push:edit",
   "POST /api/push/generate-vapid": "push:edit",
-  "POST /api/push/devices/:id/test": "push:test",
+  "POST /api/push/devices/:id/test": "push:edit",
 
   // Reports, diagnostics, backups, the landing page
   "GET /api/reports/monthly": "reports:read",
@@ -233,8 +232,8 @@ export const TOOL_SCOPES: Record<string, Scope> = {
   update_monitor: "monitors:edit",
   pause_monitor: "monitors:edit",
   resume_monitor: "monitors:edit",
-  delete_monitor: "monitors:delete",
-  rotate_heartbeat_token: "heartbeats:edit",
+  delete_monitor: "monitors:edit",
+  rotate_heartbeat_token: "monitors:edit",
   create_maintenance_window: "maintenance:edit",
   end_maintenance_window: "maintenance:edit",
   delete_maintenance_window: "maintenance:edit",

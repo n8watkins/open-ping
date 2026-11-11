@@ -191,7 +191,7 @@ export default function TokensPage() {
           <div>
             <h3 className="text-sm font-semibold text-ink">Permissions</h3>
             <p className="mt-0.5 mb-3 text-xs text-ink-muted">
-              Nothing is granted until you tick it. Edit, Test and Delete include Read of the same thing.
+              Nothing is granted until you tick it. Edit includes Read, and covers changing, testing and deleting.
             </p>
             <PermissionPicker value={selection} onChange={setSelection} />
           </div>

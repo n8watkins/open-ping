@@ -95,14 +95,12 @@ A tool with no permission assigned is admin only.
 | --- | --- |
 | `uptime:read` | `get_status`, `get_uptime` |
 | `monitors:read` | `list_monitors`, `get_monitor` |
-| `monitors:edit` | `create_monitor`, `update_monitor`, `pause_monitor`, `resume_monitor` |
-| `monitors:delete` | `delete_monitor` |
-| `heartbeats:edit` | `rotate_heartbeat_token` |
+| `monitors:edit` | `create_monitor`, `update_monitor`, `pause_monitor`, `resume_monitor`, `delete_monitor`, `rotate_heartbeat_token` |
 | `categories:read` | `list_categories` |
 | `incidents:read` | `list_incidents` |
 | `incidents:edit` | `post_incident_update` |
 | `maintenance:read` | `list_maintenance` |
-| `maintenance:edit` | `create_maintenance_window`, `end_maintenance_window`, `delete_maintenance_window` (a window that has started also needs `maintenance:delete`) |
+| `maintenance:edit` | `create_maintenance_window`, `end_maintenance_window`, `delete_maintenance_window` |
 | `status_pages:read` | `list_status_pages` |
 | `status_pages:edit` | `update_status_page` |
 | `channels:read` | `list_channels` |

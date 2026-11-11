@@ -369,7 +369,7 @@ The **Developers** page creates named, scoped tokens for the CLI, MCP clients an
 - A token is `opk_` followed by 32 random bytes in base64url.
 - Each token has `resource:action` permissions, or `admin`, and an optional expiry of 7, 30 or 90 days (see [CLI.md](./CLI.md#permissions); the list lives in `src/shared/scopes.ts`).
   `API_TOKEN` and tokens created before scopes existed are `admin`.
-  Tokens stored with the older scopes (`read`, `monitors:write`, `incidents:write`, `maintenance:write`) are expanded when read to the permissions that give exactly their old access.
+  Tokens stored with the older scopes (`read`, `monitors:write`, `incidents:write`, `maintenance:write`) are expanded when read to the matching read and edit permissions (CLI.md lists them); a write scope now also allows deleting, which edit covers.
 - One table, `ROUTE_SCOPES` in `src/worker/lib/scopes.ts`, maps every authenticated route to exactly one permission, and `requireScope` (run by `requireAuth`) enforces it.
   A route missing from the table is admin only (default deny), and a unit test fails when a route is registered without a row.
   A refused call gets `403 insufficient_scope` naming the permission it needed.

@@ -947,11 +947,6 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       if (yes !== true) return needsConfirm("a deleted maintenance window cannot be restored.");
       const w = await getMaintenanceWindow(env, id);
       if (!w) return fail("No maintenance window has that id. Call list_maintenance to find it.");
-      if (w.startsAt <= Date.now() && !hasScope(ctx.scopes, "maintenance:delete")) {
-        return fail(
-          "This window has started. Deleting it needs the maintenance:delete permission, which this token does not have; use end_maintenance_window to end it, or ask the owner.",
-        );
-      }
       await deleteMaintenanceWindow(env, id);
       return ok(`Deleted maintenance window ${id}.`, { deleted: { id, title: w.title } }, await zone());
     },

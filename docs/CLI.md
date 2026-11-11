@@ -13,19 +13,20 @@ Only a hash is stored, and **Revoke** stops it working right away (a record of i
 ### Permissions
 
 Each token has one or more permissions, so you can give a script or an AI agent only what it needs.
-A permission is a `resource:action` pair; on the **Developers** page each resource is a row with a checkbox per action, grouped by category, and nothing is ticked to start.
+A permission is a `resource:action` pair, and every resource offers `read` and `edit`, or `read` only.
+`edit` covers changing, testing and deleting, and includes `read` of the same resource.
+On the **Developers** page each resource is a row with a Read and an Edit checkbox, grouped by category, and nothing is ticked to start.
 
 | Category | Resource | Actions |
 | --- | --- | --- |
-| Monitoring | `monitors` | `read`, `edit` (add, change, pause, resume), `test` (run a check now), `delete` |
+| Monitoring | `monitors` | `read`, `edit` (add, change, pause, resume, run a check now, delete, rotate a heartbeat's secret URL) |
 | | `uptime` | `read` (overview, uptime, check history) |
-| | `heartbeats` | `edit` (rotate a heartbeat's secret URL) |
 | | `categories` | `read`, `edit` |
 | Incidents and maintenance | `incidents` | `read` (including CSV and JSON export), `edit` (updates and notes) |
-| | `maintenance` | `read`, `edit` (schedule, change, end, cancel upcoming), `delete` (delete a window that has started) |
+| | `maintenance` | `read`, `edit` (schedule, change, end and delete windows) |
 | Status pages | `status_pages` | `read`, `edit` |
-| Notifications | `channels` | `read` (credentials hidden), `edit`, `test` |
-| | `push` | `read`, `edit`, `test` |
+| Notifications | `channels` | `read` (credentials hidden), `edit` (including test alerts) |
+| | `push` | `read`, `edit` (including test pushes) |
 | Reports and data | `reports` | `read` |
 | | `diagnostics` | `read` |
 | | `backups` | `read` (full export), `edit` (import) |
@@ -34,17 +35,16 @@ A permission is a `resource:action` pair; on the **Developers** page each resour
 | | `encryption` | `read` (key status), `edit` (re-encrypt) |
 | | `security` | `read` (sessions, passkeys, support access), `edit` |
 
-Any action other than `read` includes `read` of the same resource, and `maintenance:delete` includes `maintenance:edit`.
 `admin` (Full access on the page) is everything, including anything added later.
 **Bulk select** on the page offers All read, All read and edit, Clear all, and starting points (Monitoring sync, Maintenance, Read-only) that only tick boxes you can then change.
 A token can expire after 7, 30 or 90 days, or never.
 
-Tokens created with the older scopes keep exactly the access they had:
+Tokens created with the older scopes keep working; each maps to the permissions below, so `monitors:write` and `maintenance:write` can now also delete:
 
 | Older scope | Now means |
 | --- | --- |
 | `read` | `read` of monitors, uptime, categories, incidents, maintenance, status pages, channels, reports and diagnostics (not settings, backups, encryption, the landing page, security or push) |
-| `monitors:write` | `monitors:read`, `monitors:edit`, `monitors:test` |
+| `monitors:write` | `monitors:read`, `monitors:edit` |
 | `incidents:write` | `incidents:read`, `incidents:edit` |
 | `maintenance:write` | `maintenance:read`, `maintenance:edit` |
 | `admin` | `admin` |
@@ -58,8 +58,8 @@ Each token may make at most 120 API calls a minute; more get `429` with `Retry-A
 A call outside the token's permissions fails with `403` and names the permission it needed:
 
 ```text
-DELETE /api/monitors/mon_1 failed: HTTP 403 insufficient_scope - this token lacks the monitors:delete permission.
-  It has: monitors: read, edit, test; uptime: read. Create a token with monitors:delete under Developers > API tokens (or run `op token whoami` to see which token is in use).
+DELETE /api/monitors/mon_1 failed: HTTP 403 insufficient_scope - this token lacks the monitors:edit permission.
+  It has: monitors: read; uptime: read. Create a token with monitors:edit under Developers > API tokens (or run `op token whoami` to see which token is in use).
 ```
 
 `op token whoami` shows the token the CLI is using, its permissions and when it expires.
