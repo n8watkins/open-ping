@@ -23,6 +23,8 @@ import {
 import { loadRangeHistory } from "../history/range";
 import { CRON_CADENCE, effectiveIntervals, type Cadence } from "../lib/cadence";
 import { cadenceFor } from "../lib/monitor-intervals";
+import { iconAtFor, listIconRows, refreshStaleIcons } from "../lib/favicon";
+import { requestWaitUntil } from "./monitors";
 import { hostedPlan } from "../lib/plan-limits";
 import { bucketStart } from "../history/rollups";
 import { CHECK_LOG_LENGTH_SQL, loggedChecks } from "../history/check-log";
@@ -102,7 +104,7 @@ export function monitorTarget(monitor: MonitorRecord): string | null {
 overview.get("/", async (c) => {
   const now = Date.now();
   const [body, maintenance] = await Promise.all([
-    buildOverview(c.env, now, cadenceFor(hostedPlan(c))),
+    buildOverview(c.env, now, cadenceFor(hostedPlan(c)), requestWaitUntil(c)),
     maintenanceOutlook(c.env, now),
   ]);
   return c.json({ ...body, maintenance });
@@ -227,7 +229,13 @@ export async function maintenanceOutlook(
  * `cadence`: how this install is scheduled (lib/monitor-intervals.ts,
  * cadenceFor), for each monitor's real check interval.
  */
-export async function buildOverview(env: Env, now: number = Date.now(), cadence: Cadence = CRON_CADENCE) {
+export async function buildOverview(
+  env: Env,
+  now: number = Date.now(),
+  cadence: Cadence = CRON_CADENCE,
+  /** When given, stale site icons are refreshed after the response (lib/favicon.ts). */
+  waitUntil?: (p: Promise<unknown>) => void,
+) {
   const since = now - DAY;
   const [
     monitors,
@@ -239,6 +247,7 @@ export async function buildOverview(env: Env, now: number = Date.now(), cadence:
     incidentStartsRes,
     incidentAggregate,
     lastRun,
+    iconRows,
   ] = await Promise.all([
     listMonitors(env),
     listCategories(env),
@@ -307,7 +316,9 @@ export async function buildOverview(env: Env, now: number = Date.now(), cadence:
               notification_failures AS notificationFailures, duration_ms AS durationMs
        FROM scheduler_runs ORDER BY started_at DESC LIMIT 1`,
     ).first(),
+    listIconRows(env),
   ]);
+  refreshStaleIcons(env, monitors, iconRows, waitUntil, now);
 
   // Resolve category names in one query: id -> name for the badge on each row.
   const categoryNames = new Map<string, string>(
@@ -359,6 +370,7 @@ export async function buildOverview(env: Env, now: number = Date.now(), cadence:
       name: m.name,
       type: m.type,
       target: monitorTarget(m),
+      iconAt: iconAtFor(m, iconRows.get(m.id)),
       state,
       paused: m.paused,
       intervalSeconds: m.intervalSeconds,

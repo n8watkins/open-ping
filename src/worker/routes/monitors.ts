@@ -41,6 +41,7 @@ import {
   type PlanLimitRefusal,
 } from "../lib/plan-limits";
 import { cadenceFor, withInterval, withIntervals } from "../lib/monitor-intervals";
+import { getIcon, getIconRow, iconAtFor, refreshStaleIcons } from "../lib/favicon";
 
 /** Strip secret config fields and ingestion credentials from normal responses. */
 export function redactMonitor(m: MonitorRecord): MonitorRecord {
@@ -325,6 +326,24 @@ monitors.post("/", async (c) => {
   return c.json({ monitor, firstCheck: r.firstCheck }, 201);
 });
 
+/** After an edit: fetch the icon again if the monitor's address moved to another site. */
+async function refreshIconIfMoved(c: Parameters<typeof requestWaitUntil>[0] & { env: Env }, monitor: MonitorRecord) {
+  const row = await getIconRow(c.env, monitor.id);
+  refreshStaleIcons(c.env, [monitor], row ? new Map([[monitor.id, row]]) : new Map(), requestWaitUntil(c));
+}
+
+// The monitored site's icon, kept by lib/favicon.ts. Registered with the static paths so it wins over /:id.
+monitors.get("/:id/icon", async (c) => {
+  const found = await getIcon(c.env, c.req.param("id"));
+  if (!found) return c.body(null, 404);
+  return c.body(found.icon, 200, {
+    "content-type": found.contentType,
+    "cache-control": "private, max-age=86400",
+    // Only PNG, ICO, GIF, JPEG or WebP are ever stored (sniffed by their bytes), and never as anything else.
+    "x-content-type-options": "nosniff",
+  });
+});
+
 // Registered before /:id so the static path wins.
 monitors.get("/uptime", async (c) => c.json(await listMonitorUptime(c.env)));
 
@@ -437,7 +456,11 @@ monitors.get("/:id/detail", async (c) => {
 
   const incidentMetrics = await computeIncidentMetrics(c.env, id, now);
 
+  const iconRow = await getIconRow(c.env, id);
+  refreshStaleIcons(c.env, [monitor], iconRow ? new Map([[id, iconRow]]) : new Map(), requestWaitUntil(c));
+
   return c.json({
+    iconAt: iconAtFor(monitor, iconRow),
     monitor: await withInterval(c.env, hostedPlan(c), redactMonitor(monitor)),
     state: stateRow ? state : null,
     // A certificate monitor's last read, for the Certificate panel (SANs and
@@ -496,6 +519,7 @@ monitors.put("/:id", async (c) => {
   const body = await c.req.json().catch(() => undefined);
   const r = await replaceMonitor(c.env, c.req.param("id"), body, hostedPlan(c));
   if (!r.ok) return c.json(writeError(r), r.status);
+  await refreshIconIfMoved(c, r.monitor);
   return c.json({ monitor: await withInterval(c.env, hostedPlan(c), redactMonitor(r.monitor)) });
 });
 
@@ -504,6 +528,7 @@ monitors.patch("/:id", async (c) => {
   const body = await c.req.json().catch(() => undefined);
   const r = await patchMonitor(c.env, c.req.param("id"), body, hostedPlan(c));
   if (!r.ok) return c.json(writeError(r), r.status);
+  await refreshIconIfMoved(c, r.monitor);
   return c.json({ monitor: await withInterval(c.env, hostedPlan(c), redactMonitor(r.monitor)) });
 });
 

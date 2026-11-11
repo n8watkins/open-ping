@@ -10,6 +10,8 @@ import type { Schedule } from "../../../shared/schemas";
 import { everyShort, scheduleLabel, scheduleTitle } from "./schedule-label";
 import { checkedEveryText, intervalReasonDetail, planMinimumSeconds } from "../../../shared/check-interval";
 import { usePlan } from "../../lib/plan-limits";
+import { safeHttpUrl } from "../../lib/api";
+import { SiteIcon } from "./SiteIcon";
 
 export type MonitorAction = "pause" | "resume" | "delete";
 
@@ -42,6 +44,24 @@ const STATE_ICON_CLASS: Record<MonitorState, string> = {
   unknown: "bg-surface-2 text-paused",
   cant_check: "bg-surface-2 text-paused",
 };
+
+const STATE_DOT_CLASS: Record<MonitorState, string> = {
+  up: "bg-up",
+  down: "bg-down",
+  suspended: "bg-suspended",
+  degraded: "bg-degraded",
+  warming_up: "bg-warming",
+  maintenance: "bg-maint",
+  scheduled_off: "bg-scheduled",
+  paused: "bg-paused",
+  unknown: "bg-paused",
+  cant_check: "bg-paused",
+};
+
+/** The address without its scheme and trailing slash, as the list shows it. */
+function shownAddress(target: string): string {
+  return target.replace(/^https?:\/\//, "").replace(/\/$/, "");
+}
 
 function recentCheckSegments(checks: { at: number; state: MonitorState }[]) {
   const count = 28;
@@ -295,11 +315,20 @@ export function MonitorRow({
   onSelect: () => void;
   onAction: (action: MonitorAction) => void;
 }) {
+  const detail = `/monitors/${monitor.id}`;
+  const link = monitor.type === "http" ? safeHttpUrl(monitor.target) : null;
   const nameBlock = (
-    <Link to={`/monitors/${monitor.id}`} className="group/name flex min-w-0 items-center gap-3">
-      <StateIcon state={monitor.state} />
+    <div className="flex min-w-0 items-center gap-3">
+      <Link to={detail} tabIndex={-1} aria-hidden className="shrink-0">
+        <SiteIcon
+          monitorId={monitor.id}
+          iconAt={monitor.iconAt}
+          dot={STATE_DOT_CLASS[monitor.state]}
+          fallback={<StateIcon state={monitor.state} />}
+        />
+      </Link>
       <span className="min-w-0">
-        <span className="flex min-w-0 items-center gap-2">
+        <Link to={detail} className="group/name flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-medium text-ink transition-colors group-hover/name:text-accent-hover">
             {monitor.name}
           </span>
@@ -308,13 +337,25 @@ export function MonitorRow({
               {monitor.categoryName}
             </span>
           )}
-        </span>
+        </Link>
         <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-ink-faint">
           <span className="shrink-0 rounded border border-line px-1 uppercase">{monitorTypeLabel(monitor.type)}</span>
-          <span className="truncate">{monitor.target ?? STATE_META[monitor.state].label}</span>
+          {link && monitor.target ? (
+            <a
+              href={link}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={link}
+              className="truncate rounded-sm hover:text-accent-hover hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              {shownAddress(monitor.target)}
+            </a>
+          ) : (
+            <span className="truncate">{monitor.target ?? STATE_META[monitor.state].label}</span>
+          )}
         </span>
       </span>
-    </Link>
+    </div>
   );
 
   const checkbox = (

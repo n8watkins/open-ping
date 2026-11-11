@@ -60,6 +60,7 @@ export const ROUTE_SCOPES: Record<string, RouteAccess> = {
   "GET /api/monitors/uptime": "read",
   "GET /api/monitors/:id": "read",
   "GET /api/monitors/:id/detail": "read",
+  "GET /api/monitors/:id/icon": "read",
   "GET /api/monitors/:id/history": "read",
   "POST /api/monitors": "monitors:write",
   "PUT /api/monitors/:id": "monitors:write",
