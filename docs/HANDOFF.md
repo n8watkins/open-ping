@@ -128,7 +128,7 @@ The remote migration list was verified with no pending migrations.
 The remote schema was verified to contain `push_subscriptions.endpoint_hash` and `monitors.heartbeat_token_hash`.
 
 The reviewed application was deployed to the Cloudflare Worker `open-ping` on 2026-07-15.
-The public custom domain and the workers.dev URL both returned HTTP `200` after deployment.
+The public custom domain and the workers.dev URL both returned HTTP `200` after deployment (the workers.dev address has since been turned off).
 Production setup is complete, the setup wizard is locked, and the installation timezone is `America/Los_Angeles`.
 The configured GitHub OAuth start flow redirects back to `https://openping.n8builds.dev/auth/github/callback`.
 No temporary production monitor remains from verification.

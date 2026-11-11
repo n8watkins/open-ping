@@ -66,5 +66,9 @@ Developer settings → OAuth Apps → your app**:
 - You can keep the old `*.workers.dev` URL working alongside the custom domain,
   but sign-in and links will use whatever `APP_URL` is set to, so keep that
   pointed at the canonical public URL.
+- To turn the `*.workers.dev` address and version preview URLs off, so every
+  request goes through your zone's rules and cache, set `"workers_dev": false`
+  and `"preview_urls": false` in `deploy.local.json` (INSTALL.md, "Keep your own
+  ids out of git"). The canonical install does.
 - See [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) if OAuth says "not
   authorized" or the callback is rejected after switching domains.
