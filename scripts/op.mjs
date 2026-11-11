@@ -197,7 +197,7 @@ export const COMMANDS = {
     run: cmdMaintenanceCreate,
   },
   "token whoami": {
-    summary: "Show which token the CLI is using: its name, scopes and expiry",
+    summary: "Show which token the CLI is using: its name, permissions and expiry",
     run: cmdTokenWhoami,
   },
   "maintenance end": { summary: "End an active maintenance window now", args: ["id"], run: cmdMaintenanceEnd },
@@ -1012,8 +1012,24 @@ async function cmdTokenWhoami({ api, out, flags }) {
   const me = await api("/api/api-tokens/self");
   if (flags.json) return out.json(me);
   out.line(me.kind === "token" ? `${me.name} [${me.id}]` : me.name ?? "browser session");
-  out.line(`  scopes   ${(me.scopes ?? []).join(", ") || "none"}`);
+  out.line(`  access   ${formatPermissions(me.scopes)}`);
   out.line(`  expires  ${me.expiresAt ? fmtTime(me.expiresAt) : "never"}`);
+}
+
+/**
+ * A token's permissions grouped by resource ("monitors: read, edit; incidents: read"),
+ * or "full access (admin)".
+ */
+export function formatPermissions(scopes) {
+  if (!scopes?.length) return "none";
+  if (scopes.includes("admin")) return "full access (admin)";
+  const groups = new Map();
+  for (const s of scopes) {
+    const [resource, action] = s.includes(":") ? s.split(":") : [s, ""];
+    if (!groups.has(resource)) groups.set(resource, []);
+    if (action) groups.get(resource).push(action);
+  }
+  return [...groups].map(([r, actions]) => (actions.length ? `${r}: ${actions.join(", ")}` : r)).join("; ");
 }
 
 // ---------------------------------------------------------------------------
@@ -1023,11 +1039,11 @@ async function cmdTokenWhoami({ api, out, flags }) {
 /** Describe a failed API response in one or two readable lines. */
 export function apiErrorMessage(method, path, status, data) {
   const head = `${method} ${path} failed: HTTP ${status}`;
-  // A token without the scope this call needs (lib/scopes.ts): say which one.
+  // A token without the permission this call needs (lib/scopes.ts): say which one.
   if (status === 403 && data && typeof data === "object" && data.error === "insufficient_scope") {
     return (
-      `${head} insufficient_scope - this token lacks the ${data.required} scope.` +
-      `\n  Its scopes: ${(data.scopes ?? []).join(", ") || "none"}. Create a token with ${data.required} under Developers > API tokens` +
+      `${head} insufficient_scope - this token lacks the ${data.required} permission.` +
+      `\n  It has: ${formatPermissions(data.scopes)}. Create a token with ${data.required} under Developers > API tokens` +
       ` (or run \`op token whoami\` to see which token is in use).`
     );
   }

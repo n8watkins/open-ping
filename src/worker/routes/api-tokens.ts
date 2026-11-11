@@ -11,7 +11,7 @@ import {
   MAX_API_TOKENS,
   revokeApiToken,
 } from "../db/api-tokens";
-import { SCOPES } from "../lib/scopes";
+import { isScope, LEGACY_SCOPES_IDS } from "../lib/scopes";
 
 /**
  * Named API tokens, mounted at /api/api-tokens (Developers in the app).
@@ -36,8 +36,17 @@ const createBody = z.object({
     .trim()
     .min(1, "Give the token a name, like the client that will use it.")
     .max(64, "Keep the name to 64 characters."),
-  // Absent means admin, what every token could do before scopes existed.
-  scopes: z.array(z.enum(SCOPES)).min(1, "Choose at least one scope.").max(SCOPES.length).optional(),
+  // resource:action permissions or admin (the older scope words are accepted
+  // and expanded). Absent means admin, what every token could do before scopes existed.
+  scopes: z
+    .array(
+      z.string().refine((s) => isScope(s) || LEGACY_SCOPES_IDS.includes(s), {
+        message: "Unknown permission; see Developers > API tokens for the list.",
+      }),
+    )
+    .min(1, "Tick at least one permission.")
+    .max(64)
+    .optional(),
   expiresInDays: z
     .union([z.literal(7), z.literal(30), z.literal(90), z.null()])
     .optional()

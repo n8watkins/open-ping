@@ -10,35 +10,59 @@ The CLI authenticates with a Bearer API token instead of a login session.
 The simplest way to get one is **Developers** in the app: **Create token** names it (for example "Laptop CLI"), sets what it may do and when it expires, and shows it once.
 Only a hash is stored, and **Revoke** stops it working right away (a record of it stays under **Revoked tokens**).
 
-### Scopes
+### Permissions
 
-Each token has one or more scopes, so you can give a script or an AI agent only what it needs:
+Each token has one or more permissions, so you can give a script or an AI agent only what it needs.
+A permission is a `resource:action` pair, and every resource offers `read` and `edit`, or `read` only.
+`edit` covers changing, testing and deleting, and includes `read` of the same resource.
+On the **Developers** page each resource is a row with a Read and an Edit checkbox, grouped by category, and nothing is ticked to start.
 
-| Scope | What it allows |
-| --- | --- |
-| `read` | Read monitors, incidents, uptime, reports, diagnostics, maintenance windows, status pages, categories and channels (credentials hidden). Not settings, data export, key status, the waitlist, passkeys or tokens. |
-| `monitors:write` | Create, update, pause and resume monitors, and run a test check. Not delete or rotate a heartbeat token. |
-| `incidents:write` | Post, edit and remove incident updates and notes. |
-| `maintenance:write` | Create, update and end maintenance windows, and delete a window that has not started. |
-| `admin` | Everything, and it implies every other scope. |
+| Category | Resource | Actions |
+| --- | --- | --- |
+| Monitoring | `monitors` | `read`, `edit` (add, change, pause, resume, run a check now, delete, rotate a heartbeat's secret URL) |
+| | `uptime` | `read` (overview, uptime, check history) |
+| | `categories` | `read`, `edit` |
+| Incidents and maintenance | `incidents` | `read` (including CSV and JSON export), `edit` (updates and notes) |
+| | `maintenance` | `read`, `edit` (schedule, change, end and delete windows) |
+| Status pages | `status_pages` | `read`, `edit` |
+| Notifications | `channels` | `read` (credentials hidden), `edit` (including test alerts) |
+| | `push` | `read`, `edit` (including test pushes) |
+| Reports and data | `reports` | `read` |
+| | `diagnostics` | `read` |
+| | `backups` | `read` (full export), `edit` (import) |
+| | `site` | `read` (landing page click counts and the waitlist) |
+| Account | `settings` | `read`, `edit` |
+| | `encryption` | `read` (key status), `edit` (re-encrypt) |
+| | `security` | `read` (sessions, passkeys, support access), `edit` |
 
-Scopes do not imply one another apart from `admin`: a token that should list monitors and create them needs `read` and `monitors:write`.
-The choices on the **Developers** page are Read-only (`read`), Monitoring sync (`read monitors:write`), Maintenance (`read maintenance:write`), Full admin (`admin`) and Custom. The page shows plain names for the scopes (See everything, Manage monitors, Manage incidents, Manage maintenance, Full control); the ids above are what the API and CLI use.
+`admin` (Full access on the page) is everything, including anything added later.
+**Bulk select** on the page offers All read, All read and edit, Clear all, and starting points (Monitoring sync, Maintenance, Read-only) that only tick boxes you can then change.
 A token can expire after 7, 30 or 90 days, or never.
+
+Tokens created with the older scopes keep working; each maps to the permissions below, so `monitors:write` and `maintenance:write` can now also delete:
+
+| Older scope | Now means |
+| --- | --- |
+| `read` | `read` of monitors, uptime, categories, incidents, maintenance, status pages, channels, reports and diagnostics (not settings, backups, encryption, the landing page, security or push) |
+| `monitors:write` | `monitors:read`, `monitors:edit` |
+| `incidents:write` | `incidents:read`, `incidents:edit` |
+| `maintenance:write` | `maintenance:read`, `maintenance:edit` |
+| `admin` | `admin` |
+
 Tokens created before scopes existed, and the `API_TOKEN` secret, are `admin`.
 
 Anything a route table does not list explicitly is admin only, so a new feature is never open to a narrower token by accident.
 No token, not even an admin one, can list, create or revoke tokens: that needs the owner's signed-in browser session.
 Each token may make at most 120 API calls a minute; more get `429` with `Retry-After`.
 
-A call outside the token's scopes fails with `403` and names the scope it needed:
+A call outside the token's permissions fails with `403` and names the permission it needed:
 
 ```text
-DELETE /api/monitors/mon_1 failed: HTTP 403 insufficient_scope - this token lacks the admin scope.
-  Its scopes: read, monitors:write. Create a token with admin under Developers > API tokens (or run `op token whoami` to see which token is in use).
+DELETE /api/monitors/mon_1 failed: HTTP 403 insufficient_scope - this token lacks the monitors:edit permission.
+  It has: monitors: read; uptime: read. Create a token with monitors:edit under Developers > API tokens (or run `op token whoami` to see which token is in use).
 ```
 
-`op token whoami` shows the token the CLI is using, its scopes and when it expires.
+`op token whoami` shows the token the CLI is using, its permissions and when it expires.
 
 ### The API_TOKEN secret
 

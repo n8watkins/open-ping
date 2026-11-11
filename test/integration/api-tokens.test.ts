@@ -5,7 +5,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import worker from "../../src/worker/index";
 import type { Env } from "../../src/worker/types";
 import { randomToken, sha256hex } from "../../src/worker/lib/ids";
-import { TOOL_SCOPES, type Scope } from "../../src/worker/lib/scopes";
+import { normalizeScopes, TOOL_SCOPES } from "../../src/worker/lib/scopes";
+import { PERMISSIONS } from "../../src/shared/scopes";
 import { API_TOKEN_RATE_LIMIT_PER_MINUTE, requireAuth } from "../../src/worker/middleware/auth";
 import { Hono } from "hono";
 import type { AppEnv } from "../../src/worker/types";
@@ -82,7 +83,7 @@ function mcpInitialize(token: string | null, target?: Env): Promise<Response> {
 async function createToken(
   s: Session,
   name: string,
-  extra: { scopes?: Scope[]; expiresInDays?: number | null } = {},
+  extra: { scopes?: string[]; expiresInDays?: number | null } = {},
 ): Promise<{ token: string; id: string }> {
   const res = await call("/api/api-tokens", { json: { name, ...extra }, headers: asSession(s) });
   expect(res.status).toBe(201);
@@ -228,8 +229,12 @@ describe("API tokens", () => {
 });
 
 /** A token with exactly these scopes, from a fresh owner session. */
-async function scopedToken(scopes: Scope[], extra: { expiresInDays?: number | null } = {}): Promise<string> {
-  return (await createToken(await signIn(), scopes.join("+"), { scopes, ...extra })).token;
+async function scopedToken(scopes: string[], extra: { expiresInDays?: number | null } = {}): Promise<string> {
+  // Stay under MAX_API_TOKENS across the file: only the newest few are still in use by a test.
+  await env.DB.prepare(
+    "DELETE FROM api_tokens WHERE revoked_at IS NULL AND id NOT IN (SELECT id FROM api_tokens WHERE revoked_at IS NULL ORDER BY created_at DESC LIMIT 10)",
+  ).run();
+  return (await createToken(await signIn(), scopes.join("+").slice(0, 64), { scopes, ...extra })).token;
 }
 
 /** A monitor and a not-yet-started and a running maintenance window, made by the owner. */
@@ -276,7 +281,67 @@ async function expectRefused(token: string, probes: Probe[], required: string): 
 }
 
 describe("scoped tokens", () => {
-  it("read sees monitoring data but nothing private, and changes nothing", async () => {
+  it("get exactly the pairs ticked, plus the read each edit implies", async () => {
+    const owner = await signIn();
+    const res = await call("/api/api-tokens", { json: { name: "Pairs", scopes: ["monitors:edit", "incidents:read"] }, headers: asSession(owner) });
+    expect(res.status).toBe(201);
+    const { token } = await res.json<{ token: string }>();
+    expect(await (await call("/api/api-tokens/self", { headers: asBearer(token) })).json()).toMatchObject({
+      scopes: ["monitors:read", "monitors:edit", "incidents:read"],
+    });
+    const { monitorId } = await fixtures();
+    await expectAllowed(token, [
+      ["GET", "/api/monitors"],
+      ["POST", `/api/monitors/${monitorId}/pause`],
+      ["GET", "/api/incidents"],
+    ]);
+    await expectRefused(token, [["GET", "/api/overview"]], "uptime:read");
+    await expectRefused(token, [["GET", "/api/settings"]], "settings:read");
+    await expectRefused(token, [["POST", "/api/incidents/inc_x/updates", { status: "resolved", message: "x" }]], "incidents:edit");
+  });
+
+  it("Edit covers testing, rotating and deleting", async () => {
+    const { monitorId, active } = await fixtures();
+    const token = await scopedToken(["monitors:edit", "maintenance:edit"]);
+    expect((await call(`/api/monitors/${monitorId}/test`, { method: "POST", headers: asBearer(token) })).status).not.toBe(403);
+    const rotated = await call(`/api/monitors/${monitorId}/rotate-heartbeat-token`, { method: "POST", headers: asBearer(token) });
+    expect(rotated.status).not.toBe(403);
+    expect((await call(`/api/maintenance/${active}`, { method: "DELETE", headers: asBearer(token) })).status).toBe(200);
+    expect((await call(`/api/monitors/${monitorId}`, { method: "DELETE", headers: asBearer(token) })).status).toBe(200);
+  });
+
+  it("refuse an unknown permission when creating", async () => {
+    const res = await call("/api/api-tokens", { json: { name: "Bad", scopes: ["monitors:fly"] }, headers: asSession(await signIn()) });
+    expect(res.status).toBe(400);
+  });
+
+  it("keep a stored token with the older scope words working, mapped to read and edit", async () => {
+    // A row as the #121 code wrote it.
+    const token = `opk_${randomToken(32)}`;
+    await env.DB.prepare(
+      "INSERT INTO api_tokens (id, name, token_hash, prefix, scopes, created_at) VALUES ('tok_v121', 'Old sync', ?, ?, 'read monitors:write', ?)",
+    )
+      .bind(`v2:${await sha256hex(token)}`, token.slice(0, 8), Date.now())
+      .run();
+    const self = await (await call("/api/api-tokens/self", { headers: asBearer(token) })).json<{ scopes: string[] }>();
+    expect(self.scopes).toEqual([
+      "monitors:read",
+      "monitors:edit",
+      "uptime:read",
+      "categories:read",
+      "incidents:read",
+      "maintenance:read",
+      "status_pages:read",
+      "channels:read",
+      "reports:read",
+      "diagnostics:read",
+    ]);
+    const { monitorId } = await fixtures();
+    await expectAllowed(token, [["POST", `/api/monitors/${monitorId}/pause`]]);
+    await expectRefused(token, [["GET", "/api/data/export"]], "backups:read");
+  });
+
+  it("legacy read sees monitoring data but nothing private, and changes nothing", async () => {
     const { monitorId } = await fixtures();
     const token = await scopedToken(["read"]);
     await expectAllowed(token, [
@@ -292,23 +357,17 @@ describe("scoped tokens", () => {
       ["GET", "/api/categories"],
       ["GET", "/api/channels"],
     ]);
-    await expectRefused(
-      token,
-      [
-        ["GET", "/api/settings"],
-        ["GET", "/api/data/export"],
-        ["GET", "/api/admin/rekey/status"],
-        ["GET", "/api/waitlist"],
-        ["GET", "/api/passkeys"],
-      ],
-      "admin",
-    );
-    await expectRefused(token, [["POST", `/api/monitors/${monitorId}/pause`]], "monitors:write");
-    await expectRefused(token, [["POST", "/api/maintenance", { title: "x" }]], "maintenance:write");
-    await expectRefused(token, [["POST", "/api/incidents/inc_x/updates", { status: "resolved", message: "x" }]], "incidents:write");
+    await expectRefused(token, [["GET", "/api/settings"]], "settings:read");
+    await expectRefused(token, [["GET", "/api/data/export"]], "backups:read");
+    await expectRefused(token, [["GET", "/api/admin/rekey/status"]], "encryption:read");
+    await expectRefused(token, [["GET", "/api/waitlist"]], "site:read");
+    await expectRefused(token, [["GET", "/api/passkeys"]], "security:read");
+    await expectRefused(token, [["POST", `/api/monitors/${monitorId}/pause`]], "monitors:edit");
+    await expectRefused(token, [["POST", "/api/maintenance", { title: "x" }]], "maintenance:edit");
+    await expectRefused(token, [["POST", "/api/incidents/inc_x/updates", { status: "resolved", message: "x" }]], "incidents:edit");
   });
 
-  it("monitors:write creates, updates, pauses and resumes, but never deletes or rotates", async () => {
+  it("legacy monitors:write is monitors read and edit, so it now also deletes and rotates", async () => {
     const { monitorId } = await fixtures();
     const token = await scopedToken(["monitors:write"]);
     const created = await call("/api/monitors", {
@@ -321,19 +380,13 @@ describe("scoped tokens", () => {
       ["POST", `/api/monitors/${monitorId}/pause`],
       ["POST", `/api/monitors/${monitorId}/resume`],
     ]);
-    await expectRefused(
-      token,
-      [
-        ["DELETE", `/api/monitors/${monitorId}`],
-        ["POST", `/api/monitors/${monitorId}/rotate-heartbeat-token`],
-      ],
-      "admin",
-    );
-    // Without read it cannot list either: scopes do not imply one another.
-    await expectRefused(token, [["GET", "/api/monitors"]], "read");
+    // It now includes read of monitors (edit implies read), but not of anything else.
+    await expectAllowed(token, [["GET", "/api/monitors"]]);
+    await expectRefused(token, [["GET", "/api/incidents"]], "incidents:read");
+    expect((await call(`/api/monitors/${monitorId}`, { method: "DELETE", headers: asBearer(token) })).status).toBe(200);
   });
 
-  it("incidents:write posts updates; maintenance:write opens, ends and cancels only upcoming windows", async () => {
+  it("legacy incidents:write posts updates; maintenance:write opens, ends and deletes windows", async () => {
     const { upcoming, active } = await fixtures();
     const incidents = await scopedToken(["incidents:write"]);
     // The incident does not exist (404), but the scope let the call through.
@@ -342,7 +395,7 @@ describe("scoped tokens", () => {
       headers: asBearer(incidents),
     });
     expect(posted.status).toBe(404);
-    await expectRefused(incidents, [["POST", "/api/maintenance", {}]], "maintenance:write");
+    await expectRefused(incidents, [["POST", "/api/maintenance", {}]], "maintenance:edit");
 
     const maint = await scopedToken(["maintenance:write"]);
     const opened = await call("/api/maintenance", {
@@ -353,11 +406,9 @@ describe("scoped tokens", () => {
     const openedId = (await opened.json<{ window: { id: string } }>()).window.id;
     expect((await call(`/api/maintenance/${openedId}/end`, { method: "POST", headers: asBearer(maint) })).status).toBe(200);
     expect((await call(`/api/maintenance/${upcoming}`, { method: "DELETE", headers: asBearer(maint) })).status).toBe(200);
-    await expectRefused(maint, [["DELETE", `/api/maintenance/${active}`]], "admin");
-    await expectRefused(maint, [["POST", "/api/incidents/inc_x/updates", {}]], "incidents:write");
-    // An admin token may delete a started window.
-    const admin = await scopedToken(["admin"]);
-    expect((await call(`/api/maintenance/${active}`, { method: "DELETE", headers: asBearer(admin) })).status).toBe(200);
+    await expectRefused(maint, [["POST", "/api/incidents/inc_x/updates", {}]], "incidents:edit");
+    // Edit includes deleting a window that has started.
+    expect((await call(`/api/maintenance/${active}`, { method: "DELETE", headers: asBearer(maint) })).status).toBe(200);
   });
 
   it("refuse a route missing from the scope table unless the token is admin (default deny)", async () => {
@@ -367,7 +418,7 @@ describe("scoped tokens", () => {
     const get = (token: string) =>
       app.fetch(new Request(`${ORIGIN}/api/brand-new-feature`, { headers: asBearer(token) }), env as Env);
 
-    const everythingButAdmin = await scopedToken(["read", "monitors:write", "incidents:write", "maintenance:write"]);
+    const everythingButAdmin = await scopedToken([...PERMISSIONS]);
     const refused = await get(everythingButAdmin);
     expect(refused.status).toBe(403);
     expect(await refused.json()).toMatchObject({ error: "insufficient_scope", required: "admin" });
@@ -452,21 +503,32 @@ async function mcpRpc(token: string, method: string, params?: unknown) {
 
 describe("scoped tokens over MCP", () => {
   it("list only the tools the token's scopes allow", async () => {
-    const listed = async (scopes: Scope[]) =>
+    const listed = async (scopes: string[]) =>
       ((await mcpRpc(await scopedToken(scopes), "tools/list")).result?.tools ?? []).map((t) => t.name).sort();
-    const forScopes = (scopes: Scope[]) =>
+    const forScopes = (scopes: string[]) =>
       Object.entries(TOOL_SCOPES)
-        .filter(([, s]) => scopes.includes(s))
+        .filter(([, s]) => normalizeScopes(scopes).includes(s))
         .map(([name]) => name)
         .sort();
 
     expect(await listed(["read"])).toEqual(forScopes(["read"]));
     expect(await listed(["read"])).not.toContain("delete_monitor");
     expect(await listed(["read", "monitors:write"])).toEqual(forScopes(["read", "monitors:write"]));
-    expect(await listed(["maintenance:write"])).toEqual([
+    expect(await listed(["monitors:edit"])).toEqual([
+      "create_monitor",
+      "delete_monitor",
+      "get_monitor",
+      "list_monitors",
+      "pause_monitor",
+      "resume_monitor",
+      "rotate_heartbeat_token",
+      "update_monitor",
+    ]);
+    expect(await listed(["maintenance:edit"])).toEqual([
       "create_maintenance_window",
       "delete_maintenance_window",
       "end_maintenance_window",
+      "list_maintenance",
     ]);
     expect(await listed(["admin"])).toEqual(Object.keys(TOOL_SCOPES).sort());
   });
@@ -490,8 +552,8 @@ describe("scoped tokens over MCP", () => {
       name: "delete_maintenance_window",
       arguments: { id: active, confirm: true },
     });
-    expect(started.result?.isError).toBe(true);
-    expect(started.result?.content?.[0]?.text).toContain("has started");
+    // Edit includes deleting a window that has started.
+    expect(started.result?.isError).toBeFalsy();
     const cancelled = await mcpRpc(maint, "tools/call", {
       name: "delete_maintenance_window",
       arguments: { id: upcoming, confirm: true },
