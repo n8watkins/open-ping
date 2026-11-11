@@ -30,6 +30,8 @@ export interface OutgoingEmail {
   text?: string;
   /** What it is, for the platform's per-tenant metrics and cap. */
   category: MailCategory;
+  /** Extra message headers, such as List-Unsubscribe. A plain install's transports send them; the platform's does not. */
+  headers?: Record<string, string>;
 }
 
 export type MailCategory = "alert" | "report" | "signin" | "waitlist";
@@ -46,6 +48,7 @@ export interface EmailBinding {
     subject: string;
     html?: string;
     text?: string;
+    headers?: Record<string, string>;
   }): Promise<unknown>;
 }
 
@@ -108,6 +111,7 @@ export function cloudflareTransport(env: Env, now: () => number = Date.now): Mai
           subject: m.subject,
           ...(m.html ? { html: m.html } : {}),
           text: m.text ?? "",
+          ...(m.headers ? { headers: m.headers } : {}),
         });
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
@@ -123,7 +127,7 @@ export function cloudflareTransport(env: Env, now: () => number = Date.now): Mai
 /** Resend, with the install's own key (self-host option). */
 export function resendTransport(env: Env): MailTransport {
   return {
-    send: (m) => sendResendEmail(env, { from: m.from, to: m.to, subject: m.subject, html: m.html, text: m.text }),
+    send: (m) => sendResendEmail(env, { from: m.from, to: m.to, subject: m.subject, html: m.html, text: m.text, headers: m.headers }),
   };
 }
 

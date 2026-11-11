@@ -19,6 +19,8 @@ export interface ResendMessage {
   subject: string;
   html?: string;
   text?: string;
+  /** Extra message headers, such as List-Unsubscribe. */
+  headers?: Record<string, string>;
 }
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
@@ -45,6 +47,7 @@ export async function sendResendEmail(
         subject: msg.subject,
         html: msg.html,
         text: msg.text,
+        ...(msg.headers ? { headers: msg.headers } : {}),
       }),
       // Bound the request so one hung endpoint can't stall the sequential outbox
       // drain. An abort throws and is mapped to a retryable network_error below.

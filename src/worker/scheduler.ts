@@ -63,6 +63,7 @@ import {
   type RunStats,
 } from "./lib/lease";
 import { expiredAuthCleanupStatements } from "./lib/sessions";
+import { expiredWaitlistCleanupStatements } from "./db/waitlist";
 import {
   countingD1,
   MONTHLY_REPORT_D1,
@@ -607,7 +608,7 @@ export async function runScheduled(
       env,
       "scheduler",
       writes.map((w) => w.group),
-      [...claim, ...compaction, ...(upkeep ? expiredAuthCleanupStatements(env) : [])],
+      [...claim, ...compaction, ...(upkeep ? [...expiredAuthCleanupStatements(env), ...expiredWaitlistCleanupStatements(env)] : [])],
       // Keep room for the run record and the deliveries just claimed.
       { canSpend: () => budget.canSpendD1(1 + take * NOTIFICATION_D1_COST) },
     );

@@ -99,7 +99,33 @@ export interface EmailLayoutOptions {
   button?: EmailButton;
   /** Hidden inbox preview text. */
   preheader?: string;
+  /**
+   * Replaces the closing note under the card ("This is an automated message
+   * from your OpenPing instance.") with this inner HTML, for example a leave
+   * link. Caller escapes it.
+   */
+  footerHtml?: string;
+  /**
+   * Follow the reader's dark mode where the client supports it (Apple Mail, iOS
+   * Mail, Outlook.com, Gmail's apps). The card, page and footer swap to the
+   * app's dark palette, and body text marked with the op-ink / op-muted classes
+   * swaps with them; colors set only inline stay as written, so it is off for
+   * the emails whose body has none of those classes.
+   */
+  adaptive?: boolean;
 }
+
+/** The dark palette (the app's own), applied only to markup carrying these classes. */
+const DARK_STYLE =
+  `<style>:root{color-scheme:light dark;supported-color-schemes:light dark}` +
+  `@media (prefers-color-scheme:dark){` +
+  `.op-bg{background:#0b1220 !important}` +
+  `.op-card{background:#111b2e !important;border-color:#1f2c44 !important}` +
+  `.op-ink{color:#e6edf6 !important}` +
+  `.op-muted{color:#9fb0c5 !important}` +
+  `.op-foot{background:#0d1626 !important;border-color:#1f2c44 !important}` +
+  `.op-line{border-color:#1f2c44 !important}` +
+  `}</style>`;
 
 /** The concentric "ping" glyph (recreated from Logo.tsx) as a rounded badge. */
 function glyph(): string {
@@ -142,13 +168,13 @@ function button(b: EmailButton): string {
   );
 }
 
-function footer(): string {
+function footer(note?: string): string {
   return (
-    `<tr><td style="background:${BRAND.footerBg};border-top:1px solid ${BRAND.cardBorder};padding:20px 28px;">` +
-    `<p style="margin:0;font-family:${FONT};font-size:13px;color:${BRAND.ink};font-weight:600;">` +
-    `OpenPing <span style="color:${BRAND.inkMuted};font-weight:400;">· uptime monitoring in your own Cloudflare account</span></p>` +
-    `<p style="margin:6px 0 0;font-family:${FONT};font-size:12px;color:${BRAND.inkMuted};line-height:1.5;">` +
-    `This is an automated message from your OpenPing instance.</p>` +
+    `<tr><td class="op-foot" style="background:${BRAND.footerBg};border-top:1px solid ${BRAND.cardBorder};padding:20px 28px;">` +
+    `<p class="op-ink" style="margin:0;font-family:${FONT};font-size:13px;color:${BRAND.ink};font-weight:600;">` +
+    `OpenPing <span class="op-muted" style="color:${BRAND.inkMuted};font-weight:400;">· uptime monitoring in your own Cloudflare account</span></p>` +
+    `<p class="op-muted" style="margin:6px 0 0;font-family:${FONT};font-size:12px;color:${BRAND.inkMuted};line-height:1.5;">` +
+    `${note ?? "This is an automated message from your OpenPing instance."}</p>` +
     `</td></tr>`
   );
 }
@@ -169,25 +195,26 @@ export function renderEmailLayout(opts: EmailLayoutOptions): string {
     `<meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<meta name="x-apple-disable-message-reformatting">` +
-    `<meta name="color-scheme" content="light">` +
-    `<meta name="supported-color-schemes" content="light">` +
+    (opts.adaptive
+      ? `<meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark">${DARK_STYLE}`
+      : `<meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light">`) +
     `<title>${escapeHtml(opts.heading)}</title>` +
     `</head>` +
-    `<body style="margin:0;padding:0;background:${BRAND.pageBg};-webkit-text-size-adjust:100%;">` +
+    `<body class="op-bg" style="margin:0;padding:0;background:${BRAND.pageBg};-webkit-text-size-adjust:100%;">` +
     pre +
-    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${BRAND.pageBg};">` +
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="op-bg" style="background:${BRAND.pageBg};">` +
     `<tr><td align="center" style="padding:24px 12px;">` +
-    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:${BRAND.cardBg};border:1px solid ${BRAND.cardBorder};border-radius:14px;overflow:hidden;">` +
+    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="op-card" style="width:100%;max-width:600px;background:${BRAND.cardBg};border:1px solid ${BRAND.cardBorder};border-radius:14px;overflow:hidden;">` +
     // status accent rail
     `<tr><td style="height:4px;background:${a.bar};line-height:4px;font-size:0;">&nbsp;</td></tr>` +
     header() +
     `<tr><td style="padding:28px;">` +
     pillHtml +
-    `<h1 style="margin:0 0 12px;font-family:${FONT};font-size:21px;font-weight:700;line-height:1.3;color:${BRAND.ink};">${escapeHtml(opts.heading)}</h1>` +
+    `<h1 class="op-ink" style="margin:0 0 12px;font-family:${FONT};font-size:21px;font-weight:700;line-height:1.3;color:${BRAND.ink};">${escapeHtml(opts.heading)}</h1>` +
     opts.bodyHtml +
     buttonHtml +
     `</td></tr>` +
-    footer() +
+    footer(opts.footerHtml) +
     `</table></td></tr></table></body></html>`
   );
 }

@@ -69,6 +69,15 @@ export interface Env {
   WAITLIST_ENABLED?: string;
 
   /**
+   * Cloudflare Turnstile on the Hosted waitlist form (lib/turnstile.ts). The
+   * site key is public and the secret key is a Worker secret; set both to turn
+   * it on, with no rebuild. Both unset: no check. Only the canonical install
+   * sets them.
+   */
+  TURNSTILE_SITE_KEY?: string;
+  TURNSTILE_SECRET_KEY?: string;
+
+  /**
    * What a signed-out visitor sees at `/`: "status" (the default) for this
    * install's own status page, or "landing" for OpenPing's marketing page,
    * which only the canonical install sets (lib/home-page.ts). A wrangler.jsonc var.

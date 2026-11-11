@@ -14,6 +14,11 @@ export interface PlainPage {
   body: string[];
   /** The main button. */
   action?: { href: string; label: string };
+  /**
+   * A button that POSTs (instead of a link): for a step a link scanner or a
+   * prefetch must not take by itself. `fields` become hidden inputs.
+   */
+  form?: { action: string; label: string; fields?: Record<string, string> };
   /** A quieter link under the button. */
   secondary?: { href: string; label: string };
   /** A short line under the card. */
@@ -25,6 +30,11 @@ export function renderPlainPage(page: PlainPage): string {
   const action = page.action
     ? `<a class="button" href="${escapeHtml(page.action.href)}">${escapeHtml(page.action.label)}</a>`
     : "";
+  const form = page.form
+    ? `<form method="post" action="${escapeHtml(page.form.action)}">${Object.entries(page.form.fields ?? {})
+        .map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}" />`)
+        .join("")}<button class="button" type="submit">${escapeHtml(page.form.label)}</button></form>`
+    : "";
   const secondary = page.secondary
     ? `<a class="secondary" href="${escapeHtml(page.secondary.href)}">${escapeHtml(page.secondary.label)}</a>`
     : "";
@@ -34,8 +44,9 @@ export function renderPlainPage(page: PlainPage): string {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0b1220" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f6f8fb" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
     <meta name="robots" content="noindex" />
     <title>${escapeHtml(page.title)} | OpenPing</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -48,6 +59,18 @@ export function renderPlainPage(page: PlainPage): string {
         --ink-muted: #9fb0c5;
         --ink-faint: #8595ad;
         --accent: #6d8bff;
+      }
+      /* The app's light palette (client/index.css), for visitors whose system is light. */
+      @media (prefers-color-scheme: light) {
+        :root {
+          --canvas: #f6f8fb;
+          --surface: #ffffff;
+          --line: #d8e0ea;
+          --ink: #16233a;
+          --ink-muted: #475569;
+          --ink-faint: #5f6f87;
+          --accent: #4f5fd6;
+        }
       }
       * { box-sizing: border-box; }
       html, body { min-height: 100%; margin: 0; }
@@ -98,6 +121,8 @@ export function renderPlainPage(page: PlainPage): string {
         font-weight: 600;
         text-decoration: none;
       }
+      button.button { width: 100%; border: 0; font-family: inherit; cursor: pointer; }
+      form { margin: 0; }
       .button:hover { opacity: 0.9; }
       .secondary {
         display: flex;
@@ -130,6 +155,7 @@ export function renderPlainPage(page: PlainPage): string {
         <h1>${escapeHtml(page.heading)}</h1>
         ${paragraphs}
         ${action}
+        ${form}
         ${secondary}
       </div>
       ${fine}

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BASE_SECURITY_HEADERS,
   CF_ANALYTICS_SCRIPT,
+  TURNSTILE_ORIGIN,
   cspDirectives,
   serializeCsp,
   STATIC_HTML_PAGES,
@@ -80,8 +81,9 @@ describe("static asset security headers", () => {
 });
 
 describe("the security policy", () => {
-  it("allows no inline script in production, only this origin and Web Analytics", () => {
-    expect(cspDirectives().scriptSrc).toEqual(["'self'", CF_ANALYTICS_SCRIPT]);
+  it("allows no inline script in production, only this origin, Web Analytics and Turnstile", () => {
+    expect(cspDirectives().scriptSrc).toEqual(["'self'", CF_ANALYTICS_SCRIPT, TURNSTILE_ORIGIN]);
+    expect(cspDirectives().frameSrc).toEqual([TURNSTILE_ORIGIN]);
     expect(cspDirectives({ viteDev: true }).scriptSrc).toContain("'unsafe-inline'");
   });
 
@@ -99,7 +101,7 @@ describe("the security policy", () => {
   it("serialises directives the way browsers expect", () => {
     expect(serializeCsp(cspDirectives())).toBe(
       "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; " +
-        "script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; " +
+        "script-src 'self' https://static.cloudflareinsights.com https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; " +
         "img-src 'self' data: https:; font-src 'self' data:; " +
         "connect-src 'self' https://cloudflareinsights.com https://openping.n8builds.dev; worker-src 'self'",
     );
