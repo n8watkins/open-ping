@@ -279,6 +279,7 @@ To pin your database id, or keep your own var values, without editing `wrangler.
 ```
 
 `vars` is optional and may override only vars that `wrangler.jsonc` already defines (`WORKERS_PLAN`, `WAITLIST_ENABLED`, `HOME_PAGE`), so a typo fails loudly.
+`workers_dev` and `preview_urls` are optional booleans too; set both to `false` to turn off the `*.workers.dev` address and version preview URLs once your own domain serves the install (see [`CUSTOM_DOMAIN.md`](./CUSTOM_DOMAIN.md)).
 Then use the `:prod` scripts in place of the plain ones:
 
 ```bash

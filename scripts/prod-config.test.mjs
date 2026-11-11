@@ -54,6 +54,14 @@ describe("buildProdConfig", () => {
     expect(() => buildProdConfig(template, { database_id: ID, services: {} })).toThrow(/services/);
   });
 
+  it("lets a deployment turn off the workers.dev address and preview URLs", () => {
+    const config = buildProdConfig(template, { database_id: ID, workers_dev: false, preview_urls: false });
+    expect(config.workers_dev).toBe(false);
+    expect(config.preview_urls).toBe(false);
+    expect(buildProdConfig(template, { database_id: ID })).not.toHaveProperty("workers_dev");
+    expect(() => buildProdConfig(template, { database_id: ID, workers_dev: "no" })).toThrow(/workers_dev/);
+  });
+
   it("keeps the template's vars when no overrides are given", () => {
     expect(buildProdConfig(template, { database_id: ID }).vars).toEqual(template.vars);
   });

@@ -11,6 +11,7 @@ import { pathToFileURL } from "node:url";
 //   { "database_id": "<uuid from `wrangler d1 create`>",
 //     "vars": { "WAITLIST_ENABLED": "true", "HOME_PAGE": "landing" },
 //     "services": [ ... ], "send_email": [ ... ] }   (optional: replace those bindings)
+//     "workers_dev": false, "preview_urls": false }   (optional: turn those addresses off)
 
 export const OVERRIDES_PATH = "deploy.local.json";
 export const OUTPUT_PATH = ".wrangler.prod.jsonc";
@@ -97,9 +98,18 @@ export function buildProdConfig(template, overrides) {
     if (!Array.isArray(overrides[key])) throw new Error(`${OVERRIDES_PATH}: "${key}" must be an array`);
     bindings[key] = overrides[key];
   }
+  // A deployment on its own domain can turn off the workers.dev address and the
+  // version preview URLs, so every request goes through the zone's rules and cache.
+  const exposure = {};
+  for (const key of ["workers_dev", "preview_urls"]) {
+    if (overrides[key] === undefined) continue;
+    if (typeof overrides[key] !== "boolean") throw new Error(`${OVERRIDES_PATH}: "${key}" must be true or false`);
+    exposure[key] = overrides[key];
+  }
   return {
     ...template,
     ...bindings,
+    ...exposure,
     vars: { ...template.vars, ...vars },
     d1_databases: dbs.map((db) => (db.binding === "DB" ? { ...db, database_id: id } : db)),
   };
