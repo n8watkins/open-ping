@@ -14,7 +14,10 @@ import { ErrorBanner, SavedNote, errMessage, type AppSettings, type SettingsResp
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 interface WaitlistResponse {
+  /** Confirmed sign-ups. */
   count: number;
+  /** Signed up but not yet confirmed, and not yet expired. */
+  pending: number;
   entries: { email: string; created_at: number }[];
 }
 
@@ -189,14 +192,18 @@ function WaitlistCard({ waitlist }: { waitlist: WaitlistResponse }) {
           <CardTitle>Hosted waitlist</CardTitle>
           <a
             href="/api/waitlist/export.csv"
+            title="Confirmed people. Add ?status=all to the address for the unconfirmed ones too."
             className="rounded-lg border border-line bg-surface-2 px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface"
           >
             Download CSV
           </a>
         </CardHeader>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Card className="bg-surface-2/40 p-4">
             <Stat label="People waiting" value={waitlist.count.toLocaleString()} />
+          </Card>
+          <Card className="bg-surface-2/40 p-4">
+            <Stat label="Not yet confirmed" value={(waitlist.pending ?? 0).toLocaleString()} />
           </Card>
           <Card className="bg-surface-2/40 p-4">
             <Stat label="Goal before building Hosted" value="20 in 8 weeks" />

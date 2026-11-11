@@ -58,7 +58,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+      # The landing page's waitlist form posts to the canonical install unless told otherwise;
+      # the browser tests point it at the Worker they run (e2e/serve.mjs).
       - run: npm run build
+        env:
+          VITE_WAITLIST_URL: /api/waitlist
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v7
         if: failure()

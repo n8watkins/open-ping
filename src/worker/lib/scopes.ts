@@ -162,6 +162,7 @@ export const PUBLIC_ROUTES: readonly string[] = [
   "POST /api/setup/complete",
   "POST /api/setup/passkeys/options",
   "POST /api/setup/passkeys/verify",
+  "GET /api/waitlist/config",
   "POST /api/waitlist",
   "OPTIONS /api/waitlist",
   "POST /api/events",

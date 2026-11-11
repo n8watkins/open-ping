@@ -9,6 +9,7 @@ import { auth } from "./routes/auth";
 import { magicFlow } from "./routes/magic";
 import { heartbeats } from "./routes/heartbeats";
 import { feeds } from "./routes/feeds";
+import { waitlistPages } from "./routes/waitlist-pages";
 import { mcp, MCP_MAX_BODY_BYTES } from "./mcp/handler";
 import { runScheduled } from "./scheduler";
 import { hostedAuth } from "./routes/hosted-auth";
@@ -129,6 +130,7 @@ app.use("/api/auth/passkeys/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: 
 app.use("/api/tools/is-it-down", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/api/events", bodyLimit({ maxSize: 1024, onError: payloadTooLarge }));
 app.use("/api/waitlist", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
+app.use("/waitlist/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/auth/app/*", bodyLimit({ maxSize: 4 * 1024, onError: payloadTooLarge }));
 app.use("/hb/*", bodyLimit({ maxSize: SMALL_BODY_LIMIT, onError: payloadTooLarge }));
 app.use("/mcp", bodyLimit({ maxSize: MCP_MAX_BODY_BYTES, onError: payloadTooLarge }));
@@ -149,6 +151,9 @@ app.route(HANDOFF_PATH, hostedAuth);
 // The platform's internal calls: the scheduler entry and health (hosted mode
 // only, and only from the platform; passes through otherwise).
 app.route(INTERNAL_PATH_PREFIX.slice(0, -1), platformRoutes);
+
+// The pages behind the links in the Hosted waitlist's confirm email.
+app.route("/waitlist", waitlistPages);
 
 // Signing in to the Android app through the phone's browser (docs/ANDROID.md).
 app.route("/auth/app", appSignIn);

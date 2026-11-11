@@ -28,6 +28,12 @@ export const CF_ANALYTICS_REPORT = "https://cloudflareinsights.com";
  */
 export const CANONICAL_ORIGIN = "https://openping.n8builds.dev";
 
+/**
+ * Cloudflare Turnstile, on the landing page's waitlist form: its script, and the
+ * frame it draws the challenge in.
+ */
+export const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
+
 /** The embeddable status widget: the one surface meant to be framed. */
 export const WIDGET_PATH = "/embed";
 
@@ -49,6 +55,7 @@ export type CspDirectives = {
   frameAncestors: string[];
   objectSrc: string[];
   scriptSrc: string[];
+  frameSrc: string[];
   styleSrc: string[];
   imgSrc: string[];
   fontSrc: string[];
@@ -74,8 +81,9 @@ export function cspDirectives({ viteDev = false }: { viteDev?: boolean } = {}): 
     // to cloudflareinsights.com (manual embed).
     // developers.cloudflare.com/web-analytics/faq/
     scriptSrc: viteDev
-      ? ["'self'", "'unsafe-inline'", CF_ANALYTICS_SCRIPT]
-      : ["'self'", CF_ANALYTICS_SCRIPT],
+      ? ["'self'", "'unsafe-inline'", CF_ANALYTICS_SCRIPT, TURNSTILE_ORIGIN]
+      : ["'self'", CF_ANALYTICS_SCRIPT, TURNSTILE_ORIGIN],
+    frameSrc: [TURNSTILE_ORIGIN],
     styleSrc: ["'self'", "'unsafe-inline'"],
     imgSrc: ["'self'", "data:", "https:"],
     fontSrc: ["'self'", "data:"],

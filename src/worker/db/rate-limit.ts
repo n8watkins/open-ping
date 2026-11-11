@@ -17,6 +17,9 @@ import type { Env } from "../types";
  * unit testing; only `hitRateLimit` touches D1.
  */
 
+/** Rows younger than this are never reaped, so a daily counter (a window of 24 hours) survives. */
+const REAP_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
+
 /** Default rolling window: one minute. */
 export const RATE_LIMIT_WINDOW_MS = 60_000;
 
@@ -94,9 +97,13 @@ export async function hitRateLimit(
   // Opportunistic reap of long-expired windows keeps the table bounded without a
   // dedicated cron. Best-effort and low-probability - never blocks the request,
   // and only touches rows several windows in the past (never the live one).
+  // A row doesn't record its own window, and the daily caps (the email cap, the
+  // waitlist's) share this table with per-minute ones, so a caller with a short
+  // window must not reap a still-live day-long row: the cutoff never goes
+  // closer than REAP_MIN_AGE_MS.
   if (Math.random() < 0.02) {
     await env.DB.prepare("DELETE FROM rate_limits WHERE window_start < ?")
-      .bind(now - windowMs * 5)
+      .bind(now - Math.max(windowMs * 5, REAP_MIN_AGE_MS))
       .run()
       .catch(() => {});
   }
