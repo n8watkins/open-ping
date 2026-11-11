@@ -86,7 +86,8 @@ export function classifyMailroomCode(code: string): MailError {
   // Caps are spent until a reset, so the mail waits for the next day instead
   // of being retried every few minutes.
   if (code.startsWith("cap_") || code === "daily_limit") return "quota";
-  if (code === "rate_limited" || code === "unavailable" || code === "in_progress") return "unavailable";
+  // A paused app (the owner's switch in mailroom) sends again once resumed.
+  if (code === "rate_limited" || code === "unavailable" || code === "in_progress" || code === "paused") return "unavailable";
   return "rejected";
 }
 

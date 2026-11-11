@@ -133,6 +133,7 @@ describe("the mailroom mailer", () => {
     expect(errors).toEqual(["rejected", "rejected", "unavailable", "quota", "quota", "unavailable", "unavailable", "rejected"]);
     expect(classifyMailroomCode("cap_global_day")).toBe("quota");
     expect(classifyMailroomCode("in_progress")).toBe("unavailable");
+    expect(classifyMailroomCode("paused")).toBe("unavailable");
   });
 
   it("is on only with the binding and a From on the Hosted domain", () => {
