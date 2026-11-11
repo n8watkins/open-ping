@@ -30,6 +30,7 @@ import { checkedEveryText, intervalReasonDetail, planMinimumSeconds, type Interv
 import { usePlan } from "../lib/plan-limits";
 import { monitorTypeLabel, type MonitorType } from "../lib/types";
 import { StatusPill } from "../components/ui/StatusPill";
+import { SiteIcon } from "../components/monitors/SiteIcon";
 import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { RangeControl } from "../components/ui/RangeControl";
 import { Skeleton } from "../components/ui/Skeleton";
@@ -102,6 +103,8 @@ interface IncidentRow {
 
 interface DetailResponse {
   monitor: MonitorInfo;
+  /** When the site icon OpenPing keeps was fetched; null for none. */
+  iconAt?: number | null;
   state: MonitorStateRow | null;
   uptime: UptimeWindows;
   /** Downtime and its suspended share per uptime window (absent from older workers). */
@@ -446,6 +449,7 @@ export default function MonitorDetail() {
       <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
+            <SiteIcon monitorId={monitor.id} iconAt={data?.iconAt} size="size-9" fallback={null} />
             <h1 className="truncate text-2xl font-semibold tracking-tight">{monitor.name}</h1>
             <StatusPill state={currentState} />
             {state?.is_flapping ? (
@@ -555,7 +559,7 @@ export default function MonitorDetail() {
                   <a
                     href={safeTargetUrl}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     className="mt-1 block truncate font-mono text-sm text-accent hover:underline"
                   >
                     {targetUrl}

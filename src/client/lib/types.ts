@@ -23,6 +23,8 @@ export interface MonitorSummary {
   name: string;
   type: MonitorType;
   target: string | null;
+  /** When the site icon OpenPing keeps for this monitor was fetched; null for none. */
+  iconAt?: number | null;
   state: MonitorState;
   paused: boolean;
   intervalSeconds: number;
