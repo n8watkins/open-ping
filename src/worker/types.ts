@@ -1,5 +1,6 @@
 import type { TenantProps } from "../shared/hosted-contract";
 import type { RegionProbe } from "./region-probe";
+import type { ApiTokenIdentity } from "./middleware/auth";
 
 /**
  * Cloudflare Worker runtime bindings. Secrets are optional at the type level so
@@ -166,6 +167,8 @@ export interface AppVariables {
   admin?: { id: string; login?: string; email?: string };
   /** The authenticated session row, set by requireAuth. */
   session?: SessionRow;
+  /** The bearer token that authenticated this request, set by requireAuth (absent for a session). */
+  token?: ApiTokenIdentity;
   /**
    * This call's props from the platform, in hosted mode only (set by the
    * hosted middleware in index.ts). Valid for this request only: never keep

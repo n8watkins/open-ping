@@ -55,7 +55,7 @@ export default function WebhooksPage() {
     <div className="stagger space-y-6 [&>*]:animate-enter">
       <Card className="p-5">
         <CardHeader>
-          <CardTitle>Webhooks</CardTitle>
+          <CardTitle as="h2">Webhooks</CardTitle>
           <a
             href={DOCS}
             target="_blank"
@@ -82,7 +82,7 @@ export default function WebhooksPage() {
 
       <Card className="p-5">
         <CardHeader>
-          <CardTitle>Payload</CardTitle>
+          <CardTitle as="h2">Payload</CardTitle>
         </CardHeader>
         <p className="-mt-1 mb-3 text-sm text-ink-muted">
           <code className="font-mono text-ink">Content-Type: application/json</code>. The{" "}
@@ -104,7 +104,7 @@ export default function WebhooksPage() {
 
       <Card className="p-5">
         <CardHeader>
-          <CardTitle>Verifying the signature</CardTitle>
+          <CardTitle as="h2">Verifying the signature</CardTitle>
         </CardHeader>
         <p className="-mt-1 mb-4 text-sm text-ink-muted">
           Give the channel a signing secret and every request carries two headers:

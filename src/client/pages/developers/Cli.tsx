@@ -31,7 +31,7 @@ export default function CliPage() {
     <div className="stagger space-y-6 [&>*]:animate-enter">
       <Card className="p-5">
         <CardHeader>
-          <CardTitle>CLI</CardTitle>
+          <CardTitle as="h2">CLI</CardTitle>
           <a
             href={DOCS}
             target="_blank"
@@ -66,7 +66,7 @@ export default function CliPage() {
 
       <Card className="p-5">
         <CardHeader>
-          <CardTitle>Common commands</CardTitle>
+          <CardTitle as="h2">Common commands</CardTitle>
         </CardHeader>
         <p className="-mt-1 mb-4 text-sm text-ink-muted">
           <code className="font-mono text-ink">op</code> is short for <code className="font-mono text-ink">node scripts/op.mjs</code>{" "}
@@ -102,7 +102,7 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
         {n}
       </span>
       <div className="min-w-0">
-        <h4 className="mb-2 pt-1 text-sm font-medium text-ink">{title}</h4>
+        <h3 className="mb-2 pt-1 text-sm font-medium text-ink">{title}</h3>
         {children}
       </div>
     </li>

@@ -1,7 +1,8 @@
 import { defaultIntervalSeconds } from "../../shared/check-interval";
 import { fastMonitorAllowance, STANDARD_CHECK_MINUTES, type PlanLimits } from "../../shared/hosted-contract";
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/server";
+import type { McpServer, RegisteredTool } from "@modelcontextprotocol/server";
+import { hasScope, toolScope, type Scope } from "../lib/scopes";
 import type { Env } from "../types";
 import { MONITOR_TYPES, type MonitorState } from "../../shared/states";
 import { getSetting } from "../db/settings";
@@ -89,6 +90,8 @@ export interface ToolContext {
   plan?: HostedPlan;
   /** Hosted mode: tell the platform the monitor count changed (a create or delete). */
   usageChanged?: () => void;
+  /** The calling token's scopes: only the tools they allow are offered (lib/scopes.ts). */
+  scopes: readonly Scope[];
 }
 
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -220,8 +223,26 @@ function writeFailure(r: Extract<MonitorWriteResult, { ok: false }>): ToolResult
 }
 
 /** Register every OpenPing tool on `server`. */
+/**
+ * registerTool limited to the token's scopes (lib/scopes.ts TOOL_SCOPES; a
+ * tool missing there needs admin). A tool the token may not use is never
+ * registered, so tools/list does not show it and tools/call cannot find it;
+ * the handler re-checks the scope anyway, as the last line of defense.
+ */
+function scopedRegistrar(server: McpServer, scopes: readonly Scope[]): McpServer["registerTool"] {
+  const registerTool = server.registerTool.bind(server) as (name: string, config: unknown, cb: unknown) => RegisteredTool;
+  return ((name: string, config: unknown, cb: (...args: unknown[]) => unknown) => {
+    const needed = toolScope(name);
+    if (!hasScope(scopes, needed)) return undefined;
+    return registerTool(name, config, (...args: unknown[]) =>
+      hasScope(scopes, needed) ? cb(...args) : fail(`This token does not have the ${needed} scope that ${name} needs.`),
+    );
+  }) as unknown as McpServer["registerTool"];
+}
+
 export function registerTools(server: McpServer, ctx: ToolContext): void {
   const { env } = ctx;
+  const register = scopedRegistrar(server, ctx.scopes);
   let zonePromise: Promise<string> | undefined;
   /** The install's timezone (Settings), read at most once per request. */
   const zone = () =>
@@ -229,7 +250,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 
   // ------------------------------------------------------------------ read
 
-  server.registerTool(
+  register(
     "get_status",
     {
       title: "Get status",
@@ -286,7 +307,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "list_monitors",
     {
       title: "List monitors",
@@ -337,7 +358,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "get_monitor",
     {
       title: "Get monitor",
@@ -380,7 +401,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "list_incidents",
     {
       title: "List incidents",
@@ -418,7 +439,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "get_uptime",
     {
       title: "Get uptime",
@@ -441,7 +462,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "get_monthly_report",
     {
       title: "Get monthly uptime report",
@@ -473,7 +494,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "get_diagnostics",
     {
       title: "Get diagnostics",
@@ -497,7 +518,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "get_key_status",
     {
       title: "Get encryption key status",
@@ -523,7 +544,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "list_channels",
     {
       title: "List notification channels",
@@ -543,7 +564,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "list_status_pages",
     {
       title: "List status pages",
@@ -565,7 +586,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "list_categories",
     { title: "List categories", description: "Monitor categories (groups) with their slugs.", annotations: READ },
     async () => {
@@ -577,7 +598,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "list_maintenance",
     {
       title: "List maintenance windows",
@@ -642,7 +663,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       .describe('HTTP only, e.g. [{"kind":"contains","value":"ok"}].'),
   };
 
-  server.registerTool(
+  register(
     "create_monitor",
     {
       title: "Create monitor",
@@ -685,7 +706,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "update_monitor",
     {
       title: "Update monitor",
@@ -709,7 +730,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
   );
 
   for (const [name, paused] of [["pause_monitor", true], ["resume_monitor", false]] as const) {
-    server.registerTool(
+    register(
       name,
       {
         title: paused ? "Pause monitor" : "Resume monitor",
@@ -727,7 +748,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     );
   }
 
-  server.registerTool(
+  register(
     "create_maintenance_window",
     {
       title: "Create maintenance window",
@@ -782,7 +803,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "post_incident_update",
     {
       title: "Post incident update",
@@ -825,7 +846,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "end_maintenance_window",
     {
       title: "End maintenance window",
@@ -851,7 +872,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "update_status_page",
     {
       title: "Update status page",
@@ -894,7 +915,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
   const needsConfirm = (consequence: string) =>
     fail(`Not done: ${consequence} Ask the user to confirm, then call again with confirm: true.`);
 
-  server.registerTool(
+  register(
     "delete_monitor",
     {
       title: "Delete monitor",
@@ -913,7 +934,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  server.registerTool(
+  register(
     "delete_maintenance_window",
     {
       title: "Delete maintenance window",
@@ -926,12 +947,17 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       if (yes !== true) return needsConfirm("a deleted maintenance window cannot be restored.");
       const w = await getMaintenanceWindow(env, id);
       if (!w) return fail("No maintenance window has that id. Call list_maintenance to find it.");
+      if (w.startsAt <= Date.now() && !hasScope(ctx.scopes, "admin")) {
+        return fail(
+          "This window has started. This token's maintenance:write scope can only delete windows that have not started; use end_maintenance_window to end it, or ask the owner.",
+        );
+      }
       await deleteMaintenanceWindow(env, id);
       return ok(`Deleted maintenance window ${id}.`, { deleted: { id, title: w.title } }, await zone());
     },
   );
 
-  server.registerTool(
+  register(
     "rotate_heartbeat_token",
     {
       title: "Rotate heartbeat token",

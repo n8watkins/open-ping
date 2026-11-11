@@ -292,6 +292,42 @@ describe("run", () => {
     expect(r.stderr).toContain("Upgrade: https://app.hosted.test/billing/upgrade");
   });
 
+  it("names the missing scope when a token is refused with insufficient_scope", async () => {
+    const r = await cli(["monitors", "delete", "mon_1", "--yes"], {
+      "DELETE /api/monitors/mon_1": [
+        403,
+        { error: "insufficient_scope", required: "admin", scopes: ["read", "monitors:write"], message: "..." },
+      ],
+    });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("DELETE /api/monitors/mon_1 failed: HTTP 403 insufficient_scope - this token lacks the admin scope.");
+    expect(r.stderr).toContain("Its scopes: read, monitors:write. Create a token with admin under Developers > API tokens");
+    expect(r.stderr).toContain("op token whoami");
+  });
+
+  it("explains that a session-only route refuses every token", async () => {
+    const r = await cli(["token", "whoami"], { "GET /api/api-tokens/self": [403, { error: "session_required" }] });
+    expect(r.stderr).toContain("only the owner's signed-in browser session can do this");
+  });
+
+  it("shows the token in use with token whoami", async () => {
+    const expiresAt = new Date(2026, 11, 9, 12, 0).getTime();
+    const r = await cli(["token", "whoami"], {
+      "GET /api/api-tokens/self": [
+        200,
+        { kind: "token", id: "tok_1", name: "Monitoring sync", scopes: ["read", "monitors:write"], expiresAt },
+      ],
+    });
+    expect(r.code).toBe(0);
+    expect(r.calls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /api/api-tokens/self"]);
+    expect(r.stdout).toBe("Monitoring sync [tok_1]\n  scopes   read, monitors:write\n  expires  2026-12-09 12:00\n");
+
+    const secret = await cli(["token", "whoami"], {
+      "GET /api/api-tokens/self": [200, { kind: "secret", name: "API_TOKEN secret", scopes: ["admin"], expiresAt: null }],
+    });
+    expect(secret.stdout).toBe("API_TOKEN secret\n  scopes   admin\n  expires  never\n");
+  });
+
   it("exits 2 with a message on an unknown flag", async () => {
     const r = await cli(["uptime", "--montior", "mon_1"]);
     expect(r.code).toBe(2);

@@ -30,7 +30,7 @@ export default function McpPage() {
     <div className="stagger space-y-6 [&>*]:animate-enter">
       <Card className="p-5">
         <CardHeader>
-          <CardTitle>MCP server</CardTitle>
+          <CardTitle as="h2">MCP server</CardTitle>
           {data && <Chip tone={on ? "up" : "neutral"}>{on ? "On" : "Off until you create a token"}</Chip>}
         </CardHeader>
         <p className="-mt-1 mb-4 text-sm text-ink-muted">
@@ -64,7 +64,7 @@ export default function McpPage() {
 
       <Card className="p-5">
         <CardHeader>
-          <CardTitle>Claude Code</CardTitle>
+          <CardTitle as="h2">Claude Code</CardTitle>
         </CardHeader>
         <fieldset className="mb-4">
           <legend className="mb-2 text-xs font-medium text-ink-muted">Where to add it</legend>
@@ -101,7 +101,7 @@ export default function McpPage() {
 
       <Card className="p-5">
         <CardHeader>
-          <CardTitle>Claude Desktop</CardTitle>
+          <CardTitle as="h2">Claude Desktop</CardTitle>
         </CardHeader>
         <p className="-mt-1 mb-4 text-sm text-ink-muted">
           Add this to <code className="font-mono text-ink">claude_desktop_config.json</code> (Settings, Developer, Edit
@@ -113,7 +113,7 @@ export default function McpPage() {
 
       <Card className="p-5">
         <CardHeader>
-          <CardTitle>Other clients</CardTitle>
+          <CardTitle as="h2">Other clients</CardTitle>
           <a
             href={DOCS}
             target="_blank"

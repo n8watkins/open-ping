@@ -19,6 +19,7 @@ vi.mock("../db/settings", () => ({
 }));
 
 import { mcp, MCP_RATE_LIMIT_PER_MINUTE } from "./handler";
+import { TOOL_SCOPES } from "../lib/scopes";
 import {
   createMonitor,
   deleteMonitor,
@@ -255,6 +256,8 @@ describe("tools/list", () => {
     for (const name of ["create_monitor", "update_monitor", "pause_monitor", "update_status_page"]) {
       expect(tools.get(name)!.annotations.destructiveHint).toBe(false);
     }
+    // Every tool has a scope row (lib/scopes.ts), and every row is a real tool.
+    expect([...tools.keys()].sort()).toEqual(Object.keys(TOOL_SCOPES).sort());
   });
 });
 

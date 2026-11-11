@@ -286,7 +286,7 @@ function SupportActivityCard() {
   );
 }
 
-/** API tokens are full admin credentials too; they're managed under Developers. */
+/** API tokens are credentials too (scoped, managed under Developers). */
 function ApiTokensPointer() {
   const { data } = useFetch<{ tokens: unknown[]; secretConfigured: boolean }>("/api/api-tokens");
   const count = data?.tokens.length ?? 0;

@@ -7,10 +7,42 @@ The same operations are available to AI clients through the [MCP server](./MCP.m
 ## Authentication
 
 The CLI authenticates with a Bearer API token instead of a login session.
-The simplest way to get one is **Developers** in the app: **Create token** names it (for example "Laptop CLI") and shows it once.
-Only a hash is stored, and **Revoke** stops it working right away.
+The simplest way to get one is **Developers** in the app: **Create token** names it (for example "Laptop CLI"), sets what it may do and when it expires, and shows it once.
+Only a hash is stored, and **Revoke** stops it working right away (a record of it stays under **Revoked tokens**).
 
-Or set a high-entropy token as the `API_TOKEN` Worker secret:
+### Scopes
+
+Each token has one or more scopes, so you can give a script or an AI agent only what it needs:
+
+| Scope | What it allows |
+| --- | --- |
+| `read` | Read monitors, incidents, uptime, reports, diagnostics, maintenance windows, status pages, categories and channels (credentials hidden). Not settings, data export, key status, the waitlist, passkeys or tokens. |
+| `monitors:write` | Create, update, pause and resume monitors, and run a test check. Not delete or rotate a heartbeat token. |
+| `incidents:write` | Post, edit and remove incident updates and notes. |
+| `maintenance:write` | Create, update and end maintenance windows, and delete a window that has not started. |
+| `admin` | Everything, and it implies every other scope. |
+
+Scopes do not imply one another apart from `admin`: a token that should list monitors and create them needs `read` and `monitors:write`.
+The presets on the **Developers** page are Read-only (`read`), Monitoring sync (`read monitors:write`), Maintenance (`read maintenance:write`) and Full admin (`admin`).
+A token can expire after 7, 30 or 90 days, or never.
+Tokens created before scopes existed, and the `API_TOKEN` secret, are `admin`.
+
+Anything a route table does not list explicitly is admin only, so a new feature is never open to a narrower token by accident.
+No token, not even an admin one, can list, create or revoke tokens: that needs the owner's signed-in browser session.
+Each token may make at most 120 API calls a minute; more get `429` with `Retry-After`.
+
+A call outside the token's scopes fails with `403` and names the scope it needed:
+
+```text
+DELETE /api/monitors/mon_1 failed: HTTP 403 insufficient_scope - this token lacks the admin scope.
+  Its scopes: read, monitors:write. Create a token with admin under Developers > API tokens (or run `op token whoami` to see which token is in use).
+```
+
+`op token whoami` shows the token the CLI is using, its scopes and when it expires.
+
+### The API_TOKEN secret
+
+You can also set a high-entropy token as the `API_TOKEN` Worker secret:
 
 ```sh
 openssl rand -base64 32 | npx wrangler secret put API_TOKEN
@@ -21,7 +53,31 @@ Do not confuse it with `wrangler versions secret put`, which creates an undeploy
 
 When `API_TOKEN` is set, any request with `Authorization: Bearer <API_TOKEN>` is treated as the admin.
 A browser never sends a Bearer header on its own, so there is no CSRF surface, and the token path skips the cookie and CSRF checks the browser uses.
-The token grants full admin access: treat it like a password, keep it out of version control, and rotate it by setting a new value.
+The secret grants full admin access: treat it like a password, keep it out of version control, and rotate it by setting a new value.
+Prefer a scoped token from **Developers** for anything but your own terminal.
+
+## Giving an AI agent access
+
+An agent that keeps monitors in sync, opens maintenance windows or reads status should get its own narrow, expiring token, never the admin secret.
+
+1. In the app, open **Developers > API tokens**, name the token (for example "Claude Code agent"), choose **Monitoring sync** (`read` and `monitors:write`; add `maintenance:write` if it should open maintenance windows), set **Expires after** to 90 days, and select **Create token**.
+2. Copy the token, then store it in your secret store instead of a file, for example with `pass-env`:
+
+   ```sh
+   pass-env set open-ping/OPENPING_TOKEN --force
+   ```
+
+   Paste the token when it asks.
+3. List `OPENPING_TOKEN=open-ping/OPENPING_TOKEN` (and `OPENPING_URL`) in the project's `.env.pass`, and have the agent run the CLI through `pass-env run`, so the token reaches the process without ever being printed or written to disk:
+
+   ```sh
+   pass-env run -- node scripts/op.mjs token whoami
+   pass-env run -- node scripts/op.mjs monitors list
+   ```
+
+The agent cannot delete monitors, change alert channels, read settings or export data, and it cannot create a token for itself.
+When the token expires, create a new one the same way and run the `pass-env set` command again.
+The same token works for the [MCP server](./MCP.md), which then offers the agent only the tools its scopes allow.
 
 ## Configuration
 
@@ -36,7 +92,7 @@ Otherwise the CLI reads a `.op.env` file in the current directory, or else in th
 ```sh
 # .op.env (gitignored)
 OPENPING_URL=https://status.example.com
-OPENPING_TOKEN=<the API_TOKEN value>
+OPENPING_TOKEN=<a token from Developers>
 ```
 
 `.op.env` is in `.gitignore`; keep its permissions tight with `chmod 600 .op.env`.
@@ -83,6 +139,7 @@ API failures exit with code 1 and print the HTTP status and any validation messa
 | `op maintenance create ...` | Schedules maintenance; see below. |
 | `op maintenance end <id>` | Ends an active window now. |
 | `op maintenance delete <id> --yes` | Deletes a window, for example one that has not started yet. |
+| `op token whoami` | The token in use: its name, scopes and expiry. |
 
 ## Monitors
 
@@ -155,3 +212,4 @@ Everything goes through the authenticated `/api` routes the web app uses, valida
 Partial updates use `PATCH /api/monitors/:id` and `PATCH /api/status-pages/:id`, which merge the change into the stored record and validate the result exactly like a full `PUT`.
 `op uptime` reads `GET /api/monitors/uptime`, and `op maintenance end` calls `POST /api/maintenance/:id/end`.
 `op incidents update` calls `POST /api/incidents/:id/updates`, and `op report` reads `GET /api/reports/monthly`.
+`op token whoami` reads `GET /api/api-tokens/self`, the one token route a token may call.

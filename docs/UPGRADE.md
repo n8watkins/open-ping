@@ -105,3 +105,10 @@ A build from before it reads only sample rows, so for a while after rolling back
 - The bar heals after about 28 new checks, and the monitor page and the 24-hour charts after 24 hours, as the older build writes a sample row for every check again.
 - Uptime, downtime, incidents, the 7-day to 90-day charts, status pages and the monthly report stay correct throughout: they come from the hourly and daily summaries, which every build keeps the same way.
 
+
+### Rolling back past migration 0029 (scoped API tokens)
+
+Migration 0029 adds scopes, an expiry and a revocation record to API tokens; every token that existed before it stays an admin token and keeps working.
+An older build ignores scopes and expiry, so it does not accept tokens created after the upgrade at all: they get `401` until you upgrade again (or you create new tokens on the older build).
+Tokens revoked after the upgrade stay revoked on the older build.
+Tokens created before the upgrade, and the `API_TOKEN` secret, work on both.
