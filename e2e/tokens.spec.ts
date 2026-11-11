@@ -2,8 +2,8 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { E2E_PORT, E2E_SESSION_TOKEN } from "./env.mjs";
 
-// Developers > API tokens: a scoped, expiring token made from a vertical list of plain-language
-// choices (an accordion of radios), shown once, listed with plain permission names, and limited to them when used.
+// Developers > API tokens: permissions picked like a cloud console. Categories with a granted/total counter, one row per
+// resource with a checkbox per action, nothing ticked to start, a live plain-language summary, and Full access apart.
 
 const base = `http://localhost:${E2E_PORT}`;
 
@@ -11,23 +11,29 @@ test.beforeEach(async ({ context }) => {
   await context.addCookies([{ name: "op_session", value: E2E_SESSION_TOKEN, url: base, secure: true, httpOnly: true }]);
 });
 
-test("creates a Monitoring sync token that expires in 90 days and can only do what it says", async ({ page, request }) => {
+test("starts with nothing ticked; Edit ticks Read; the token gets exactly what is ticked", async ({ page, request }) => {
   const name = `Agent ${Date.now().toString(36)}`;
   await page.goto("/developers/tokens");
   await page.getByLabel("Name").fill(name);
-  const group = page.getByRole("radiogroup", { name: "What can this token do?" });
-  await expect(group.getByRole("radio")).toHaveCount(5);
-  await expect(group.getByRole("radio", { name: /Read-only/ })).toBeChecked();
   await expect(page.getByLabel("Expires after")).toHaveValue("90");
-  await expect(page.getByText("Look, but never change anything")).toBeVisible();
+  await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Create token" })).toBeDisabled();
+  await expect(page.getByText("Tick at least one permission.")).toBeVisible();
+  await expect(page.getByText("Nothing yet. Tick at least one permission above.")).toBeVisible();
 
-  // Only the open card shows its details, in plain words.
-  await group.getByText("Monitoring sync").click();
-  await expect(group.getByRole("radio", { name: /Monitoring sync/ })).toBeChecked();
-  await expect(page.getByText("Add, change, pause and resume monitors")).toBeVisible();
-  await expect(page.getByText("Remove monitors")).toBeVisible();
-  await expect(page.getByText("See monitors, incidents, uptime and reports")).toHaveCount(1);
-  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  const monitoring = page.getByRole("button", { name: "Monitoring", exact: true });
+  await expect(monitoring).toHaveAccessibleDescription("0 of 8 granted");
+  await expect(monitoring).toHaveAttribute("aria-expanded", "false");
+  await monitoring.click();
+  await page.getByRole("checkbox", { name: "Monitors: Edit" }).check();
+  // Edit includes Read, shown ticked and locked.
+  await expect(page.getByRole("checkbox", { name: "Monitors: Read (included with Edit)" })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Monitors: Read (included with Edit)" })).toBeDisabled();
+  await expect(monitoring).toHaveAccessibleDescription("2 of 8 granted");
+  const summary = page.getByRole("region", { name: "What this token can do" });
+  await expect(summary).toContainText("Add, change, pause and resume monitors");
+  await expect(summary).toContainText("See monitors, their settings and their current status");
+  await expect(summary).toContainText("Everything else is refused.");
 
   const axe = await new AxeBuilder({ page }).include("main").analyze();
   expect(axe.violations).toEqual([]);
@@ -37,65 +43,67 @@ test("creates a Monitoring sync token that expires in 90 days and can only do wh
   await expect(status).toBeVisible();
   const token = (await status.locator("code").textContent())!.trim();
   expect(token).toMatch(/^opk_/);
+  // The form resets, so the next token starts from nothing again.
+  await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
 
   const row = page.getByRole("listitem").filter({ hasText: name });
-  await expect(row).toContainText("See everything");
-  await expect(row).toContainText("Manage monitors");
-  await expect(row).not.toContainText("monitors:write");
+  await expect(row).toContainText("Monitors: edit");
   await expect(row).toContainText("Never used");
   await expect(row).toContainText(/Expires in (89|90)d/);
-  await expect(row).not.toContainText("Full control");
+  await expect(row).not.toContainText("Full access");
 
   const bearer = { authorization: `Bearer ${token}` };
   expect((await request.get("/api/monitors", { headers: bearer })).status()).toBe(200);
-  const refused = await request.get("/api/settings", { headers: bearer });
+  const refused = await request.get("/api/overview", { headers: bearer });
   expect(refused.status()).toBe(403);
-  expect(await refused.json()).toMatchObject({ error: "insufficient_scope", required: "admin" });
+  expect(await refused.json()).toMatchObject({ error: "insufficient_scope", required: "uptime:read" });
   expect(await (await request.get("/api/api-tokens/self", { headers: bearer })).json()).toMatchObject({
     name,
-    scopes: ["read", "monitors:write"],
+    scopes: ["monitors:read", "monitors:edit"],
   });
 });
 
-test("Full admin is one clear line and a warning, not ticked boxes; Custom has the only checkboxes", async ({ page }) => {
+test("Bulk select ticks visible boxes; search narrows the list; a long access line opens in full", async ({ page }) => {
+  const name = `Bulk ${Date.now().toString(36)}`;
   await page.goto("/developers/tokens");
-  const group = page.getByRole("radiogroup", { name: "What can this token do?" });
-  await group.getByText("Full admin").click();
-  await expect(page.getByText("Everything, including settings, exports and other tokens. Only for your own CLI.")).toBeVisible();
-  await expect(page.getByText(/Give an AI\s+agent a narrower one/)).toBeVisible();
-  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await page.getByRole("button", { name: "Bulk select" }).click();
+  await page.getByRole("menuitem", { name: /Monitoring sync/ }).click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Monitoring", exact: true })).toHaveAccessibleDescription("5 of 8 granted");
+  await expect(page.getByRole("region", { name: "What this token can do" })).toContainText("Run a monitor's check on demand");
 
-  await group.getByText("Custom").click();
-  await expect(page.getByRole("checkbox")).toHaveCount(4);
-  await expect(page.getByRole("checkbox", { name: /^See everything/ })).not.toBeChecked();
-  await page.getByLabel("Name").fill("Custom mix");
-  await expect(page.getByRole("button", { name: "Create token" })).toBeDisabled();
-  await expect(page.getByText("Tick at least one permission.")).toBeVisible();
-  await page.getByRole("checkbox", { name: /^Manage incidents/ }).check();
-  await page.getByRole("checkbox", { name: /^See everything/ }).check();
+  await page.getByRole("searchbox", { name: "Search permissions" }).fill("alert");
+  await expect(page.getByRole("checkbox", { name: "Alert channels: Read" })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Alert channels: Test" })).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: /^Monitors:/ })).toHaveCount(0);
+  await page.getByRole("searchbox", { name: "Search permissions" }).fill("");
+
+  await page.getByLabel("Name").fill(name);
   await page.getByRole("button", { name: "Create token" }).click();
-  const row = page.getByRole("listitem").filter({ hasText: "Custom mix" });
-  await expect(row).toContainText("See everything");
-  await expect(row).toContainText("Manage incidents");
-  await expect(row).not.toContainText("Full control");
+  const row = page.getByRole("listitem").filter({ hasText: name });
+  await expect(row).toContainText("Monitors: edit, test");
+  await row.getByRole("button", { name: /more permissions/ }).click();
+  await expect(row).toContainText("Diagnostics: read");
+  await expect(row.getByRole("button", { name: "Show less" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Bulk select" }).click();
+  await page.getByRole("menuitem", { name: "Clear all" }).click();
+  await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
 });
 
-test("the choices work from the keyboard; an expiry and revoke work from the list", async ({ page }) => {
-  const name = `Preset ${Date.now().toString(36)}`;
+test("Full access is a separate, warned checkbox; an expiry and revoke work from the list", async ({ page }) => {
+  const name = `Admin ${Date.now().toString(36)}`;
   await page.goto("/developers/tokens");
-  const group = page.getByRole("radiogroup", { name: "What can this token do?" });
-  await group.getByRole("radio", { name: /Read-only/ }).focus();
-  await page.keyboard.press("ArrowDown");
-  await expect(group.getByRole("radio", { name: /Monitoring sync/ })).toBeChecked();
-  await expect(group.getByRole("radio", { name: /Monitoring sync/ })).toBeFocused();
-  await page.keyboard.press("ArrowDown");
-  await expect(group.getByRole("radio", { name: /^Maintenance/ })).toBeChecked();
-  await expect(page.getByText("Start, change and end maintenance windows")).toBeVisible();
+  const full = page.getByRole("checkbox", { name: /^Full access/ });
+  await expect(full).not.toBeChecked();
+  await full.check();
+  await expect(page.getByRole("searchbox", { name: "Search permissions" })).toBeDisabled();
+  await expect(page.getByRole("region", { name: "What this token can do" })).toContainText("Everything");
   await page.getByLabel("Expires after").selectOption("never");
   await page.getByLabel("Name").fill(name);
   await page.getByRole("button", { name: "Create token" }).click();
   const row = page.getByRole("listitem").filter({ hasText: name });
-  await expect(row).toContainText("Manage maintenance");
+  await expect(row).toContainText("Full access");
   await expect(row).toContainText("Never expires");
 
   await page.getByRole("button", { name: `Revoke ${name}` }).click();

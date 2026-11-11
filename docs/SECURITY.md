@@ -353,7 +353,7 @@ It exists only while `API_TOKEN` is set or at least one [API token](#api-tokens)
 - Unauthenticated requests never write to D1.
   A bearer value that starts with `opk_` costs one indexed read to look up, and on an install without the `API_TOKEN` secret so does deciding whether `/mcp` exists.
 - Authenticated requests are capped at 120 a minute per token through the `rate_limits` table, and bodies at 256 KB.
-- `tools/list` offers only the tools the token's scopes allow (`TOOL_SCOPES` in `src/worker/lib/scopes.ts`; a tool missing there is admin only), and each tool re-checks the scope when called.
+- `tools/list` offers only the tools the token's permissions allow (`TOOL_SCOPES` in `src/worker/lib/scopes.ts`; a tool missing there is admin only), and each tool re-checks the permission when called.
 - It is stateless: nothing about an MCP client is stored between requests.
 - Tool results go to the client's model provider, so they are redacted more strictly than REST responses: modeled secrets (HTTP auth passwords and tokens, heartbeat shared secrets, webhook URLs and secrets, Telegram bot tokens) are blanked as in the API, and custom header values and request bodies are blanked as in a backup export.
 - Heartbeat ping tokens are returned only by `create_monitor` and `rotate_heartbeat_token`, matching the API's one-time disclosure.
@@ -367,17 +367,19 @@ Rotating `API_TOKEN` cuts off every client that uses the secret at once; revokin
 The **Developers** page creates named, scoped tokens for the CLI, MCP clients and scripts, beside the optional `API_TOKEN` secret.
 
 - A token is `opk_` followed by 32 random bytes in base64url.
-- Each token has scopes (`read`, `monitors:write`, `incidents:write`, `maintenance:write`, `admin`; see [CLI.md](./CLI.md#scopes)) and an optional expiry of 7, 30 or 90 days.
+- Each token has `resource:action` permissions, or `admin`, and an optional expiry of 7, 30 or 90 days (see [CLI.md](./CLI.md#permissions); the list lives in `src/shared/scopes.ts`).
   `API_TOKEN` and tokens created before scopes existed are `admin`.
-- One table, `ROUTE_SCOPES` in `src/worker/lib/scopes.ts`, says which scope every authenticated route needs, and `requireScope` (run by `requireAuth`) enforces it.
+  Tokens stored with the older scopes (`read`, `monitors:write`, `incidents:write`, `maintenance:write`) are expanded when read to the permissions that give exactly their old access.
+- One table, `ROUTE_SCOPES` in `src/worker/lib/scopes.ts`, maps every authenticated route to exactly one permission, and `requireScope` (run by `requireAuth`) enforces it.
   A route missing from the table is admin only (default deny), and a unit test fails when a route is registered without a row.
-  A refused call gets `403 insufficient_scope` naming the scope it needed.
+  A refused call gets `403 insufficient_scope` naming the permission it needed.
 - Only its SHA-256 hash is stored (`api_tokens.token_hash`); the token is shown once, in the response that creates it, which is sent with `Cache-Control: no-store`.
 - Listing, creating and revoking tokens need a signed-in browser session (with its CSRF token for changes), so no token, not even an admin one or `API_TOKEN`, can mint a broader or longer-lived replacement, see the others or revoke them.
   A token can only describe itself (`GET /api/api-tokens/self`).
 - Each token may make 120 REST calls a minute (`rate_limits`); more get `429` with `Retry-After`.
 - Revoking keeps the row as an audit record (`revoked_at`) and overwrites its hash, so the token stops working on the next request.
 - Rollback safety: tokens created since migration 0029 store their hash as `v2:<hex>`, and a revoked token's hash is replaced, so an older OpenPing, which ignores scopes and expiry, matches neither and refuses them instead of treating them as admin.
+  No permission id reuses an older scope word (apart from `admin`, which means the same), so an OpenPing from before permissions reads a newer token's permissions as unknown and refuses its calls.
 - `last_used_at` is updated at most every five minutes per token.
 - Tokens are not in the JSON export, and signing out everywhere or recovering access does not revoke them: revoke any you no longer trust under **Developers**.
 

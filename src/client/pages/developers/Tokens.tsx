@@ -1,10 +1,9 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowRight, Check, ChevronDown, KeyRound, Minus, Plus, Trash2, Loader2, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, KeyRound, Plus, Trash2, Loader2, X } from "lucide-react";
 import { api } from "../../lib/api";
 import { useBootstrap } from "../../lib/bootstrap";
 import { useFetch } from "../../lib/useFetch";
-import { cn } from "../../lib/cn";
 import { formatDateTime, formatRelativeTime } from "../../lib/format";
 import { curlExample, exportTokenLine } from "../../lib/dev-snippets";
 import { Card, CardHeader, CardTitle } from "../../components/ui/Card";
@@ -13,7 +12,8 @@ import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { Chip, ErrorBanner, PrimaryButton, SectionSkeleton, errMessage } from "../settings/shared";
 import { useDevelopers } from "../Developers";
-import { EXPIRY_DAYS, SCOPES, SCOPE_INFO, SCOPE_PRESETS, type Scope } from "../../../shared/scopes";
+import { EXPIRY_DAYS, PERMISSIONS, grantedResources, shortActions, type Scope } from "../../../shared/scopes";
+import { EMPTY_SELECTION, PermissionPicker, PermissionSummary, type PermissionSelection } from "./PermissionPicker";
 
 interface ApiToken {
   id: string;
@@ -38,44 +38,25 @@ type Expiry = "7" | "30" | "90" | "never";
 const EXPIRY_LABEL: Record<Expiry, string> = { "7": "7 days", "30": "30 days", "90": "90 days", never: "Never" };
 const EXPIRY_OPTIONS = EXPIRY_DAYS.map((d) => (d === null ? "never" : String(d)) as Expiry);
 
-const CUSTOM = "custom";
-/** Custom offers the four everyday scopes; Full control is its own choice. */
-const CUSTOM_SCOPES = SCOPES.filter((x) => x !== "admin");
-
 /** Developers > API tokens: create with scopes and expiry (shown once), list and revoke; and the API_TOKEN secret. */
 export default function TokensPage() {
   const { csrf } = useBootstrap();
   const { fresh, setFresh, origin } = useDevelopers();
   const { data, loading, error, reload } = useFetch<TokensResponse>("/api/api-tokens");
   const [name, setName] = useState("");
-  const [choice, setChoice] = useState<string>(SCOPE_PRESETS[0]!.id);
-  const [custom, setCustom] = useState<Set<Scope>>(() => new Set<Scope>(["read"]));
+  const [selection, setSelection] = useState<PermissionSelection>(EMPTY_SELECTION);
   const [expiry, setExpiry] = useState<Expiry>("90");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState<{ token: string; name: string; id: string } | null>(null);
+  const [revealed, setRevealed] = useState<{
+    token: string;
+    name: string;
+    id: string;
+  } | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
-  const scopes: ReadonlySet<Scope> =
-    choice === CUSTOM ? custom : new Set(SCOPE_PRESETS.find((p) => p.id === choice)?.scopes ?? []);
-
-  function pick(id: string) {
-    if (id === CUSTOM && choice !== CUSTOM) {
-      // Start Custom from what was selected, so nothing jumps.
-      setCustom(new Set([...scopes].filter((x) => x !== "admin")));
-    }
-    setChoice(id);
-  }
-
-  function toggleScope(scope: Scope, on: boolean) {
-    setCustom((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(scope);
-      else next.delete(scope);
-      return next;
-    });
-  }
+  const scopes: Scope[] = selection.full ? ["admin"] : PERMISSIONS.filter((p) => selection.granted.has(p));
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -87,13 +68,18 @@ export default function TokensPage() {
         csrf: csrf ?? undefined,
         json: {
           name: name.trim(),
-          scopes: SCOPES.filter((s) => scopes.has(s)),
+          scopes,
           expiresInDays: expiry === "never" ? null : Number(expiry),
         },
       });
-      setRevealed({ token: res.token, name: res.apiToken.name, id: res.apiToken.id });
+      setRevealed({
+        token: res.token,
+        name: res.apiToken.name,
+        id: res.apiToken.id,
+      });
       setFresh({ token: res.token, id: res.apiToken.id });
       setName("");
+      setSelection(EMPTY_SELECTION);
       await reload();
     } catch (err) {
       setCreateError(errMessage(err, "Could not create the token."));
@@ -110,7 +96,10 @@ export default function TokensPage() {
     setRevoking(t.id);
     setListError(null);
     try {
-      await api(`/api/api-tokens/${encodeURIComponent(t.id)}`, { method: "DELETE", csrf: csrf ?? undefined });
+      await api(`/api/api-tokens/${encodeURIComponent(t.id)}`, {
+        method: "DELETE",
+        csrf: csrf ?? undefined,
+      });
       if (revealed?.id === t.id) setRevealed(null);
       if (fresh?.id === t.id) setFresh(null);
       await reload();
@@ -132,16 +121,16 @@ export default function TokensPage() {
         </CardHeader>
         <p className="-mt-1 mb-5 text-sm text-ink-muted">
           A token lets the CLI, an MCP client or a script use OpenPing, limited to the permissions you choose. Give each client
-          its own token with the least it needs, so you can revoke one without the others. OpenPing keeps only a hash, so
-          a token is shown once. Only you, signed in here, can create or revoke tokens.
+          its own token with the least it needs, so you can revoke one without the others. OpenPing keeps only a hash, so a token
+          is shown once. Only you, signed in here, can create or revoke tokens.
         </p>
 
         {revealed && (
           <div role="status" className="mb-5 animate-enter rounded-lg border border-accent/40 bg-accent-soft/60 p-4">
             <div className="flex items-start justify-between gap-3">
               <p className="text-sm text-ink">
-                <span className="font-semibold">&ldquo;{revealed.name}&rdquo; is ready.</span> Copy it now: it won&apos;t be
-                shown again.
+                <span className="font-semibold">&ldquo;{revealed.name}&rdquo; is ready.</span> Copy it now: it won&apos;t be shown
+                again.
               </p>
               <button
                 type="button"
@@ -199,70 +188,29 @@ export default function TokensPage() {
             </div>
           </div>
 
-          <fieldset>
-            <legend className="mb-2 text-sm font-semibold text-ink">What can this token do?</legend>
-            <div role="radiogroup" aria-label="What can this token do?" className="space-y-2">
-              {SCOPE_PRESETS.map((p) => (
-                <ChoiceCard
-                  key={p.id}
-                  id={p.id}
-                  title={p.label}
-                  summary={p.summary}
-                  selected={choice === p.id}
-                  danger={p.id === "admin"}
-                  onSelect={() => pick(p.id)}
-                >
-                  {p.id === "admin" ? (
-                    <>
-                      <p className="text-sm text-ink">{p.can[0]}. Only for your own CLI.</p>
-                      <p className="mt-3 flex items-start gap-2 text-xs text-degraded">
-                        <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
-                        Anyone holding this token can delete monitors, change alert channels and export your data. Give an AI
-                        agent a narrower one.
-                      </p>
-                    </>
-                  ) : (
-                    <CanCant can={p.can} cant={p.cant} />
-                  )}
-                  <ScopeIds scopes={p.scopes} />
-                </ChoiceCard>
-              ))}
-              <ChoiceCard
-                id={CUSTOM}
-                title="Custom"
-                summary="Pick exactly what it can do"
-                selected={choice === CUSTOM}
-                onSelect={() => pick(CUSTOM)}
-              >
-                <ul className="space-y-2" aria-label="Permissions">
-                  {CUSTOM_SCOPES.map((s) => (
-                    <li key={s}>
-                      <label className="flex cursor-pointer items-start gap-2.5">
-                        <input
-                          type="checkbox"
-                          checked={custom.has(s)}
-                          onChange={(e) => toggleScope(s, e.target.checked)}
-                          className="mt-0.5 size-4 shrink-0 accent-accent"
-                        />
-                        <span className="min-w-0 text-sm">
-                          <span className="font-medium text-ink">{SCOPE_INFO[s].label}</span>
-                          <span className="block text-xs text-ink-faint">{SCOPE_INFO[s].description}</span>
-                        </span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              </ChoiceCard>
-            </div>
-          </fieldset>
+          <div>
+            <h3 className="text-sm font-semibold text-ink">Permissions</h3>
+            <p className="mt-0.5 mb-3 text-xs text-ink-muted">
+              Nothing is granted until you tick it. Edit, Test and Delete include Read of the same thing.
+            </p>
+            <PermissionPicker value={selection} onChange={setSelection} />
+          </div>
+
+          <PermissionSummary value={selection} />
 
           <div className="flex flex-wrap items-center gap-3">
-            <PrimaryButton type="submit" busy={creating} disabled={!name.trim() || scopes.size === 0 || atMax}>
+            <PrimaryButton type="submit" busy={creating} disabled={!name.trim() || scopes.length === 0 || atMax}>
               {!creating && <Plus className="size-4" />}
               Create token
             </PrimaryButton>
-            {scopes.size === 0 && <span className="text-xs text-ink-faint">Tick at least one permission.</span>}
-            {atMax && <span className="text-xs text-ink-faint">That&apos;s the most tokens an install keeps; revoke one first.</span>}
+            {scopes.length === 0 ? (
+              <span className="text-xs text-ink-faint">Tick at least one permission.</span>
+            ) : (
+              !name.trim() && <span className="text-xs text-ink-faint">Give the token a name.</span>
+            )}
+            {atMax && (
+              <span className="text-xs text-ink-faint">That&apos;s the most tokens an install keeps; revoke one first.</span>
+            )}
           </div>
           {createError && <ErrorBanner>{createError}</ErrorBanner>}
         </form>
@@ -306,7 +254,7 @@ export default function TokensPage() {
                   <li key={t.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-2 text-xs text-ink-faint">
                     <span className="font-medium text-ink-muted">{t.name}</span>
                     <span className="font-mono">{t.prefix}…</span>
-                    <span>{scopeNames(t.scopes)}</span>
+                    <span>{fullList(t.scopes)}</span>
                     {t.revokedAt && <span title={formatDateTime(t.revokedAt)}>Revoked {formatRelativeTime(t.revokedAt)}</span>}
                   </li>
                 ))}
@@ -321,7 +269,8 @@ export default function TokensPage() {
           <CardTitle as="h2">Try it</CardTitle>
         </CardHeader>
         <p className="-mt-1 mb-4 text-sm text-ink-muted">
-          Send the token as a Bearer header. A call outside its permissions gets 403 insufficient_scope, naming the scope id it needs.
+          Send the token as a Bearer header. A call outside its permissions gets 403 insufficient_scope, naming the permission
+          it needs, like monitors:edit.
         </p>
         <div className="space-y-3">
           <CodeBlock label="Terminal" code={`${exportTokenLine(fresh?.token ?? null)}\n${curlExample(origin)}`} />
@@ -335,13 +284,11 @@ export default function TokensPage() {
       <Card className="p-5">
         <CardHeader>
           <CardTitle as="h2">API_TOKEN Worker secret</CardTitle>
-          {data && (
-            <Chip tone={data.secretConfigured ? "up" : "neutral"}>{data.secretConfigured ? "Set" : "Not set"}</Chip>
-          )}
+          {data && <Chip tone={data.secretConfigured ? "up" : "neutral"}>{data.secretConfigured ? "Set" : "Not set"}</Chip>}
         </CardHeader>
         <p className="-mt-1 mb-4 text-sm text-ink-muted">
-          The older way to make a token: a secret on the Worker with full admin access, which works beside the tokens
-          above. Cloudflare never shows its value, so OpenPing can&apos;t either.{" "}
+          The older way to make a token: a secret on the Worker with full admin access, which works beside the tokens above.
+          Cloudflare never shows its value, so OpenPing can&apos;t either.{" "}
           {data?.secretConfigured
             ? "To rotate it, set a new value; every client using the old one is cut off at once."
             : "You don't need it if you use the tokens above."}
@@ -373,7 +320,6 @@ export default function TokensPage() {
 function TokenRow({ token: t, busy, onRevoke }: { token: ApiToken; busy: boolean; onRevoke: () => void }) {
   const now = Date.now();
   const expired = t.expiresAt != null && t.expiresAt <= now;
-  const admin = t.scopes.includes("admin");
   return (
     <li className="flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-surface-2/30">
       <KeyRound className="size-4 shrink-0 self-start text-ink-faint sm:mt-0.5" aria-hidden />
@@ -382,27 +328,7 @@ function TokenRow({ token: t, busy, onRevoke }: { token: ApiToken; busy: boolean
           <span className="truncate text-sm font-medium text-ink">{t.name}</span>
           <span className="font-mono text-xs text-ink-faint">{t.prefix}…</span>
         </div>
-        <div className="mt-1 flex flex-wrap gap-1">
-          {admin ? (
-            <span
-              title={SCOPE_INFO.admin.description}
-              className="inline-flex items-center gap-1 rounded-full border border-degraded/40 bg-degraded/10 px-2 py-0.5 text-[11px] font-medium text-degraded"
-            >
-              <AlertTriangle className="size-3" aria-hidden />
-              {SCOPE_INFO.admin.label}
-            </span>
-          ) : (
-            t.scopes.map((s) => (
-              <span
-                key={s}
-                title={SCOPE_INFO[s].description}
-                className="rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[11px] text-ink-muted"
-              >
-                {SCOPE_INFO[s].label}
-              </span>
-            ))
-          )}
-        </div>
+        <TokenAccess scopes={t.scopes} />
         <div className="mt-1 text-xs text-ink-faint">
           <span title={formatDateTime(t.createdAt)}>Created {formatRelativeTime(t.createdAt)}</span>
           {" · "}
@@ -449,97 +375,69 @@ function NextLink({ to, children }: { to: string; children: string }) {
   );
 }
 
-function scopeNames(scopes: readonly Scope[]): string {
-  return scopes.includes("admin") ? SCOPE_INFO.admin.label : scopes.map((x) => SCOPE_INFO[x].label).join(", ");
+/** Every permission a token has, in one line, for tooltips and the revoked list. */
+function fullList(scopes: readonly Scope[]): string {
+  if (scopes.includes("admin")) return "Full access";
+  return grantedResources(scopes)
+    .map((g) => `${g.resource.label}: ${g.actions.join(", ")}`)
+    .join(" · ");
 }
 
-/** Technical ids, small and muted, for people who want to match them to the API docs. */
-function ScopeIds({ scopes }: { scopes: readonly Scope[] }) {
-  return <p className="mt-3 font-mono text-[11px] text-ink-faint">Scopes: {scopes.join(", ")}</p>;
-}
+/** How many resources a row names before "+N". */
+const ROW_SHOWN = 2;
 
-function CanCant({ can, cant }: { can: readonly string[]; cant: readonly string[] }) {
+/** A token's access in one short line ("Monitors: edit · Incidents: read · +3"); +N opens the full list. */
+function TokenAccess({ scopes }: { scopes: readonly Scope[] }) {
+  const [expanded, setExpanded] = useState(false);
+  if (scopes.includes("admin")) {
+    return (
+      <p className="mt-1">
+        <span className="inline-flex items-center gap-1 rounded-full border border-degraded/40 bg-degraded/10 px-2 py-0.5 text-[11px] font-medium text-degraded">
+          <AlertTriangle className="size-3" aria-hidden />
+          Full access
+        </span>
+      </p>
+    );
+  }
+  const groups = grantedResources(scopes);
+  const more = groups.length - ROW_SHOWN;
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      <div>
-        <p className="mb-1 text-xs font-semibold text-ink">Can</p>
-        <ul className="space-y-1">
-          {can.map((c) => (
-            <li key={c} className="flex items-start gap-1.5 text-sm text-ink-muted">
-              <Check className="mt-0.5 size-3.5 shrink-0 text-up" aria-hidden />
-              {c}
+    <div className="mt-1 text-xs text-ink-muted">
+      {expanded ? (
+        <ul className="space-y-0.5">
+          {groups.map((g) => (
+            <li key={g.resource.id}>
+              <span className="text-ink">{g.resource.label}</span>: {g.actions.join(", ")}
             </li>
           ))}
         </ul>
-      </div>
-      <div>
-        <p className="mb-1 text-xs font-semibold text-ink">Can&apos;t</p>
-        <ul className="space-y-1">
-          {cant.map((c) => (
-            <li key={c} className="flex items-start gap-1.5 text-sm text-ink-muted">
-              <Minus className="mt-0.5 size-3.5 shrink-0 text-ink-faint" aria-hidden />
-              {c}
-            </li>
+      ) : (
+        <span title={fullList(scopes)}>
+          {groups.slice(0, ROW_SHOWN).map((g, i) => (
+            <span key={g.resource.id}>
+              {i > 0 && <span className="text-ink-faint"> · </span>}
+              <span className="text-ink">{g.resource.label}</span>: {shortActions(g.actions)}
+            </span>
           ))}
-        </ul>
-      </div>
-    </div>
-  );
-}
-
-/**
- * One choice in a vertical radio group that opens like an FAQ accordion: the selected card shows its details.
- * A real (visually hidden) radio keeps arrow keys, focus and screen readers native.
- */
-function ChoiceCard({
-  id,
-  title,
-  summary,
-  selected,
-  danger,
-  onSelect,
-  children,
-}: {
-  id: string;
-  title: string;
-  summary: string;
-  selected: boolean;
-  danger?: boolean;
-  onSelect: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div
-      className={cn(
-        "rounded-lg border transition-colors has-[input[type=radio]:focus-visible]:ring-2 has-[input[type=radio]:focus-visible]:ring-accent/60",
-        selected ? (danger ? "border-degraded/50 bg-degraded/5" : "border-accent/50 bg-accent-soft/30") : "border-line hover:border-ink-faint/50",
+        </span>
       )}
-    >
-      <label className="flex cursor-pointer items-center gap-3 px-3.5 py-3">
-        <input
-          type="radio"
-          name="token-access"
-          value={id}
-          checked={selected}
-          onChange={onSelect}
-          className="sr-only"
-        />
-        <span
-          aria-hidden
-          className={cn(
-            "grid size-4 shrink-0 place-items-center rounded-full border",
-            selected ? (danger ? "border-degraded" : "border-accent") : "border-ink-faint",
-          )}
+      {more > 0 && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((e) => !e)}
+          className="rounded px-1 font-medium text-accent hover:underline"
         >
-          {selected && <span className={cn("size-2 rounded-full", danger ? "bg-degraded" : "bg-accent")} />}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm font-semibold text-ink">{title}</span>
-          <span className="block text-xs text-ink-muted">{summary}</span>
-        </span>
-        <ChevronDown aria-hidden className={cn("size-4 shrink-0 text-ink-faint transition-transform", selected && "rotate-180")} />
-      </label>
-      {selected && <div className="animate-enter border-t border-line/70 px-3.5 py-3 pl-[2.625rem]">{children}</div>}
+          {expanded ? (
+            "Show less"
+          ) : (
+            <>
+              · +{more}
+              <span className="sr-only"> more permissions</span>
+            </>
+          )}
+        </button>
+      )}
     </div>
   );
 }

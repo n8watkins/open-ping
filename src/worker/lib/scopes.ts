@@ -1,6 +1,8 @@
 /**
- * What an API token may do: its scopes, and the one table that says which
- * scope each authenticated REST route and MCP tool needs.
+ * What an API token may do: its scopes (resource:action permissions, or
+ * admin; src/shared/scopes.ts), and the one table that says which permission
+ * each authenticated REST route and MCP tool needs. Every route maps to
+ * exactly one.
  *
  * DEFAULT DENY. A route or tool missing from these tables needs `admin`, so a
  * new feature is never open to a narrower token by accident. A browser session
@@ -8,28 +10,19 @@
  * route is registered without a row here, so every new route is a decision.
  */
 
-import { SCOPES, type Scope } from "../../shared/scopes";
+import { isScope, LEGACY_SCOPES, normalizeScopes, SCOPES, type Permission, type Scope } from "../../shared/scopes";
 
-export { SCOPES, type Scope };
+export { isScope, normalizeScopes, SCOPES, type Permission, type Scope };
 
-export function isScope(value: string): value is Scope {
-  return (SCOPES as readonly string[]).includes(value);
-}
+/** The older scope words (#121) a create request may still send. */
+export const LEGACY_SCOPES_IDS: readonly string[] = Object.keys(LEGACY_SCOPES);
 
-/** Parse a stored scopes column ('read monitors:write'); unknown words are dropped. */
+/** Parse a stored scopes column into the canonical list (see normalizeScopes). */
 export function parseScopes(stored: string | null | undefined): Scope[] {
-  const out = new Set<Scope>();
-  for (const word of (stored ?? "").split(/[\s,]+/)) if (isScope(word)) out.add(word);
-  return SCOPES.filter((s) => out.has(s));
+  return normalizeScopes(stored);
 }
 
-/** The canonical stored form: known scopes in table order; just 'admin' when admin is in it. */
-export function normalizeScopes(scopes: readonly string[]): Scope[] {
-  const parsed = parseScopes(scopes.join(" "));
-  return parsed.includes("admin") ? ["admin"] : parsed;
-}
-
-/** Whether a token with `scopes` has `needed`. `admin` implies every scope. */
+/** Whether a token with `scopes` (canonical, from parseScopes) has `needed`. `admin` implies everything. */
 export function hasScope(scopes: readonly Scope[], needed: Scope): boolean {
   return scopes.includes("admin") || scopes.includes(needed);
 }
@@ -48,96 +41,103 @@ export type RouteAccess = Scope | "token" | "session";
  * `:param` segments. HEAD is checked as GET.
  */
 export const ROUTE_SCOPES: Record<string, RouteAccess> = {
-  // Overview, uptime, reports, diagnostics
-  "GET /api/overview": "read",
-  "GET /api/overview/history": "read",
-  "GET /api/reports/monthly": "read",
-  "GET /api/diagnostics": "read",
-  "GET /api/diagnostics/usage": "read",
+  // Overview and uptime
+  "GET /api/overview": "uptime:read",
+  "GET /api/overview/history": "uptime:read",
+  "GET /api/monitors/uptime": "uptime:read",
+  "GET /api/monitors/:id/history": "uptime:read",
 
-  // Monitors: no delete or heartbeat token rotation below admin
-  "GET /api/monitors": "read",
-  "GET /api/monitors/uptime": "read",
-  "GET /api/monitors/:id": "read",
-  "GET /api/monitors/:id/detail": "read",
-  "GET /api/monitors/:id/icon": "read",
-  "GET /api/monitors/:id/history": "read",
-  "POST /api/monitors": "monitors:write",
-  "PUT /api/monitors/:id": "monitors:write",
-  "PATCH /api/monitors/:id": "monitors:write",
-  "POST /api/monitors/:id/pause": "monitors:write",
-  "POST /api/monitors/:id/resume": "monitors:write",
-  "POST /api/monitors/:id/test": "monitors:write",
-  "DELETE /api/monitors/:id": "admin",
-  "POST /api/monitors/:id/rotate-heartbeat-token": "admin",
+  // Monitors
+  "GET /api/monitors": "monitors:read",
+  "GET /api/monitors/:id": "monitors:read",
+  "GET /api/monitors/:id/detail": "monitors:read",
+  "GET /api/monitors/:id/icon": "monitors:read",
+  "POST /api/monitors": "monitors:edit",
+  "PUT /api/monitors/:id": "monitors:edit",
+  "PATCH /api/monitors/:id": "monitors:edit",
+  "POST /api/monitors/:id/pause": "monitors:edit",
+  "POST /api/monitors/:id/resume": "monitors:edit",
+  "POST /api/monitors/:id/test": "monitors:test",
+  "DELETE /api/monitors/:id": "monitors:delete",
+  "POST /api/monitors/:id/rotate-heartbeat-token": "heartbeats:edit",
+
+  // Categories
+  "GET /api/categories": "categories:read",
+  "GET /api/categories/:id": "categories:read",
+  "POST /api/categories": "categories:edit",
+  "PUT /api/categories/:id": "categories:edit",
+  "DELETE /api/categories/:id": "categories:edit",
 
   // Incidents
-  "GET /api/incidents": "read",
-  "GET /api/incidents/export.json": "read",
-  "GET /api/incidents/export.csv": "read",
-  "GET /api/incidents/:id": "read",
-  "PATCH /api/incidents/:id": "incidents:write",
-  "POST /api/incidents/:id/updates": "incidents:write",
-  "PATCH /api/incidents/:id/updates/:updateId": "incidents:write",
-  "DELETE /api/incidents/:id/updates/:updateId": "incidents:write",
+  "GET /api/incidents": "incidents:read",
+  "GET /api/incidents/export.json": "incidents:read",
+  "GET /api/incidents/export.csv": "incidents:read",
+  "GET /api/incidents/:id": "incidents:read",
+  "PATCH /api/incidents/:id": "incidents:edit",
+  "POST /api/incidents/:id/updates": "incidents:edit",
+  "PATCH /api/incidents/:id/updates/:updateId": "incidents:edit",
+  "DELETE /api/incidents/:id/updates/:updateId": "incidents:edit",
 
-  // Maintenance: deleting a window that has started needs admin (routes/maintenance.ts)
-  "GET /api/maintenance": "read",
-  "GET /api/maintenance/:id": "read",
-  "POST /api/maintenance": "maintenance:write",
-  "PUT /api/maintenance/:id": "maintenance:write",
-  "POST /api/maintenance/:id/end": "maintenance:write",
-  "DELETE /api/maintenance/:id": "maintenance:write",
+  // Maintenance: deleting a window that has started also needs
+  // maintenance:delete (checked in routes/maintenance.ts)
+  "GET /api/maintenance": "maintenance:read",
+  "GET /api/maintenance/:id": "maintenance:read",
+  "POST /api/maintenance": "maintenance:edit",
+  "PUT /api/maintenance/:id": "maintenance:edit",
+  "POST /api/maintenance/:id/end": "maintenance:edit",
+  "DELETE /api/maintenance/:id": "maintenance:edit",
 
-  // Status pages, categories, channels (responses never carry credentials)
-  "GET /api/status-pages": "read",
-  "GET /api/status-pages/:id": "read",
-  "POST /api/status-pages": "admin",
-  "PUT /api/status-pages/:id": "admin",
-  "PATCH /api/status-pages/:id": "admin",
-  "DELETE /api/status-pages/:id": "admin",
-  "GET /api/categories": "read",
-  "GET /api/categories/:id": "read",
-  "POST /api/categories": "admin",
-  "PUT /api/categories/:id": "admin",
-  "DELETE /api/categories/:id": "admin",
-  "GET /api/channels": "read",
-  "GET /api/channels/:id": "read",
-  "POST /api/channels": "admin",
-  "PUT /api/channels/:id": "admin",
-  "DELETE /api/channels/:id": "admin",
-  "POST /api/channels/:id/test": "admin",
+  // Status pages (embeds read these too)
+  "GET /api/status-pages": "status_pages:read",
+  "GET /api/status-pages/:id": "status_pages:read",
+  "POST /api/status-pages": "status_pages:edit",
+  "PUT /api/status-pages/:id": "status_pages:edit",
+  "PATCH /api/status-pages/:id": "status_pages:edit",
+  "DELETE /api/status-pages/:id": "status_pages:edit",
 
-  // Settings, data, keys, waitlist, click counts, push devices: admin only
-  "GET /api/settings": "admin",
-  "PUT /api/settings": "admin",
-  "GET /api/data/export": "admin",
-  "POST /api/data/import": "admin",
-  "GET /api/admin/rekey/status": "admin",
-  "POST /api/admin/rekey": "admin",
-  "GET /api/waitlist": "admin",
-  "GET /api/waitlist/export.csv": "admin",
-  "GET /api/events": "admin",
-  "GET /api/push/vapid-public-key": "admin",
-  "POST /api/push/subscribe": "admin",
-  "GET /api/push/fcm": "admin",
-  "POST /api/push/fcm": "admin",
-  "DELETE /api/push/fcm": "admin",
-  "GET /api/push/devices": "admin",
-  "DELETE /api/push/devices/:id": "admin",
-  "POST /api/push/devices/:id/disable": "admin",
-  "POST /api/push/devices/:id/enable": "admin",
-  "POST /api/push/devices/:id/test": "admin",
-  "POST /api/push/generate-vapid": "admin",
+  // Alert channels (responses never carry credentials)
+  "GET /api/channels": "channels:read",
+  "GET /api/channels/:id": "channels:read",
+  "POST /api/channels": "channels:edit",
+  "PUT /api/channels/:id": "channels:edit",
+  "DELETE /api/channels/:id": "channels:edit",
+  "POST /api/channels/:id/test": "channels:test",
 
-  // Sign-in and security
-  "GET /api/auth/sessions": "admin",
-  "DELETE /api/auth/sessions/:id": "admin",
-  "GET /api/auth/support-activity": "admin",
-  "GET /api/passkeys": "admin",
-  "POST /api/passkeys/register/options": "admin",
-  "POST /api/passkeys/register/verify": "admin",
-  "DELETE /api/passkeys/:id": "admin",
+  // Phone push
+  "GET /api/push/vapid-public-key": "push:read",
+  "GET /api/push/fcm": "push:read",
+  "GET /api/push/devices": "push:read",
+  "POST /api/push/subscribe": "push:edit",
+  "POST /api/push/fcm": "push:edit",
+  "DELETE /api/push/fcm": "push:edit",
+  "DELETE /api/push/devices/:id": "push:edit",
+  "POST /api/push/devices/:id/disable": "push:edit",
+  "POST /api/push/devices/:id/enable": "push:edit",
+  "POST /api/push/generate-vapid": "push:edit",
+  "POST /api/push/devices/:id/test": "push:test",
+
+  // Reports, diagnostics, backups, the landing page
+  "GET /api/reports/monthly": "reports:read",
+  "GET /api/diagnostics": "diagnostics:read",
+  "GET /api/diagnostics/usage": "diagnostics:read",
+  "GET /api/data/export": "backups:read",
+  "POST /api/data/import": "backups:edit",
+  "GET /api/events": "site:read",
+  "GET /api/waitlist": "site:read",
+  "GET /api/waitlist/export.csv": "site:read",
+
+  // Settings, encryption key, sign-in and security
+  "GET /api/settings": "settings:read",
+  "PUT /api/settings": "settings:edit",
+  "GET /api/admin/rekey/status": "encryption:read",
+  "POST /api/admin/rekey": "encryption:edit",
+  "GET /api/auth/sessions": "security:read",
+  "GET /api/auth/support-activity": "security:read",
+  "GET /api/passkeys": "security:read",
+  "DELETE /api/auth/sessions/:id": "security:edit",
+  "POST /api/passkeys/register/options": "security:edit",
+  "POST /api/passkeys/register/verify": "security:edit",
+  "DELETE /api/passkeys/:id": "security:edit",
 
   // API tokens: only the owner's browser session manages them; a token may
   // only describe itself.
@@ -186,7 +186,12 @@ interface CompiledRoute {
 const COMPILED: CompiledRoute[] = Object.entries(ROUTE_SCOPES).map(([key, access]) => {
   const [method = "", path = ""] = key.split(" ");
   const parts = path.split("/").filter(Boolean);
-  return { method, parts, literals: parts.filter((p) => !p.startsWith(":")).length, access };
+  return {
+    method,
+    parts,
+    literals: parts.filter((p) => !p.startsWith(":")).length,
+    access,
+  };
 });
 
 /**
@@ -212,29 +217,29 @@ export function routeAccess(method: string, path: string): RouteAccess | null {
  * and a call to it is refused.
  */
 export const TOOL_SCOPES: Record<string, Scope> = {
-  get_status: "read",
-  list_monitors: "read",
-  get_monitor: "read",
-  list_incidents: "read",
-  get_uptime: "read",
-  get_monthly_report: "read",
-  get_diagnostics: "read",
-  get_key_status: "admin",
-  list_channels: "read",
-  list_status_pages: "read",
-  list_categories: "read",
-  list_maintenance: "read",
-  create_monitor: "monitors:write",
-  update_monitor: "monitors:write",
-  pause_monitor: "monitors:write",
-  resume_monitor: "monitors:write",
-  create_maintenance_window: "maintenance:write",
-  end_maintenance_window: "maintenance:write",
-  delete_maintenance_window: "maintenance:write",
-  post_incident_update: "incidents:write",
-  update_status_page: "admin",
-  delete_monitor: "admin",
-  rotate_heartbeat_token: "admin",
+  get_status: "uptime:read",
+  get_uptime: "uptime:read",
+  list_monitors: "monitors:read",
+  get_monitor: "monitors:read",
+  list_incidents: "incidents:read",
+  get_monthly_report: "reports:read",
+  get_diagnostics: "diagnostics:read",
+  get_key_status: "encryption:read",
+  list_channels: "channels:read",
+  list_status_pages: "status_pages:read",
+  list_categories: "categories:read",
+  list_maintenance: "maintenance:read",
+  create_monitor: "monitors:edit",
+  update_monitor: "monitors:edit",
+  pause_monitor: "monitors:edit",
+  resume_monitor: "monitors:edit",
+  delete_monitor: "monitors:delete",
+  rotate_heartbeat_token: "heartbeats:edit",
+  create_maintenance_window: "maintenance:edit",
+  end_maintenance_window: "maintenance:edit",
+  delete_maintenance_window: "maintenance:edit",
+  post_incident_update: "incidents:edit",
+  update_status_page: "status_pages:edit",
 };
 
 /** The scope `tool` needs: its TOOL_SCOPES row, else admin (default deny). */
@@ -247,6 +252,11 @@ export function insufficientScopeBody(needed: Scope | "session", scopes: readonl
   const message =
     needed === "session"
       ? "Only a signed-in browser session can do this; no API token can."
-      : `This token does not have the ${needed} scope${detail ? ` (${detail})` : ""}. Its scopes: ${scopes.join(", ") || "none"}. Create a token with ${needed} under Developers > API tokens.`;
-  return { error: needed === "session" ? "session_required" : "insufficient_scope", required: needed, scopes, message };
+      : `This token does not have the ${needed} permission${detail ? ` (${detail})` : ""}. Its permissions: ${scopes.join(", ") || "none"}. Create a token with ${needed} under Developers > API tokens.`;
+  return {
+    error: needed === "session" ? "session_required" : "insufficient_scope",
+    required: needed,
+    scopes,
+    message,
+  };
 }

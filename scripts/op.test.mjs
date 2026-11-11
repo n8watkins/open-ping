@@ -296,12 +296,21 @@ describe("run", () => {
     const r = await cli(["monitors", "delete", "mon_1", "--yes"], {
       "DELETE /api/monitors/mon_1": [
         403,
-        { error: "insufficient_scope", required: "admin", scopes: ["read", "monitors:write"], message: "..." },
+        {
+          error: "insufficient_scope",
+          required: "monitors:delete",
+          scopes: ["monitors:read", "monitors:edit", "incidents:read"],
+          message: "...",
+        },
       ],
     });
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain("DELETE /api/monitors/mon_1 failed: HTTP 403 insufficient_scope - this token lacks the admin scope.");
-    expect(r.stderr).toContain("Its scopes: read, monitors:write. Create a token with admin under Developers > API tokens");
+    expect(r.stderr).toContain(
+      "DELETE /api/monitors/mon_1 failed: HTTP 403 insufficient_scope - this token lacks the monitors:delete permission.",
+    );
+    expect(r.stderr).toContain(
+      "It has: monitors: read, edit; incidents: read. Create a token with monitors:delete under Developers > API tokens",
+    );
     expect(r.stderr).toContain("op token whoami");
   });
 
@@ -315,17 +324,17 @@ describe("run", () => {
     const r = await cli(["token", "whoami"], {
       "GET /api/api-tokens/self": [
         200,
-        { kind: "token", id: "tok_1", name: "Monitoring sync", scopes: ["read", "monitors:write"], expiresAt },
+        { kind: "token", id: "tok_1", name: "Monitoring sync", scopes: ["monitors:read", "monitors:edit", "uptime:read"], expiresAt },
       ],
     });
     expect(r.code).toBe(0);
     expect(r.calls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /api/api-tokens/self"]);
-    expect(r.stdout).toBe("Monitoring sync [tok_1]\n  scopes   read, monitors:write\n  expires  2026-12-09 12:00\n");
+    expect(r.stdout).toBe("Monitoring sync [tok_1]\n  access   monitors: read, edit; uptime: read\n  expires  2026-12-09 12:00\n");
 
     const secret = await cli(["token", "whoami"], {
       "GET /api/api-tokens/self": [200, { kind: "secret", name: "API_TOKEN secret", scopes: ["admin"], expiresAt: null }],
     });
-    expect(secret.stdout).toBe("API_TOKEN secret\n  scopes   admin\n  expires  never\n");
+    expect(secret.stdout).toBe("API_TOKEN secret\n  access   full access (admin)\n  expires  never\n");
   });
 
   it("exits 2 with a message on an unknown flag", async () => {

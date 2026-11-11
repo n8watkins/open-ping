@@ -5,7 +5,7 @@ import { normalizeScopes, parseScopes, type Scope } from "../lib/scopes";
 /**
  * Named API tokens (migrations 0017 and 0029), used by the CLI, the MCP server
  * and scripts beside the API_TOKEN Worker secret. Each has scopes
- * (lib/scopes.ts) and an optional expiry. Only a hash of a token is stored;
+ * (resource:action permissions or admin, lib/scopes.ts) and an optional expiry. Only a hash of a token is stored;
  * the token is returned once, by {@link createApiToken}. Revoking keeps the
  * row as an audit record and destroys its hash.
  */
@@ -97,7 +97,8 @@ export async function countApiTokens(env: Env): Promise<number> {
 
 export interface CreateApiTokenInput {
   name: string;
-  scopes: readonly Scope[];
+  /** Permissions or admin; older scope words are expanded (normalizeScopes). */
+  scopes: readonly string[];
   /** Days until it expires, or null for never. */
   expiresInDays: number | null;
   /** Who created it, for the audit record. */
