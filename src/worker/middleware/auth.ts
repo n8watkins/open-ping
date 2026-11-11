@@ -1,20 +1,31 @@
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import type { AppEnv, Env } from "../types";
 import { findApiToken } from "../db/api-tokens";
+import { hitRateLimit } from "../db/rate-limit";
 import { CSRF_HEADER, getSession, touchSession } from "../lib/sessions";
 import { timingSafeEqual } from "../lib/timing";
+import { hasScope, insufficientScopeBody, routeAccess, type Scope } from "../lib/scopes";
 import { SUPPORT_RESTRICTED, auditSupportChange, isSupportSession, recordSupportActivity, supportRestriction } from "../lib/support";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-/** Who a valid bearer token is: the API_TOKEN secret, or a stored token by id. */
-export type ApiTokenIdentity = { kind: "secret" } | { kind: "stored"; id: string; name: string };
+/** REST calls each bearer token may make per minute (one D1 write each). */
+export const API_TOKEN_RATE_LIMIT_PER_MINUTE = 120;
+
+/**
+ * Who a valid bearer token is: the API_TOKEN secret (always admin), or a
+ * stored token by id with its scopes (lib/scopes.ts).
+ */
+export type ApiTokenIdentity =
+  | { kind: "secret"; scopes: Scope[] }
+  | { kind: "stored"; id: string; name: string; scopes: Scope[]; expiresAt: number | null };
 
 /**
  * Who `authorization` (`Bearer <token>`) authenticates as, or null: the
- * API_TOKEN secret (compared in constant time), or a token created under
- * Developers (looked up by its SHA-256 hash, db/api-tokens.ts). The one bearer
- * check behind the REST API's requireAuth and the /mcp endpoint.
+ * API_TOKEN secret (compared in constant time), or a live token created under
+ * Developers (looked up by hash; revoked and expired ones are null,
+ * db/api-tokens.ts). The one bearer check behind the REST API's requireAuth
+ * and the /mcp endpoint.
  */
 export async function apiTokenIdentity(
   env: Env,
@@ -23,15 +34,49 @@ export async function apiTokenIdentity(
   if (!authorization || !/^bearer\s+/i.test(authorization)) return null;
   const bearer = authorization.replace(/^bearer\s+/i, "").trim();
   if (!bearer) return null;
-  if (env.API_TOKEN && (await timingSafeEqual(bearer, env.API_TOKEN))) return { kind: "secret" };
+  if (env.API_TOKEN && (await timingSafeEqual(bearer, env.API_TOKEN))) return { kind: "secret", scopes: ["admin"] };
   const stored = await findApiToken(env, bearer);
-  return stored ? { kind: "stored", id: stored.id, name: stored.name } : null;
+  return stored
+    ? { kind: "stored", id: stored.id, name: stored.name, scopes: stored.scopes, expiresAt: stored.expiresAt }
+    : null;
 }
 
-/** The admin id requireAuth records for a bearer token. */
+/** The admin id requireAuth records for a bearer token (also its rate limit key). */
 export function apiTokenAdminId(who: ApiTokenIdentity): string {
   return who.kind === "secret" ? "api-token" : `api-token:${who.id}`;
 }
+
+/** A 403 for a token that lacks `needed` (or for any token on a session-only route). */
+export function insufficientScope(c: Context<AppEnv>, needed: Scope | "session", detail?: string): Response {
+  const scopes = c.get("token")?.scopes ?? [];
+  if (needed !== "session") {
+    c.header("WWW-Authenticate", `Bearer realm="OpenPing", error="insufficient_scope", scope="${needed}"`);
+  }
+  return c.json(insufficientScopeBody(needed, scopes, detail), 403);
+}
+
+/**
+ * Whether the caller may do what needs `scope`: a browser session always may,
+ * a token only with that scope (admin implies every scope).
+ */
+export function callerHasScope(c: Context<AppEnv>, scope: Scope): boolean {
+  const token = c.get("token");
+  return !token || hasScope(token.scopes, scope);
+}
+
+/**
+ * The scope check for bearer tokens, run by requireAuth right after a token
+ * authenticates. A route's access comes from the one table in lib/scopes.ts;
+ * a route missing from it is admin only (DEFAULT DENY). Sessions pass.
+ */
+export const requireScope: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const token = c.get("token");
+  if (!token) return next();
+  const access = routeAccess(c.req.method, c.req.path) ?? "admin";
+  if (access === "session") return insufficientScope(c, "session");
+  if (access !== "token" && !hasScope(token.scopes, access)) return insufficientScope(c, access);
+  return next();
+};
 
 /**
  * Require an authenticated session. For state-changing methods, also enforce a
@@ -41,15 +86,29 @@ export function apiTokenAdminId(who: ApiTokenIdentity): string {
  */
 export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   // API-token auth for CLI/automation: a Bearer token matching the API_TOKEN
-  // secret, or a token created under Developers, grants admin. Bearer tokens
-  // aren't sent automatically by browsers, so there's no CSRF surface - we
-  // intentionally skip the cookie/CSRF checks here.
+  // secret (admin), or a token created under Developers (its scopes, checked
+  // by requireScope). Bearer tokens aren't sent automatically by browsers, so
+  // there's no CSRF surface - we intentionally skip the cookie/CSRF checks here.
   // Opt-in: only active when API_TOKEN is set or a token has been created.
   const bearer = await apiTokenIdentity(c.env, c.req.header("authorization"));
   if (bearer) {
-    c.set("admin", { id: apiTokenAdminId(bearer) });
-    await next();
-    return;
+    const adminId = apiTokenAdminId(bearer);
+    // One counter per token, so a runaway script or agent is capped without
+    // starving the owner's other clients.
+    const limit = await hitRateLimit(c.env, `api:${adminId}`, API_TOKEN_RATE_LIMIT_PER_MINUTE);
+    if (!limit.allowed) {
+      c.header("Retry-After", String(limit.retryAfterSeconds));
+      return c.json(
+        {
+          error: "rate_limited",
+          message: `At most ${API_TOKEN_RATE_LIMIT_PER_MINUTE} API calls a minute per token; retry in ${limit.retryAfterSeconds}s.`,
+        },
+        429,
+      );
+    }
+    c.set("admin", { id: adminId });
+    c.set("token", bearer);
+    return requireScope(c, next);
   }
 
   const session = await getSession(c);

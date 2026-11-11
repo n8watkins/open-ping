@@ -82,7 +82,7 @@ function EmbedBuilder({ pages }: { pages: StatusPage[] }) {
   return (
     <Card className="p-5">
       <CardHeader>
-        <CardTitle>Badge and widget</CardTitle>
+        <CardTitle as="h2">Badge and widget</CardTitle>
         <a
           href={DOCS}
           target="_blank"
@@ -242,7 +242,7 @@ function FeedsCard({ pages }: { pages: StatusPage[] }) {
   return (
     <Card className="p-5">
       <CardHeader>
-        <CardTitle>RSS and Atom feeds</CardTitle>
+        <CardTitle as="h2">RSS and Atom feeds</CardTitle>
       </CardHeader>
       <p className="-mt-1 mb-4 text-sm text-ink-muted">
         Each status page publishes its public incidents and their updates, for feed readers, Slack&apos;s RSS app or your

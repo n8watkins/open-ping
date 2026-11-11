@@ -196,6 +196,10 @@ export const COMMANDS = {
     },
     run: cmdMaintenanceCreate,
   },
+  "token whoami": {
+    summary: "Show which token the CLI is using: its name, scopes and expiry",
+    run: cmdTokenWhoami,
+  },
   "maintenance end": { summary: "End an active maintenance window now", args: ["id"], run: cmdMaintenanceEnd },
   "maintenance delete": {
     summary: "Delete a maintenance window (needs --yes)",
@@ -1004,13 +1008,32 @@ async function cmdMaintenanceDelete({ api, out, flags, positionals: [id] }) {
   out.line(`Deleted maintenance window ${id}`);
 }
 
+async function cmdTokenWhoami({ api, out, flags }) {
+  const me = await api("/api/api-tokens/self");
+  if (flags.json) return out.json(me);
+  out.line(me.kind === "token" ? `${me.name} [${me.id}]` : me.name ?? "browser session");
+  out.line(`  scopes   ${(me.scopes ?? []).join(", ") || "none"}`);
+  out.line(`  expires  ${me.expiresAt ? fmtTime(me.expiresAt) : "never"}`);
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
 /** Describe a failed API response in one or two readable lines. */
-function apiErrorMessage(method, path, status, data) {
+export function apiErrorMessage(method, path, status, data) {
   const head = `${method} ${path} failed: HTTP ${status}`;
+  // A token without the scope this call needs (lib/scopes.ts): say which one.
+  if (status === 403 && data && typeof data === "object" && data.error === "insufficient_scope") {
+    return (
+      `${head} insufficient_scope - this token lacks the ${data.required} scope.` +
+      `\n  Its scopes: ${(data.scopes ?? []).join(", ") || "none"}. Create a token with ${data.required} under Developers > API tokens` +
+      ` (or run \`op token whoami\` to see which token is in use).`
+    );
+  }
+  if (status === 403 && data && typeof data === "object" && data.error === "session_required") {
+    return `${head} session_required - only the owner's signed-in browser session can do this, never an API token.`;
+  }
   if (data && typeof data === "object") {
     const issues = Array.isArray(data.issues)
       ? data.issues.slice(0, 8).map((i) => `${(i.path ?? []).join(".") || "(body)"}: ${i.message}`).join("; ")
@@ -1046,7 +1069,7 @@ export async function run(argv, io = {}) {
   const config = loadConfig(io);
   if (!config.url || !config.token) {
     stderr(
-      `${!config.url ? "OPENPING_URL" : "OPENPING_TOKEN"} is not set. Export OPENPING_URL (your install's URL) and OPENPING_TOKEN (its API_TOKEN secret), or put them in a gitignored .op.env file.\n`,
+      `${!config.url ? "OPENPING_URL" : "OPENPING_TOKEN"} is not set. Export OPENPING_URL (your install's URL) and OPENPING_TOKEN (an API token from Developers > API tokens), or put them in a gitignored .op.env file.\n`,
     );
     return 1;
   }
@@ -1075,7 +1098,7 @@ export async function run(argv, io = {}) {
       data = text;
     }
     if (!res.ok) {
-      const hint = res.status === 401 ? "\n  Check OPENPING_TOKEN: it must equal the Worker's API_TOKEN secret." : "";
+      const hint = res.status === 401 ? "\n  Check OPENPING_TOKEN: it must be a live token from Developers > API tokens (not revoked or expired), or the API_TOKEN secret." : "";
       throw new Error(apiErrorMessage(method, path, res.status, data) + hint);
     }
     return data;

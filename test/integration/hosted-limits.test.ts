@@ -129,6 +129,9 @@ beforeEach(async () => {
     env.DB.prepare("DELETE FROM monitors"),
     env.DB.prepare("DELETE FROM notification_channels"),
     env.DB.prepare("DELETE FROM status_pages WHERE is_default = 0"),
+    // Every call here uses the API_TOKEN secret, whose per-token limit (120 a
+    // minute) this whole file would otherwise use up; it is not under test.
+    env.DB.prepare("DELETE FROM rate_limits"),
   ]);
 });
 

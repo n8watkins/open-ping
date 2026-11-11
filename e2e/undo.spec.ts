@@ -177,7 +177,10 @@ test("revoking an API token asks in an in-app dialog that Cancel and Escape dism
   await revoke.click();
   await dialog.getByRole("button", { name: "Revoke token" }).click();
   await expect(dialog).toBeHidden();
-  await expect(page.getByText(name)).toHaveCount(0);
+  await expect(revoke).toHaveCount(0);
+  // It moves to the revoked tokens record.
+  await page.getByText(/^Revoked tokens \(\d+\)$/).click();
+  await expect(page.getByText(name)).toBeVisible();
 });
 
 test("signing out everywhere asks first, and Cancel keeps the session", async ({ page }) => {

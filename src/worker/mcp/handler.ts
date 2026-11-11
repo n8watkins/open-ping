@@ -6,7 +6,7 @@ import {
   isLegacyRequest,
 } from "@modelcontextprotocol/server";
 import type { AppEnv } from "../types";
-import { apiTokenIdentity } from "../middleware/auth";
+import { apiTokenAdminId, apiTokenIdentity } from "../middleware/auth";
 import { countApiTokens } from "../db/api-tokens";
 import { hitRateLimit } from "../db/rate-limit";
 import { registerTools, type ToolContext } from "./tools";
@@ -24,9 +24,10 @@ import pkg from "../../../package.json";
  * createMcpHandler, and 2025 clients (initialize handshake) through a
  * stateless Streamable HTTP transport in JSON mode.
  *
- * Access is an admin API token only (Authorization: Bearer <token>): the
+ * Access is an API token only (Authorization: Bearer <token>): the
  * API_TOKEN secret or a token created under Developers, the same check as the
- * REST API. No cookies, no CORS: a browser page on another origin is refused
+ * REST API. Only the tools the token's scopes allow are offered (lib/scopes.ts).
+ * No cookies, no CORS: a browser page on another origin is refused
  * before authentication. With neither the secret nor a stored token the
  * endpoint does not exist (404). Tools call the same
  * validation and data functions as the REST routes (./tools.ts).
@@ -34,7 +35,7 @@ import pkg from "../../../package.json";
 
 /** Largest accepted request body; a create_monitor call is a few KB. */
 export const MCP_MAX_BODY_BYTES = 256 * 1024;
-/** Authenticated requests allowed per minute (one D1 write each). */
+/** Authenticated requests allowed per minute, per token (one D1 write each). */
 export const MCP_RATE_LIMIT_PER_MINUTE = 120;
 
 const INSTRUCTIONS = [
@@ -42,6 +43,7 @@ const INSTRUCTIONS = [
   "Monitor, window and page ids come from the list_* tools.",
   "Times are ISO 8601 in the install's timezone. Credentials and heartbeat tokens are never readable; a heartbeat ping URL is shown only when the monitor is created or its token rotated.",
   "Tools marked destructive need confirm: true; set it only after the user explicitly agrees.",
+  "Only the tools this token's scopes allow are listed; the owner manages tokens and scopes under Developers.",
 ].join(" ");
 
 /** A fresh server with every OpenPing tool, for one request. */
@@ -142,7 +144,7 @@ mcp.all("/", async (c) => {
   // Only authenticated requests reach the limiter, so an anonymous flood never
   // costs a D1 write; a runaway client loop is capped here.
   if (c.req.method === "POST") {
-    const limit = await hitRateLimit(c.env, "mcp:api-token", MCP_RATE_LIMIT_PER_MINUTE);
+    const limit = await hitRateLimit(c.env, `mcp:${apiTokenAdminId(who)}`, MCP_RATE_LIMIT_PER_MINUTE);
     if (!limit.allowed) {
       return jsonRpcError(429, -32000, `Rate limit: at most ${MCP_RATE_LIMIT_PER_MINUTE} MCP requests a minute.`, {
         "retry-after": String(limit.retryAfterSeconds),
@@ -156,5 +158,6 @@ mcp.all("/", async (c) => {
     waitUntil: requestWaitUntil(c),
     plan: hostedPlan(c),
     usageChanged: usageReporter(c),
+    scopes: who.scopes,
   });
 });

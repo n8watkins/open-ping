@@ -17,8 +17,9 @@ It runs inside the same Worker as the rest of OpenPing, needs no extra Cloudflar
 
 ## Turn it on
 
-The MCP server uses an admin API token, like the [CLI](./CLI.md).
+The MCP server uses an API token, like the [CLI](./CLI.md).
 Create one under **Developers** in the app (it is shown once; give each client its own so you can revoke one without the others), or set the `API_TOKEN` Worker secret.
+A token's [scopes](./CLI.md#scopes) decide which tools the client sees: give an agent the narrowest preset that does its job and an expiry ([Giving an AI agent access](./CLI.md#giving-an-ai-agent-access)).
 Until one of them exists, `/mcp` answers `404` with a message saying so.
 The **Developers** page also shows the commands below with your install's URL filled in.
 
@@ -27,7 +28,7 @@ openssl rand -base64 32 | npx wrangler secret put API_TOKEN
 ```
 
 Keep the value in a password manager.
-It grants full admin access to your install, through the REST API and through MCP.
+The secret grants full admin access to your install, through the REST API and through MCP.
 To revoke it, set a new value with the same command; old clients then get `401`.
 A token from **Developers** is revoked there, and only the clients using it are cut off.
 
@@ -87,6 +88,19 @@ npx @modelcontextprotocol/inspector --cli https://<your-install>/mcp \
 
 ## Tools
 
+`tools/list` shows only the tools the token's scopes allow, and a call to any other tool is refused, so an agent never even sees what it may not do.
+A tool with no scope assigned is admin only.
+
+| Scope | Tools |
+| --- | --- |
+| `read` | every read-only tool below except `get_key_status` |
+| `monitors:write` | `create_monitor`, `update_monitor`, `pause_monitor`, `resume_monitor` |
+| `incidents:write` | `post_incident_update` |
+| `maintenance:write` | `create_maintenance_window`, `end_maintenance_window`, `delete_maintenance_window` (only for a window that has not started) |
+| `admin` | everything, including `get_key_status`, `update_status_page`, `delete_monitor` and `rotate_heartbeat_token` |
+
+The destructive tools still need `confirm: true` whatever the token's scopes.
+
 Read-only tools (annotated `readOnlyHint`):
 
 | Tool | What it returns |
@@ -129,7 +143,7 @@ The same operations are available in the terminal through the [CLI](./CLI.md) an
 
 ## Security
 
-- Only `Authorization: Bearer <API_TOKEN>` is accepted, compared in constant time with the same check as the REST API.
+- Only `Authorization: Bearer <token>` is accepted (the `API_TOKEN` secret, compared in constant time, or a live token from **Developers**), with the same check as the REST API; a revoked or expired token gets `401`.
   Session cookies are never accepted on `/mcp`.
 - A request with a browser `Origin` header from another site is refused with `403`, and `/mcp` never sends CORS headers, so a web page cannot use your browser to reach it.
 - Tool results never contain credentials: HTTP auth passwords and tokens, custom header values and request bodies are blanked, as are heartbeat shared secrets, webhook URLs and webhook secrets.
@@ -138,7 +152,7 @@ The same operations are available in the terminal through the [CLI](./CLI.md) an
   It cannot be read back later.
 - Monitor names, target URLs (including query strings), incident errors and notes do appear in results and so reach the model provider.
   Do not put secrets in a monitor's URL.
-- Requests are limited to 256 KB, and an install accepts at most 120 authenticated MCP requests a minute; more get `429` with `Retry-After`.
+- Requests are limited to 256 KB, and each token may make at most 120 MCP requests a minute; more get `429` with `Retry-After`.
   Every request is a Worker invocation and counts toward the plan's daily request allowance.
 - Unauthenticated requests never touch D1, so a flood of bad requests cannot use up your database quota.
 - `/mcp` is listed in `robots.txt` as disallowed.
