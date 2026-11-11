@@ -37,7 +37,7 @@ On the **Developers** page each resource is a row with a Read and an Edit checkb
 
 `admin` (Full access on the page) is everything, including anything added later.
 **Bulk select** on the page offers All read, All read and edit, Clear all, and starting points (Monitoring sync, Maintenance, Read-only) that only tick boxes you can then change.
-A token can expire after 7, 30 or 90 days, or never.
+A token can expire after 7, 30 or 90 days, on a custom date (tomorrow to 1 year ahead, ending at the end of that day in your time zone), or never.
 
 Tokens created with the older scopes keep working; each maps to the permissions below, so `monitors:write` and `maintenance:write` can now also delete:
 

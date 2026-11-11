@@ -219,6 +219,39 @@ describe("API tokens", () => {
     expect(list.revoked.find((t) => t.id === id)?.revokedAt).toBe(row?.revoked_at);
   });
 
+  it("accept a custom expiry date and reject past or too-distant ones", async () => {
+    const owner = await signIn();
+    const day = 86_400_000;
+    const ok = Date.now() + 30 * day;
+    const res = await call("/api/api-tokens", {
+      json: { name: "Custom", scopes: ["read"], expiresAt: ok },
+      headers: asSession(owner),
+    });
+    expect(res.status).toBe(201);
+    const { apiToken } = await res.json<{
+      apiToken: { id: string; expiresAt: number };
+    }>();
+    expect(apiToken.expiresAt).toBe(ok);
+    const row = await env.DB.prepare(
+      "SELECT expires_at FROM api_tokens WHERE id = ?",
+    )
+      .bind(apiToken.id)
+      .first<{ expires_at: number }>();
+    expect(row?.expires_at).toBe(ok);
+
+    for (const [expiresAt, message] of [
+      [Date.now() - day, "must be in the future"],
+      [Date.now() + 400 * day, "at most 1 year"],
+    ] as const) {
+      const bad = await call("/api/api-tokens", {
+        json: { name: "Bad", scopes: ["read"], expiresAt },
+        headers: asSession(owner),
+      });
+      expect(bad.status).toBe(400);
+      expect(JSON.stringify(await bad.json())).toContain(message);
+    }
+  });
+
   it("validate scopes and expiry", async () => {
     const owner = await signIn();
     for (const extra of [{ scopes: [] }, { scopes: ["write"] }, { expiresInDays: 5 }, { expiresInDays: "30" }]) {

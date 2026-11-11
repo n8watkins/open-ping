@@ -339,5 +339,17 @@ export const PERMISSION_TEMPLATES: readonly PermissionTemplate[] = [
   },
 ];
 
-/** Expiry choices in days (null: never). */
+/** Expiry choices in days (null: never). A custom date is the other choice. */
 export const EXPIRY_DAYS = [7, 30, 90, null] as const;
+
+/** The furthest a custom expiry may be, in days from today. */
+export const MAX_CUSTOM_EXPIRY_DAYS = 365;
+
+/** Why a custom expiry (epoch ms, the end of the chosen day) is not allowed, or null if it is. */
+export function customExpiryError(expiresAt: number, now: number): string | null {
+  if (!Number.isFinite(expiresAt)) return "Pick a valid expiry date.";
+  if (expiresAt <= now) return "The expiry date must be in the future.";
+  // The end of a day a year out can sit just over 365 days from now (time zones, leap days), so allow a little slack.
+  if (expiresAt > now + (MAX_CUSTOM_EXPIRY_DAYS + 2) * 86_400_000) return "The expiry date can be at most 1 year from today.";
+  return null;
+}
