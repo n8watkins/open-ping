@@ -8,7 +8,11 @@ import type { SendResult } from "./channels/http";
  * Where OpenPing's email goes out (alerts, the weekly summary, the monthly
  * report, sign-in links).
  *
- * - A plain install sends through Cloudflare Email Service, the Worker's
+ * - With a `MAILROOM` service binding (the canonical install: github.com/
+ *   n8watkins/mailroom, app "openping"), every email goes through mailroom,
+ *   which holds the account's one Email Service binding and its monthly caps.
+ *   MAILROOM wins over EMAIL and Resend when it is present.
+ * - Otherwise a plain install sends through Cloudflare Email Service, the Worker's
  *   `EMAIL` send_email binding (no API key), from the `email_from` setting.
  *   Resend (RESEND_API_KEY, channels/resend.ts) stays as an optional transport
  *   for self-hosters who bring their own key: set EMAIL_TRANSPORT=resend to
@@ -52,10 +56,27 @@ export interface EmailBinding {
   }): Promise<unknown>;
 }
 
-export type MailProvider = "cloudflare" | "resend";
+/** What mailroom's `send()` takes and answers (github.com/n8watkins/mailroom, src/types.ts). */
+export interface MailroomBinding {
+  send(request: {
+    kind: string;
+    to: string;
+    subject: string;
+    text: string;
+    html?: string;
+    from?: string;
+    fromName?: string;
+    replyTo?: string;
+    headers?: Record<string, string>;
+    key?: string;
+  }): Promise<{ ok: true; messageId: string; duplicate?: boolean } | { ok: false; code: string; retryable: boolean; message: string }>;
+}
+
+export type MailProvider = "mailroom" | "cloudflare" | "resend";
 
 /** Which provider a plain install sends with; null when none is set up. */
 export function mailProvider(env: Env): MailProvider | null {
+  if (env.MAILROOM) return "mailroom";
   const wanted = env.EMAIL_TRANSPORT?.trim().toLowerCase();
   if (wanted === "resend") return env.RESEND_API_KEY ? "resend" : null;
   if (wanted === "cloudflare") return env.EMAIL ? "cloudflare" : null;
@@ -124,6 +145,59 @@ export function cloudflareTransport(env: Env, now: () => number = Date.now): Mai
   };
 }
 
+/** mailroom's kind for each of OpenPing's email categories (all allowed for app "openping" in its apps file). */
+const MAILROOM_KINDS: Record<MailCategory, string> = { alert: "alert", report: "report", signin: "signin", waitlist: "waitlist" };
+
+/**
+ * The shared mailroom, over the `MAILROOM` service binding. The install's
+ * EMAIL_DAILY_CAP still applies locally. mailroom picks the sender (its app's
+ * first sender), since the app's From must be one mailroom lists; the From
+ * name is kept. A refused send is logged by code and returned as the outbox's
+ * last error; caps wait for the next UTC day instead of spending attempts, and
+ * every other refusal goes through the outbox's bounded backoff.
+ */
+export function mailroomTransport(env: Env, now: () => number = Date.now): MailTransport {
+  return {
+    async send(m) {
+      const binding = env.MAILROOM;
+      if (!binding) return { ok: false, error: "email_not_configured" };
+      const t = now();
+      const cap = await hitRateLimit(env, "email-sent:all", emailDailyCap(env), { now: t, windowMs: DAY_MS });
+      if (!cap.allowed) {
+        console.error(JSON.stringify({ event: "email_daily_cap_reached", category: m.category }));
+        return { ok: false, error: "email_daily_cap", deferUntil: nextUtcDay(t) };
+      }
+      const name = parseFrom(m.from).name;
+      let result: Awaited<ReturnType<MailroomBinding["send"]>>;
+      try {
+        result = await binding.send({
+          kind: MAILROOM_KINDS[m.category],
+          to: m.to,
+          subject: m.subject,
+          text: m.text ?? "",
+          ...(m.html ? { html: m.html } : {}),
+          ...(name ? { fromName: name } : {}),
+          ...(m.headers ? { headers: m.headers } : {}),
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(JSON.stringify({ event: "mailroom_unreachable", category: m.category }));
+        return { ok: false, error: `mailroom_unavailable: ${detail.slice(0, 200)}` };
+      }
+      if (!result.ok) {
+        console.error(JSON.stringify({ event: "mailroom_refused", category: m.category, code: result.code }));
+        const failed: SendResult = { ok: false, error: `mailroom_${result.code}: ${result.message}`.slice(0, 300) };
+        // A spent cap resets at a UTC boundary; waiting costs no attempt and cannot loop.
+        if (result.code.startsWith("cap_") || result.code === "daily_limit") failed.deferUntil = nextUtcDay(t);
+        return failed;
+      }
+      console.log(JSON.stringify({ event: "email_sent", category: m.category, via: "mailroom" }));
+      await hitRateLimit(env, `email-sent:${m.category}`, Number.MAX_SAFE_INTEGER, { now: t, windowMs: DAY_MS }).catch(() => undefined);
+      return { ok: true };
+    },
+  };
+}
+
 /** Resend, with the install's own key (self-host option). */
 export function resendTransport(env: Env): MailTransport {
   return {
@@ -185,7 +259,9 @@ const unavailable: MailTransport = {
 /** The transport for this call: the platform's in hosted mode, else the install's provider. */
 export function mailTransport(env: Env): MailTransport {
   if (!isHostedMode(env.HOSTED_MODE)) {
-    return mailProvider(env) === "resend" ? resendTransport(env) : cloudflareTransport(env);
+    const provider = mailProvider(env);
+    if (provider === "mailroom") return mailroomTransport(env);
+    return provider === "resend" ? resendTransport(env) : cloudflareTransport(env);
   }
   return env.MAIL_TRANSPORT ?? unavailable;
 }

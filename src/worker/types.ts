@@ -34,6 +34,8 @@ export interface Env {
 
   /** Cloudflare Email Service: the `send_email` binding (wrangler.jsonc). */
   EMAIL?: import("./notifications/mail").EmailBinding;
+  /** The shared mailroom (service binding, app "openping"); wins over EMAIL when present. */
+  MAILROOM?: import("./notifications/mail").MailroomBinding;
   /** "cloudflare" or "resend"; unset picks Cloudflare when the EMAIL binding exists, else Resend when RESEND_API_KEY is set. */
   EMAIL_TRANSPORT?: string;
   /** The From address used when the `email_from` setting is empty. */
