@@ -1,0 +1,91 @@
+# Deploys the canonical install (openping.n8builds.dev) after CI passes on main,
+# the same steps as a hand `npm run deploy:prod` (docs/INSTALL.md): build,
+# D1 migrations, deploy, then a check of the live /api/health.
+#
+# This runs only in n8watkins/open-ping. Self-hosters deploy their own way
+# (the Deploy to Cloudflare button, or `npm run deploy`).
+#
+# The canonical install's settings live in the DEPLOY_LOCAL_JSON repository
+# variable (Settings, Secrets and variables, Actions, Variables): the exact
+# content of the gitignored deploy.local.json (the D1 database id and the
+# non-secret vars). Secrets stay in Worker secrets, never here.
+name: Deploy
+
+on:
+  # Safe here: the job runs only for CI runs from pushes to main in this repo
+  # (never pull requests or forks) and checks out the commit CI passed on.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare Workers
+    if: >-
+      github.repository == 'n8watkins/open-ping' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      DEPLOY_LOCAL_JSON: ${{ vars.DEPLOY_LOCAL_JSON }}
+    steps:
+      # Fails loudly: a missing token must never look like a successful deploy.
+      - name: Check for the Cloudflare token and settings
+        run: |
+          missing=""
+          [ -z "$CLOUDFLARE_API_TOKEN" ] && missing="$missing secret:CLOUDFLARE_API_TOKEN"
+          [ -z "$CLOUDFLARE_ACCOUNT_ID" ] && missing="$missing variable:CLOUDFLARE_ACCOUNT_ID"
+          [ -z "$DEPLOY_LOCAL_JSON" ] && missing="$missing variable:DEPLOY_LOCAL_JSON"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository settings:$missing. Nothing was deployed."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit CI passed on, not whatever main is now.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Write deploy.local.json
+        run: printf '%s\n' "$DEPLOY_LOCAL_JSON" > deploy.local.json
+
+      # Builds, applies D1 migrations before deploying, then deploys; refuses
+      # (without a terminal) if the live Worker's vars would change.
+      - name: Deploy
+        run: npm run deploy:prod
+
+      # /api/health must report a working database after the deploy.
+      - name: Smoke check the live site
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            body=$(curl -sS --max-time 20 https://openping.n8builds.dev/api/health || true)
+            db=$(printf '%s' "$body" | jq -r '.db // empty' 2>/dev/null || true)
+            if [ "$db" = "true" ]; then
+              echo "Health is ok."
+              exit 0
+            fi
+            echo "Attempt $attempt: db=${db:-unreadable}"
+            sleep 15
+          done
+          echo "::error::https://openping.n8builds.dev/api/health did not report db true after the deploy: $body"
+          exit 1

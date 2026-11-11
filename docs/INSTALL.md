@@ -288,6 +288,21 @@ Because that file is regenerated on every run, new settings in `wrangler.jsonc` 
 Don't edit `.wrangler.prod.jsonc` by hand.
 While `deploy.local.json` exists, plain `npm run deploy` refuses to run, so a deploy can't silently drop your values.
 
+### Automatic deploys (the canonical install)
+
+`n8watkins/open-ping` deploys itself: `.github/workflows/deploy.yml` runs `npm run deploy:prod` after CI passes on a push to main, then checks that `https://openping.n8builds.dev/api/health` reports `db: true`.
+It runs only in that repository (`github.repository` check), so forks and self-hosters keep deploying their own way.
+Its settings, set under Settings, Secrets and variables, Actions:
+
+| Name | Kind | Holds |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | secret | the owner's shared deploy token (`shared/CLOUDFLARE_DEPLOY_TOKEN` in pass) |
+| `CLOUDFLARE_ACCOUNT_ID` | variable | the Cloudflare account id |
+| `DEPLOY_LOCAL_JSON` | variable | the exact content of `deploy.local.json` (D1 database id and the non-secret vars); the job writes it to that file before deploying |
+
+A missing setting fails the run with an error annotation instead of skipping.
+When you change `deploy.local.json`, update the variable too: `gh variable set DEPLOY_LOCAL_JSON -R n8watkins/open-ping < deploy.local.json`.
+
 ### What visitors see at `/`
 
 Your install is yours alone, so a signed-out visitor who opens its address sees your own default status page, not OpenPing's marketing page.
