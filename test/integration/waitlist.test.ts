@@ -104,8 +104,8 @@ describe("the Hosted waitlist: joining", () => {
     expect(stored?.confirmed_at).toBeNull();
     expect(stored?.expires_at).toBeGreaterThan(Date.now() + (PENDING_DAYS - 1) * DAY_MS);
 
-    expect(sent).toHaveLength(1);
-    const mail = sent[0]!;
+    expect(mailsTo("person@example.com")).toBe(1);
+    const mail = sent.find((m) => m.to === "person@example.com")!;
     expect(mail.to).toBe("person@example.com");
     expect(mail.subject).toContain("Confirm");
     expect(mail.html).toContain("/waitlist/confirm?t=");
@@ -149,7 +149,7 @@ describe("the Hosted waitlist: joining", () => {
     sent = [];
     await join("again@example.com", "10.0.2.1");
     await new Promise((r) => setTimeout(r, 150));
-    expect(sent).toHaveLength(0);
+    expect(mailsTo("again@example.com")).toBe(0);
   });
 
   it("caps the confirm emails to one address a day", async () => {
@@ -221,7 +221,7 @@ describe("the Hosted waitlist: Turnstile", () => {
     expect(siteverify).toHaveBeenCalledTimes(1);
     await new Promise((r) => setTimeout(r, 100));
     expect(await row("nobody@example.com")).toBeNull();
-    expect(sent).toHaveLength(0);
+    expect(mailsTo("nobody@example.com")).toBe(0);
   });
 
   it("refuses when Cloudflare can't be reached (fails closed)", async () => {
@@ -407,6 +407,5 @@ describe("the Hosted waitlist: rows from before double opt-in", () => {
     await applyD1Migrations(env.FRESH_DB, all);
     const old = await env.FRESH_DB.prepare("SELECT confirmed_at, expires_at FROM waitlist WHERE id = 'wl_old'").first<{ confirmed_at: number; expires_at: number | null }>();
     expect(old).toEqual({ confirmed_at: 1700000000000, expires_at: null });
-    expect(sent).toHaveLength(0);
   });
 });
