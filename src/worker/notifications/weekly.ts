@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { getSetting, setSetting } from "../db/settings";
-import { sendEmail } from "./mail";
+import { defaultFrom, sendEmail } from "./mail";
 import { listMonitors } from "../db/monitors";
 import { escapeHtml, renderEmailLayout, renderEmailText } from "./email-layout";
 
@@ -29,7 +29,6 @@ const DEFAULT_MIN_INTERVAL_MS = 6.5 * 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 /** How long a failed send waits before the next try. */
 export const RETRY_AFTER_MS = 60 * 60 * 1000;
-const DEFAULT_FROM = "OpenPing <onboarding@resend.dev>";
 
 // ---------------------------------------------------------------------------
 // Due check (pure)
@@ -363,7 +362,7 @@ export async function sendWeeklySummary(
   const appUrl = configuredUrl ? configuredUrl.replace(/\/$/, "") : undefined;
   const email = buildWeeklyEmail(stats, periodLabel, appUrl);
 
-  const from = (await getSetting(env, "email_from")) ?? DEFAULT_FROM;
+  const from = (await getSetting(env, "email_from")) ?? defaultFrom(env);
 
   const result = await sendEmail(env, {
     from,

@@ -24,6 +24,7 @@ import { getSetting } from "../db/settings";
 import { CSRF_HEADER, getSession } from "../lib/sessions";
 import { timingSafeEqual } from "../lib/timing";
 import { isValidMasterKey } from "../lib/crypto";
+import { emailConfigured } from "../notifications/mail";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const SETUP_TOKEN_HEADER = "x-setup-token";
@@ -120,7 +121,7 @@ async function setupStatus(env: Env) {
     githubEnabled: !!env.GITHUB_CLIENT_ID,
     githubAdminConfigured: !!(await getAdminGithubLogin(env)),
     emailAdminConfigured: !!(await getAdminEmail(env)),
-    resendConfigured: !!env.RESEND_API_KEY,
+    emailConfigured: emailConfigured(env),
     appUrl: await getSetting(env, "app_url"),
     timezone: await getSetting(env, "timezone"),
   };

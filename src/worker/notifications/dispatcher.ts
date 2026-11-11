@@ -4,7 +4,7 @@ import { getChannel, recordChannelResult, secretFieldsFor } from "../db/channels
 import { getSubscription, recordPushResult } from "../db/push";
 import { claimDue, markDeferred, markSent, markFailed, type OutboxEntry } from "../db/outbox";
 import { getSetting } from "../db/settings";
-import { sendEmail } from "./mail";
+import { defaultFrom, sendEmail } from "./mail";
 import { sendDiscordMessage } from "./channels/discord";
 import { sendWebhook } from "./channels/webhook";
 import { sendSlackMessage, toSlackMessage } from "./channels/slack";
@@ -34,7 +34,6 @@ import { DecryptError, isCiphertext } from "../lib/crypto";
 
 const MAX_ATTEMPTS = 5;
 const BATCH = 25;
-const DEFAULT_FROM = "OpenPing <onboarding@resend.dev>";
 
 /** A provider-specific destination check failed: never send anywhere else. */
 function invalidTarget(check: TargetCheck, prefix: string): SendResult | null {
@@ -104,7 +103,7 @@ export async function deliverToChannel(
     case "email": {
       if (!cfg.to) return { ok: false, error: "missing_recipient" };
       const from =
-        cfg.from || (await (emailFrom ? emailFrom() : getSetting(env, "email_from"))) || DEFAULT_FROM;
+        cfg.from || (await (emailFrom ? emailFrom() : getSetting(env, "email_from"))) || defaultFrom(env);
       return sendEmail(env, {
         from,
         to: cfg.to,

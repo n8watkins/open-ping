@@ -14,6 +14,10 @@
     // bundles, which static assets serve on their own (public/_headers).
     "run_worker_first": ["/*", "!/assets/*"]
   },
+  // Cloudflare Email Service: alerts, reports and sign-in links send through this
+  // binding, from the `email_from` setting, once your sending domain is onboarded
+  // (docs/INSTALL.md). Without it, or without RESEND_API_KEY, email stays off.
+  "send_email": [{ "name": "EMAIL" }],
   "observability": {
     "enabled": true
   },
@@ -44,7 +48,15 @@
     // Leave empty to send no error reports. Set it (in deploy.local.json) to a
     // Sentry DSN of your own to get the Worker's and the browser's errors there
     // (src/worker/lib/error-reporting.ts).
-    "SENTRY_DSN": ""
+    "SENTRY_DSN": "",
+    // Which provider sends email: "cloudflare" (the EMAIL binding) or "resend"
+    // (RESEND_API_KEY). Empty picks Cloudflare when the EMAIL binding exists, else Resend when a key is set.
+    "EMAIL_TRANSPORT": "",
+    // The From address when the email_from setting is empty, e.g.
+    // "OpenPing <alerts@your-domain.com>". It must be on a domain onboarded for sending.
+    "DEFAULT_EMAIL_FROM": "",
+    // Emails this install may send per UTC day; extra ones wait for the next day.
+    "EMAIL_DAILY_CAP": "150"
   },
   // The per-region re-checkers behind CONFIRM_REGIONS (src/worker/region-probe.ts).
   // SQLite-backed Durable Objects are on the Workers Free plan.

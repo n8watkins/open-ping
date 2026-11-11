@@ -2,7 +2,7 @@ import { DateTime } from "luxon";
 import type { Env } from "../types";
 import { setSetting, setSettingStatement, settingsFromRows, settingsStatement } from "../db/settings";
 import type { RetentionConfig } from "../history/rollups";
-import { sendEmail } from "./mail";
+import { defaultFrom, sendEmail } from "./mail";
 import { escapeHtml, renderEmailLayout, renderEmailText } from "./email-layout";
 import {
   monthBounds,
@@ -45,7 +45,6 @@ export const MONTHLY_GATE_SETTINGS = [
 const SEND_HOUR = 9;
 /** How long a failed send waits before the next try. */
 export const RETRY_AFTER_MS = 60 * 60 * 1000;
-const DEFAULT_FROM = "OpenPing <onboarding@resend.dev>";
 
 /**
  * The month to report on if a report is due at `now`, else null: last month's
@@ -209,7 +208,7 @@ export async function sendMonthlyReport(
   const appUrl = configuredUrl ? configuredUrl.replace(/\/$/, "") : undefined;
   const email = buildMonthlyEmail(report, appUrl);
   const result = await sendEmail(env, {
-    from: sender.get("email_from") ?? DEFAULT_FROM,
+    from: sender.get("email_from") ?? defaultFrom(env),
     to: recipient,
     subject: email.subject,
     html: email.html,

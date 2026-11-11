@@ -244,7 +244,7 @@ export default function Install() {
           <Step n={8} title="Optional extras">
             <ul className="list-disc space-y-1 pl-5">
               <li>
-                Email alerts and magic-link sign-in: add a <C>RESEND_API_KEY</C> from Resend.
+                Email alerts and magic-link sign-in: use Cloudflare Email Service (the <C>EMAIL</C> binding in wrangler.jsonc), or add a <C>RESEND_API_KEY</C> from Resend.
               </li>
               <li>
                 Your own domain: add it to the Worker in Cloudflare and update your address (and the GitHub app, if you

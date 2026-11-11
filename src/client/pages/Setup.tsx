@@ -23,7 +23,7 @@ interface SetupStatus {
   githubEnabled: boolean;
   githubAdminConfigured: boolean;
   emailAdminConfigured: boolean;
-  resendConfigured: boolean;
+  emailConfigured: boolean;
   appUrl: string | null;
   timezone: string | null;
   /** Passkeys created so far (optional for an older Worker). */
@@ -460,7 +460,7 @@ function StepBody(p: BodyProps) {
             <Ready ok label="Database is reachable" />
             <Ready ok={p.status?.encryptionConfigured} label="Encryption at rest configured" />
             <Ready ok={p.status?.githubEnabled} label="GitHub sign-in app configured" optional />
-            <Ready ok={p.status?.resendConfigured} label="Resend email configured" optional />
+            <Ready ok={p.status?.emailConfigured} label="Email configured" optional />
           </ul>
           {p.status && !p.status.encryptionConfigured && <AddSecretHelp name="MASTER_KEY" />}
         </Section>
@@ -533,7 +533,7 @@ function StepBody(p: BodyProps) {
               />
             </Field>
           </div>
-          <p className="mt-1.5 text-xs text-ink-faint">Email sign-in also needs RESEND_API_KEY.</p>
+          <p className="mt-1.5 text-xs text-ink-faint">Email sign-in also needs email set up (Cloudflare Email Service, or RESEND_API_KEY).</p>
         </Section>
       );
     case "finish":

@@ -128,7 +128,7 @@ function WeeklySummaryCard({
                 <span className="block text-xs text-ink-faint">
                   {hosted
                     ? "Sent to your account email. A send that fails is retried hourly."
-                    : "Sent to the admin email. Needs RESEND_API_KEY; a send that fails is retried hourly."}
+                    : "Sent to the admin email. Needs email set up (INSTALL.md); a send that fails is retried hourly."}
                 </span>
               </span>
             </label>
