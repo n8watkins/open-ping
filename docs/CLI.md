@@ -23,7 +23,7 @@ Each token has one or more scopes, so you can give a script or an AI agent only 
 | `admin` | Everything, and it implies every other scope. |
 
 Scopes do not imply one another apart from `admin`: a token that should list monitors and create them needs `read` and `monitors:write`.
-The presets on the **Developers** page are Read-only (`read`), Monitoring sync (`read monitors:write`), Maintenance (`read maintenance:write`) and Full admin (`admin`).
+The choices on the **Developers** page are Read-only (`read`), Monitoring sync (`read monitors:write`), Maintenance (`read maintenance:write`), Full admin (`admin`) and Custom. The page shows plain names for the scopes (See everything, Manage monitors, Manage incidents, Manage maintenance, Full control); the ids above are what the API and CLI use.
 A token can expire after 7, 30 or 90 days, or never.
 Tokens created before scopes existed, and the `API_TOKEN` secret, are `admin`.
 

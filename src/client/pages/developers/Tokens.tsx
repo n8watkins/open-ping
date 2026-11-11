@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowRight, KeyRound, Plus, Trash2, Loader2, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ChevronDown, KeyRound, Minus, Plus, Trash2, Loader2, X } from "lucide-react";
 import { api } from "../../lib/api";
 import { useBootstrap } from "../../lib/bootstrap";
 import { useFetch } from "../../lib/useFetch";
@@ -38,11 +38,9 @@ type Expiry = "7" | "30" | "90" | "never";
 const EXPIRY_LABEL: Record<Expiry, string> = { "7": "7 days", "30": "30 days", "90": "90 days", never: "Never" };
 const EXPIRY_OPTIONS = EXPIRY_DAYS.map((d) => (d === null ? "never" : String(d)) as Expiry);
 
-/** The preset these scopes are exactly, if any. */
-function presetOf(scopes: ReadonlySet<Scope>): string | null {
-  const p = SCOPE_PRESETS.find((x) => x.scopes.length === scopes.size && x.scopes.every((s) => scopes.has(s)));
-  return p?.id ?? null;
-}
+const CUSTOM = "custom";
+/** Custom offers the four everyday scopes; Full control is its own choice. */
+const CUSTOM_SCOPES = SCOPES.filter((x) => x !== "admin");
 
 /** Developers > API tokens: create with scopes and expiry (shown once), list and revoke; and the API_TOKEN secret. */
 export default function TokensPage() {
@@ -50,7 +48,8 @@ export default function TokensPage() {
   const { fresh, setFresh, origin } = useDevelopers();
   const { data, loading, error, reload } = useFetch<TokensResponse>("/api/api-tokens");
   const [name, setName] = useState("");
-  const [scopes, setScopes] = useState<Set<Scope>>(() => new Set<Scope>(["read"]));
+  const [choice, setChoice] = useState<string>(SCOPE_PRESETS[0]!.id);
+  const [custom, setCustom] = useState<Set<Scope>>(() => new Set<Scope>(["read"]));
   const [expiry, setExpiry] = useState<Expiry>("90");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -58,11 +57,19 @@ export default function TokensPage() {
   const [revoking, setRevoking] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
-  const isAdmin = scopes.has("admin");
-  const preset = presetOf(scopes);
+  const scopes: ReadonlySet<Scope> =
+    choice === CUSTOM ? custom : new Set(SCOPE_PRESETS.find((p) => p.id === choice)?.scopes ?? []);
+
+  function pick(id: string) {
+    if (id === CUSTOM && choice !== CUSTOM) {
+      // Start Custom from what was selected, so nothing jumps.
+      setCustom(new Set([...scopes].filter((x) => x !== "admin")));
+    }
+    setChoice(id);
+  }
 
   function toggleScope(scope: Scope, on: boolean) {
-    setScopes((prev) => {
+    setCustom((prev) => {
       const next = new Set(prev);
       if (on) next.add(scope);
       else next.delete(scope);
@@ -80,7 +87,7 @@ export default function TokensPage() {
         csrf: csrf ?? undefined,
         json: {
           name: name.trim(),
-          scopes: isAdmin ? ["admin"] : SCOPES.filter((s) => scopes.has(s)),
+          scopes: SCOPES.filter((s) => scopes.has(s)),
           expiresInDays: expiry === "never" ? null : Number(expiry),
         },
       });
@@ -124,7 +131,7 @@ export default function TokensPage() {
           {data && <Chip tone="neutral">{data.tokens.length === 1 ? "1 token" : `${data.tokens.length} tokens`}</Chip>}
         </CardHeader>
         <p className="-mt-1 mb-5 text-sm text-ink-muted">
-          A token lets the CLI, an MCP client or a script use OpenPing, limited to the scopes you choose. Give each client
+          A token lets the CLI, an MCP client or a script use OpenPing, limited to the permissions you choose. Give each client
           its own token with the least it needs, so you can revoke one without the others. OpenPing keeps only a hash, so
           a token is shown once. Only you, signed in here, can create or revoke tokens.
         </p>
@@ -193,58 +200,60 @@ export default function TokensPage() {
           </div>
 
           <fieldset>
-            <legend className="mb-2 text-sm font-semibold text-ink">Access</legend>
-            <label htmlFor="token-preset" className="mb-1.5 block text-xs font-medium text-ink-muted">
-              Preset
-            </label>
-            <select
-              id="token-preset"
-              value={preset ?? "custom"}
-              onChange={(e) => {
-                const p = SCOPE_PRESETS.find((x) => x.id === e.target.value);
-                if (p) setScopes(new Set(p.scopes));
-              }}
-              className="input sm:max-w-sm"
-            >
+            <legend className="mb-2 text-sm font-semibold text-ink">What can this token do?</legend>
+            <div role="radiogroup" aria-label="What can this token do?" className="space-y-2">
               {SCOPE_PRESETS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
+                <ChoiceCard
+                  key={p.id}
+                  id={p.id}
+                  title={p.label}
+                  summary={p.summary}
+                  selected={choice === p.id}
+                  danger={p.id === "admin"}
+                  onSelect={() => pick(p.id)}
+                >
+                  {p.id === "admin" ? (
+                    <>
+                      <p className="text-sm text-ink">{p.can[0]}. Only for your own CLI.</p>
+                      <p className="mt-3 flex items-start gap-2 text-xs text-degraded">
+                        <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+                        Anyone holding this token can delete monitors, change alert channels and export your data. Give an AI
+                        agent a narrower one.
+                      </p>
+                    </>
+                  ) : (
+                    <CanCant can={p.can} cant={p.cant} />
+                  )}
+                  <ScopeIds scopes={p.scopes} />
+                </ChoiceCard>
               ))}
-              {preset === null && <option value="custom">Custom</option>}
-            </select>
-            <p className="mt-1.5 text-xs text-ink-faint">
-              {SCOPE_PRESETS.find((p) => p.id === preset)?.hint ?? "Your own mix of scopes"}. Adjust the scopes below and
-              the preset follows.
-            </p>
-            <ul className="mt-4 space-y-2" aria-label="Scopes">
-              {SCOPES.map((s) => {
-                const implied = isAdmin && s !== "admin";
-                return (
-                  <li key={s}>
-                    <label className={cn("flex cursor-pointer items-start gap-2.5", implied && "cursor-default opacity-60")}>
-                      <input
-                        type="checkbox"
-                        checked={scopes.has(s) || implied}
-                        disabled={implied}
-                        onChange={(e) => toggleScope(s, e.target.checked)}
-                        className="mt-0.5 size-4 shrink-0 accent-accent"
-                      />
-                      <span className="min-w-0 text-sm">
-                        <span className="font-mono text-[13px] text-ink">{s}</span>
-                        <span className="block text-xs text-ink-faint">{SCOPE_INFO[s].description}</span>
-                      </span>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-            {isAdmin && (
-              <p className="mt-3 flex items-start gap-2 text-xs text-degraded">
-                <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
-                Admin can delete monitors, change alert channels and export your data. Give an AI agent a narrower token.
-              </p>
-            )}
+              <ChoiceCard
+                id={CUSTOM}
+                title="Custom"
+                summary="Pick exactly what it can do"
+                selected={choice === CUSTOM}
+                onSelect={() => pick(CUSTOM)}
+              >
+                <ul className="space-y-2" aria-label="Permissions">
+                  {CUSTOM_SCOPES.map((s) => (
+                    <li key={s}>
+                      <label className="flex cursor-pointer items-start gap-2.5">
+                        <input
+                          type="checkbox"
+                          checked={custom.has(s)}
+                          onChange={(e) => toggleScope(s, e.target.checked)}
+                          className="mt-0.5 size-4 shrink-0 accent-accent"
+                        />
+                        <span className="min-w-0 text-sm">
+                          <span className="font-medium text-ink">{SCOPE_INFO[s].label}</span>
+                          <span className="block text-xs text-ink-faint">{SCOPE_INFO[s].description}</span>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </ChoiceCard>
+            </div>
           </fieldset>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -252,7 +261,7 @@ export default function TokensPage() {
               {!creating && <Plus className="size-4" />}
               Create token
             </PrimaryButton>
-            {scopes.size === 0 && <span className="text-xs text-ink-faint">Choose at least one scope.</span>}
+            {scopes.size === 0 && <span className="text-xs text-ink-faint">Tick at least one permission.</span>}
             {atMax && <span className="text-xs text-ink-faint">That&apos;s the most tokens an install keeps; revoke one first.</span>}
           </div>
           {createError && <ErrorBanner>{createError}</ErrorBanner>}
@@ -297,7 +306,7 @@ export default function TokensPage() {
                   <li key={t.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-2 text-xs text-ink-faint">
                     <span className="font-medium text-ink-muted">{t.name}</span>
                     <span className="font-mono">{t.prefix}…</span>
-                    <span>{t.scopes.join(", ")}</span>
+                    <span>{scopeNames(t.scopes)}</span>
                     {t.revokedAt && <span title={formatDateTime(t.revokedAt)}>Revoked {formatRelativeTime(t.revokedAt)}</span>}
                   </li>
                 ))}
@@ -312,7 +321,7 @@ export default function TokensPage() {
           <CardTitle as="h2">Try it</CardTitle>
         </CardHeader>
         <p className="-mt-1 mb-4 text-sm text-ink-muted">
-          Send the token as a Bearer header. A call outside its scopes gets 403 insufficient_scope, naming the scope it needs.
+          Send the token as a Bearer header. A call outside its permissions gets 403 insufficient_scope, naming the scope id it needs.
         </p>
         <div className="space-y-3">
           <CodeBlock label="Terminal" code={`${exportTokenLine(fresh?.token ?? null)}\n${curlExample(origin)}`} />
@@ -380,16 +389,16 @@ function TokenRow({ token: t, busy, onRevoke }: { token: ApiToken; busy: boolean
               className="inline-flex items-center gap-1 rounded-full border border-degraded/40 bg-degraded/10 px-2 py-0.5 text-[11px] font-medium text-degraded"
             >
               <AlertTriangle className="size-3" aria-hidden />
-              Full admin
+              {SCOPE_INFO.admin.label}
             </span>
           ) : (
             t.scopes.map((s) => (
               <span
                 key={s}
                 title={SCOPE_INFO[s].description}
-                className="rounded-full border border-line bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-ink-muted"
+                className="rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[11px] text-ink-muted"
               >
-                {s}
+                {SCOPE_INFO[s].label}
               </span>
             ))
           )}
@@ -437,5 +446,100 @@ function NextLink({ to, children }: { to: string; children: string }) {
       {children}
       <ArrowRight aria-hidden className="size-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
     </Link>
+  );
+}
+
+function scopeNames(scopes: readonly Scope[]): string {
+  return scopes.includes("admin") ? SCOPE_INFO.admin.label : scopes.map((x) => SCOPE_INFO[x].label).join(", ");
+}
+
+/** Technical ids, small and muted, for people who want to match them to the API docs. */
+function ScopeIds({ scopes }: { scopes: readonly Scope[] }) {
+  return <p className="mt-3 font-mono text-[11px] text-ink-faint">Scopes: {scopes.join(", ")}</p>;
+}
+
+function CanCant({ can, cant }: { can: readonly string[]; cant: readonly string[] }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div>
+        <p className="mb-1 text-xs font-semibold text-ink">Can</p>
+        <ul className="space-y-1">
+          {can.map((c) => (
+            <li key={c} className="flex items-start gap-1.5 text-sm text-ink-muted">
+              <Check className="mt-0.5 size-3.5 shrink-0 text-up" aria-hidden />
+              {c}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div>
+        <p className="mb-1 text-xs font-semibold text-ink">Can&apos;t</p>
+        <ul className="space-y-1">
+          {cant.map((c) => (
+            <li key={c} className="flex items-start gap-1.5 text-sm text-ink-muted">
+              <Minus className="mt-0.5 size-3.5 shrink-0 text-ink-faint" aria-hidden />
+              {c}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One choice in a vertical radio group that opens like an FAQ accordion: the selected card shows its details.
+ * A real (visually hidden) radio keeps arrow keys, focus and screen readers native.
+ */
+function ChoiceCard({
+  id,
+  title,
+  summary,
+  selected,
+  danger,
+  onSelect,
+  children,
+}: {
+  id: string;
+  title: string;
+  summary: string;
+  selected: boolean;
+  danger?: boolean;
+  onSelect: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border transition-colors has-[input[type=radio]:focus-visible]:ring-2 has-[input[type=radio]:focus-visible]:ring-accent/60",
+        selected ? (danger ? "border-degraded/50 bg-degraded/5" : "border-accent/50 bg-accent-soft/30") : "border-line hover:border-ink-faint/50",
+      )}
+    >
+      <label className="flex cursor-pointer items-center gap-3 px-3.5 py-3">
+        <input
+          type="radio"
+          name="token-access"
+          value={id}
+          checked={selected}
+          onChange={onSelect}
+          className="sr-only"
+        />
+        <span
+          aria-hidden
+          className={cn(
+            "grid size-4 shrink-0 place-items-center rounded-full border",
+            selected ? (danger ? "border-degraded" : "border-accent") : "border-ink-faint",
+          )}
+        >
+          {selected && <span className={cn("size-2 rounded-full", danger ? "bg-degraded" : "bg-accent")} />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-ink">{title}</span>
+          <span className="block text-xs text-ink-muted">{summary}</span>
+        </span>
+        <ChevronDown aria-hidden className={cn("size-4 shrink-0 text-ink-faint transition-transform", selected && "rotate-180")} />
+      </label>
+      {selected && <div className="animate-enter border-t border-line/70 px-3.5 py-3 pl-[2.625rem]">{children}</div>}
+    </div>
   );
 }
