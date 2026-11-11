@@ -4,7 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { PLAN_LIMITS, type HostedEmail } from "../../src/shared/hosted-contract";
 import { EMAIL_LIMITS, TenantCapability, emailUsageCleanup, emailsToday, hostedEmailProblem, tenantMailFromEnv, utcDay } from "../src/capability";
-import { ResendMailer, classifyResendError, isOnDomain, mailProblem, mailerFromEnv, tenantMailFrom } from "../src/mail";
+import { MailroomMailer, classifyMailroomCode, isOnDomain, mailProblem, mailerFromEnv, mailroomKind, splitFrom, tenantMailFrom, type MailroomBinding, type MailroomRequest, type MailroomResult } from "../src/mail";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { createApp } from "../src/app";
 import type { PlatformEnv } from "../src/env";
@@ -12,20 +12,21 @@ import { CONFIRMS_PER_DAY } from "../src/recipients";
 import { FakeMailer } from "./fake-mailer";
 
 const DOMAIN = "openping.test";
-const KEY = "re_test_secret_key_123";
 const FROM = "OpenPing <alerts@openping.test>";
 const TENANT = "mailtenant000001";
 
-/** A fetch that records each request and answers from the queue (200 with an id when empty). */
-function recordingFetch(answers: (Response | Error)[] = []) {
-  const calls: { url: string; init: RequestInit; body: any }[] = [];
-  const fetcher = (async (url: string, init: RequestInit) => {
-    calls.push({ url, init, body: JSON.parse(String(init.body)) });
-    const next = answers.shift();
-    if (next instanceof Error) throw next;
-    return next ?? Response.json({ id: `re_${calls.length}` });
-  }) as unknown as typeof fetch;
-  return { fetcher, calls };
+/** A fake MAILROOM binding: records each request and answers from the queue (sent with an id when empty). */
+function fakeMailroom(answers: (MailroomResult | Error)[] = []) {
+  const calls: MailroomRequest[] = [];
+  const binding: MailroomBinding = {
+    async send(request) {
+      calls.push(request);
+      const next = answers.shift();
+      if (next instanceof Error) throw next;
+      return next ?? { ok: true, messageId: `mr_${calls.length}` };
+    },
+  };
+  return { binding, calls };
 }
 
 const alert = (over: Partial<HostedEmail> = {}): HostedEmail => ({
@@ -60,7 +61,7 @@ async function tenant(fields: { status?: string; plan?: string; overrides?: stri
 
 const CONFIRMED = ["ops@customer.example", "a@x.example", "b@x.example", "c@x.example", "d@x.example", "me@customer.example"];
 
-function capability(mailer: FakeMailer | ResendMailer | null = new FakeMailer()) {
+function capability(mailer: FakeMailer | MailroomMailer | null = new FakeMailer()) {
   return new TenantCapability(env.PLATFORM_DB, TENANT, "acc_mail", () => clock, mailer ? { mailer, from: FROM, hostedDomain: DOMAIN } : null);
 }
 
@@ -73,72 +74,76 @@ beforeEach(async () => {
   await tenant();
 });
 
-describe("the Resend mailer", () => {
-  it("sends what Resend's API expects, with the platform's key and From", async () => {
-    const { fetcher, calls } = recordingFetch();
-    const mailer = new ResendMailer(KEY, "OpenPing Hosted <signin@openping.test>", fetcher);
-    const sent = await mailer.send({ to: "a@example.com", subject: "Hi", text: "t", html: "<p>t</p>", replyTo: "support@n8builds.dev", category: "signin", tenantId: "abc", idempotencyKey: "k1" });
-    expect(sent).toEqual({ ok: true, id: "re_1" });
-    expect(calls[0]!.url).toBe("https://api.resend.com/emails");
-    const headers = new Headers(calls[0]!.init.headers);
-    expect(headers.get("authorization")).toBe(`Bearer ${KEY}`);
-    expect(headers.get("idempotency-key")).toBe("k1");
-    expect(calls[0]!.body).toEqual({
-      from: "OpenPing Hosted <signin@openping.test>",
-      to: ["a@example.com"],
+describe("the mailroom mailer", () => {
+  const NOW = Date.UTC(2026, 10, 10, 9, 0, 0);
+
+  it("sends what mailroom expects, with the platform's From split into address and name", async () => {
+    const { binding, calls } = fakeMailroom();
+    const mailer = new MailroomMailer(binding, "OpenPing Hosted <signin@openping.test>", () => NOW);
+    const sent = await mailer.send({ to: "a@example.com", subject: "Hi", text: "t", html: "<p>t</p>", replyTo: "support@n8builds.dev", category: "signin", stream: "signin", tenantId: "abc", idempotencyKey: "k1" });
+    expect(sent).toEqual({ ok: true, id: "mr_1" });
+    expect(calls[0]).toEqual({
+      kind: "signin",
+      to: "a@example.com",
       subject: "Hi",
       text: "t",
       html: "<p>t</p>",
-      reply_to: "support@n8builds.dev",
-      tags: [
-        { name: "category", value: "signin" },
-        { name: "tenant", value: "abc" },
-      ],
+      from: "signin@openping.test",
+      fromName: "OpenPing Hosted",
+      replyTo: "support@n8builds.dev",
+      // mailroom keeps keys for months: the day keeps a one-day window.
+      key: "k1:2026-11-10",
     });
     await mailer.send({ to: "c@example.com", subject: "s", text: "t", html: "", headers: { "List-Unsubscribe": "<https://x.example/u>" } });
-    expect(calls[1]!.body.headers).toEqual({ "List-Unsubscribe": "<https://x.example/u>" });
-    calls.splice(1, 1);
-    await mailer.send({ to: "b@example.com", subject: "s", text: "t", html: "", from: FROM });
-    expect(calls[1]!.body.from).toBe(FROM);
-    expect(calls[1]!.body.tags).toBeUndefined();
-    expect(new Headers(calls[1]!.init.headers).has("idempotency-key")).toBe(false);
+    expect(calls[1]).toMatchObject({ kind: "account", headers: { "List-Unsubscribe": "<https://x.example/u>" } });
+    expect(calls[1]).not.toHaveProperty("html");
+    expect(calls[1]).not.toHaveProperty("key");
+    await mailer.send({ to: "b@example.com", subject: "s", text: "t", html: "", from: "alerts@openping.test", stream: "tenant", category: "alert" });
+    expect(calls[2]).toMatchObject({ kind: "tenant", from: "alerts@openping.test" });
+    expect(calls[2]).not.toHaveProperty("fromName");
   });
 
-  it("tells a refused message from a bad moment and from the day's quota", async () => {
-    const err = (status: number, name: string) => Response.json({ statusCode: status, name, message: `${name} happened` }, { status });
-    const { fetcher } = recordingFetch([
-      err(422, "validation_error"),
-      err(403, "validation_error"),
-      err(429, "rate_limit_exceeded"),
-      err(429, "daily_quota_exceeded"),
-      err(429, "monthly_quota_exceeded"),
-      err(500, "application_error"),
+  it("keeps a tenant's own sign-in links in the sign-in stream", () => {
+    expect(mailroomKind({ to: "a@x.example", subject: "s", text: "t", html: "", stream: "tenant", category: "signin" })).toBe("signin");
+    expect(mailroomKind({ to: "a@x.example", subject: "s", text: "t", html: "", stream: "tenant", category: "alert" })).toBe("tenant");
+    expect(mailroomKind({ to: "a@x.example", subject: "s", text: "t", html: "" })).toBe("account");
+    expect(splitFrom('"OpenPing" <alerts@openping.test>')).toEqual({ address: "alerts@openping.test", name: "OpenPing" });
+    expect(splitFrom("alerts@openping.test")).toEqual({ address: "alerts@openping.test" });
+  });
+
+  it("tells a refused message from a bad moment and from a spent cap", async () => {
+    const refusal = (code: string): MailroomResult => ({ ok: false, code, retryable: false, message: `${code} happened` });
+    const { binding } = fakeMailroom([
+      refusal("suppressed"),
+      refusal("sender_not_allowed"),
+      refusal("rate_limited"),
+      refusal("cap_app_day"),
+      refusal("daily_limit"),
+      refusal("unavailable"),
       new Error("connection reset"),
-      new Response("not json", { status: 200 }),
+      refusal("kind_not_allowed"),
     ]);
-    const mailer = new ResendMailer(KEY, FROM, fetcher);
+    const mailer = new MailroomMailer(binding, FROM, () => NOW);
     const errors = [];
     for (let i = 0; i < 8; i++) {
       const r = await mailer.send({ to: "a@example.com", subject: "s", text: "t", html: "" });
       expect(r.ok).toBe(false);
-      if (!r.ok) {
-        errors.push(r.error);
-        expect(r.message).not.toContain(KEY);
-      }
+      if (!r.ok) errors.push(r.error);
     }
     expect(errors).toEqual(["rejected", "rejected", "unavailable", "quota", "quota", "unavailable", "unavailable", "rejected"]);
-    expect(classifyResendError(409, "concurrent_idempotent_requests")).toBe("unavailable");
-    expect(classifyResendError(409, "invalid_idempotent_request")).toBe("rejected");
+    expect(classifyMailroomCode("cap_global_day")).toBe("quota");
+    expect(classifyMailroomCode("in_progress")).toBe("unavailable");
   });
 
-  it("is on only with a key and a From on the Hosted domain", () => {
-    expect(mailProblem({ HOSTED_DOMAIN: DOMAIN })).toBe("RESEND_API_KEY isn't set");
-    expect(mailProblem({ HOSTED_DOMAIN: DOMAIN, RESEND_API_KEY: KEY })).toBe("MAIL_FROM isn't set");
-    expect(mailProblem({ HOSTED_DOMAIN: DOMAIN, RESEND_API_KEY: KEY, MAIL_FROM: "OpenPing <x@n8builds.dev>" })).toBe("MAIL_FROM isn't on HOSTED_DOMAIN");
-    expect(mailProblem({ HOSTED_DOMAIN: DOMAIN, RESEND_API_KEY: KEY, MAIL_FROM: "x@openping.test", TENANT_MAIL_FROM: "y@evil.example" })).toBe("TENANT_MAIL_FROM isn't on HOSTED_DOMAIN");
-    expect(mailerFromEnv({ HOSTED_DOMAIN: DOMAIN, RESEND_API_KEY: KEY, MAIL_FROM: "OpenPing Hosted <signin@openping.test>" })).toBeInstanceOf(ResendMailer);
-    expect(tenantMailFrom({ HOSTED_DOMAIN: DOMAIN, RESEND_API_KEY: KEY, MAIL_FROM: "a@openping.test" })).toBe("a@openping.test");
-    expect(tenantMailFrom({ HOSTED_DOMAIN: DOMAIN, RESEND_API_KEY: KEY, MAIL_FROM: "a@openping.test", TENANT_MAIL_FROM: FROM })).toBe(FROM);
+  it("is on only with the binding and a From on the Hosted domain", () => {
+    const { binding } = fakeMailroom();
+    expect(mailProblem({ HOSTED_DOMAIN: DOMAIN })).toBe("the MAILROOM binding isn't set");
+    expect(mailProblem({ HOSTED_DOMAIN: DOMAIN, MAILROOM: binding })).toBe("MAIL_FROM isn't set");
+    expect(mailProblem({ HOSTED_DOMAIN: DOMAIN, MAILROOM: binding, MAIL_FROM: "OpenPing <x@n8builds.dev>" })).toBe("MAIL_FROM isn't on HOSTED_DOMAIN");
+    expect(mailProblem({ HOSTED_DOMAIN: DOMAIN, MAILROOM: binding, MAIL_FROM: "x@openping.test", TENANT_MAIL_FROM: "y@evil.example" })).toBe("TENANT_MAIL_FROM isn't on HOSTED_DOMAIN");
+    expect(mailerFromEnv({ HOSTED_DOMAIN: DOMAIN, MAILROOM: binding, MAIL_FROM: "OpenPing Hosted <signin@openping.test>" })).toBeInstanceOf(MailroomMailer);
+    expect(tenantMailFrom({ HOSTED_DOMAIN: DOMAIN, MAILROOM: binding, MAIL_FROM: "a@openping.test" })).toBe("a@openping.test");
+    expect(tenantMailFrom({ HOSTED_DOMAIN: DOMAIN, MAILROOM: binding, MAIL_FROM: "a@openping.test", TENANT_MAIL_FROM: FROM })).toBe(FROM);
     expect(tenantMailFromEnv({ HOSTED_DOMAIN: DOMAIN }, new FakeMailer())).toBeNull();
     expect(isOnDomain("a@mail.openping.test", DOMAIN)).toBe(true);
     expect(isOnDomain("a@openping.test.evil.example", DOMAIN)).toBe(false);
@@ -153,7 +158,7 @@ describe("a tenant's email through the platform", () => {
     expect(result).toEqual({ ok: true, id: "m1" });
     expect(mailer.sent.map((m) => m.to)).toEqual(["a@x.example", "b@x.example"]);
     expect(mailer.sent[0]).toMatchObject({ from: FROM, replyTo: "me@customer.example", category: "alert", tenantId: TENANT, subject: "DOWN: api.customer.example" });
-    // Resend's idempotency key: the same message to the same address is one send.
+    // The idempotency key: the same message to the same address is one send (the mailer adds the day).
     expect(mailer.sent[0]!.idempotencyKey).toMatch(new RegExp(`^tenant-${TENANT}-[0-9a-f]{64}$`));
     await capability(mailer).sendEmail(alert({ to: ["a@x.example"], replyTo: "me@customer.example" }));
     expect(mailer.sent[2]!.idempotencyKey).toBe(mailer.sent[0]!.idempotencyKey);
@@ -246,7 +251,7 @@ describe("a tenant's email through the platform", () => {
     mailer.failNext = ["unavailable", "rejected", "quota"];
     expect(await cap.sendEmail(alert())).toMatchObject({ ok: false, error: "email_unavailable" });
     expect(await cap.sendEmail(alert())).toMatchObject({ ok: false, error: "email_rejected" });
-    // Resend's own day is spent: the tenant waits for the next UTC day, like for its own cap.
+    // mailroom's caps for the day are spent: the tenant waits for the next UTC day, like for its own cap.
     expect(await cap.sendEmail(alert())).toMatchObject({ ok: false, error: "email_quota_exceeded" });
     expect(await emailsToday(env.PLATFORM_DB, TENANT, clock)).toEqual({ sent: PLAN_LIMITS.hosted.emailsPerDay - 1, failed: 3, refused: 0 });
     expect((await cap.sendEmail(alert())).ok).toBe(true);
@@ -263,11 +268,11 @@ describe("a tenant's email through the platform", () => {
     expect(await capability(null).sendEmail(alert())).toMatchObject({ error: "email_unavailable", message: "Email isn't set up on OpenPing Hosted yet." });
   });
 
-  it("never hands the tenant the key, even when the provider's answer would", async () => {
-    const { fetcher } = recordingFetch([Response.json({ name: "validation_error", message: `API key ${KEY} is invalid` }, { status: 401 })]);
-    const result = await capability(new ResendMailer(KEY, FROM, fetcher)).sendEmail(alert());
+  it("sends tenant mail in mailroom's tenant stream, and never passes mailroom's detail to the tenant", async () => {
+    const { binding, calls } = fakeMailroom([{ ok: false, code: "sender_not_allowed", retryable: false, message: "This app may not send as alerts@openping.test." }]);
+    const result = await capability(new MailroomMailer(binding, FROM, () => clock)).sendEmail(alert());
+    expect(calls[0]).toMatchObject({ kind: "tenant", from: "alerts@openping.test", fromName: "OpenPing" });
     expect(result).toEqual({ ok: false, error: "email_rejected", message: "The mail provider refused this email." });
-    expect(JSON.stringify(result)).not.toContain(KEY);
   });
 
   it("forgets days older than five weeks", async () => {

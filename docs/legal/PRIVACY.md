@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 2026-10-28
+Last updated: 2026-11-10
 
 This policy explains what personal data OpenPing Hosted collects, why, where it goes, and how long we keep it.
 It also covers the OpenPing website at openping.n8builds.dev (section 13).
@@ -44,8 +44,9 @@ Stripe handles payment and keeps your card, billing address and any tax id.
 We keep your Stripe customer id, your subscription's id, plan, status, renewal date and payment state, and a record of each billing event Stripe sends us.
 
 **Email.**
-We send email through Resend: sign-in codes, account emails (welcome, trial ending, payment failed, paused, deletion warning, a new passkey, your key being shown) and your OpenPing's alerts and reports.
+We send email through Cloudflare Email Service: sign-in codes, account emails (welcome, trial ending, payment failed, paused, deletion warning, a new passkey, your key being shown) and your OpenPing's alerts and reports.
 For your OpenPing's email, we keep the list of addresses it may send to, whether each one confirmed or declined, and the token of each one's unsubscribe link, and a count of emails sent each day.
+For every email we send, we keep the recipient's address, what kind of email it was and when, for up to 400 days, and whether it was delivered, bounced or reported as spam, for up to 180 days; an address that bounced for good or reported spam gets no more email from us.
 We do not track whether you open emails or click links.
 
 **Your OpenPing's numbers.**
@@ -98,9 +99,8 @@ For push notifications, your browser's push service (from Google, Apple, Mozilla
 We use these companies to run OpenPing Hosted.
 Each one handles your data only to provide its service to us.
 
-- **Cloudflare** runs everything: our servers, every customer's OpenPing and its database, file storage for exports, queues, logs, and email forwarding for support@n8builds.dev.
+- **Cloudflare** runs everything: our servers, every customer's OpenPing and its database, file storage for exports, queues, logs, every email we send (sign-in codes, account emails and your OpenPing's alerts), and email forwarding for support@n8builds.dev.
 - **Stripe** takes payments, calculates tax, keeps invoices and runs the billing portal.
-- **Resend** sends every email: sign-in codes, account emails and your OpenPing's alerts.
 - **GitHub**, only if you choose to sign in with GitHub, confirms who you are.
 - **[TO FILL: the mailbox provider that receives support@n8builds.dev, for example Google Workspace]** stores the support emails we receive and send.
 
@@ -137,7 +137,7 @@ When you pay, Stripe's checkout and billing pages set Stripe's own cookies, whic
 ## 8. Where your data is stored
 
 Cloudflare runs on a global network, and stores your databases in the region it chooses, which may be outside your country.
-Stripe and Resend are based in the United States.
+Stripe and Cloudflare are based in the United States.
 When data leaves the EU or the UK, we rely on our providers' data processing agreements, which include the European Commission's standard contractual clauses (and the UK addendum) or another legal transfer mechanism.
 
 ## 9. Security
@@ -179,7 +179,7 @@ If you visit a customer's public status page, we do not set cookies, and only ou
 
 The OpenPing website is the project's own copy of OpenPing, run by us in our own Cloudflare account.
 
-- **The waitlist:** if you join, we keep your email address and when you joined, send you one confirmation email through Resend, and email you when OpenPing Hosted opens; to stop abuse, sign-ups are counted per IP address for a few minutes; we keep it until you ask to be removed (reply to any email from us, or write to support@n8builds.dev) or we close the waitlist.
+- **The waitlist:** if you join, we keep your email address and when you joined, send you one confirmation email through Cloudflare Email Service, and email you when OpenPing Hosted opens; to stop abuse, sign-ups are counted per IP address for a few minutes; we keep it until you ask to be removed (reply to any email from us, or write to support@n8builds.dev) or we close the waitlist.
 - **Click counts:** the page counts a few clicks, such as "Start a free trial", as daily totals only; no cookies are set, and nothing about you is stored; your IP address is used only for a moment, in Cloudflare's memory, to limit how often one visitor is counted.
 - **Page views:** [TO FILL: confirm whether Cloudflare Web Analytics is on for openping.n8builds.dev; if it is, keep this line] Cloudflare Web Analytics counts page views without cookies and without tracking you across sites.
 - **The "Is it down?" tool:** the address you enter is checked once, and is not stored; to stop abuse we count requests per IP address and per site checked, for a few minutes.

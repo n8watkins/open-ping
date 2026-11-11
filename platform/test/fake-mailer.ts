@@ -1,6 +1,6 @@
 /**
  * An in-memory Mailer: every message the platform would send, kept for the
- * test to read, and failures on demand. Same interface as ResendMailer.
+ * test to read, and failures on demand. Same interface as MailroomMailer.
  */
 
 import type { MailError, MailResult, Mailer, OutgoingEmail } from "../src/mail";

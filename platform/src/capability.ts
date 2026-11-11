@@ -35,17 +35,16 @@ export interface TenantMail {
   hostedDomain: string;
 }
 
-/** The tenant mail for this env: Resend with the platform's key, from the Hosted domain. */
+/** The tenant mail for this env: mailroom through the platform's binding, from the Hosted domain. */
 export function tenantMailFromEnv(env: MailEnv, mailer: Mailer | null): TenantMail | null {
   const from = tenantMailFrom(env);
   return mailer && from ? { mailer, from, hostedDomain: env.HOSTED_DOMAIN } : null;
 }
 
 /**
- * Resend's Idempotency-Key for a tenant's email: the same message to the
- * same address within 24 hours goes out once, so a retry after a lost
- * answer doesn't send it twice. (Resend: unique per request, up to 256
- * characters, kept 24 hours.)
+ * The idempotency key for a tenant's email: the same message to the same
+ * address on the same UTC day goes out once (the mailer adds the day), so a
+ * retry after a lost answer doesn't send it twice.
  */
 export async function tenantIdempotencyKey(tenantId: string, to: string, message: HostedEmail): Promise<string> {
   const data = new TextEncoder().encode(JSON.stringify([to, message.subject, message.text, message.html ?? "", message.category]));
@@ -199,6 +198,7 @@ export class TenantCapability implements PlatformCapability {
         ...(body.headers ? { headers: body.headers } : {}),
         ...(replyTo ? { replyTo } : {}),
         category: message.category,
+        stream: "tenant",
         tenantId: this.tenantId,
         idempotencyKey: await tenantIdempotencyKey(this.tenantId, to, message),
       });

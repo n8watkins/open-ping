@@ -598,7 +598,7 @@ describe("the review's cases", () => {
     const t = await tenant(w, { status: "suspended", trialEndsAt: w.clock.now - 32 * DAY, suspendedAt: w.clock.now - 31 * DAY });
     const cycle = String(w.clock.now - 31 * DAY);
     await sentNotice(t.id, "suspended", cycle, w.clock.now - 31 * DAY);
-    // A run claimed the warning a while ago and died before Resend answered.
+    // A run claimed the warning a while ago and died before mailroom answered.
     await env.PLATFORM_DB.prepare("INSERT INTO lifecycle_notices (tenant_id, kind, cycle, state, claimed_at) VALUES (?, 'deletion_warning', ?, 'sending', ?)")
       .bind(t.id, cycle, w.clock.now - 8 * DAY)
       .run();

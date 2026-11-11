@@ -70,9 +70,9 @@ export interface PlatformEnv {
   SIGN_UPS?: string;
   /** Secret: base64url PKCS#8 Ed25519 private key that signs hand-off tokens (contract, section 7; O6). */
   HANDOFF_SIGNING_KEY?: string;
-  /** Secret: the platform's Resend API key, for sign-in codes. */
-  RESEND_API_KEY?: string;
-  /** Var: the From of the platform's mail, on HOSTED_DOMAIN (verified in Resend), e.g. "OpenPing Hosted <signin@<domain>>". */
+  /** Service binding to mailroom (entrypoint Mailroom, props { app: "openping-hosted" }), which sends all the platform's mail (src/mail.ts). */
+  MAILROOM?: import("./mail").MailroomBinding;
+  /** Var: the From of the platform's mail, on HOSTED_DOMAIN (onboarded for Cloudflare Email Sending), e.g. "OpenPing Hosted <signin@<domain>>". */
   MAIL_FROM?: string;
   /** Var: the From of each customer's OpenPing's mail (alerts, reports), on HOSTED_DOMAIN; MAIL_FROM when empty. */
   TENANT_MAIL_FROM?: string;

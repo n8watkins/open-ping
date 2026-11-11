@@ -16,7 +16,7 @@
  *     the database about one batch per location per 10 seconds; with the
  *     HEALTH_RATE_LIMIT binding, one caller past its limit gets a 429;
  *   - never anything per tenant, never a call to a tenant or to Cloudflare,
- *     Stripe or Resend.
+ *     Stripe or mailroom.
  *
  * The public answer is the verdict and each check as a yes or no, nothing
  * else (publicHealth): no counts, versions, times of day or reasons. The full

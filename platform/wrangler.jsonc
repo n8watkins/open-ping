@@ -79,13 +79,14 @@
     // lets only existing accounts sign in (staging testers, then launch).
     "SIGN_UPS": "closed",
     // The From of the platform's own emails (sign-in, the account emails),
-    // an address on HOSTED_DOMAIN, the one domain verified in Resend. All
-    // platform mail is off while it (or the RESEND_API_KEY secret) is empty
-    // or on another domain (src/mail.ts).
+    // an address on HOSTED_DOMAIN, onboarded for Cloudflare Email Sending and
+    // listed as openping-hosted's sender in mailroom. All platform mail is
+    // off while it (or the MAILROOM binding) is missing or on another domain
+    // (src/mail.ts).
     "MAIL_FROM": "",
     // The From of every customer's OpenPing's mail (alerts, reports), sent
-    // through the platform capability with the platform's key; also on
-    // HOSTED_DOMAIN. Empty: MAIL_FROM.
+    // through the platform capability and mailroom; also on HOSTED_DOMAIN.
+    // Empty: MAIL_FROM.
     "TENANT_MAIL_FROM": "",
     // The platform's GitHub OAuth app; GitHub sign-in is off while it (or the
     // GITHUB_CLIENT_SECRET secret) is empty.
@@ -221,9 +222,20 @@
         "max_retries": 20
       }
     ]
-  }
+  },
+  // All the platform's mail goes through mailroom (github.com/n8watkins/mailroom),
+  // the one Worker on the account that holds the Email Service binding, with
+  // per-app caps and bounce handling. props.app names this Worker there.
+  "services": [
+    {
+      "binding": "MAILROOM",
+      "service": "mailroom",
+      "entrypoint": "Mailroom",
+      "props": { "app": "openping-hosted" }
+    }
+  ]
   // Secrets, set later with `wrangler secret put` from the owner's machine,
-  // never in this file: HANDOFF_SIGNING_KEY, RESEND_API_KEY and
+  // never in this file: HANDOFF_SIGNING_KEY and
   // GITHUB_CLIENT_SECRET (B2), PLATFORM_KEY, CF_ACCOUNT_ID and CF_API_TOKEN
   // (B3), CF_ZONE_ID (custom_domains addresses), STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (B5, platform/README.md step 10).
 }

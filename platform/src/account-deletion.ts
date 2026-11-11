@@ -183,7 +183,7 @@ export async function tenantOfDeletingAccount(db: D1Database, accountId: string)
  * finished it first.
  */
 export async function scrubAccount(db: D1Database, mailer: Mailer | null, account: DeletingAccount, now: number): Promise<boolean> {
-  // The email first, while the address is known; at most once (Resend's idempotency key covers a retried run).
+  // The email first, while the address is known; at most once (the idempotency key covers a retried run the same day).
   if (mailer) {
     const sent = await mailer.send({
       to: account.email,

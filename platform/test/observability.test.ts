@@ -54,7 +54,7 @@ const db = env.PLATFORM_DB;
 
 /** Every setting mail, billing and provisioning need, made up (nothing is called). */
 const CONFIGURED: Partial<PlatformEnv> = {
-  RESEND_API_KEY: "re_test_123",
+  MAILROOM: { send: async () => ({ ok: true, messageId: "m1" }) },
   MAIL_FROM: `OpenPing Hosted <signin@${DOMAIN}>`,
   STRIPE_SECRET_KEY: "sk_test_123",
   STRIPE_WEBHOOK_SECRET: "whsec_123",
@@ -311,12 +311,12 @@ describe("the platform health check", () => {
 
   it("says whether mail, billing and provisioning are configured, as yes or no only", async () => {
     await beats();
-    const r = await report({ RESEND_API_KEY: undefined, STRIPE_WEBHOOK_SECRET: "", CF_API_TOKEN: undefined });
+    const r = await report({ MAILROOM: undefined, STRIPE_WEBHOOK_SECRET: "", CF_API_TOKEN: undefined });
     expect(r.checks.config).toEqual({ ok: false, mail: false, billing: false, provisioning: false });
     expect(r.problems).toEqual(["Not configured: mail, billing, provisioning."]);
     // Never which setting, never a value.
     const text = JSON.stringify(r);
-    for (const leak of ["RESEND", "STRIPE", "CF_", "sk_test", "whsec", "re_test", "token"]) expect(text).not.toContain(leak);
+    for (const leak of ["MAILROOM", "STRIPE", "CF_", "sk_test", "whsec", "re_test", "token"]) expect(text).not.toContain(leak);
     expect(configChecks(platformEnv()).ok).toBe(true);
   });
 

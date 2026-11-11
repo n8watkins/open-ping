@@ -92,7 +92,7 @@ The pieces:
 - **A customer's OpenPing** is today's OpenPing built with hosted mode, uploaded as a user Worker named `t-<id>` (from the permanent tenant id, never the slug, which can be renamed), with its own D1 database, its own `MASTER_KEY`, and no `SETUP_TOKEN`, GitHub app or Resend key of its own.
 - **Scheduling:** the platform's cron runs every minute and puts each due customer on a Queue; the queue consumer calls each customer's scheduler through the namespace, building fresh props (and a fresh platform capability) for every call, since an RPC stub in props only lives for the request that received it.
   One message per customer means one slow or broken customer can't delay the others, and Queues retry on failure.
-- **Email:** the platform owns one Resend account and one verified sending domain; a customer's OpenPing sends email through a platform capability (an RPC stub passed in props), so no customer holds the Resend key and the platform can cap sends per customer.
+- **Email:** the platform sends through mailroom (the account's one Cloudflare Email Service sender, over a service binding) from one sending domain; a customer's OpenPing sends email through a platform capability (an RPC stub passed in props), so no customer holds a key or binding and the platform can cap sends per customer.
 
 ## 4. Decisions, with recommendations
 
@@ -154,7 +154,7 @@ Sizes: S is under a day of agent work, M one to two days, L three or more.
 
 - [x] **B1 Skeleton (M), done in #40.** Workspace layout, its own `wrangler.jsonc`, Hono app, platform D1 schema and migrations, host-based routing (`app.` versus `<slug>.`), dispatch with custom limits, 404 and suspended pages, tests with a fake namespace. Needs: C0.
 - [x] **B2 Accounts and sign-in (L), done.** Email link plus code (reusing the magic-link code), passkeys (reusing `src/worker/lib/webauthn.ts`), GitHub OAuth, sessions, rate limits, the account page, issuing hand-off tokens. Needs: B1.
-  Sign-ups stay closed (`SIGN_UPS`) until launch; the owner still needs a Resend sending domain and a GitHub OAuth app for the Hosted domain.
+  Sign-ups stay closed (`SIGN_UPS`) until launch; the owner still needs the Hosted domain onboarded for Cloudflare Email Sending and a GitHub OAuth app for the Hosted domain.
 - [x] **B3 Provisioning (L), done.** A Cloudflare API client (create and delete D1, upload a user Worker with assets, bindings, secrets and tags, delete it), the provisioning state machine (`requested`, `db_created`, `uploaded`, `migrated`, `ready`, with retry and clean rollback), slug rules and reserved names, and a fake API for tests. Needs: B1 for wiring; the client itself can start with C0.
   The tenant's migrations run through the contract's `POST /__platform/scheduled` (A3); the bundle comes from an R2 bucket the release runner (C1) fills.
   Runs are driven by a Queue with the cron as a net; a permanent failure, or too many in a row, pauses the tenant for the owner instead of rolling it back, and `removeTenant` is the clean teardown.
