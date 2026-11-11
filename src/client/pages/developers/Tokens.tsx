@@ -12,7 +12,7 @@ import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { Chip, ErrorBanner, PrimaryButton, SectionSkeleton, errMessage } from "../settings/shared";
 import { useDevelopers } from "../Developers";
-import { EXPIRY_DAYS, PERMISSIONS, grantedResources, shortActions, type Scope } from "../../../shared/scopes";
+import { EXPIRY_DAYS, MAX_CUSTOM_EXPIRY_DAYS, PERMISSIONS, grantedResources, shortActions, type Scope } from "../../../shared/scopes";
 import { EMPTY_SELECTION, PermissionPicker, PermissionSummary, type PermissionSelection } from "./PermissionPicker";
 
 interface ApiToken {
@@ -34,9 +34,28 @@ interface TokensResponse {
 
 const SECRET_COMMAND = "openssl rand -base64 32 | npx wrangler secret put API_TOKEN";
 
-type Expiry = "7" | "30" | "90" | "never";
-const EXPIRY_LABEL: Record<Expiry, string> = { "7": "7 days", "30": "30 days", "90": "90 days", never: "Never" };
-const EXPIRY_OPTIONS = EXPIRY_DAYS.map((d) => (d === null ? "never" : String(d)) as Expiry);
+type Expiry = "7" | "30" | "90" | "never" | "custom";
+const EXPIRY_LABEL: Record<Expiry, string> = {
+  "7": "7 days",
+  "30": "30 days",
+  "90": "90 days",
+  never: "Never",
+  custom: "Custom date",
+};
+const EXPIRY_OPTIONS: Expiry[] = [...EXPIRY_DAYS.map((d) => (d === null ? "never" : String(d)) as Expiry), "custom"];
+
+/** A local calendar date as YYYY-MM-DD, `daysAhead` days from today. */
+function localDateInput(daysAhead: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + daysAhead);
+  return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0")].join("-");
+}
+
+/** The last millisecond of a YYYY-MM-DD day in the browser's time zone, as epoch ms. */
+function endOfLocalDay(date: string): number {
+  const [y = 0, m = 1, d = 1] = date.split("-").map(Number);
+  return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+}
 
 /** Developers > API tokens: create with scopes and expiry (shown once), list and revoke; and the API_TOKEN secret. */
 export default function TokensPage() {
@@ -46,6 +65,7 @@ export default function TokensPage() {
   const [name, setName] = useState("");
   const [selection, setSelection] = useState<PermissionSelection>(EMPTY_SELECTION);
   const [expiry, setExpiry] = useState<Expiry>("90");
+  const [customDate, setCustomDate] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<{
@@ -69,7 +89,9 @@ export default function TokensPage() {
         json: {
           name: name.trim(),
           scopes,
-          expiresInDays: expiry === "never" ? null : Number(expiry),
+          ...(expiry === "custom"
+            ? { expiresAt: endOfLocalDay(customDate) }
+            : { expiresInDays: expiry === "never" ? null : Number(expiry) }),
         },
       });
       setRevealed({
@@ -79,6 +101,7 @@ export default function TokensPage() {
       });
       setFresh({ token: res.token, id: res.apiToken.id });
       setName("");
+      setCustomDate("");
       setSelection(EMPTY_SELECTION);
       await reload();
     } catch (err) {
@@ -186,6 +209,24 @@ export default function TokensPage() {
                 ))}
               </select>
             </div>
+            {expiry === "custom" && (
+              <div>
+                <label htmlFor="token-expiry-date" className="mb-1.5 block text-xs font-medium text-ink-muted">
+                  Expires on
+                </label>
+                <input
+                  id="token-expiry-date"
+                  type="date"
+                  value={customDate}
+                  onChange={(e) => setCustomDate(e.target.value)}
+                  min={localDateInput(1)}
+                  max={localDateInput(MAX_CUSTOM_EXPIRY_DAYS)}
+                  required
+                  className="input sm:w-44"
+                />
+                <p className="mt-1 text-xs text-ink-faint">Ends at the end of that day, in your time zone.</p>
+              </div>
+            )}
           </div>
 
           <div>
@@ -199,7 +240,7 @@ export default function TokensPage() {
           <PermissionSummary value={selection} />
 
           <div className="flex flex-wrap items-center gap-3">
-            <PrimaryButton type="submit" busy={creating} disabled={!name.trim() || scopes.length === 0 || atMax}>
+            <PrimaryButton type="submit" busy={creating} disabled={!name.trim() || scopes.length === 0 || atMax || (expiry === "custom" && !customDate)}>
               {!creating && <Plus className="size-4" />}
               Create token
             </PrimaryButton>
@@ -347,6 +388,7 @@ function TokenRow({ token: t, busy, onRevoke }: { token: ApiToken; busy: boolean
           ) : (
             <span title={formatDateTime(t.expiresAt)}>Expires {formatRelativeTime(t.expiresAt)}</span>
           )}
+          {t.expiresAt != null && ` (${formatDateTime(t.expiresAt)})`}
         </div>
       </div>
       <button

@@ -101,6 +101,8 @@ export interface CreateApiTokenInput {
   scopes: readonly string[];
   /** Days until it expires, or null for never. */
   expiresInDays: number | null;
+  /** An exact expiry (epoch ms, already validated); wins over expiresInDays. */
+  expiresAt?: number | null;
   /** Who created it, for the audit record. */
   createdVia: string | null;
 }
@@ -121,7 +123,7 @@ export async function createApiToken(
     scopes: scopes.join(" "),
     created_at: now,
     last_used_at: null,
-    expires_at: input.expiresInDays == null ? null : now + input.expiresInDays * DAY_MS,
+    expires_at: input.expiresAt ?? (input.expiresInDays == null ? null : now + input.expiresInDays * DAY_MS),
     created_via: input.createdVia,
     revoked_at: null,
   };

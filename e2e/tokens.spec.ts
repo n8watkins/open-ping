@@ -91,6 +91,46 @@ test("Bulk select ticks visible boxes; search narrows the list; a long access li
   await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
 });
 
+test("Custom date expiry: a date picker limited to tomorrow through 1 year, shown exactly in the list", async ({
+  page,
+}) => {
+  const name = `Custom ${Date.now().toString(36)}`;
+  await page.goto("/developers/tokens");
+  await page.getByLabel("Name").fill(name);
+  await page.getByRole("button", { name: "Monitoring", exact: true }).click();
+  await page.getByRole("checkbox", { name: "Monitors: Read" }).check();
+  await expect(page.getByLabel("Expires on")).toHaveCount(0);
+  await page.getByLabel("Expires after").selectOption("custom");
+  const picker = page.getByLabel("Expires on");
+  await expect(picker).toHaveAttribute("type", "date");
+  await expect(
+    page.getByRole("button", { name: "Create token" }),
+  ).toBeDisabled();
+  const { min, max, target } = await page.evaluate(() => {
+    const fmt = (n: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + n);
+      return [
+        d.getFullYear(),
+        String(d.getMonth() + 1).padStart(2, "0"),
+        String(d.getDate()).padStart(2, "0"),
+      ].join("-");
+    };
+    return { min: fmt(1), max: fmt(365), target: fmt(10) };
+  });
+  await expect(picker).toHaveAttribute("min", min);
+  await expect(picker).toHaveAttribute("max", max);
+  await picker.fill(target);
+  await page.getByRole("button", { name: "Create token" }).click();
+  const row = page.getByRole("listitem").filter({ hasText: name });
+  await expect(row).toContainText(/Expires in (10|11)d/);
+  const expected = await page.evaluate((t) => {
+    const [y, m, d] = t.split("-").map(Number);
+    return new Date(y, m - 1, d, 23, 59, 59, 999).toLocaleString();
+  }, target);
+  await expect(row).toContainText(`(${expected})`);
+});
+
 test("Full access is a separate, warned checkbox; an expiry and revoke work from the list", async ({ page }) => {
   const name = `Admin ${Date.now().toString(36)}`;
   await page.goto("/developers/tokens");

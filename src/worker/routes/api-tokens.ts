@@ -12,6 +12,7 @@ import {
   revokeApiToken,
 } from "../db/api-tokens";
 import { isScope, LEGACY_SCOPES_IDS } from "../lib/scopes";
+import { customExpiryError } from "../../shared/scopes";
 
 /**
  * Named API tokens, mounted at /api/api-tokens (Developers in the app).
@@ -51,6 +52,8 @@ const createBody = z.object({
     .union([z.literal(7), z.literal(30), z.literal(90), z.null()])
     .optional()
     .describe(`One of ${EXPIRY_DAYS.join(", ")} (null: never).`),
+  // A custom expiry: epoch ms of the end of the chosen day in the user's time zone. Wins over expiresInDays.
+  expiresAt: z.number().int().optional().describe("Custom expiry, epoch ms; from now to 1 year ahead."),
 });
 
 apiTokens.get("/self", async (c) => {
@@ -76,6 +79,10 @@ apiTokens.post("/", async (c) => {
   if (!session) return c.json({ error: "session_required" }, 403);
   const parsed = createBody.safeParse(await c.req.json().catch(() => undefined));
   if (!parsed.success) return c.json({ error: "validation", issues: parsed.error.issues }, 400);
+  if (parsed.data.expiresAt !== undefined) {
+    const message = customExpiryError(parsed.data.expiresAt, Date.now());
+    if (message) return c.json({ error: "validation", message, issues: [{ path: ["expiresAt"], message }] }, 400);
+  }
   if ((await countApiTokens(c.env)) >= MAX_API_TOKENS) {
     return c.json({ error: "too_many_tokens", message: `At most ${MAX_API_TOKENS} tokens; revoke one first.` }, 409);
   }
@@ -83,6 +90,7 @@ apiTokens.post("/", async (c) => {
     name: parsed.data.name,
     scopes: parsed.data.scopes ?? ["admin"],
     expiresInDays: parsed.data.expiresInDays ?? null,
+    expiresAt: parsed.data.expiresAt,
     createdVia: `${session.identity_kind}:${session.identity}`.slice(0, 200),
   });
   c.header("Cache-Control", "no-store");
