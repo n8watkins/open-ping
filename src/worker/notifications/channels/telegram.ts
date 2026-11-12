@@ -49,7 +49,7 @@ export function toTelegramMessage(chatId: string, p: NotificationPayload): Teleg
     ...metaLines(p).map(([label, value]) => `<b>${escapeTelegramHtml(label)}:</b> ${escapeTelegramHtml(truncate(value, VALUE_MAX))}`),
   ];
   if (p.url) {
-    lines.push("", `<a href="${escapeTelegramHtml(p.url)}">${escapeTelegramHtml(emailButtonLabel(p.event))}</a>`);
+    lines.push("", `<a href="${escapeTelegramHtml(p.url)}">${escapeTelegramHtml(emailButtonLabel(p))}</a>`);
   }
   return {
     chat_id: chatId,

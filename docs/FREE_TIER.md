@@ -118,15 +118,16 @@ Builds before this change wrote each check on its own, about 3 round trips per p
 
 | Due monitors | Passing, before | Passing, now | Opening incidents, before | Opening incidents, now |
 | --- | --- | --- | --- | --- |
-| 1 | 6 | 3 | 17 | 7 |
-| 3 | 12 | 3 | 45 | 11 |
-| 10 | 33 | 3 | 143 | 25 |
-| 30 | 93 | 3 | 408 | 55 |
+| 1 | 6 | 3 | 17 | 8 |
+| 3 | 12 | 3 | 45 | 8 |
+| 10 | 33 | 3 | 143 | 8 |
+| 30 | 93 | 3 | 408 | 8 |
 
 A run of passing checks now costs the same three round trips as a run that checks nothing, however many monitors it checks.
 A run that opens or resolves incidents adds one shared read batch, so its checks cost four round trips together.
 What remains in the "opening incidents" column is alert delivery, and a run delivers at most 25.
-Each channel is read once per run, then each alert to it costs two queries (marking it sent or failed, and the channel's result).
+Each channel is read once per run, and so is what each channel was sent in the last 10 minutes (the alert cap), then each alert to it costs two queries (marking it sent or failed, and the channel's result).
+Three or more monitors going down (or recovering) together are one grouped alert per channel ([Many monitors at once](./ALERT_CHANNELS.md#many-monitors-at-once)), so from 3 due monitors up the column stays at 8.
 A Web Push alert also reads its device (three queries), and the VAPID keys are read once per run.
 Before an alert goes, the run checks that its worst case still fits; one that doesn't waits for the next run.
 If an incident opens but the write that queues its alert doesn't land, a later run queues it, with the same event keys, so it is never sent twice.

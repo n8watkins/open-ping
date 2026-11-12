@@ -5,6 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import "../../src/worker/index";
 import { PLAN_BUDGETS } from "../../src/worker/lib/budget";
 import { runScheduled } from "../../src/worker/scheduler";
+import { GROUP_MIN } from "../../src/worker/notifications/dispatcher";
 
 // How many D1 round trips (what Cloudflare's 50-per-invocation Free limit
 // counts: a query, or a whole batch) and statements a cron run makes for N due
@@ -32,15 +33,15 @@ const controller: ScheduledController = {
 interface Counts {
   roundTrips: number;
   statements: number;
-  /** Alert deliveries the run attempted (each costs its own queries; notifications/dispatcher.ts). */
+  /** Alert messages the run attempted (each costs its own queries; a grouped alert is one; notifications/dispatcher.ts). */
   deliveries?: number;
 }
 
-/** Deliveries attempted since `since`: each one is marked sent or failed when tried. */
+/** Messages attempted since `since`: each is marked sent or failed when tried, a grouped alert's rows under one batch_id. */
 const deliveredSince = async (since: number) =>
   (
     await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM notification_outbox WHERE status <> 'pending' AND updated_at >= ?",
+      "SELECT COUNT(DISTINCT COALESCE(batch_id, id)) AS n FROM notification_outbox WHERE status <> 'pending' AND updated_at >= ?",
     )
       .bind(since)
       .first<{ n: number }>()
@@ -196,13 +197,17 @@ describe("D1 round trips per scheduler run", () => {
     // Every check's writes share the run's batches: a run of passing checks is
     // the idle run's three round trips, and one that opens or resolves
     // incidents adds one shared read batch. Only delivering alerts costs per
-    // alert (notifications/dispatcher.ts): the channel is read once per run,
-    // then each delivery is marked and its channel's result recorded.
+    // alert (notifications/dispatcher.ts): the channel and what it was sent in
+    // the last 10 minutes (the alert cap) are read once per run, then each
+    // message is marked and its channel's result recorded. Three or more
+    // monitors failing (or recovering) together are one grouped message.
     expect(warmup.roundTrips).toBe(3);
     expect(passing.roundTrips).toBe(3);
-    expect(failing.roundTrips - 2 * failing.deliveries!).toBe(4 + 1);
-    expect(recovering.roundTrips - 2 * recovering.deliveries!).toBe(4 + 1);
-    expect(failing.deliveries).toBe(Math.min(n, 25));
+    expect(failing.roundTrips - 2 * failing.deliveries!).toBe(4 + 2);
+    expect(recovering.roundTrips - 2 * recovering.deliveries!).toBe(4 + 2);
+    expect(failing.deliveries).toBe(n < GROUP_MIN ? n : 1);
+    // Over 25 (a run's claim), the downs left over go out with the recoveries: a group of each.
+    expect(recovering.deliveries).toBe(n < GROUP_MIN ? n : n > 25 ? 2 : 1);
 
     const row = (c: Counts) =>
       `${c.roundTrips} (${c.statements} stmts${c.deliveries ? `, ${c.deliveries} alerts` : ""})`;

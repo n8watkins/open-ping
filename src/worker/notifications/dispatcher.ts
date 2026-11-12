@@ -2,7 +2,18 @@ import type { Env } from "../types";
 import type { ChannelRecord } from "../db/channels";
 import { getChannel, recordChannelResult, secretFieldsFor } from "../db/channels";
 import { getSubscription, recordPushResult } from "../db/push";
-import { claimDue, markDeferred, markSent, markFailed, type OutboxEntry } from "../db/outbox";
+import {
+  claimDue,
+  markDeferred,
+  markSent,
+  markFailed,
+  markSuppressed,
+  recentSendsStatement,
+  type OutboxEntry,
+  type OutboxIds,
+} from "../db/outbox";
+import { NOTIFY_EVENTS, type NotifyEvent } from "../../shared/notifications";
+import { newId } from "../lib/ids";
 import { getSetting } from "../db/settings";
 import { defaultFrom, sendEmail } from "./mail";
 import { sendDiscordMessage } from "./channels/discord";
@@ -23,6 +34,7 @@ import { getVapid } from "./push/vapid";
 import { sendFcm, serviceAccount, type FcmAlert } from "./push/fcm";
 import { configuredOrigin } from "../lib/app-origin";
 import {
+  buildGroupPayload,
   isNotificationPayload,
   toEmailHtml,
   toEmailText,
@@ -116,6 +128,126 @@ export async function deliverToChannel(
     default:
       return { ok: false, error: "unsupported_channel" };
   }
+}
+
+// --- Grouped alerts and the alert cap ----------------------------------------
+//
+// On 2026-11-11 a firewall rule made every HTTP monitor fail at once, and each
+// monitor's down alert, then its recovery, went out as its own email: about 30
+// in minutes, enough for Gmail to start filing the sender as spam. Two guards:
+//
+// - Grouping: when GROUP_MIN or more monitors go down (or recover) within
+//   GROUP_WINDOW_MS, each channel and push device gets ONE message listing them
+//   all. A run queues its alerts with its writes and delivers them at its end,
+//   so the monitors that changed in one run, and any earlier alerts still
+//   waiting, are grouped. Fewer than GROUP_MIN go out one by one as before.
+// - The cap: no destination gets more than ALERT_CAP alerts in
+//   ALERT_CAP_WINDOW_MS (a grouped one counts once). The rest are held back
+//   (status 'suppressed') and logged, never sent late.
+
+/** Monitors changing state within this window of each other are alerted together. */
+export const GROUP_WINDOW_MS = 2 * 60_000;
+/** How many monitors changing together make a grouped alert. */
+export const GROUP_MIN = 3;
+/** At most this many alerts per channel (or push device) ... */
+export const ALERT_CAP = 10;
+/** ... within this window. */
+export const ALERT_CAP_WINDOW_MS = 10 * 60_000;
+
+/** Which events group together: the down family, and recoveries. */
+const GROUP_KIND: Partial<Record<NotifyEvent, "down" | "recovered">> = {
+  down: "down",
+  heartbeat_missed: "down",
+  flapping: "down",
+  recovered: "recovered",
+};
+
+/**
+ * The events the cap counts and holds back: what monitoring raises by itself.
+ * Not tests, the weekly summary, or an incident update an admin wrote.
+ */
+export const CAPPED_EVENTS: readonly NotifyEvent[] = NOTIFY_EVENTS.filter(
+  (e) => e !== "test" && e !== "weekly" && e !== "incident_update",
+);
+const CAPPED = new Set<string>(CAPPED_EVENTS);
+
+/** One channel, or one push device: what the cap and grouping are per. */
+export function destinationOf(entry: Pick<OutboxEntry, "channelType" | "channelId" | "target">): string {
+  return entry.channelType === "push" ? `push:${entry.target ?? ""}` : `channel:${entry.channelId ?? ""}`;
+}
+
+/**
+ * One message to send: a single outbox entry, or a grouped alert standing for
+ * several (`group` set, its payload built from theirs). `lead` is the entry
+ * whose destination, attempts and bookkeeping the message uses.
+ */
+export interface Delivery {
+  lead: OutboxEntry;
+  entries: OutboxEntry[];
+  group?: { kind: "down" | "recovered"; payload: NotificationPayload };
+}
+
+/**
+ * Turn the due entries into the messages to send, in order: GROUP_MIN or more
+ * entries of one kind (down or recovered) for one destination, each queued
+ * within GROUP_WINDOW_MS of the first, become one grouped delivery at the place
+ * of the first; everything else stays a single delivery. Pure.
+ */
+export function planDeliveries(due: readonly OutboxEntry[]): Delivery[] {
+  const buckets = new Map<string, OutboxEntry[]>();
+  for (const entry of due) {
+    const kind = GROUP_KIND[entry.eventType as NotifyEvent];
+    if (!kind || entry.payloadError || !isNotificationPayload(entry.payload)) continue;
+    const key = `${destinationOf(entry)}|${kind}`;
+    const list = buckets.get(key);
+    if (list) list.push(entry);
+    else buckets.set(key, [entry]);
+  }
+
+  const groupOf = new Map<string, Delivery>();
+  for (const [key, list] of buckets) {
+    if (list.length < GROUP_MIN) continue;
+    const kind = key.endsWith("|recovered") ? "recovered" : "down";
+    const sorted = [...list].sort((a, b) => a.createdAt - b.createdAt);
+    let cluster: OutboxEntry[] = [];
+    const close = () => {
+      if (cluster.length >= GROUP_MIN) {
+        const payload = buildGroupPayload(
+          cluster.map((e) => e.payload as NotificationPayload),
+          kind,
+        );
+        // The entry that comes first in `due` leads, so the group goes where it would have.
+        const lead = due.find((e) => cluster.includes(e))!;
+        const delivery: Delivery = { lead, entries: cluster, group: { kind, payload } };
+        for (const e of cluster) groupOf.set(e.id, delivery);
+      }
+    };
+    for (const entry of sorted) {
+      if (cluster.length > 0 && entry.createdAt - cluster[0]!.createdAt > GROUP_WINDOW_MS) {
+        close();
+        cluster = [];
+      }
+      cluster.push(entry);
+    }
+    close();
+  }
+
+  const plan: Delivery[] = [];
+  const placed = new Set<Delivery>();
+  for (const entry of due) {
+    const grouped = groupOf.get(entry.id);
+    if (!grouped) plan.push({ lead: entry, entries: [entry] });
+    else if (!placed.has(grouped)) {
+      placed.add(grouped);
+      plan.push(grouped);
+    }
+  }
+  return plan;
+}
+
+/** What a delivery marks: one entry, or every entry a grouped alert carried, under a new batch id for this attempt. */
+function idsOf(delivery: Delivery): OutboxIds {
+  return delivery.group ? { ids: delivery.entries.map((e) => e.id), batchId: newId("grp") } : delivery.lead.id;
 }
 
 /** How many deliveries one pass takes for a requested limit (0 to BATCH). */
@@ -219,52 +351,69 @@ export async function processOutbox(
     return cache.channels.get(id) ?? null;
   };
 
-  for (const entry of due) {
+  const plan = planDeliveries(due);
+
+  // The alert cap: what each destination was already sent in its window, read
+  // once (only when something here counts toward it), then kept up to date as
+  // this pass sends. Without the read (no budget, or it failed) the cap still
+  // holds within this pass.
+  const sentRecently = new Map<string, number>();
+  if (plan.some((d) => CAPPED.has(d.lead.eventType)) && (!opts.canSpend || opts.canSpend(1))) {
+    try {
+      const { results } = await recentSendsStatement(env, now - ALERT_CAP_WINDOW_MS, CAPPED_EVENTS).all<{
+        channel_id: string | null;
+        target: string | null;
+        sent: number;
+      }>();
+      for (const r of results ?? []) {
+        const key = destinationOf({ channelType: r.channel_id ? "channel" : "push", channelId: r.channel_id, target: r.target });
+        sentRecently.set(key, (sentRecently.get(key) ?? 0) + r.sent);
+      }
+    } catch (e) {
+      console.error("[dispatcher] reading recent alerts for the cap failed", e);
+    }
+  }
+  const suppressed: OutboxEntry[] = [];
+
+  for (const delivery of plan) {
+    const entry = delivery.lead;
+    const ids = idsOf(delivery);
+    const destination = destinationOf(entry);
+    if (CAPPED.has(entry.eventType) && (sentRecently.get(destination) ?? 0) >= ALERT_CAP) {
+      suppressed.push(...delivery.entries);
+      continue;
+    }
     if (opts.canSpend && !opts.canSpend(deliveryD1Cost(entry, cache))) {
       console.log(`[dispatcher] out of budget; ${due.length - processed} deliveries wait for the next run`);
       break;
     }
-    processed++;
+    processed += delivery.entries.length;
+    // A grouped alert's entries share their attempts from the first try on; the
+    // most any of them has made is the one that counts.
+    const attempts = Math.max(...delivery.entries.map((e) => e.attempts));
+    const payload = delivery.group?.payload ?? entry.payload;
     try {
       // Never send ciphertext or malformed legacy data to an external provider.
       // Keep the row in the normal bounded retry flow so operators can see the
       // failure without one corrupt row blocking every other due delivery.
       if (entry.payloadError) {
-        await markFailed(
-          env,
-          entry.id,
-          entry.attempts + 1,
-          entry.payloadError,
-          MAX_ATTEMPTS,
-        );
+        await markFailed(env, ids, attempts + 1, entry.payloadError, MAX_ATTEMPTS);
         failed++;
         continue;
       }
-      if (!isNotificationPayload(entry.payload)) {
-        await markFailed(
-          env,
-          entry.id,
-          entry.attempts + 1,
-          "payload_invalid_shape",
-          MAX_ATTEMPTS,
-        );
+      if (!isNotificationPayload(payload)) {
+        await markFailed(env, ids, attempts + 1, "payload_invalid_shape", MAX_ATTEMPTS);
         failed++;
         continue;
       }
 
       // Web Push entries target a device subscription, not a channel.
       if (entry.channelType === "push") {
-        const r = await deliverPush(
-          env,
-          entry.id,
-          entry.target,
-          entry.attempts,
-          entry.payload,
-          vapid,
-          origin,
-        );
-        if (r === "sent") sent++;
-        else if (r === "failed") failed++;
+        const r = await deliverPush(env, ids, entry.target, attempts, payload, vapid, origin);
+        if (r === "sent") {
+          sent++;
+          sentRecently.set(destination, (sentRecently.get(destination) ?? 0) + 1);
+        } else if (r === "failed") failed++;
         // "pruned" (subscription gone/expired) is neither a send nor a failure.
         continue;
       }
@@ -272,13 +421,14 @@ export async function processOutbox(
       const channel = entry.channelId ? await channelById(entry.channelId) : null;
       if (!channel || !channel.enabled) {
         // Channel removed/disabled - drop the entry as dead.
-        await markFailed(env, entry.id, MAX_ATTEMPTS, "channel_unavailable", MAX_ATTEMPTS);
+        await markFailed(env, ids, MAX_ATTEMPTS, "channel_unavailable", MAX_ATTEMPTS);
         failed++;
         continue;
       }
-      const result = await deliverToChannel(env, channel, entry.payload, emailFrom);
+      const result = await deliverToChannel(env, channel, payload, emailFrom);
       if (result.ok) {
-        await markSent(env, entry.id);
+        await markSent(env, ids);
+        sentRecently.set(destination, (sentRecently.get(destination) ?? 0) + 1);
         // Bookkeeping only - must never reach the outer catch (which would
         // re-mark this already-sent entry failed and re-deliver it).
         try {
@@ -290,14 +440,14 @@ export async function processOutbox(
       } else if (result.deferUntil !== undefined) {
         // The sender can't take it before then (Hosted's daily email cap):
         // wait, without spending an attempt.
-        await markDeferred(env, entry.id, result.deferUntil, result.error ?? "deferred");
+        await markDeferred(env, ids, result.deferUntil, result.error ?? "deferred");
         await recordChannelResult(env, channel.id, false, result.error ?? "deferred");
         failed++;
       } else {
         await markFailed(
           env,
-          entry.id,
-          entry.attempts + 1,
+          ids,
+          attempts + 1,
           result.error ?? "send_failed",
           MAX_ATTEMPTS,
           result.retryAfterMs,
@@ -309,11 +459,38 @@ export async function processOutbox(
       failed++;
       await markFailed(
         env,
-        entry.id,
-        entry.attempts + 1,
+        ids,
+        attempts + 1,
         e instanceof Error ? e.message : "exception",
         MAX_ATTEMPTS,
       ).catch(() => {});
+    }
+  }
+
+  if (suppressed.length > 0) {
+    const byDestination = new Map<string, number>();
+    for (const e of suppressed) byDestination.set(destinationOf(e), (byDestination.get(destinationOf(e)) ?? 0) + 1);
+    for (const [destination, count] of byDestination) {
+      console.warn(
+        `[dispatcher] alert cap: ${destination} already got ${ALERT_CAP} alerts in ${ALERT_CAP_WINDOW_MS / 60_000} min; held back ${count} more`,
+        suppressed
+          .filter((e) => destinationOf(e) === destination)
+          .map((e) => ({ id: e.id, event: e.eventType, monitorId: e.monitorId })),
+      );
+    }
+    // One query for all of them; without the budget they stay due and are
+    // judged again next run.
+    if (!opts.canSpend || opts.canSpend(1)) {
+      try {
+        await markSuppressed(
+          env,
+          suppressed.map((e) => e.id),
+          `alert_cap: over ${ALERT_CAP} alerts in ${ALERT_CAP_WINDOW_MS / 60_000} min on this channel`,
+        );
+        processed += suppressed.length;
+      } catch (e) {
+        console.error("[dispatcher] marking capped alerts failed", e);
+      }
     }
   }
 
@@ -322,10 +499,10 @@ export async function processOutbox(
 
 type PushOutcome = "sent" | "failed" | "pruned";
 
-/** Deliver one push outbox entry. "pruned" = the subscription is simply gone. */
+/** Deliver one push (one entry, or a grouped alert's entries). "pruned" = the subscription is simply gone. */
 async function deliverPush(
   env: Env,
-  entryId: string,
+  ids: OutboxIds,
   subscriptionId: string | null,
   attempts: number,
   payload: NotificationPayload,
@@ -339,11 +516,11 @@ async function deliverPush(
     // Its endpoint or keys can't be decrypted (for example the MASTER_KEY that
     // sealed them is gone): retrying can never succeed, so stop now.
     if (!(e instanceof DecryptError)) throw e;
-    await markFailed(env, entryId, MAX_ATTEMPTS, "subscription_unreadable", MAX_ATTEMPTS);
+    await markFailed(env, ids, MAX_ATTEMPTS, "subscription_unreadable", MAX_ATTEMPTS);
     return "failed";
   }
   if (!sub || sub.disabled) {
-    await markFailed(env, entryId, MAX_ATTEMPTS, "subscription_gone", MAX_ATTEMPTS);
+    await markFailed(env, ids, MAX_ATTEMPTS, "subscription_gone", MAX_ATTEMPTS);
     return "pruned";
   }
   let result: Awaited<ReturnType<typeof sendFcm>>;
@@ -351,14 +528,14 @@ async function deliverPush(
     // The Android app (notifications/push/fcm.ts).
     const sa = serviceAccount(env);
     if (!sa) {
-      await markFailed(env, entryId, MAX_ATTEMPTS, "fcm_not_configured", MAX_ATTEMPTS);
+      await markFailed(env, ids, MAX_ATTEMPTS, "fcm_not_configured", MAX_ATTEMPTS);
       return "failed";
     }
     result = await sendFcm(sa, sub.endpoint, fcmAlert(await loadOrigin(), payload));
   } else {
     const vapid = await loadVapid();
     if (!vapid) {
-      await markFailed(env, entryId, MAX_ATTEMPTS, "vapid_not_configured", MAX_ATTEMPTS);
+      await markFailed(env, ids, MAX_ATTEMPTS, "vapid_not_configured", MAX_ATTEMPTS);
       return "failed";
     }
     result = await sendWebPush({
@@ -368,7 +545,7 @@ async function deliverPush(
     });
   }
   if (result.ok) {
-    await markSent(env, entryId);
+    await markSent(env, ids);
     // Bookkeeping only - isolate so a failure here can't reach the caller's
     // catch and re-mark this already-sent entry failed (duplicate push).
     try {
@@ -383,10 +560,10 @@ async function deliverPush(
     // keys): the subscription can never succeed, so prune it and stop retrying
     // instead of burning the retry budget on a guaranteed failure.
     await recordPushResult(env, sub.id, false, { expired: true });
-    await markSent(env, entryId);
+    await markSent(env, ids);
     return "pruned";
   }
-  await markFailed(env, entryId, attempts + 1, result.error ?? "push_failed", MAX_ATTEMPTS, result.retryAfterMs);
+  await markFailed(env, ids, attempts + 1, result.error ?? "push_failed", MAX_ATTEMPTS, result.retryAfterMs);
   await recordPushResult(env, sub.id, false);
   return "failed";
 }

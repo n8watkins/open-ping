@@ -32,6 +32,17 @@ When you edit a channel, leave a secret field blank to keep the stored value.
 A channel's own event list (`events` in the API) replaces these defaults, and a monitor can limit its alerts to chosen channels.
 Repeated down, flapping and missed-heartbeat alerts for one monitor are combined into one alert per hour.
 
+## Many monitors at once
+
+When 3 or more monitors go down within 2 minutes of each other, each channel and push device gets one alert listing them all, titled for example "5 sites down at once", with the line "likely a shared cause (network, DNS, firewall)".
+Many sites failing together usually means something between OpenPing and them broke, such as a firewall or bot rule, a DNS change or a network problem, rather than each site on its own.
+Their recoveries are grouped the same way ("5 sites recovered").
+Alerts for one or two monitors go out one by one, as before.
+
+As a backstop, no channel or push device gets more than 10 alerts in 10 minutes; a grouped alert counts as one.
+Alerts over that are not sent: they are kept in the outbox with status `suppressed` and logged by the Worker, so check the dashboard for the current state.
+Tests, incident updates and the weekly summary don't count and are never held back.
+
 ## Incident updates
 
 When you post a status update to an incident (under **Incidents**, with `op incidents update`, the MCP tool `post_incident_update` or `POST /api/incidents/:id/updates`), its monitor's channels get an alert with the update's status and message.
@@ -140,6 +151,9 @@ The body is the notification payload as JSON, posted with `Content-Type: applica
 | `durationSeconds` | number or null | The incident's length once resolved |
 | `incidentId` | string, optional | The incident's id |
 | `update` | object, only on `incident_update` | `id`, `status` (`investigating`, `identified`, `monitoring` or `resolved`), `label` (for example `Identified`), `message` and `postedAt` |
+| `group` | object, only on a grouped alert | `count`, and `monitors`: one object per monitor with `monitorId`, `monitorName`, `event`, `incidentId`, `url`, `statusCode` and `error` |
+
+A grouped alert ([Many monitors at once](#many-monitors-at-once)) has `monitorId` `group`, no `incidentId`, and lists each monitor in `group.monitors`.
 
 An incident update looks like this:
 
@@ -168,7 +182,7 @@ An incident update looks like this:
 ```
 
 Each alert is queued once per channel, keyed by its event, its incident (or update) and the channel.
-A delivery that failed is retried, so a receiver that took a request but answered with an error can get it again; drop duplicates by `update.id`, or by `incidentId` and `event`.
+A delivery that failed is retried, so a receiver that took a request but answered with an error can get it again; drop duplicates by `update.id`, or by `incidentId` and `event` (for a grouped alert, those of each of `group.monitors`).
 
 ## Backups
 
