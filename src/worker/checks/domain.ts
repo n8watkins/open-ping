@@ -1,6 +1,7 @@
 import type { DomainConfig } from "../../shared/schemas";
 import type { ProbeResult } from "./types";
 import { assertSafeUrl } from "../lib/ssrf";
+import { DEFAULT_CHECKER_USER_AGENT } from "../lib/user-agent";
 
 /**
  * Domain-expiry check executor (docs/MONITOR_TYPES.md, "Domain expiry").
@@ -191,7 +192,7 @@ interface RdapResponse {
 }
 
 /** One RDAP request for the domain's expiration date. */
-async function lookupExpiry(config: DomainConfig, now: number): Promise<RdapLookup> {
+async function lookupExpiry(config: DomainConfig, now: number, userAgent: string): Promise<RdapLookup> {
   const url = `${RDAP_BASE}${encodeURIComponent(config.domain)}`;
 
   const safe = assertSafeUrl(url);
@@ -220,7 +221,7 @@ async function lookupExpiry(config: DomainConfig, now: number): Promise<RdapLook
       // don't advertise the RDAP media type or carry no User-Agent.
       headers: {
         accept: "application/rdap+json, application/json",
-        "user-agent": "OpenPing/1.0 (+https://github.com/n8watkins/open-ping)",
+        "user-agent": userAgent,
       },
     });
 
@@ -288,6 +289,8 @@ export interface DomainCheckOptions {
   force?: boolean;
   /** Awaited before each RDAP request, so a run spaces its lookups out. */
   pace?: () => Promise<void>;
+  /** The checker's User-Agent (lib/user-agent.ts). */
+  userAgent?: string;
 }
 
 /** A result judged from a cached read: no request, no latency, nothing a re-check could change. */
@@ -318,7 +321,7 @@ export async function runDomainCheck(
   }
 
   await opts.pace?.();
-  const r = await lookupExpiry(config, now);
+  const r = await lookupExpiry(config, now, opts.userAgent ?? DEFAULT_CHECKER_USER_AGENT);
 
   if (r.ok) {
     const ev = evaluateExpiry(config, r.expiresAt, now);

@@ -1,6 +1,7 @@
 import type { CertConfig } from "../../shared/schemas";
 import type { ProbeResult } from "./types";
 import { assertSafeHost, assertSafeUrl, isIPv4 } from "../lib/ssrf";
+import { DEFAULT_CHECKER_USER_AGENT } from "../lib/user-agent";
 import {
   ALERT_PROTOCOL_VERSION,
   certificateCovers,
@@ -394,13 +395,16 @@ export const CLOUDFLARE_BLOCK_MESSAGE = /cannot connect to the specified address
 const RESOLVER = "https://cloudflare-dns.com/dns-query";
 
 /** Resolves the host's A records over DNS-over-HTTPS; null when that fails. */
-async function resolveIPv4(host: string, timeoutMs: number): Promise<string[] | null> {
+async function resolveIPv4(host: string, timeoutMs: number, userAgent: string): Promise<string[] | null> {
   const url = `${RESOLVER}?name=${encodeURIComponent(host)}&type=A`;
   if (!assertSafeUrl(url).ok) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { headers: { accept: "application/dns-json" }, signal: controller.signal });
+    const res = await fetch(url, {
+      headers: { accept: "application/dns-json", "user-agent": userAgent },
+      signal: controller.signal,
+    });
     if (!res.ok) {
       await res.body?.cancel();
       return null;
@@ -437,7 +441,7 @@ type ReadOutcome =
   | { ok: false; error: string; errorMessage: string; durationMs: number; fetches: number };
 
 /** One read of the server's certificate, classified. */
-async function readServer(config: CertConfig, host: string): Promise<ReadOutcome> {
+async function readServer(config: CertConfig, host: string, userAgent: string): Promise<ReadOutcome> {
   const r = await tlsReader.read(host, config.port, config.timeoutMs);
   if (r.ok) return { ok: true, read: { kind: "cert", cert: r.cert, chainLength: r.chainLength }, durationMs: r.durationMs, fetches: 1 };
   if (r.kind === "alert") {
@@ -463,7 +467,7 @@ async function readServer(config: CertConfig, host: string): Promise<ReadOutcome
       return { ok: true, read: { kind: "cant_check", reason: "cloudflare", detail: r.message }, durationMs: r.durationMs, fetches: 1 };
     }
     // A second opinion: is the host on Cloudflare's network anyway?
-    const ips = await resolveIPv4(host, RESOLVE_TIMEOUT_MS);
+    const ips = await resolveIPv4(host, RESOLVE_TIMEOUT_MS, userAgent);
     if (ips?.some(isCloudflareIPv4)) {
       return { ok: true, read: { kind: "cant_check", reason: "cloudflare", detail: r.message }, durationMs: r.durationMs, fetches: 2 };
     }
@@ -486,6 +490,8 @@ export interface CertCheckOptions {
   now?: number;
   /** Read the server even when the cache is fresh (a manual test). */
   force?: boolean;
+  /** The checker's User-Agent for its resolver lookup (lib/user-agent.ts). */
+  userAgent?: string;
 }
 
 /** A result judged from a cached read: no connection, no latency, nothing a re-check could change. */
@@ -534,7 +540,7 @@ export async function runCertCheck(config: CertConfig, opts: CertCheckOptions = 
   const plan = planCertCheck(config, opts.cache, now, opts.force);
   if (!plan.read) return { ...fromCache(config, plan.cache, now, plan.cache.lastError), fetches: 0 };
 
-  const r = await readServer(config, host);
+  const r = await readServer(config, host, opts.userAgent ?? DEFAULT_CHECKER_USER_AGENT);
   if (r.ok) {
     // The warned marker belongs to a certificate: keep it while it's the same one.
     const prevWarned = plan.fallback?.warned;

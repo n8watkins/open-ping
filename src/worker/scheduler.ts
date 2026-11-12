@@ -79,6 +79,7 @@ import { runWritePlan, type GroupOutcome, type WriteGroup } from "./lib/batch";
 import { claimDueStatement, outboxEntriesFromRows, type OutboxRow } from "./db/outbox";
 import { parseJSONSetting, settingsFromRows, settingsStatement, type SettingRow } from "./db/settings";
 import { newId } from "./lib/ids";
+import { checkerUserAgent } from "./lib/user-agent";
 
 const LEASE_NAME = "scheduler";
 const LEASE_TTL_MS = 5 * 60 * 1000; // shorter than the 12-min cadence
@@ -389,6 +390,7 @@ export async function runScheduled(
     let deferred = 0;
     const results: { m: MonitorRecord; outcome: CheckOutcome; st: SchedulerStateRow | null }[] = [];
     const paceLookup = pacer(opts.rdapSpacingMs ?? RDAP_SPACING_MS);
+    const userAgent = checkerUserAgent(env);
     // Second-region confirmation (checks/region.ts): null when this install
     // confirms where the check ran.
     const remoteRecheck = regionalRechecker(env, opts.regional);
@@ -453,6 +455,7 @@ export async function runScheduled(
           certCache,
           plannedAt,
           paceLookup,
+          userAgent,
           now: Date.now(),
         });
         fetchesSpent = outcome.fetches;

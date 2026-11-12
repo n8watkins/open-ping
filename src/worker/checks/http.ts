@@ -2,6 +2,7 @@ import type { HttpConfig } from "../../shared/schemas";
 import type { ProbeResult } from "./types";
 import { b64encode } from "../lib/crypto";
 import { assertSafeUrl } from "../lib/ssrf";
+import { DEFAULT_CHECKER_USER_AGENT } from "../lib/user-agent";
 
 /**
  * HTTP/API check executor (PRD §6.1): performs a single outbound request and
@@ -116,7 +117,13 @@ function classifyFetchError(err: unknown): {
 
 export async function runHttpCheck(
   config: HttpConfig,
-  opts?: { warmup?: boolean; skipBody?: boolean; noStore?: boolean },
+  opts?: {
+    warmup?: boolean;
+    skipBody?: boolean;
+    noStore?: boolean;
+    /** The checker's User-Agent (lib/user-agent.ts); a monitor's own header wins. */
+    userAgent?: string;
+  },
 ): Promise<HttpCheckResult> {
   // SSRF guard (PRD §19): reject loopback/link-local/metadata/private/credentialed
   // targets before making any outbound request.
@@ -136,6 +143,10 @@ export async function runHttpCheck(
   // Build request headers, then layer auth on top.
   const headers = new Headers();
   for (const { name, value } of config.headers) headers.set(name, value);
+  // Name the checker unless the monitor sets its own User-Agent: a nameless
+  // request is what firewalls challenge first (lib/user-agent.ts).
+  const userAgent = headers.get("user-agent") ?? opts?.userAgent ?? DEFAULT_CHECKER_USER_AGENT;
+  headers.set("user-agent", userAgent);
   if (config.auth.type === "basic") {
     const encoded = b64encode(
       new TextEncoder().encode(
@@ -253,7 +264,8 @@ export async function runHttpCheck(
       // a different origin would leak it. Stripping only Authorization (as before)
       // missed every other configured secret-bearing header.
       if (next.origin !== prevOrigin) {
-        reqHeaders = new Headers();
+        // The User-Agent is not a secret and names the checker, so it stays.
+        reqHeaders = new Headers({ "user-agent": userAgent });
         // Drop the request body as well. On a 307/308 the method and body are
         // preserved, so without this a secret carried in the body would be
         // re-sent to the server-chosen cross-origin target - the same leak the

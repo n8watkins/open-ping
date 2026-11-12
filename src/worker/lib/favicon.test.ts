@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fetchFavicon, iconCandidates, iconIsStale, iconOrigin, ICON_MAX_BYTES, ICON_REFRESH_MS, sniffImage } from "./favicon";
+import { DEFAULT_CHECKER_USER_AGENT } from "./user-agent";
 
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 1, 2, 3]);
 const SVG = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
@@ -67,6 +68,20 @@ describe("fetchFavicon", () => {
     expect(got?.contentType).toBe("image/png");
     expect(got?.bytes.length).toBe(PNG.length);
     expect(asked).toEqual(["https://example.com/", "https://example.com/icon.png"]);
+  });
+
+  it("names itself with the checker's User-Agent on every request", async () => {
+    const agents: (string | null)[] = [];
+    const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      agents.push(new Headers(init?.headers).get("user-agent"));
+      return String(input).endsWith("/favicon.ico") ? image(PNG)() : html("")();
+    }) as typeof fetch;
+    expect(await fetchFavicon("https://example.com/", fn)).not.toBeNull();
+    expect(agents).toEqual([DEFAULT_CHECKER_USER_AGENT, DEFAULT_CHECKER_USER_AGENT]);
+
+    agents.length = 0;
+    await fetchFavicon("https://example.com/", fn, "MyPing/2");
+    expect(agents).toEqual(["MyPing/2", "MyPing/2"]);
   });
 
   it("falls back to /favicon.ico when the page declares none", async () => {

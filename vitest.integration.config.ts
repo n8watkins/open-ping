@@ -1,6 +1,6 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
-import { openpingBundle } from "./scripts/bundle-module";
+import { openpingBundle } from "./scripts/bundle-module.ts";
 
 const TEST_MASTER_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 

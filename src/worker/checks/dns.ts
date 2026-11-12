@@ -1,6 +1,7 @@
 import type { DnsConfig } from "../../shared/schemas";
 import type { ProbeResult } from "./types";
 import { assertSafeUrl } from "../lib/ssrf";
+import { DEFAULT_CHECKER_USER_AGENT } from "../lib/user-agent";
 
 /**
  * DNS record check executor. Resolves a record over Cloudflare's public DNS-over-
@@ -44,7 +45,10 @@ function normalizeRecord(data: string, recordType: DnsConfig["recordType"]): str
   return v;
 }
 
-export async function runDnsCheck(config: DnsConfig): Promise<ProbeResult> {
+export async function runDnsCheck(
+  config: DnsConfig,
+  opts: { userAgent?: string } = {},
+): Promise<ProbeResult> {
   const url = `${RESOLVER}?name=${encodeURIComponent(config.hostname)}&type=${config.recordType}`;
 
   // Belt-and-suspenders: the resolver is a fixed public host, but re-validate.
@@ -68,7 +72,7 @@ export async function runDnsCheck(config: DnsConfig): Promise<ProbeResult> {
 
   try {
     const res = await fetch(url, {
-      headers: { accept: "application/dns-json" },
+      headers: { accept: "application/dns-json", "user-agent": opts.userAgent ?? DEFAULT_CHECKER_USER_AGENT },
       signal: controller.signal,
     });
     const durationMs = Date.now() - startedAt;

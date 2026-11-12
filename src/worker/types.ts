@@ -110,6 +110,13 @@ export interface Env {
   CONFIRM_REGIONS?: string;
 
   /**
+   * The User-Agent the checker sends on every request it makes for a monitor
+   * (lib/user-agent.ts). Unset means `OpenPing/<version>
+   * (+https://openping.n8builds.dev/bot)`. A wrangler.jsonc var, optional.
+   */
+  CHECKER_USER_AGENT?: string;
+
+  /**
    * The per-region re-checkers (worker/region-probe.ts). Optional, so an install
    * deployed without it confirms where the check ran, as before.
    */

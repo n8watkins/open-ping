@@ -433,6 +433,11 @@ hits:
   `DEFAULT_EMAIL_FROM`) is on it. If you chose Resend with your own `RESEND_API_KEY`,
   make sure its sending domain is verified; Resend only lets `onboarding@resend.dev`
   send to your own account email.
+- **Every HTTP monitor on one site reports 403 at once.** That site's firewall or bot rule is probably challenging the checker.
+  OpenPing's requests come from Cloudflare's IP addresses, which change, and carry the User-Agent `OpenPing/<version> (+https://openping.n8builds.dev/bot)`.
+  Allow that User-Agent (starts with `OpenPing/`) in the rule, rather than an IP range.
+  To name your own install instead, set the `CHECKER_USER_AGENT` var (a monitor's own `User-Agent` request header still wins for that monitor).
+  Every install explains its checker at `/bot`.
 - **Setup reports `app_url_required`.** Enter the public origin in the wizard or set `APP_URL`; it must be an HTTPS origin with no path, query, fragment, or embedded credentials.
 
 ---

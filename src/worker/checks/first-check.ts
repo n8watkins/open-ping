@@ -5,6 +5,7 @@ import { activeWindowsFromRows, listMaintenanceStatement, type MaintenanceRow } 
 import { isActiveAt } from "../lib/schedule";
 import { runMonitorCheck } from "./runner";
 import { applyCheckResult, setMaintenanceState, setScheduledOff } from "./state";
+import { checkerUserAgent } from "../lib/user-agent";
 
 /**
  * A new monitor's first check, run right after it is created (REST, the web
@@ -65,7 +66,12 @@ export async function runFirstCheck(
   // No confirmation re-check: a warm-up failure never alerts, so there is
   // nothing to confirm, and the person who just created the monitor gets its
   // result in one check's time. The next scheduled check confirms as usual.
-  const outcome = await runMonitorCheck(monitor, { warmup: true, confirm: false, now });
+  const outcome = await runMonitorCheck(monitor, {
+    warmup: true,
+    confirm: false,
+    userAgent: checkerUserAgent(env),
+    now,
+  });
   await applyCheckResult(env, monitor, outcome, null);
   return {
     status: "checked",
