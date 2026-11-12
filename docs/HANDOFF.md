@@ -8,7 +8,7 @@ Last updated: 2026-11-02.
 ## Current state (2026-11-02): start here
 
 - **Live:** https://openping.n8builds.dev runs the latest release tag on `main` (`git describe --tags --abbrev=0`), with root migrations through 0028 applied, waitlist on and `HOME_PAGE` "landing".
-  Before each deploy a D1 export goes to `../open-ping-backups/` on the owner's machine.
+  Before each deploy a D1 export goes to `~/backups/open-ping/` on the owner's machine (mode 600: the exports hold production data).
   D1 use is about 6,000 rows read and 1,000 written a day after the leaner writes (v0.19.0), far inside the Free plan.
 - **Status and to-dos:** [STATUS.md](./STATUS.md) is the overview, the owner's ordered to-do list and the agent follow-ups.
   [DEFERRED_INPUTS.md](./DEFERRED_INPUTS.md) holds the step-by-step owner checklists; [ROADMAP.md](./ROADMAP.md) the staged plan.
@@ -47,7 +47,7 @@ Plain `npm run deploy` refuses to run while `deploy.local.json` exists, and from
 5. Optional: `RESEND_API_KEY` for waitlist confirmations; `WORKERS_PLAN` "paid" if on Workers Paid.
 
 Only the main session deploys, after review; agents in worktrees never run remote wrangler commands, `deploy` or `db:migrate:prod`.
-Back up first with `npx wrangler d1 export open-ping --remote --output ../open-ping-backups/<date>.sql`, with `set -o pipefail` and a retry (Cloudflare sometimes returns auth error 10000), and check the file is not empty.
+Back up first with `npx wrangler d1 export open-ping --remote --output ~/backups/open-ping/<date>.sql`, with `set -o pipefail` and a retry (Cloudflare sometimes returns auth error 10000), and check the file is not empty.
 
 ### Next
 
