@@ -20,7 +20,7 @@ import { turnstileSiteKey, verifyTurnstile } from "../lib/turnstile";
  * routes answer 404 and the table stays empty.
  *
  * POST / is public and cross-origin (another install's landing page posts here):
- * an email, a honeypot field, Turnstile (when its keys are set), per-IP and
+ * an email, a honeypot field, Turnstile (refuses when its keys are missing, unless TURNSTILE=off), per-IP and
  * global rate limits, and the same answer whether or not the address was already
  * on the list, so it can't be used to test addresses. It is double opt-in: the
  * row starts pending and a confirm email (links in routes/waitlist-pages.ts)

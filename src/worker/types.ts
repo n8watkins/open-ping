@@ -73,11 +73,16 @@ export interface Env {
   /**
    * Cloudflare Turnstile on the Hosted waitlist form (lib/turnstile.ts). The
    * site key is public and the secret key is a Worker secret; set both to turn
-   * it on, with no rebuild. Both unset: no check. Only the canonical install
-   * sets them.
+   * it on, with no rebuild. With either missing the waitlist refuses every
+   * sign-up; the only way to run without Turnstile is TURNSTILE=off. Only the
+   * canonical install sets the keys.
    */
   TURNSTILE_SITE_KEY?: string;
   TURNSTILE_SECRET_KEY?: string;
+  /** "off" is the explicit opt-out for installs that run without Turnstile (docs/INSTALL.md). */
+  TURNSTILE?: string;
+  /** Optional comma-separated hostnames Siteverify may report; empty accepts any (the widget's own hostname list in Cloudflare still applies). */
+  TURNSTILE_HOSTNAMES?: string;
 
   /**
    * What a signed-out visitor sees at `/`: "status" (the default) for this
