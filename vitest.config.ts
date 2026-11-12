@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
-import { openpingBundle } from "./scripts/bundle-module";
+import { openpingBundle } from "./scripts/bundle-module.ts";
 
 // Standalone test config so vitest doesn't pull in the Cloudflare Vite plugin
 // from vite.config.ts. Pure unit tests run in Node (Web Crypto is available).
