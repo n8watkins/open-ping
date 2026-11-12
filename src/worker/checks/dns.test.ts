@@ -36,6 +36,13 @@ describe("runDnsCheck", () => {
     vi.unstubAllGlobals();
   });
 
+  it("names the checker on its resolver lookup", async () => {
+    const fetchMock = mockFetch(dohResponse({ Status: 0, Answer: [{ type: A, data: "93.184.216.34" }] }));
+    await runDnsCheck(makeConfig(), { userAgent: "MyPing/2" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("user-agent")).toBe("MyPing/2");
+  });
+
   it("is up on Status:0 with matching answers and populates meta.records", async () => {
     mockFetch(
       dohResponse({

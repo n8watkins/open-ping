@@ -108,6 +108,11 @@ export interface RunOptions {
    * means re-check here.
    */
   remoteRecheck?: (monitor: MonitorRecord, opts: { warmup: boolean }) => Promise<RemoteRecheck>;
+  /**
+   * The checker's User-Agent (lib/user-agent.ts checkerUserAgent). Absent means
+   * the default, so a check never goes out nameless.
+   */
+  userAgent?: string;
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   now?: number;
@@ -192,10 +197,12 @@ export async function probe(
   monitor: MonitorRecord,
   opts: { warmup: boolean; fresh: boolean; run: RunOptions },
 ): Promise<ProbeAttempt> {
+  const userAgent = opts.run.userAgent;
   switch (monitor.type) {
     case "http": {
       const r = await runHttpCheck(monitor.config as HttpConfig, {
         warmup: opts.warmup,
+        ...(userAgent ? { userAgent } : {}),
         ...(opts.fresh ? { noStore: true } : {}),
       });
       const assertions = (monitor.assertions ?? []) as Assertion[];
@@ -207,7 +214,7 @@ export async function probe(
       return { result: r, ok: r.ok };
     }
     case "dns": {
-      const r = await runDnsCheck(monitor.config as DnsConfig);
+      const r = await runDnsCheck(monitor.config as DnsConfig, userAgent ? { userAgent } : {});
       return { result: r, ok: r.ok };
     }
     case "tcp": {
@@ -222,6 +229,7 @@ export async function probe(
         ...(at !== undefined ? { now: at } : {}),
         ...(run.refreshDomain ? { force: true } : {}),
         ...(run.paceLookup ? { pace: run.paceLookup } : {}),
+        ...(userAgent ? { userAgent } : {}),
       });
       return { result: r, ok: r.ok };
     }
@@ -232,6 +240,7 @@ export async function probe(
         cache: run.certCache ?? null,
         ...(at !== undefined ? { now: at } : {}),
         ...(run.refreshCert ? { force: true } : {}),
+        ...(userAgent ? { userAgent } : {}),
       });
       return { result: r, ok: r.ok };
     }

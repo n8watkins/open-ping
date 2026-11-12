@@ -42,6 +42,7 @@ import {
 } from "../lib/plan-limits";
 import { cadenceFor, withInterval, withIntervals } from "../lib/monitor-intervals";
 import { getIcon, getIconRow, iconAtFor, refreshStaleIcons } from "../lib/favicon";
+import { checkerUserAgent } from "../lib/user-agent";
 
 /** Strip secret config fields and ingestion credentials from normal responses. */
 export function redactMonitor(m: MonitorRecord): MonitorRecord {
@@ -579,6 +580,7 @@ monitors.post("/:id/test", async (c) => {
     monitor.type === "domain" || monitor.type === "cert" || apply ? await readState(c.env, monitor.id) : undefined;
   const outcome = await runMonitorCheck(monitor, {
     confirm: monitor.confirmFailures !== "off",
+    userAgent: checkerUserAgent(c.env),
     ...(monitor.type === "domain"
       ? { domainCache: parseDomainCache(known?.domain_cache), refreshDomain: true }
       : {}),

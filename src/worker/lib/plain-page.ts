@@ -10,8 +10,13 @@ export interface PlainPage {
   /** The tab title, before " | OpenPing". */
   title: string;
   heading: string;
-  /** Paragraphs of plain text. */
-  body: string[];
+  /** Paragraphs of plain text; `{ code }` is a line of monospace text, such as a header value to copy. */
+  body: (string | { code: string })[];
+  /**
+   * "article" widens the card and aligns its text to the start, for a page
+   * that explains something in several paragraphs (/bot). Default "card".
+   */
+  layout?: "card" | "article";
   /** The main button. */
   action?: { href: string; label: string };
   /**
@@ -26,7 +31,11 @@ export interface PlainPage {
 }
 
 export function renderPlainPage(page: PlainPage): string {
-  const paragraphs = page.body.map((text) => `<p>${escapeHtml(text)}</p>`).join("\n        ");
+  const paragraphs = page.body
+    .map((item) =>
+      typeof item === "string" ? `<p>${escapeHtml(item)}</p>` : `<p class="code"><code>${escapeHtml(item.code)}</code></p>`,
+    )
+    .join("\n        ");
   const action = page.action
     ? `<a class="button" href="${escapeHtml(page.action.href)}">${escapeHtml(page.action.label)}</a>`
     : "";
@@ -137,10 +146,22 @@ export function renderPlainPage(page: PlainPage): string {
       }
       .secondary:hover { color: var(--ink); }
       .button:focus-visible, .secondary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .article main { max-width: 38rem; }
+      .article .card { padding: 1.75rem; text-align: left; }
+      .article .card p { font-size: 0.9375rem; }
+      .card p.code {
+        padding: 0.625rem 0.75rem;
+        border: 1px solid var(--line);
+        border-radius: 0.5rem;
+        background-color: var(--canvas);
+        color: var(--ink);
+        text-align: left;
+      }
+      .card p.code code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8125rem; }
       .fine { margin: 1.5rem 0 0; font-size: 0.75rem; line-height: 1.5; color: var(--ink-faint); text-align: center; }
     </style>
   </head>
-  <body>
+  <body${page.layout === "article" ? ' class="article"' : ""}>
     <main>
       <p class="brand" aria-label="OpenPing">
         <svg viewBox="0 0 32 32" aria-hidden="true">

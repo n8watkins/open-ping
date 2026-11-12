@@ -5,6 +5,7 @@ import { httpConfigSchema } from "../../shared/schemas";
 import { assertSafeUrl } from "../lib/ssrf";
 import { runHttpCheck } from "../checks/http";
 import { hitRateLimit } from "../db/rate-limit";
+import { checkerUserAgent } from "../lib/user-agent";
 
 /**
  * Public, UNAUTHENTICATED "Is it down?" tool. Mounted by the integrator at
@@ -114,7 +115,7 @@ isItDown.post("/", async (c) => {
   });
 
   // skipBody: we return reachability only, so don't download the target's body.
-  const result = await runHttpCheck(config, { skipBody: true });
+  const result = await runHttpCheck(config, { skipBody: true, userAgent: checkerUserAgent(c.env) });
 
   const status = result.statusCode ?? null;
   // "Up" = the server answered with a non-5xx HTTP status. A 5xx, or any

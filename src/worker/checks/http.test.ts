@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runHttpCheck, isSuspendedResponse, MAX_REDIRECTS } from "./http";
+import { DEFAULT_CHECKER_USER_AGENT } from "../lib/user-agent";
 import type { HttpConfig } from "../../shared/schemas";
 
 /** Build a complete HttpConfig with sensible defaults, overridable per test. */
@@ -321,6 +322,51 @@ describe("runHttpCheck", () => {
     expect(firstInit.body).toBe("secret-payload");
     expect(secondInit.method).toBe("POST"); // 307 keeps the method...
     expect(secondInit.body).toBeUndefined(); // ...but the body must not cross origins
+  });
+
+  it("names the checker with the default User-Agent", async () => {
+    // A nameless request is what firewalls challenge first (2026-11-11).
+    const fetchMock = mockFetch(new Response("ok", { status: 200 }));
+
+    await runHttpCheck(makeConfig());
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Headers).get("user-agent")).toBe(DEFAULT_CHECKER_USER_AGENT);
+    expect(DEFAULT_CHECKER_USER_AGENT).toMatch(/^OpenPing\/\d+\.\d+\.\d+ \(\+https:\/\/openping\.n8builds\.dev\/bot\)$/);
+  });
+
+  it("sends the install's configured User-Agent", async () => {
+    const fetchMock = mockFetch(new Response("ok", { status: 200 }));
+
+    await runHttpCheck(makeConfig(), { userAgent: "MyPing/2 (+https://ping.example.org/bot)" });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Headers).get("user-agent")).toBe("MyPing/2 (+https://ping.example.org/bot)");
+  });
+
+  it("lets a monitor's own User-Agent header win", async () => {
+    const fetchMock = mockFetch(new Response("ok", { status: 200 }));
+
+    await runHttpCheck(makeConfig({ headers: [{ name: "User-Agent", value: "Custom/1" }] }), {
+      userAgent: "MyPing/2",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Headers).get("user-agent")).toBe("Custom/1");
+  });
+
+  it("keeps the User-Agent but drops credentials on a cross-origin redirect", async () => {
+    const fetchMock = mockFetchSequence(
+      redirectTo("https://other.example.com/next", 302),
+      new Response("final body", { status: 200 }),
+    );
+
+    await runHttpCheck(makeConfig({ auth: { type: "bearer", token: "secret-token" } }), { userAgent: "MyPing/2" });
+
+    const [, secondInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const headers = secondInit.headers as Headers;
+    expect(headers.get("user-agent")).toBe("MyPing/2");
+    expect(headers.get("authorization")).toBeNull();
   });
 
   it("preserves the request body on a same-origin 307 redirect", async () => {

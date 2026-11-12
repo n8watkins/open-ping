@@ -14,6 +14,7 @@ import {
   type DomainMeta,
 } from "./domain";
 import type { DomainConfig } from "../../shared/schemas";
+import { DEFAULT_CHECKER_USER_AGENT } from "../lib/user-agent";
 
 /** Build a complete DomainConfig with sensible defaults, overridable per test. */
 function makeConfig(overrides: Partial<DomainConfig> = {}): DomainConfig {
@@ -56,6 +57,18 @@ describe("runDomainCheck", () => {
     const meta = r.meta as { expiresAt: string; daysUntil: number };
     expect(meta.daysUntil).toBeGreaterThan(30);
     expect(typeof meta.expiresAt).toBe("string");
+  });
+
+  it("names the checker on its RDAP lookup", async () => {
+    const fetchMock = mockFetch(rdapResponse([{ eventAction: "expiration", eventDate: isoInDays(200) }]));
+    await runDomainCheck(makeConfig(), { userAgent: "MyPing/2" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("user-agent")).toBe("MyPing/2");
+
+    const defaulted = mockFetch(rdapResponse([{ eventAction: "expiration", eventDate: isoInDays(200) }]));
+    await runDomainCheck(makeConfig());
+    const [, init2] = defaulted.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init2.headers).get("user-agent")).toBe(DEFAULT_CHECKER_USER_AGENT);
   });
 
   it("is degraded when the expiry is within warnDays", async () => {

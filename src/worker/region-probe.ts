@@ -3,6 +3,7 @@ import type { Env } from "./types";
 import type { MonitorRecord } from "./db/monitors";
 import { probe, probeFetchLimit } from "./checks/runner";
 import { lookupColo, type RegionProbeRpc, type RegionRecheckResult } from "./checks/region";
+import { checkerUserAgent } from "./lib/user-agent";
 
 /**
  * One region's re-checker (checks/region.ts). The scheduler reaches it by the
@@ -33,7 +34,11 @@ export class RegionProbe extends DurableObject<Env> implements RegionProbeRpc {
         await this.ctx.storage.put({ [COLO_KEY]: found, [COLO_AT_KEY]: Date.now() });
       }
     }
-    const attempt = await probe(monitor, { warmup: opts.warmup, fresh: true, run: {} });
+    const attempt = await probe(monitor, {
+      warmup: opts.warmup,
+      fresh: true,
+      run: { userAgent: checkerUserAgent(this.env) },
+    });
     fetches += attempt.result.fetches ?? probeFetchLimit(monitor);
     const { body: _body, ...result } = attempt.result as typeof attempt.result & { body?: string };
     return { attempt: { ...attempt, result }, colo: colo ?? null, fetches };

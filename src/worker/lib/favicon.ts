@@ -1,6 +1,7 @@
 import type { Env } from "../types";
 import type { MonitorRecord } from "../db/monitors";
 import { assertSafeUrl } from "./ssrf";
+import { checkerUserAgent, DEFAULT_CHECKER_USER_AGENT } from "./user-agent";
 
 /**
  * Site icons for HTTP monitors (the Monitors list and a monitor's page).
@@ -31,7 +32,6 @@ const MAX_CANDIDATES = 4;
 export const ICON_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
 /** How many monitors' icons one request refreshes in the background. */
 const REFRESH_BATCH = 4;
-const USER_AGENT = "OpenPing-favicon/1.0 (+https://openping.n8builds.dev)";
 
 export interface IconImage {
   bytes: Uint8Array;
@@ -144,6 +144,7 @@ async function guardedGet(
   signal: AbortSignal,
   hosts: ReadonlySet<string> | null,
   fetchFn: typeof fetch,
+  userAgent: string,
 ): Promise<Got | null> {
   let url = start;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -153,7 +154,7 @@ async function guardedGet(
       method: "GET",
       redirect: "manual",
       signal,
-      headers: { "user-agent": USER_AGENT, accept: "*/*" },
+      headers: { "user-agent": userAgent, accept: "*/*" },
     });
     if (res.status >= 300 && res.status < 400 && res.status !== 304) {
       const location = res.headers.get("location");
@@ -176,7 +177,11 @@ async function guardedGet(
 }
 
 /** The site's icon, or null when it has none we may serve. Never throws. */
-export async function fetchFavicon(pageUrl: string, fetchFn: typeof fetch = fetch): Promise<IconImage | null> {
+export async function fetchFavicon(
+  pageUrl: string,
+  fetchFn: typeof fetch = fetch,
+  userAgent: string = DEFAULT_CHECKER_USER_AGENT,
+): Promise<IconImage | null> {
   let start: URL;
   try {
     start = new URL(pageUrl);
@@ -187,13 +192,13 @@ export async function fetchFavicon(pageUrl: string, fetchFn: typeof fetch = fetc
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     // The page may redirect (to www, or to a login), so its own host is where it ends up.
-    const page = await guardedGet(start, PAGE_MAX_BYTES, controller.signal, null, fetchFn).catch(() => null);
+    const page = await guardedGet(start, PAGE_MAX_BYTES, controller.signal, null, fetchFn, userAgent).catch(() => null);
     const finalUrl = page?.url ?? start;
     const own = new Set([start.hostname, finalUrl.hostname]);
     const html = page ? new TextDecoder().decode(page.bytes) : "";
     for (const candidate of iconCandidates(html, finalUrl).slice(0, MAX_CANDIDATES)) {
       if (!own.has(candidate.hostname)) continue;
-      const got = await guardedGet(candidate, ICON_MAX_BYTES, controller.signal, own, fetchFn).catch(() => null);
+      const got = await guardedGet(candidate, ICON_MAX_BYTES, controller.signal, own, fetchFn, userAgent).catch(() => null);
       if (!got || got.over) continue;
       const contentType = sniffImage(got.bytes);
       if (contentType) return { bytes: got.bytes, contentType };
@@ -296,7 +301,7 @@ export async function refreshMonitorIcon(
     )
       .bind(monitor.id, origin, now)
       .run();
-    const image = await fetchFavicon((monitor.config as { url: string }).url, fetchFn);
+    const image = await fetchFavicon((monitor.config as { url: string }).url, fetchFn, checkerUserAgent(env));
     if (!image) return;
     await env.DB.prepare("UPDATE monitor_icons SET icon = ?1, content_type = ?2 WHERE monitor_id = ?3 AND origin = ?4")
       .bind(image.bytes.buffer.slice(image.bytes.byteOffset, image.bytes.byteOffset + image.bytes.byteLength), image.contentType, monitor.id, origin)
