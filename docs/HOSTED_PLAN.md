@@ -175,7 +175,7 @@ Nothing past stage 2 starts until the stage 1 gate passes.
 - **Scope:**
   - "Runs in your own Cloudflare account" instead of "self-hosted" where it misleads.
   - A Pricing section on the landing page: the free own-account path with the step-by-step guide, and "OpenPing Hosted, $24 a year, coming soon" with a waitlist form.
-  - The waitlist: email only, a honeypot, Cloudflare Turnstile (when `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` are set), per-IP and global rate limits, and a double opt-in (migration 0030): the row starts pending, a confirm email with a single-use link (stored hashed, good for 7 days) confirms it, an unconfirmed row is deleted after 7 days, and every email carries a one-click leave link and the `List-Unsubscribe` headers. Stored in D1 (migrations 0010 and 0030), and only on the canonical install (`WAITLIST_ENABLED`).
+  - The waitlist: email only, a honeypot, Cloudflare Turnstile (required: with `TURNSTILE_SITE_KEY` or `TURNSTILE_SECRET_KEY` missing every sign-up is refused, unless the install sets `TURNSTILE=off`), per-IP and global rate limits, and a double opt-in (migration 0030): the row starts pending, a confirm email with a single-use link (stored hashed, good for 7 days) confirms it, an unconfirmed row is deleted after 7 days, and every email carries a one-click leave link and the `List-Unsubscribe` headers. Stored in D1 (migrations 0010 and 0030), and only on the canonical install (`WAITLIST_ENABLED`).
     Since the landing page plan's item 1.9, only the canonical install shows the landing page (`HOME_PAGE` "landing"); every other install shows its own status page at `/`.
   - An admin view in Settings with the count, the latest sign-ups and a CSV download.
   - A public `/install` guide.

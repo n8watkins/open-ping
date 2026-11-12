@@ -66,8 +66,10 @@ function linksIn(to: string): { confirm: string; leave: string } {
 }
 
 const confirmPost = (token: string) => page(`/waitlist/confirm?t=${token}`, { method: "POST" });
-const setKeys = (site?: string, secret?: string) => {
-  const e = env as { TURNSTILE_SITE_KEY?: string; TURNSTILE_SECRET_KEY?: string };
+/** Turns Turnstile on (the suite's default is the TURNSTILE=off opt-out) with these keys; no arguments restores the opt-out. */
+const setKeys = (site?: string, secret?: string, on = site !== undefined || secret !== undefined) => {
+  const e = env as { TURNSTILE?: string; TURNSTILE_SITE_KEY?: string; TURNSTILE_SECRET_KEY?: string };
+  e.TURNSTILE = on ? undefined : "off";
   e.TURNSTILE_SITE_KEY = site;
   e.TURNSTILE_SECRET_KEY = secret;
 };
@@ -240,6 +242,23 @@ describe("the Hosted waitlist: Turnstile", () => {
     expect(body.get("remoteip")).toBe("10.1.0.3");
     await until(() => mailsTo("human@example.com"));
     expect(await row("human@example.com")).not.toBeNull();
+  });
+
+  it("refuses everything when Turnstile is on but both keys are missing (production default), and never calls Cloudflare", async () => {
+    setKeys(undefined, undefined, true);
+    const siteverify = verdict(true);
+    expect(await (await page("/api/waitlist/config")).json()).toEqual({ turnstileSiteKey: null });
+    const res = await join("nokeys@example.com", "10.1.0.5", { turnstile: "t" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "turnstile_failed" });
+    expect(siteverify).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await row("nokeys@example.com")).toBeNull();
+  });
+
+  it("takes sign-ups without a token only under the explicit TURNSTILE=off opt-out", async () => {
+    setKeys();
+    expect((await join("optout@example.com", "10.1.0.6")).status).toBe(200);
   });
 
   it("is on, and refuses everything, when only one of the two keys is set", async () => {

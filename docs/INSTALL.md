@@ -52,6 +52,11 @@ Good to know:
 - **Upgrading.** The new repository is a copy, not a fork, so it doesn't follow this one by itself.
   To upgrade, pull this repository's `main` into your copy and push; Workers Builds migrates and deploys ([Upgrading](./UPGRADE.md)).
 - **A missing secret.** If you skipped `MASTER_KEY` or `SETUP_TOKEN`, the setup page says which one is missing and how to add it in the dashboard.
+- **Turnstile and the waitlist.** Only the canonical install collects the Hosted waitlist (`WAITLIST_ENABLED`), and its form is protected by Cloudflare Turnstile (`TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`).
+  With `WAITLIST_ENABLED` on and either key missing, sign-ups are refused and the Worker logs `turnstile_not_configured`; it never silently skips the check.
+  If you run a waitlist without Turnstile on purpose (local development, a private copy), set the var `TURNSTILE` to `off` in `wrangler.jsonc`.
+  Optionally set `TURNSTILE_HOSTNAMES` to a comma-separated list of the hostnames Cloudflare may report back.
+  A normal self-hosted install keeps `WAITLIST_ENABLED` at `false` and needs none of this.
 - **Changing vars.** `WORKERS_PLAN`, `WAITLIST_ENABLED` and `HOME_PAGE` live in your copy's `wrangler.jsonc`; change them there and push, because each deploy resets vars to that file.
 - **Limits.** The button needs a public repository on github.com or gitlab.com, and deploys Workers only ([Cloudflare's docs](https://developers.cloudflare.com/workers/platform/deploy-buttons/)).
 

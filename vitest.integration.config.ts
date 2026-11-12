@@ -26,6 +26,8 @@ export default defineConfig({
           MASTER_KEY: TEST_MASTER_KEY,
           // The integration install plays the canonical one, so the waitlist is on.
           WAITLIST_ENABLED: "true",
+          // The explicit Turnstile opt-out; the Turnstile tests switch it on with setKeys().
+          TURNSTILE: "off",
           // ...and its home page is the marketing page, so click counts are on.
           HOME_PAGE: "landing",
           TEST_MIGRATIONS: await readD1Migrations("./migrations"),
