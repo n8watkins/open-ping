@@ -95,7 +95,7 @@ export function toTeamsMessage(p: NotificationPayload): TeamsMessage {
     msteams: { width: "Full" },
     body,
   };
-  if (p.url) card.actions = [{ type: "Action.OpenUrl", title: emailButtonLabel(p.event), url: p.url }];
+  if (p.url) card.actions = [{ type: "Action.OpenUrl", title: emailButtonLabel(p), url: p.url }];
 
   return {
     type: "message",

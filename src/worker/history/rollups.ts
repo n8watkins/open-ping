@@ -347,7 +347,7 @@ export function compactionStatements(
       // retried. The alert cooldown reads minutes back, far inside this.
       label: "outbox prune",
       stmt: env.DB.prepare(
-        "DELETE FROM notification_outbox WHERE status IN ('sent', 'dead') AND updated_at < ?",
+        "DELETE FROM notification_outbox WHERE status IN ('sent', 'dead', 'suppressed') AND updated_at < ?",
       ).bind(now - OUTBOX_KEEP_DAYS * DAY_MS),
     },
   ];

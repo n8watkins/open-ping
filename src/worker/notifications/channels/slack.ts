@@ -87,7 +87,7 @@ export function toSlackMessage(p: NotificationPayload): SlackMessage {
       elements: [
         {
           type: "button",
-          text: { type: "plain_text", text: emailButtonLabel(p.event) },
+          text: { type: "plain_text", text: emailButtonLabel(p) },
           url: p.url,
           action_id: "openping_open",
         },

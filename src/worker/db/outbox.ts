@@ -216,13 +216,64 @@ export async function claimDue(
   return outboxEntriesFromRows(env, results ?? []);
 }
 
-/** Mark a record as successfully delivered. */
-export async function markSent(env: Env, id: string): Promise<void> {
+/**
+ * What a mark applies to: one record's id, or a grouped alert
+ * (notifications/dispatcher.ts): every record it carried, marked together in
+ * one query so they stay together on a retry, and the id of the message they
+ * were tried in, kept as their batch_id so the alert cap counts it once.
+ */
+export type OutboxIds = string | { ids: readonly string[]; batchId: string };
+
+/** The `WHERE` match for {@link OutboxIds}, its bound value, and the batch_id to record (null for one record). */
+function idMatch(target: OutboxIds): { sql: string; value: string; batchId: string | null } {
+  return typeof target === "string"
+    ? { sql: "id = ?", value: target, batchId: null }
+    : { sql: "id IN (SELECT value FROM json_each(?))", value: JSON.stringify(target.ids), batchId: target.batchId };
+}
+
+/** Statuses a record never leaves: delivered, given up, or held back by the alert cap. */
+const TERMINAL = "('sent', 'dead', 'suppressed')";
+
+/** Mark records as successfully delivered. */
+export async function markSent(env: Env, target: OutboxIds): Promise<void> {
+  const match = idMatch(target);
   await env.DB.prepare(
-    "UPDATE notification_outbox SET status = 'sent', updated_at = ? WHERE id = ?",
+    `UPDATE notification_outbox SET status = 'sent', batch_id = ?, updated_at = ? WHERE ${match.sql}`,
   )
-    .bind(Date.now(), id)
+    .bind(match.batchId, Date.now(), match.value)
     .run();
+}
+
+/**
+ * Hold back records the alert cap stopped (notifications/dispatcher.ts): never
+ * sent and never retried, kept with the reason so they can be looked up.
+ */
+export async function markSuppressed(env: Env, ids: readonly string[], reason: string): Promise<void> {
+  if (ids.length === 0) return;
+  await env.DB.prepare(
+    `UPDATE notification_outbox SET status = 'suppressed', last_error = ?, updated_at = ?
+      WHERE id IN (SELECT value FROM json_each(?)) AND status NOT IN ${TERMINAL}`,
+  )
+    .bind(reason.slice(0, MAX_ERROR_LEN), Date.now(), JSON.stringify(ids))
+    .run();
+}
+
+/**
+ * How many alerts went out to each destination since `since` (rows: channel_id,
+ * target, sent): a grouped alert counts once, by its batch_id. Only the events
+ * in `events` count. Read once per delivery pass, for the alert cap.
+ */
+export function recentSendsStatement(env: Env, since: number, events: readonly string[]): D1PreparedStatement {
+  // next_attempt_at bounds the scan through idx_outbox_pending: a row is sent at
+  // or after it became due, so one sent since `since` was due no earlier than
+  // a retry's longest wait (an hour) before it.
+  return env.DB.prepare(
+    `SELECT channel_id, target, COUNT(DISTINCT COALESCE(batch_id, id)) AS sent
+       FROM notification_outbox
+      WHERE status = 'sent' AND next_attempt_at >= ? AND updated_at >= ?
+        AND event_type IN (SELECT value FROM json_each(?))
+      GROUP BY channel_id, target`,
+  ).bind(since - BACKOFF_CAP_MS, since, JSON.stringify(events));
 }
 
 /**
@@ -235,7 +286,7 @@ export async function markSent(env: Env, id: string): Promise<void> {
  */
 export async function markFailed(
   env: Env,
-  id: string,
+  ids: OutboxIds,
   newAttemptCount: number,
   error: string,
   maxAttempts: number,
@@ -243,22 +294,24 @@ export async function markFailed(
 ): Promise<void> {
   const now = Date.now();
   const { status, nextAttemptAt } = computeRetry(newAttemptCount, maxAttempts, now, retryAfterMs);
+  const match = idMatch(ids);
   // Never resurrect a terminal row: if post-send bookkeeping throws after an
   // entry is already 'sent' (or 'dead'), the caller's catch must not be able to
   // flip it back to 'failed' and cause a duplicate delivery on the next claim.
   await env.DB.prepare(
     `UPDATE notification_outbox
         SET status = ?, attempts = ?, next_attempt_at = ?, last_error = ?,
-            updated_at = ?
-      WHERE id = ? AND status NOT IN ('sent', 'dead')`,
+            batch_id = ?, updated_at = ?
+      WHERE ${match.sql} AND status NOT IN ${TERMINAL}`,
   )
     .bind(
       status,
       newAttemptCount,
       nextAttemptAt,
       error.slice(0, MAX_ERROR_LEN),
+      match.batchId,
       now,
-      id,
+      match.value,
     )
     .run();
 }
@@ -270,14 +323,15 @@ export async function markFailed(
  * attempts, would only lose the alert. Like markFailed, it never touches a
  * terminal row.
  */
-export async function markDeferred(env: Env, id: string, until: number, error: string): Promise<void> {
+export async function markDeferred(env: Env, ids: OutboxIds, until: number, error: string): Promise<void> {
   const now = Date.now();
+  const match = idMatch(ids);
   await env.DB.prepare(
     `UPDATE notification_outbox
-        SET status = 'failed', next_attempt_at = ?, last_error = ?, updated_at = ?
-      WHERE id = ? AND status NOT IN ('sent', 'dead')`,
+        SET status = 'failed', next_attempt_at = ?, last_error = ?, batch_id = ?, updated_at = ?
+      WHERE ${match.sql} AND status NOT IN ${TERMINAL}`,
   )
-    .bind(Math.max(until, now), error.slice(0, MAX_ERROR_LEN), now, id)
+    .bind(Math.max(until, now), error.slice(0, MAX_ERROR_LEN), match.batchId, now, match.value)
     .run();
 }
 

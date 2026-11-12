@@ -30,6 +30,25 @@ export interface NotificationPayload {
   incidentId?: string;
   /** Only on `incident_update`: the status update the admin posted. */
   update?: IncidentUpdateSummary;
+  /**
+   * Only on a grouped alert (buildGroupPayload): the monitors that went down,
+   * or recovered, together. Built at delivery, never stored in the outbox.
+   */
+  group?: AlertGroupSummary;
+}
+
+/** The monitors a grouped alert covers, for a webhook receiver to act on each. */
+export interface AlertGroupSummary {
+  count: number;
+  monitors: Array<{
+    monitorId: string;
+    monitorName: string;
+    event: NotifyEvent;
+    incidentId?: string;
+    url?: string;
+    statusCode?: number | null;
+    error?: string | null;
+  }>;
 }
 
 /** The posted status update an `incident_update` notification carries. */
@@ -212,6 +231,73 @@ export function buildCertExpiringPayload(
   };
 }
 
+/** At most this many monitors are named in a grouped alert's message; the rest are counted. */
+export const GROUP_LIST_MAX = 20;
+
+/** One monitor's line in a grouped alert. */
+function groupLine(p: NotificationPayload, kind: "down" | "recovered"): string {
+  let detail = "";
+  if (kind === "recovered") {
+    if (p.durationSeconds != null) detail = ` (after ${Math.round(p.durationSeconds / 60)} min)`;
+  } else if (p.event === "heartbeat_missed") {
+    detail = " (missed its heartbeat)";
+  } else if (p.event === "flapping") {
+    detail = " (flapping)";
+  } else if (p.statusCode) {
+    detail = ` (HTTP ${p.statusCode})`;
+  } else if (p.error) {
+    detail = ` (${p.error})`;
+  }
+  return `- ${p.monitorName}${detail}`;
+}
+
+/**
+ * One alert for several monitors that went down, or recovered, together
+ * (notifications/dispatcher.ts groups them): one email, push or message per
+ * channel instead of one per monitor. Many monitors failing at once usually
+ * share a cause on OpenPing's side of the sites (the network, DNS, a firewall
+ * rule), so the message says so. `payloads` are the single alerts it stands
+ * for, oldest first.
+ */
+export function buildGroupPayload(payloads: readonly NotificationPayload[], kind: "down" | "recovered"): NotificationPayload {
+  const n = payloads.length;
+  const events = new Set(payloads.map((p) => p.event));
+  const event: NotifyEvent = events.size === 1 ? payloads[0]!.event : kind;
+  const headline =
+    kind === "down"
+      ? `${n} sites down at once: likely a shared cause (network, DNS, firewall).`
+      : `${n} sites recovered at once.`;
+  const listed = payloads.slice(0, GROUP_LIST_MAX).map((p) => groupLine(p, kind));
+  if (n > GROUP_LIST_MAX) listed.push(`- and ${n - GROUP_LIST_MAX} more`);
+  // Every single alert links to its monitor under the same app; the group links to the list.
+  const link = payloads.find((p) => p.url)?.url;
+  return {
+    event,
+    monitorId: "group",
+    monitorName: `${n} sites`,
+    state: kind === "recovered" ? "up" : "down",
+    title: kind === "down" ? `🔴 ${n} sites down at once` : `🟢 ${n} sites recovered`,
+    body: `${headline}\n\n${listed.join("\n")}`,
+    url: link ? link.replace(/\/monitors\/[^/]+$/, "/monitors") : undefined,
+    statusCode: null,
+    error: null,
+    detectedAt: Math.min(...payloads.map((p) => p.detectedAt)),
+    durationSeconds: null,
+    group: {
+      count: n,
+      monitors: payloads.map((p) => ({
+        monitorId: p.monitorId,
+        monitorName: p.monitorName,
+        event: p.event,
+        ...(p.incidentId ? { incidentId: p.incidentId } : {}),
+        ...(p.url ? { url: p.url } : {}),
+        statusCode: p.statusCode ?? null,
+        error: p.error ?? null,
+      })),
+    },
+  };
+}
+
 /** A synthetic payload for the "send test notification" action. */
 export function buildTestPayload(channelName: string, appUrl?: string): NotificationPayload {
   const base = appUrl ? appUrl.replace(/\/$/, "") : undefined;
@@ -248,8 +334,10 @@ export const EVENT_PILL: Record<NotifyEvent, string> = {
   test: "Test",
 };
 
-/** CTA label per event: incidents link to the monitor, test opens the app. */
-export function emailButtonLabel(event: NotifyEvent): string {
+/** CTA label per event: incidents link to the monitor, test opens the app, a grouped alert opens the list. */
+export function emailButtonLabel(p: Pick<NotificationPayload, "event" | "group">): string {
+  const event = p.event;
+  if (p.group) return "View monitors";
   if (event === "test") return "Open OpenPing";
   if (event === "maintenance_start" || event === "maintenance_end" || event === "cert_expiring") return "View monitor";
   return "View incident";
@@ -285,7 +373,7 @@ export function toEmailText(p: NotificationPayload): string {
   return renderEmailText({
     heading: stripLeadingEmoji(p.title),
     lines,
-    button: p.url ? { label: emailButtonLabel(p.event), url: p.url } : undefined,
+    button: p.url ? { label: emailButtonLabel(p), url: p.url } : undefined,
   });
 }
 
@@ -309,7 +397,7 @@ export function toEmailHtml(p: NotificationPayload): string {
     accent: colorState(p),
     statusLabel: pillLabel(p),
     bodyHtml,
-    button: p.url ? { label: emailButtonLabel(p.event), url: p.url } : undefined,
+    button: p.url ? { label: emailButtonLabel(p), url: p.url } : undefined,
     preheader: p.body,
   });
 }
