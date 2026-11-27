@@ -6,7 +6,10 @@
 # GitHub Free), the merge-when-green fallback merges it once every check on it
 # has passed. workflow_run lists every workflow that runs on pull requests, so
 # the one that finishes last still triggers a look; rerun npx release-kit
-# apply . after adding one. "autoMerge": false in .release.json turns it off.
+# apply . after adding one. A Dependabot minor update waits a few days first,
+# and some packages always wait for a person (.release.json "autoMerge"); the
+# daily schedule looks again, so one that has waited long enough merges
+# without a new push. "autoMerge": false in .release.json turns it all off.
 name: Auto-merge
 
 on:
@@ -14,6 +17,9 @@ on:
   workflow_run:
     workflows: ["Android app", "CI", "Commit messages", "Security scan"]
     types: [completed]
+  schedule:
+    - cron: "37 7 * * *" # release-kit: look again at waiting update pull requests
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -25,6 +31,7 @@ jobs:
       (github.event_name == 'pull_request' && (github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref, 'release-kit/')))
       || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
           && (github.event.workflow_run.actor.login == 'dependabot[bot]' || startsWith(github.event.workflow_run.head_branch, 'release-kit/')))
+      || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write # merge the pull request
       pull-requests: write # turn on auto-merge
