@@ -16,6 +16,14 @@
 #    major) lets a bad release be pulled before it reaches the repo. These
 #    entries ignore the kit, which the first ones update.
 #
+# Major updates of typescript are ignored, because the repo can't take them
+# yet. For typescript: lint tooling (typescript-eslint) does not support
+# TypeScript 7, so its pull request could never be merged. Minor and patch
+# updates still arrive, and an ignore applies to security updates of that
+# package too. To take a package's majors again, list it under "allowMajors" in
+# .release.json "dependabot", like { "allowMajors": ["typescript"] }, and rerun
+# npx release-kit apply .
+#
 # Security updates use neither allow nor groups here, so Dependabot opens one for
 # any vulnerable dependency, direct or transitive, as soon as an alert appears
 # (no cooldown). Don't add an allow list: Dependabot applies it to security
@@ -43,6 +51,8 @@ updates:
       interval: weekly
     ignore:
       - dependency-name: release-kit
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     cooldown:
       default-days: 3
       semver-major-days: 7
